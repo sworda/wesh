@@ -1,0 +1,143 @@
+# wesh
+
+> Share terminal over web —— 用现代技术路线重写的 Web 终端分享工具
+
+## What This Is
+
+wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <command> [args...]` 启动后在指定端口提供 HTTPS/WebSocket 服务，浏览器打开页面即获得一个运行 `<command>` 的完整终端。它是对 ttyd 1.7.7 的现代化重写，面向个人运维场景，在保持 ttyd"单静态二进制、scp 上去就能跑"核心优势的同时，原生解决 ttyd 的会话不保持、无多路复用、安全缺陷等已核实问题。
+
+## Core Value
+
+**浏览器里获得一个可靠、安全、断线不丢的远程终端。** 其他一切（文件传输、协作共享、Sixel）都可以后续迭代，但"打开页面就有可用的安全终端、刷新/断网后会话还在"必须成立。
+
+## Requirements
+
+### Validated
+
+（暂无 —— 发布后验证）
+
+### Active
+
+**核心终端（对标 ttyd）**
+- [ ] 启动时指定任意命令及参数，浏览器获得完整交互终端（PTY 双向转发）
+- [ ] 终端尺寸同步（前端 resize → 服务端 TIOCSWINSZ）
+- [ ] 窗口标题同步
+- [ ] 只读/可写模式（默认只读）
+- [ ] 前端基于 xterm.js 生态：WebGL 渲染、Unicode 11/CJK/IME、fit 自适应、超链接、剪贴板
+- [ ] 断线自动重连（配合会话保持，重连接回原会话而非新建）
+
+**会话保持（改进 ttyd 限制 #1）**
+- [ ] 会话与连接解耦：WS 断开进程不死，重连接回同一会话（含滚动缓冲回放）
+- [ ] 会话保活策略可配置（超时回收）
+
+**多客户端共享（改进 ttyd 限制 #2）**
+- [ ] 原生多客户端 attach 同一会话，写入权限可配置（全员可写 / 主写旁观）
+
+**安全（改进 ttyd 限制 #3 + 源码核实的新发现）**
+- [ ] 认证：时序安全比较、凭据不明文进日志、一次性短时令牌替代 ttyd 的 /token 明文下发
+- [ ] 认证失败节流防爆破
+- [ ] Origin 允许列表校验
+- [ ] TLS（禁旧协议、合理 cipher、安全响应头）
+- [ ] 子进程环境变量白名单（不继承父进程全部 env）
+- [ ] URL 传参严格校验与上限（若保留该能力）
+
+**资源控制（改进 ttyd 限制 #4/#5）**
+- [ ] WS 消息长度上限与分片重组缓冲上限（修复预认证内存放大/崩溃）
+- [ ] 背压控制与每客户端限速
+- [ ] 最大连接数限制
+
+**部署与集成**
+- [ ] 端口/绑定地址/UNIX socket 监听配置
+- [ ] 反代子路径挂载（base-path）
+- [ ] 自定义首页
+- [ ] 子进程 cwd/TERM/关闭信号配置
+- [ ] 降权运行（uid/gid）
+- [ ] 客户端偏好下发（-t key=value 等价机制）
+- [ ] /healthz、metrics、结构化日志（ttyd 缺失的可运维性）
+- [ ] 配置文件支持
+
+**质量底线**
+- [ ] 修复源码核实的全部 ttyd 缺陷（见 Context 节清单）
+
+### Out of Scope
+
+- **ZMODEM 文件传输** — v2；依赖停更的 zmodem.js，且 trzsz 已覆盖现代场景
+- **trzsz 文件传输** — v2；核心优先，v1 先不做
+- **Sixel 图片** — v2
+- **Windows (ConPTY) 支持** — 复杂度高，个人运维场景以 Linux/macOS 为主
+- **服务端重启后会话恢复** — 需 CRIU 类技术，复杂度极高；断线保活已覆盖主要痛点
+- **多租户 / 嵌入产品的 API 平台化** — 定位为个人运维工具，不做 SaaS 化
+- **ttyd CLI 参数兼容** — 用户明确选择全新设计，不背兼容包袱
+
+## Context
+
+**功能基线**：完整功能清单见 `~/open_src/ttyd/.codebuddy/ttyd-analysis/01-功能清单.md`。ttyd 后端 C 约 2100 行 + 前端 TS 约 940 行，架构为 libwebsockets + libuv + forkpty，前端 xterm.js。
+
+**源码核实结论**（2026-08-13，Explore agent 对 ttyd 1.7.7 全量核实，含行号证据）：
+
+原清单 6 条限制全部属实。另发现更严重问题：
+
+*安全（严重）*
+- 预认证远程崩溃：空 WS 消息导致空指针解引用，任何客户端可 DoS 整服（utils.c:34, protocol.c:298）
+- 预认证内存放大：分片累积在认证检查之前（protocol.c:288-296）
+- 凭据 base64 明文打印进日志（server.c:142）；超长凭据静默截断
+- Origin 校验弱：仅字符串比对，可绕过（protocol.c:51-71）
+- 子进程继承全部父环境变量，env 中密钥泄露给 Web shell（pty.c:441-444）
+- ?arg= 无校验无上限拼接（protocol.c:241-249）
+- TLS 仅禁 1.0/1.1，无 cipher 控制/HSTS/安全响应头
+- pty_spawn 失败路径误 close(0)（pty.c:87,112, protocol.c:161）
+
+*健壮性/性能*
+- 关闭码 1006 写入 close frame 违反 RFC6455（protocol.c:90,105）
+- 每数据块 3-4 次拷贝；固定 64KB 读缓冲且读后即停，吞吐受限（pty.c:40-66）
+- 每客户端独占一条 waitpid 线程（pty.c:483）；单 libuv 循环承载全部 IO
+- 无 /healthz、metrics、结构化日志、配置文件
+
+*协议/前端*
+- 无版本协商、无错误消息类型、spawn 失败原因无法传给客户端
+- AuthToken 与 Basic 凭据同一 secret 复用
+- zmodem.js 0.1.10（2017 年停更需本地 patch）、decko 停更、execCommand('copy') 已废弃
+
+*libwebsockets 编程模型是 bug 高发区*：手工 LWS_PRE 预留、手写分片重组（两大预认证漏洞均在此）、pss 生命周期跨 lws/libuv 双域仅靠标志位防 UAF。重写应弃用裸 lws 回调状态机，改用高级框架。
+
+**对重写的启示**：协议重设计（版本协商、类型化错误帧、认证并入握手、长度上限、合规关闭码）；会话与进程解耦（session 抽象支持挂接/共享/保活）；安全默认；零拷贝管道；SIGCHLD/pidfd 统一收割替代每进程一线程。
+
+## Constraints
+
+- **分发形态**: 单静态二进制 — ttyd 的核心优势，必须保持（scp 上去就能跑，无运行时依赖）
+- **平台**: Linux + macOS — 个人运维主场景；Windows 不做
+- **技术选型**: 后端语言/框架由调研决定（Rust vs Go 为主要候选） — 用户明确授权"选择最合适的"
+- **前端**: xterm.js 生态（渲染器/CJK/fit 等 addon）— ttyd 已验证的正确选择，前端无重写必要
+- **兼容性**: 不兼容 ttyd CLI 参数，全新设计 — 用户明确决策
+
+## Key Decisions
+
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| 项目名 wesh | web + shell；原名 stow 与 GNU Stow 严重撞名 | — Pending |
+| 单静态二进制分发 | 保持 ttyd 核心优势 | — Pending |
+| 全新 CLI 设计，不兼容 ttyd 参数 | 不背兼容包袱，怎么合理怎么设计 | — Pending |
+| 会话保持做到"断线保活"即可 | 服务端重启恢复需 CRIU，复杂度与收益不匹配 | — Pending |
+| 多客户端共享写入权限可配置 | 同时覆盖协作排障（全员可写）与演示教学（主写旁观） | — Pending |
+| v1 核心优先，ZMODEM/trzsz/sixel 放 v2 | 先把核心终端+安全做到位 | — Pending |
+| 后端语言由调研决定 | 单二进制约束下 Rust/Go 是主要候选，让数据说话 | — Pending |
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd:complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
+---
+*Last updated: 2026-08-13 after initialization*
