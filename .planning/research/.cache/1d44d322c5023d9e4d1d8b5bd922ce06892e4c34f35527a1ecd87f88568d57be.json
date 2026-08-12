@@ -1,0 +1,1 @@
+{"content":"Current stable Go versions per go.dev/dl JSON (2026-08-13): go1.26.5 and go1.25.12 (both stable). Go 1.22+ ServeMux routing + stdlib net/http (HTTP/2, crypto/tls FIPS-capable) cover wesh server needs without a web framework.","source":"web","provider":"webfetch","confidence":"MEDIUM","fetched_at":"2026-08-12T16:51:27.666Z","ttl":86400000,"kind":"web"}

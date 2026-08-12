@@ -1,0 +1,1 @@
+{"content":"同类项目教训:ttyd 1.7.7源码审计确认预认证空指针崩溃(空WS帧)、预认证内存放大、凭据明文进日志、strcmp非时序安全、/token明文下发凭据、Origin弱校验、子进程继承全env、?arg=无校验拼接、写1006关闭码、每客户端waitpid线程;GoTTY类工具历史上默认无认证直接暴露shell;wetty(Node)把SSH放到浏览器同样面临暴力破解与TLS配置问题。共同模式:认证后置+资源无上限+手写协议解析=预认证RCE/DoS高发区。","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-08-12T16:41:27.858Z","ttl":86400000,"kind":"web"}

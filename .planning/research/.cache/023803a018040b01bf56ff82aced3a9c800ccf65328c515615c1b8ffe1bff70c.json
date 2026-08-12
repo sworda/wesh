@@ -1,0 +1,1 @@
+{"content":"WS扇出背压设计:经典模式为每客户端有界发送队列,满则丢最旧帧或断开该客户端(gorilla chat示例用256缓冲channel,满即关连接);绝不能让一个慢客户端阻塞PTY读取或其他客户端。tungstenite默认max_write_buffer_size=usize::MAX(写缓冲无限,背压风险默认存在)需手动设上限;gorilla单连接只支持一个reader一个writer goroutine,写须串行化。","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-08-12T16:40:52.508Z","ttl":86400000,"kind":"web"}

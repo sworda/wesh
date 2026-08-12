@@ -1,0 +1,1 @@
+{"content":"RFC6455第7.4节:1005/1006/1015为保留值,MUST NOT由端点写入Close帧;1006仅供应用内部表示异常关闭(未收发Close帧即断);ttyd把1006写进close frame属协议违规,部分严格客户端/代理会报错;服务端协议错误应用1002、策略违例用1008、消息过大用1009、内部错误用1011;前端不应以收到1006作为逻辑判断(它永远不可能从线上收到),而应基于onclose的wasClean/code缺失判断。","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-08-12T16:42:01.225Z","ttl":86400000,"kind":"web"}

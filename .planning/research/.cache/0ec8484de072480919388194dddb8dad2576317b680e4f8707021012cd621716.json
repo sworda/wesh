@@ -1,0 +1,1 @@
+{"content":"nginx反代WebSocket:proxy_read_timeout默认60s,空闲WS 60秒无流量即被切断(浏览器侧表现为1006异常关闭);必须配置Upgrade/Connection头、调大proxy_read_timeout,且服务端WS ping间隔须显著小于代理空闲超时(ttyd默认5s ping可覆盖);Caddy/Cloudflare等各有空闲超时(Cloudflare约100s)需在部署文档中给出配方。","source":"web","provider":"websearch","confidence":"MEDIUM","fetched_at":"2026-08-12T16:40:52.696Z","ttl":86400000,"kind":"web"}
