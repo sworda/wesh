@@ -32,7 +32,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. 用户启动 `wesh -- bash`（或任意命令及参数）后，浏览器打开页面即获得完整交互终端，键盘输入与终端输出经 WS 双向实时转发
   2. 拖动浏览器窗口时前端 fit 自适应且服务端同步 TIOCSWINSZ，远端 vim/htop 等全屏应用随 resize 正确重绘
   3. 子进程退出后被正确收割（Linux pidfd / macOS kqueue，零额外线程、无僵尸残留）；Web shell 内 `env` 看不到服务端环境变量（白名单最小集）
-**Plans**: TBD
+**Plans**: 5 plans
+- [ ] 01-01-PLAN.md — 行走骨架 tracer：仓库重命名 + Go module + CLI/proto/embed 契约 + 端到端 PTY 管道（spawn/io/reap/server/生命周期）+ TestEchoPTY + 前端 UI-SPEC 全量接入
+- [ ] 01-02-PLAN.md — pty 引擎测试加固：exec 数组/env 白名单/spawn 失败不伤 fd（spawn_test）+ resize TIOCSWINSZ/收割无僵尸（io_test/reap_test）
+- [ ] 01-03-PLAN.md — server/main 生命周期测试：第二连接 409、退出码传递、未知帧 1002、断开 SIGHUP 进程组 + CLI parseArgs/无命令报错
+- [ ] 01-04-PLAN.md — darwin 共享 kqueue watcher + Q1 竞态裁决双测试（CI-only）+ 双平台 CI（go 矩阵 ubuntu/macos + web 构建）
+- [ ] 01-05-PLAN.md — README（无认证警示 + 单次语义）+ 全量收口验证（-race 全量/前端构建/裸 clone embed 链/启动冒烟）+ 浏览器手动 checklist
 **UI hint**: yes
 **Research flag**: macOS kqueue EVFILT_PROC/NOTE_EXIT 退出监视需早期原型验证（MEDIUM-HIGH 置信，平台差异风险；失败兜底为 SIGCHLD + WNOHANG 循环 reap）——建议 `/gsd-plan-phase --research-phase 1`
 
@@ -137,7 +142,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 行走骨架（核心 PTY 管道） | TBD | Not started | - |
+| 1. 行走骨架（核心 PTY 管道） | 0/5 | Planned | - |
 | 2. 协议基线 | TBD | Not started | - |
 | 3. 认证与传输安全 | TBD | Not started | - |
 | 4. 前端体验 | TBD | Not started | - |
