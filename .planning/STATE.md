@@ -4,15 +4,15 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 1
 current_phase_name: 行走骨架
-status: planning
-stopped_at: Phase 1 context gathered
-last_updated: "2026-08-13T11:26:30.471Z"
+status: executing
+stopped_at: Phase 1 UI-SPEC approved
+last_updated: "2026-08-13T15:52:57.327Z"
 last_activity: 2026-08-13
 last_activity_desc: Roadmap created (9 phases, 44/44 requirements mapped)
 progress:
   total_phases: 1
   completed_phases: 0
-  total_plans: 0
+  total_plans: 5
   completed_plans: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-08-13)
 
 Phase: 1 of 9 (行走骨架)
 Plan: 0 of TBD in current phase
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-08-13 — Roadmap created (9 phases, 44/44 requirements mapped)
 
 Progress: [░░░░░░░░░░] 0%
@@ -86,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-13T11:26:30.456Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-pty/01-CONTEXT.md
+Last session: 2026-08-13T11:53:00.681Z
+Stopped at: Phase 1 UI-SPEC approved
+Resume file: ~/open_src/stow/.planning/phases/01-pty/01-UI-SPEC.md
