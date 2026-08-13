@@ -1,7 +1,7 @@
 # Requirements: wesh
 
 **Defined:** 2026-08-13
-**Core Value:** 浏览器里获得一个可靠、安全、断线不丢的远程终端
+**Core Value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
 
 ## v1 Requirements
 
@@ -110,13 +110,56 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (待 roadmap 填充) | — | Pending |
+| CORE-01 | Phase 1 | Pending |
+| CORE-02 | Phase 1 | Pending |
+| CORE-03 | Phase 4 | Pending |
+| CORE-04 | Phase 2 | Pending |
+| CORE-05 | Phase 6 | Pending |
+| CORE-06 | Phase 2 | Pending |
+| FE-01 | Phase 1 | Pending |
+| FE-02 | Phase 4 | Pending |
+| FE-03 | Phase 1 | Pending |
+| FE-04 | Phase 4 | Pending |
+| FE-05 | Phase 4 | Pending |
+| FE-06 | Phase 4 | Pending |
+| FE-07 | Phase 4 | Pending |
+| SESS-01 | Phase 6 | Pending |
+| SESS-02 | Phase 6 | Pending |
+| SESS-03 | Phase 6 | Pending |
+| MULTI-01 | Phase 5 | Pending |
+| MULTI-02 | Phase 5 | Pending |
+| MULTI-03 | Phase 5 | Pending |
+| MULTI-04 | Phase 5 | Pending |
+| MULTI-05 | Phase 5 | Pending |
+| SEC-01 | Phase 3 | Pending |
+| SEC-02 | Phase 3 | Pending |
+| SEC-03 | Phase 3 | Pending |
+| SEC-04 | Phase 3 | Pending |
+| SEC-05 | Phase 3 | Pending |
+| SEC-06 | Phase 1 | Pending |
+| SEC-07 | Phase 7 | Pending |
+| SEC-08 | Phase 2 | Pending |
+| RES-01 | Phase 2 | Pending |
+| RES-02 | Phase 5 | Pending |
+| RES-03 | Phase 5 | Pending |
+| RES-04 | Phase 5 | Pending |
+| OPS-01 | Phase 7 | Pending |
+| OPS-02 | Phase 7 | Pending |
+| OPS-03 | Phase 9 | Pending |
+| OPS-04 | Phase 7 | Pending |
+| OPS-05 | Phase 7 | Pending |
+| OPS-06 | Phase 8 | Pending |
+| OPS-07 | Phase 8 | Pending |
+| OPS-08 | Phase 8 | Pending |
+| OPS-09 | Phase 7 | Pending |
+| OPS-10 | Phase 9 | Pending |
+| OPS-11 | Phase 7 | Pending |
 
 **Coverage:**
-- v1 requirements: 42 total
-- Mapped to phases: 0
-- Unmapped: 42 ⚠️（roadmap 创建时填充）
+- v1 requirements: 44 total（原写 42，按实际条目数修正：CORE 6 + FE 7 + SESS 3 + MULTI 5 + SEC 8 + RES 4 + OPS 11）
+- Mapped to phases: 44
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-08-13 after initial definition*
+*Last updated: 2026-08-13 after roadmap creation（traceability 填充；Core Value 与 PROJECT.md 对齐——v1 不做会话保持，"断线不丢"改为"可多人共享"）*
