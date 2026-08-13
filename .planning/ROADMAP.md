@@ -36,10 +36,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 拖动浏览器窗口时前端 fit 自适应且服务端同步 TIOCSWINSZ，远端 vim/htop 等全屏应用随 resize 正确重绘
   3. 子进程退出后被正确收割（Linux pidfd / macOS kqueue，零额外线程、无僵尸残留）；Web shell 内 `env` 看不到服务端环境变量（白名单最小集）
 
-**Plans**: 5 plans
+**Plans**: 1/5 plans executed
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — 行走骨架 tracer：仓库重命名 + Go module + CLI/proto/embed 契约 + 端到端 PTY 管道（spawn/io/reap/server/生命周期）+ TestEchoPTY + 前端 UI-SPEC 全量接入
+- [x] 01-01-PLAN.md — 行走骨架 tracer：仓库重命名 + Go module + CLI/proto/embed 契约 + 端到端 PTY 管道（spawn/io/reap/server/生命周期）+ TestEchoPTY + 前端 UI-SPEC 全量接入
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -179,7 +179,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 行走骨架（核心 PTY 管道） | 0/5 | Planned | - |
+| 1. 行走骨架（核心 PTY 管道） | 1/5 | In Progress|  |
 | 2. 协议基线 | TBD | Not started | - |
 | 3. 认证与传输安全 | TBD | Not started | - |
 | 4. 前端体验 | TBD | Not started | - |

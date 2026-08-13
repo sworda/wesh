@@ -7,8 +7,8 @@
 
 ### 核心终端（CORE）
 
-- [ ] **CORE-01**: 用户可通过命令行指定任意命令及参数，浏览器获得完整交互终端（PTY 双向转发）
-- [ ] **CORE-02**: 前端窗口 resize 时服务端同步调整 PTY 尺寸（TIOCSWINSZ）
+- [x] **CORE-01**: 用户可通过命令行指定任意命令及参数，浏览器获得完整交互终端（PTY 双向转发）
+- [x] **CORE-02**: 前端窗口 resize 时服务端同步调整 PTY 尺寸（TIOCSWINSZ）
 - [ ] **CORE-03**: 终端标题变化同步到浏览器标签页标题
 - [ ] **CORE-04**: 默认只读模式（丢弃客户端输入），显式开启可写后才接受输入
 - [ ] **CORE-05**: WS 异常断开后前端自动重连并接回同一 PTY 进程（共享进程模型；无滚动回放，屏幕内容靠程序重绘或 tmux/herdr 恢复）
@@ -16,9 +16,9 @@
 
 ### 前端（FE）
 
-- [ ] **FE-01**: 基于 xterm.js 6 渲染，WebGL 渲染器失败时自动回落 DOM 渲染器
+- [x] **FE-01**: 基于 xterm.js 6 渲染，WebGL 渲染器失败时自动回落 DOM 渲染器
 - [ ] **FE-02**: Unicode 11 宽字符支持，CJK/IME 正常输入显示
-- [ ] **FE-03**: 浏览器窗口变化时终端自动 fit 适配
+- [x] **FE-03**: 浏览器窗口变化时终端自动 fit 适配
 - [ ] **FE-04**: 终端输出中的 URL 自动识别为可点击超链接
 - [ ] **FE-05**: 选中即复制，剪贴板使用 navigator.clipboard 现代 API（替代已废弃的 execCommand）
 - [ ] **FE-06**: 辅助交互可开关：resize 时显示 COLSxROWS 浮层、离开页面前确认
@@ -45,7 +45,7 @@
 - [ ] **SEC-03**: 认证失败节流（指数退避/速率限制），防止暴力破解
 - [ ] **SEC-04**: WS 握手 Origin 允许列表校验，不在列表内拒绝
 - [ ] **SEC-05**: TLS 最低 1.2（默认 1.3），合理 cipher 套件，安全响应头（HSTS/X-Content-Type-Options 等）
-- [ ] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
+- [x] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
 - [ ] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名作为子进程环境变量
 - [ ] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
 
@@ -110,15 +110,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORE-01 | Phase 1 | Pending |
-| CORE-02 | Phase 1 | Pending |
+| CORE-01 | Phase 1 | Complete |
+| CORE-02 | Phase 1 | Complete |
 | CORE-03 | Phase 4 | Pending |
 | CORE-04 | Phase 2 | Pending |
 | CORE-05 | Phase 6 | Pending |
 | CORE-06 | Phase 2 | Pending |
-| FE-01 | Phase 1 | Pending |
+| FE-01 | Phase 1 | Complete |
 | FE-02 | Phase 4 | Pending |
-| FE-03 | Phase 1 | Pending |
+| FE-03 | Phase 1 | Complete |
 | FE-04 | Phase 4 | Pending |
 | FE-05 | Phase 4 | Pending |
 | FE-06 | Phase 4 | Pending |
@@ -136,7 +136,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEC-03 | Phase 3 | Pending |
 | SEC-04 | Phase 3 | Pending |
 | SEC-05 | Phase 3 | Pending |
-| SEC-06 | Phase 1 | Pending |
+| SEC-06 | Phase 1 | Complete |
 | SEC-07 | Phase 7 | Pending |
 | SEC-08 | Phase 2 | Pending |
 | RES-01 | Phase 2 | Pending |
@@ -156,6 +156,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-11 | Phase 7 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 44 total（原写 42，按实际条目数修正：CORE 6 + FE 7 + SESS 3 + MULTI 5 + SEC 8 + RES 4 + OPS 11）
 - Mapped to phases: 44
 - Unmapped: 0 ✓

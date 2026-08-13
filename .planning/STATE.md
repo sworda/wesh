@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 1
-current_phase_name: 行走骨架
+current_phase: 01
+current_phase_name: pty
 status: executing
-stopped_at: Phase 1 UI-SPEC approved
-last_updated: "2026-08-13T15:52:57.327Z"
-last_activity: 2026-08-13
-last_activity_desc: Roadmap created (9 phases, 44/44 requirements mapped)
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-08-13T16:52:12.968Z"
+last_activity: 2026-08-14
+last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 5
-  completed_plans: 0
+  completed_plans: 1
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-13)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 1: 行走骨架（核心 PTY 管道）
+**Current focus:** Phase 01 — pty
 
 ## Current Position
 
-Phase: 1 of 9 (行走骨架)
-Plan: 0 of TBD in current phase
+Phase: 01 (pty) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-08-13 — Roadmap created (9 phases, 44/44 requirements mapped)
+Last activity: 2026-08-14 — Phase 01 execution started
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
@@ -54,6 +54,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 34min | 3 tasks | 18 files |
 
 ## Accumulated Context
 
@@ -67,6 +72,9 @@ Recent decisions affecting current work:
 - [Roadmap]: WS 三层上限 + RFC 合规关闭码在 Phase 2 协议层一次性到位（事后补洞要动协议）
 - [Roadmap]: SEC-06 env 白名单提前至 Phase 1 spawn 路径一次到位（PITFALLS C7）
 - [Roadmap]: REQUIREMENTS.md 实际 v1 需求为 44 条（原文 Coverage 误写 42），已按 44 修正
+- [Phase ?]: 仓库 stow/ 重命名为 wesh/，module path github.com/sworda/wesh 落地（D-01）
+- [Phase ?]: server.New 钉死 ReadLoop drain（D-12）与 lifecycle（D-10）启动点；/ws handler 命名 Attach；exitf 经 sync.Once 收口
+- [Phase ?]: 前端 typescript 钉 5.9.3（避 TS7 原生工具链风险）；build = tsc && vite build && gzip -k9
 
 ### Pending Todos
 
@@ -86,6 +94,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-13T11:53:00.681Z
-Stopped at: Phase 1 UI-SPEC approved
-Resume file: ~/open_src/stow/.planning/phases/01-pty/01-UI-SPEC.md
+Last session: 2026-08-13T16:52:12.956Z
+Stopped at: Completed 01-01-PLAN.md
+Resume file: None
