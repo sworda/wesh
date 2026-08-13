@@ -1,0 +1,56 @@
+package pty
+
+import (
+	"time"
+
+	"github.com/creack/pty"
+)
+
+// ReadLoop 以 32KiB 缓冲循环读 master：n>0 回调 onChunk，任何 read 错误（含 io.EOF
+// 与 Linux EIO）统一归一为"输出终结"即 return（Pitfall 3，禁止 err == io.EOF 单判）。
+//
+// onChunk 在读循环 goroutine 内同步调用、复用底层缓冲——回调方如需跨帧持有须自行拷贝。
+// ReadLoop 必须恰好调用一次（server.New 装配时启动并持续运行，D-12 drain）。
+func (s *Session) ReadLoop(onChunk func([]byte)) {
+	defer close(s.readDone)
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := s.Master.Read(buf)
+		if n > 0 {
+			onChunk(buf[:n])
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// Resize 经 TIOCSWINSZ 同步 PTY 尺寸；ws_xpixel/ws_ypixel 置 0 是 ttyd 与
+// creack/pty 共同实践。cols/rows 已由 proto.DecodeResize 钳制到 [1,1000]（D-16），
+// uint16 转换安全。
+func (s *Session) Resize(cols, rows int) error {
+	return pty.Setsize(s.Master, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+}
+
+// Close 关闭 master（有效指针判空，非零值推断——Pitfall 1"只关成功打开且登记在册的 fd"）。
+func (s *Session) Close() error {
+	if s.Master != nil {
+		return s.Master.Close()
+	}
+	return nil
+}
+
+// Wait 阻塞等待子进程退出，平台收割实现见 reap_*.go（唯一收割者，退出码完整）。
+func (s *Session) Wait() error {
+	return awaitExit(s.Cmd)
+}
+
+// Drain 带时限 drain（Pitfall 4）：Wait 返回后给读循环最多 d 等 EOF/EIO，到点无条件
+// Close(master)——残留孙进程下次读写 slave 得 EIO 自然消亡。
+func (s *Session) Drain(d time.Duration) {
+	select {
+	case <-s.readDone:
+	case <-time.After(d):
+	}
+	s.Close()
+}

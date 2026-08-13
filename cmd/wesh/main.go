@@ -1,0 +1,88 @@
+// wesh — share terminal over web。
+//
+// CLI 形态：wesh [flags] -- <cmd> [args...]（D-02）；`--` 后原样以 exec 数组传递，
+// 绝不经 shell。Phase 1 单次语义：WS 断开即退出（D-11），断线重连在 Phase 6。
+package main
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+
+	"github.com/sworda/wesh/internal/pty"
+	"github.com/sworda/wesh/internal/server"
+)
+
+// version 由发布构建注入；开发构建为 dev。
+var version = "dev"
+
+type config struct {
+	port        int
+	bind        string
+	showVersion bool
+}
+
+// parseArgs 解析 flags（D-04：仅 --port/--bind/--version 三个显式 flag，
+// --help 由 flag 包自带）。`--` 后参数原样收集为 argv（D-02）；
+// argv 为空（且非 --version/--help）返回错误（D-03：无命令不起登录 shell）。
+func parseArgs(args []string) (cfg config, argv []string, err error) {
+	fs := flag.NewFlagSet("wesh", flag.ContinueOnError)
+	fs.IntVar(&cfg.port, "port", 7681, "listen port (0 = random, actual port is printed)")
+	fs.StringVar(&cfg.bind, "bind", "0.0.0.0", "listen address")
+	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return cfg, nil, err
+	}
+	if cfg.showVersion {
+		return cfg, nil, nil
+	}
+	argv = fs.Args()
+	if len(argv) == 0 {
+		return cfg, nil, errors.New("missing command")
+	}
+	return cfg, argv, nil
+}
+
+func run(args []string) int {
+	cfg, argv, err := parseArgs(args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0 // --help：flag 包已打印用法
+		}
+		fmt.Fprintf(os.Stderr, "wesh: %v; usage: wesh [flags] -- <cmd> [args...]\n", err)
+		return 2
+	}
+	if cfg.showVersion {
+		fmt.Printf("wesh %s\n", version)
+		return 0
+	}
+	sess, err := pty.Start(argv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
+		return 1
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.bind, cfg.port))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
+		return 1
+	}
+	srv := server.New(sess, os.Exit)
+	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
+	fmt.Printf("listening on http://%s\n", ln.Addr())
+	if err := http.Serve(ln, srv.Handler()); err != nil {
+		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func main() {
+	os.Exit(run(os.Args[1:]))
+}
