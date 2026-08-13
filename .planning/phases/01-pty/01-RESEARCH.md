@@ -686,20 +686,23 @@ jobs:
 
 **除 A1 外无高风险假设。** A1 已通过"CI 先行测试 + 明确兜底"消化，无需用户额外确认。
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **darwin kqueue 僵尸注册竞态（A1）——早期原型验证方案**
    - What we know: API 面完整且交叉编译通过；`NOTE_EXIT` 语义（子进程退出即触发）与 `NOTE_EXITSTATUS`（附带退出码）常量齐全；`cmd.Wait()` 作为唯一收割者与 watcher 通知不冲突。
    - What's unclear: 子进程在 `kevent(EV_ADD)` 注册**之前**已退出（僵尸态）时，注册调用是否立即交付事件。短命令（`wesh -- true`、测试用例）必踩此窗口。
    - Recommendation: CI macos-latest leg 加两个针对性测试，**安排在 darwin watcher 实现任务的同一天**：(a) 正常路径——spawn `sleep 0.1 && exit 42`，注册后等事件，断言事件到达 + `Wait` 返回退出码 42；(b) 竞态路径——spawn `/usr/bin/true`，**先 sleep 200ms 确保已退出成僵尸，再注册**，kqueue 带 1s 超时等事件。若 (b) 事件到达 → 共享 watcher 无竞态成立；若超时 → 兜底启用：darwin `awaitExit` 退化为直接 `cmd.Wait()`（每会话一个阻塞 goroutine，v1 单会话可接受），watcher 代码以 build tag 保留待 Phase 5 多会话时再评估。
+   - **→ RESOLVED：** 由 plan 01-04 Task 2 落地——CI macos-latest leg 双测试（`TestKqueueExitNormal` / `TestKqueueExitZombieRace`）裁决，竞态测试超时分支为 `t.Skip` + 裁决标记打印（兜底退化预先写入任务，两条出路均为计划内路径）。
 
 2. **无客户端期间 PTY 输出的丢弃语义**
    - What we know: GoTTY 共享进程模型下 PTY 随服务端启动（STATE.md 锁定）；Phase 1 无 ring 缓冲（回放属 Phase 6）。
    - What's unclear: 首个客户端 attach 之前 master 读到的输出（如启动横幅）无处投递。
    - Recommendation: Phase 1 明确"attach 前输出直接丢弃"并写进 README；读循环从 spawn 起持续 drain（防子进程写满 64KiB PTY 缓冲阻塞）。
+   - **→ RESOLVED：** 由 CONTEXT.md D-12 锁定——attach 前输出直接丢弃，服务端装配（`server.New`）时即启动 drain 读循环持续读 master；启动点接线与行为断言见 plan 01-01 Task 2（acceptance_criteria 源码断言 + `TestDrainBeforeAttach`）。
 
 3. **默认 PTY 初始尺寸**
    - 首个 RESIZE 到达前用 80x24 硬编码（PITFALLS 技术债表认可"首帧窗口可接受"）；可配置属 Phase 7（OPS-04）。前端 attach 后立刻 fit+sendResize（Pattern 5 的 `ws.onopen`），窗口极短。
+   - **→ RESOLVED：** 由 CONTEXT.md D-15 锁定——初始尺寸 24x80（`pty.StartWithSize` Rows:24, Cols:80），首个 RESIZE 到达即纠正；落地见 plan 01-01 Task 2 spawn 路径。
 
 ## Environment Availability
 
