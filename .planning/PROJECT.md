@@ -14,16 +14,16 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 
 ### Validated
 
-（暂无 —— 发布后验证）
+- ✓ 启动时指定任意命令及参数，浏览器获得完整交互终端（PTY 双向转发）— Phase 1（CORE-01；TestEchoPTY + 生命周期五测 + UAT 浏览器实测）
+- ✓ 终端尺寸同步（前端 resize → 服务端 TIOCSWINSZ）— Phase 1（CORE-02；TestResize 24 80→50 132 + UAT vim resize 跟随实测）
+- ✓ 子进程环境变量白名单（不继承父进程全部 env）— Phase 1（SEC-06；TestEnvWhitelist 双层断言宿主注入 AWS_SECRET_ACCESS_KEY 不可见）
 
 ### Active
 
 **核心终端（对标 ttyd）**
-- [ ] 启动时指定任意命令及参数，浏览器获得完整交互终端（PTY 双向转发）
-- [ ] 终端尺寸同步（前端 resize → 服务端 TIOCSWINSZ）
 - [ ] 窗口标题同步
 - [ ] 只读/可写模式（默认只读）
-- [ ] 前端基于 xterm.js 生态：WebGL 渲染、Unicode 11/CJK/IME、fit 自适应、超链接、剪贴板
+- [ ] 前端基于 xterm.js 生态：WebGL 渲染、Unicode 11/CJK/IME、fit 自适应、超链接、剪贴板（WebGL 渲染回落 + fit 自适应已于 Phase 1 验证；CJK/IME/超链接/剪贴板 Phase 4）
 - [ ] 断线自动重连接回同一进程（共享进程模型；历史现场恢复依赖 tmux/herdr）
 
 **多客户端共享（改进 ttyd 限制 #2）**
@@ -34,7 +34,6 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - [ ] 认证失败节流防爆破
 - [ ] Origin 允许列表校验
 - [ ] TLS（禁旧协议、合理 cipher、安全响应头）
-- [ ] 子进程环境变量白名单（不继承父进程全部 env）
 - [ ] URL 传参严格校验与上限（若保留该能力）
 
 **资源控制（改进 ttyd 限制 #4/#5）**
@@ -111,15 +110,16 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| 项目名 wesh | web + shell；原名 stow 与 GNU Stow 严重撞名 | — Pending |
-| 单静态二进制分发 | 保持 ttyd 核心优势 | — Pending |
-| 全新 CLI 设计，不兼容 ttyd 参数 | 不背兼容包袱，怎么合理怎么设计 | — Pending |
+| 项目名 wesh | web + shell；原名 stow 与 GNU Stow 严重撞名 | ✓ 落地 github.com/sworda/wesh（Phase 1） |
+| 单静态二进制分发 | 保持 ttyd 核心优势 | — Pending（Phase 9 goreleaser 验证） |
+| 全新 CLI 设计，不兼容 ttyd 参数 | 不背兼容包袱，怎么合理怎么设计 | ✓ Phase 1 CLI 契约落地（`--` 透传/默认 0.0.0.0:7681/无命令 usage 退 2/--version） |
 | v1 不做会话保持 | 用户以 tmux/herdr 覆盖断线保活需求，自研性价比不足；架构上仍需为 v2 留出演进空间 | — Pending |
-| 多客户端共享写入权限可配置 | 同时覆盖协作排障（全员可写）与演示教学（主写旁观） | — Pending |
+| 多客户端共享写入权限可配置 | 同时覆盖协作排障（全员可写）与演示教学（主写旁观） | — Pending（Phase 5） |
 | v1 核心优先，ZMODEM/trzsz/sixel 放 v2 | 先把核心终端+安全做到位 | — Pending |
 | ?arg= URL 传参 v1 砍掉 | 已核实注入面；v2 以命令模板安全替代 | — Pending |
 | E2E 加密明确不做 | 自托管场景威胁模型不成立，TLS+认证足够 | — Pending |
-| 后端语言由调研决定 → Go | 调研结论：creack/pty 纯 Go 生态、coder/websocket 根治 ttyd 两类漏洞、静态编译发布故事最顺 | — Pending |
+| 后端语言由调研决定 → Go | 调研结论：creack/pty 纯 Go 生态、coder/websocket 根治 ttyd 两类漏洞、静态编译发布故事最顺 | ✓ Phase 1 行走骨架落地，-race 全绿 + ubuntu/macos 双平台 CI 通过 |
+| darwin 收割用共享 kqueue exit watcher（非 SIGCHLD+WNOHANG 手动 reap） | EVFILT_PROC/NOTE_EXIT 早知 + cmd.Wait() 唯一收割；Q1 僵尸注册竞态由 CI 裁决 | ✓ Q1 裁决=watcher 成立（kqueue 对僵尸进程补发 NOTE_EXIT，TestKqueueExitNormal/ZombieRace CI 双 PASS），兜底路径休眠 |
 
 ## Evolution
 
@@ -139,4 +139,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-13 after initialization*
+*Last updated: 2026-08-14 after Phase 1*

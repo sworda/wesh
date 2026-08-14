@@ -1,59 +1,73 @@
 ---
 phase: 01-pty
 verified: 2026-08-14T03:50:14Z
-status: human_needed
+status: passed
 score: 19/27 must-haves verified
 behavior_unverified: 8
 overrides_applied: 0
 behavior_unverified_items:
+
   - truth: "浏览器打开页面即获得完整交互终端（xterm 渲染、键盘输入可用）"
     test: "go run ./cmd/wesh -- bash，浏览器开 http://localhost:7681，键入命令观察回显与实时输出；web shell 内执行 env 确认只见白名单变量；开第二个标签页应见 Unable to connect"
     expected: "终端渲染正常、输入输出双向实时；env 无服务端机密；第二标签显示三态面板"
     why_human: "xterm 渲染与键盘交互需真实浏览器；WS 数据面已由 TestEchoPTY 行为证明，渲染一半无法自动化"
+
   - truth: "前端 fit 自适应且远端 vim/htop 随 resize 正确重绘"
     test: "wesh -- vim 打开后拖动浏览器窗口，远端 stty size 跟随变化"
     expected: "stty size 跟随窗口变化，vim 无闪屏错乱"
     why_human: "TUI 重绘质量是视觉判断；TIOCSWINSZ 机制已由 TestResize 行为证明"
+
   - truth: "macOS kqueue（EVFILT_PROC/NOTE_EXIT）运行时收割"
     test: "推送触发 CI macos-latest leg，观察 TestKqueueExitNormal / TestKqueueExitZombieRace 结果"
     expected: "正常路径事件到达 + 退出码 42；竞态路径事件到达则 watcher 成立，Q1-VERDICT skip 则执行计划内兜底（awaitExit 退化为直接 cmd.Wait()）"
     why_human: "本机无 macOS（RESEARCH Environment Availability），运行时裁决由 CI 承担是 plan 01-04 既定设计"
+
   - truth: "UI-SPEC loading 态：WS 建立期间空黑终端、无白闪、无 spinner"
     test: "浏览器打开页面观察 WS 建立瞬间"
     expected: "黑底空终端即现，无白闪"
     why_human: "视觉时序判断；内联 CSS + singlefile 构建已静态验证"
+
   - truth: "UI-SPEC error 态：三态面板文案与遮罩下终端可读"
     test: "触发三种关闭路径（未连上 / exit 终结 / 异常断开）观察面板"
     expected: "分别显示 Unable to connect / Session ended / Connection lost，遮罩下终端输出可读"
     why_human: "视觉判断；三态文案字符串与 onerror/onclose 接线已静态验证"
+
   - truth: "UI-SPEC overflow 态：10000 行 scrollback 与原生滚动条、长行折行"
     test: "web shell 内产生超屏输出（如 seq 1 20000）并滚动"
     expected: "滚动条可用、scrollback 10000 行、长行按 cols 折行"
     why_human: "滚动交互需真实浏览器；scrollback: 10000 选项已静态验证"
+
   - truth: "FE-01：WebGL 失败或 GPU 上下文丢失自动回落 DOM 渲染器（backstop truth）"
     test: "DevTools 禁用 WebGL 后刷新页面；恢复正常后刷新"
     expected: "禁用时终端仍渲染可交互（DOM 回落）；恢复后渲染正常"
     why_human: "verification: backstop——非推断性 truth，需显式证据；onContextLoss 注册代码已静态验证但 GPU 上下文行为无法自动化"
+
   - truth: "Q1 darwin 僵尸注册竞态由 CI 双测试裁决"
     test: "CI macos leg 运行 TestKqueueExitZombieRace"
     expected: "事件到达（watcher 成立）或 t.Skip + Q1-VERDICT 标记（兜底退化）——两条出路均为计划内路径"
     why_human: "测试为 CI-only（//go:build darwin），本机 Linux 由 build tag 排除，需推送后 CI 执行"
 human_verification:
+
   - test: "浏览器交互四项（VALIDATION 1-01-08/09 + 成功准则整体确认）"
     expected: "交互终端可用 + env 白名单 + 第二标签 409 面板；vim resize 跟随；WebGL 禁用回落 DOM；exit 后 Session ended 且服务端以子进程退出码退出"
     why_human: "渲染正确性、TUI 重绘质量、GPU 回落均为视觉/交互判断，plan 01-05 已设计为 end-of-phase 人工验证（human_verify_mode=end-of-phase）"
+
   - test: "UI-SPEC 五态视觉确认（loading/populated/overflow/error/long-text）"
     expected: "无白闪、面板 480px 内折行无截断、scrollback 滚动条可用、遮罩下终端可读"
     why_human: "视觉呈现 grep 不可证"
+
   - test: "推送触发 CI 首次运行：ubuntu+macos 双 leg go vet/-race 全测 + web 构建"
     expected: "三面全绿；macos leg 输出 Q1 裁决（watcher 成立或兜底 skip）"
     why_human: "远端 CI 执行需推送动作，plan 01-05 明示不在执行断言范围"
+
   - test: "judgment-tier prohibition 人工确认 1/3：wesh 无第三方运行时网络请求（无遥测/上报）"
     expected: "确认成立。验证者证据（非权威）：cmd/ internal/ web/src/ 全文无 http.Get/Post/Do/NewRequest、fetch、XMLHttpRequest、http.Client；前端仅 new WebSocket(location.host)；dist/index.html 零外部 URL"
     why_human: "plan 标记 verification: judgment（descriptor-less），交互式验证需人工逐项裁决，绝不静默通过"
+
   - test: "judgment-tier prohibition 人工确认 2/3：终端 I/O 不写入日志、不持久化磁盘"
     expected: "确认成立。验证者证据（非权威）：非测试生产代码无 log./slog/WriteFile/Create 调用（仅 reap_darwin.go 一处 TODO(Phase 8) 注释提及 slog）；onChunk 数据面仅写 WS"
     why_human: "同上，judgment-tier 需人工裁决"
+
   - test: "judgment-tier prohibition 人工确认 3/3：前端运行时零外部资源（离线可用单 HTML）"
     expected: "确认成立。验证者证据（非权威）：dist/index.html 无 http(s) 引用、无 <script src= 外链、无 webfont（system-ui 字体栈）；vite-plugin-singlefile 全量内联 + go:embed 硬约束"
     why_human: "同上，judgment-tier 需人工裁决"
