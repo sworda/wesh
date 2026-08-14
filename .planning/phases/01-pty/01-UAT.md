@@ -1,0 +1,76 @@
+---
+status: testing
+phase: 01-pty
+source: [01-VERIFICATION.md]
+started: 2026-08-14T03:54:12Z
+updated: 2026-08-14T03:54:12Z
+---
+
+## Current Test
+
+number: 1
+name: 浏览器交互四项（VALIDATION 1-01-08/09 + 成功准则整体确认）
+expected: |
+  交互终端可用 + env 白名单 + 第二标签 409 面板；vim resize 跟随；WebGL 禁用回落 DOM；exit 后 Session ended 且服务端以子进程退出码退出
+awaiting: user response
+
+## Tests
+
+### 1. 浏览器交互四项（VALIDATION 1-01-08/09 + 成功准则整体确认）
+
+test: |
+  `go run ./cmd/wesh -- bash` 开 http://localhost:7681：
+  (a) 键入命令看回显；
+  (b) web shell 内 `env` 确认白名单；
+  (c) 第二标签页应见 "Unable to connect"；
+  (d) `wesh -- vim` 拖窗口看 stty size 跟随；
+  (e) DevTools 禁 WebGL 刷新看 DOM 回落；
+  (f) web shell 内 `exit` 看 "Session ended" 且 shell 侧 `echo $?` 为子进程退出码
+expected: 四项全部符合预期
+result: [pending]
+
+### 2. UI-SPEC 五态视觉确认
+
+test: |
+  观察 loading（无白闪）/populated/overflow（scrollback 滚动条）/error（三态面板）/long-text（480px 折行）
+expected: 无白闪、面板 480px 内折行无截断、scrollback 滚动条可用、遮罩下终端可读
+result: [pending]
+
+### 3. CI 首次运行（含 macOS kqueue Q1 裁决）
+
+test: |
+  推送仓库，观察 GitHub Actions：ubuntu/macos 双 leg `go vet` + `go test -race -count=1 ./...`，web job `pnpm install --frozen-lockfile && pnpm -C web build`；macos leg 的 TestKqueueExitNormal/TestKqueueExitZombieRace 结果
+expected: 三面全绿；若 TestKqueueExitZombieRace 出现 Q1-VERDICT skip，执行计划内兜底（awaitExit 退化为直接 cmd.Wait()）
+result: [pending]
+
+### 4. judgment-tier prohibition 1/3：wesh 无第三方运行时网络请求
+
+test: |
+  人工确认。验证者非权威 grep 证据：`cmd/ internal/ web/src/` 全文无 http.Get/Post/Do/NewRequest、fetch、XMLHttpRequest、http.Client；前端仅 new WebSocket(location.host)；dist/index.html 零外部 URL
+expected: 确认成立
+result: [pending]
+
+### 5. judgment-tier prohibition 2/3：终端 I/O 不入日志不落盘
+
+test: |
+  人工确认。验证者非权威 grep 证据：非测试生产代码无 log./slog/WriteFile/Create 调用（仅 reap_darwin.go 一处 TODO(Phase 8) 注释提及 slog）；onChunk 数据面仅写 WS
+expected: 确认成立
+result: [pending]
+
+### 6. judgment-tier prohibition 3/3：前端运行时零外部资源（离线可用单 HTML）
+
+test: |
+  人工确认。验证者非权威 grep 证据：dist/index.html 无 http(s) 引用、无 <script src= 外链、无 webfont（system-ui 字体栈）；vite-plugin-singlefile 全量内联 + go:embed 硬约束
+expected: 确认成立
+result: [pending]
+
+## Summary
+
+total: 6
+passed: 0
+issues: 0
+pending: 6
+skipped: 0
+blocked: 0
+
+## Gaps
