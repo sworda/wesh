@@ -3,15 +3,15 @@ status: testing
 phase: 01-pty
 source: [01-VERIFICATION.md]
 started: 2026-08-14T03:54:12Z
-updated: 2026-08-14T04:53:03Z
+updated: 2026-08-14T05:10:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: 浏览器交互四项（VALIDATION 1-01-08/09 + 成功准则整体确认）
+number: 3
+name: CI 首次运行（含 macOS kqueue Q1 裁决）
 expected: |
-  交互终端可用 + env 白名单 + 第二标签 409 面板；vim resize 跟随；WebGL 禁用回落 DOM；exit 后 Session ended 且服务端以子进程退出码退出
+  三面全绿；若 TestKqueueExitZombieRace 出现 Q1-VERDICT skip，执行计划内兜底（awaitExit 退化为直接 cmd.Wait()）
 awaiting: user response
 
 ## Tests
@@ -27,14 +27,18 @@ test: |
   (e) DevTools 禁 WebGL 刷新看 DOM 回落；
   (f) web shell 内 `exit` 看 "Session ended" 且 shell 侧 `echo $?` 为子进程退出码
 expected: 四项全部符合预期
-result: [pending]
+result: pass
+verified_at: 2026-08-14
+note: 用户浏览器实测全部通过（含 1d vim resize 跟随、1e WebGL 回落、1f exit 语义）。vim 退出后光标不闪经诊断为标准终端行为（terminfo cnorm=\E[?12l），非 bug。
 
 ### 2. UI-SPEC 五态视觉确认
 
 test: |
   观察 loading（无白闪）/populated/overflow（scrollback 滚动条）/error（三态面板）/long-text（480px 折行）
 expected: 无白闪、面板 480px 内折行无截断、scrollback 滚动条可用、遮罩下终端可读
-result: [pending]
+result: pass
+verified_at: 2026-08-14
+note: 用户浏览器实测五态全部通过。期间发现 Reload 链接点击无反应，已修复（显式 location.reload() + #status z-index 1000，commit cb3c2cc）并复测通过。
 
 ### 3. CI 首次运行（含 macOS kqueue Q1 裁决）
 
@@ -85,9 +89,9 @@ evidence: |
 ## Summary
 
 total: 6
-passed: 3
+passed: 5
 issues: 0
-pending: 3
+pending: 1
 skipped: 0
 blocked: 0
 
