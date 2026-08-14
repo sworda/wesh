@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  go:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest] # darwin leg 同时承担 kqueue 运行时裁决（Q1，PATTERNS 注意 6）
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      # 注意：不设 CGO_ENABLED（保持默认启用）——-race 需要 cgo（Pitfall 5；该变量只属于 Phase 9 goreleaser 发布构建）
+      - run: go test -race -count=1 ./...
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@v6.0.10
+        with:
+          # web/package.json 无 packageManager 字段，显式钉版（与本地一致，lockfileVersion 9.0）
+          version: 11.21.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm -C web install --frozen-lockfile
+      - run: pnpm -C web build # tsc 类型检查 + vite 构建一体（D-18 构建顺序的 CI 固化）
