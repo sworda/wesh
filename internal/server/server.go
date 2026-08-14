@@ -28,7 +28,13 @@ type Server struct {
 	attached atomic.Bool                    // D-09：单客户端原子门
 	conn     atomic.Pointer[websocket.Conn] // 当前已 attach 的 WS 连接（onChunk 写端 / 1000 关闭用）
 	frame    []byte                         // OUTPUT 组帧缓冲（仅 ReadLoop 单 goroutine 经 onChunk 访问，无竞争）
-	termOnce sync.Once                      // 两条终结路径收口，exitf 只触发一次
+
+	// childExited 区分两条终结路径的触发源：lifecycle 在 Wait 返回后先置位再关 conn，
+	// Attach 读循环随服务端 1000 关闭帧终结时据此前置位识别"非客户端断开"，
+	// 不得走 D-11 竞争 exitf——否则 D-10 退出码会被 terminate(true, 0) 抢跑覆盖
+	// （plan 01-03 TestExitCodePropagation 暴露：exitf(0) 顶替 exitf(42)）。
+	childExited atomic.Bool
+	termOnce    sync.Once // 两条终结路径收口，exitf 只触发一次
 }
 
 // New 装配服务端并钉死两个 goroutine 的启动点：
@@ -133,6 +139,9 @@ func (s *Server) lifecycle() {
 	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	}
+	// 置位必须先于关 conn：随后的 1000 关闭帧必然终结 Attach 读循环（c.Read 返回
+	// CloseError），wsDisconnected 凭此标志识别该路径并放弃 exitf 竞争（D-10 优先）。
+	s.childExited.Store(true)
 	s.sess.Drain(200 * time.Millisecond)
 	if c := s.conn.Load(); c != nil {
 		c.Close(websocket.StatusNormalClosure, "") // D-10：1000
@@ -141,7 +150,12 @@ func (s *Server) lifecycle() {
 }
 
 // wsDisconnected 是 D-11 路径：WS 断开（reader 返回错误）→ SIGHUP 子进程进程组 → exitf(0)。
+// 若 childExited 已置位，说明读循环终结是 D-10 服务端 1000 关闭帧的必然结果，
+// 而非客户端断开——直接返回，exitf 由 lifecycle 以子进程退出码收口。
 func (s *Server) wsDisconnected() {
+	if s.childExited.Load() {
+		return
+	}
 	s.terminate(true, 0)
 }
 
