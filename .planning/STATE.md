@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 01
 current_phase_name: pty
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-08-13T16:52:12.968Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-08-14T01:26:05.656Z"
 last_activity: 2026-08-14
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -32,7 +32,7 @@ Plan: 2 of 5
 Status: Ready to execute
 Last activity: 2026-08-14 — Phase 01 execution started
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [██░░░░░░░░] 20%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 34min | 3 tasks | 18 files |
+| Phase 01 P02 | 4min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 仓库 stow/ 重命名为 wesh/，module path github.com/sworda/wesh 落地（D-01）
 - [Phase ?]: server.New 钉死 ReadLoop drain（D-12）与 lifecycle（D-10）启动点；/ws handler 命名 Attach；exitf 经 sync.Once 收口
 - [Phase ?]: 前端 typescript 钉 5.9.3（避 TS7 原生工具链风险）；build = tsc && vite build && gzip -k9
+- [Phase ?]: [Phase 01-02]: fd 活性探测用 syscall.Fsync 而非 os.NewFile（finalizer 会误关真实 fd 0/1/2）；PTY 输出断言按 strings.Fields 切分免疫 ONLCR
 
 ### Pending Todos
 
@@ -94,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-13T16:52:12.956Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-08-14T01:26:05.644Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

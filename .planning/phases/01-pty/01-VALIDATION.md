@@ -40,11 +40,11 @@ created: 2026-08-13
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 1-01-01 | 01 | 1 | CORE-01 | — | exec 数组不经 shell（`$(id)` 不被展开） | unit | `go test ./internal/pty -run TestExecArrayNoShell` | ❌ W0 | ⬜ pending |
-| 1-01-02 | 01 | 1 | SEC-06 | T-1-env | env 白名单：注入 `AWS_SECRET_ACCESS_KEY` 到宿主 env，断言子进程 env 不含 | unit | `go test ./internal/pty -run TestEnvWhitelist` | ❌ W0 | ⬜ pending |
-| 1-01-03 | 01 | 1 | SEC-06/Pitfall 1 | T-1-fd | spawn 失败不伤 fd：spawn 不存在二进制后 fd 0/1/2 `Fsync` 非 EBADF | unit | `go test ./internal/pty -run TestSpawnFailKeepsStdio` | ❌ W0 | ⬜ pending |
-| 1-01-04 | 01 | 1 | CORE-02 | — | resize 同步 TIOCSWINSZ：spawn `stty size; sleep 1; stty size`，中途 `Setsize(50,132)`，输出含 `50 132` | 集成 | `go test ./internal/pty -run TestResize -count=1` | ❌ W0 | ⬜ pending |
-| 1-01-05 | 01 | 1 | 成功准则3 | T-1-zombie | 收割无僵尸：短命令退出后 `/proc/<pid>` 消失（linux） | 集成 | `go test ./internal/pty -run TestReap` | ❌ W0 | ⬜ pending |
+| 1-01-01 | 01 | 1 | CORE-01 | — | exec 数组不经 shell（`$(id)` 不被展开） | unit | `go test ./internal/pty -run TestExecArrayNoShell` | ✅ spawn_test.go | ✅ green |
+| 1-01-02 | 01 | 1 | SEC-06 | T-1-env | env 白名单：注入 `AWS_SECRET_ACCESS_KEY` 到宿主 env，断言子进程 env 不含 | unit | `go test ./internal/pty -run TestEnvWhitelist` | ✅ spawn_test.go | ✅ green |
+| 1-01-03 | 01 | 1 | SEC-06/Pitfall 1 | T-1-fd | spawn 失败不伤 fd：spawn 不存在二进制后 fd 0/1/2 `Fsync` 非 EBADF | unit | `go test ./internal/pty -run TestSpawnFailKeepsStdio` | ✅ spawn_test.go | ✅ green |
+| 1-01-04 | 01 | 1 | CORE-02 | — | resize 同步 TIOCSWINSZ：spawn `stty size; sleep 1; stty size`，中途 `Setsize(50,132)`，输出含 `50 132` | 集成 | `go test ./internal/pty -run TestResize -count=1` | ✅ io_test.go | ✅ green |
+| 1-01-05 | 01 | 1 | 成功准则3 | T-1-zombie | 收割无僵尸：短命令退出后 `/proc/<pid>` 消失（linux） | 集成 | `go test ./internal/pty -run TestReap` | ✅ reap_test.go | ✅ green |
 | 1-01-06 | 01 | 1 | CORE-01 | — | WS echo e2e：`wesh -- /bin/cat`，`Dial` 发 INPUT 帧，断言收到同字节 OUTPUT 帧 | e2e | `go test ./internal/server -run TestEchoPTY -count=1` | ❌ W0 | ⬜ pending |
 | 1-01-07 | 01 | 1 | 研究旗帜 | — | darwin kqueue 竞态：正常路径 + 僵尸注册路径双测试（CI-only，macos runner） | CI 集成 | `go test ./internal/pty -run TestKqueue -count=1`（macos runner） | ❌ W0 | ⬜ pending |
 | 1-01-08 | 01 | 1 | FE-01 | — | WebGL→DOM 回落：DevTools 禁 WebGL 后页面仍渲染 | 手动 | — | 手动 checklist | ⬜ pending |
