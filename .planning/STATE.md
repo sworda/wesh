@@ -2,35 +2,35 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 01
-current_phase_name: pty
-status: executing
+current_phase: 2
+current_phase_name: 协议基线
+status: "Phase 1 shipped — PR #1"
 stopped_at: Completed 01-05-PLAN.md
-last_updated: "2026-08-14T02:38:43.697Z"
+last_updated: "2026-08-14T11:52:45.207Z"
 last_activity: 2026-08-14
-last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 1
   completed_phases: 1
   total_plans: 5
   completed_plans: 5
+last_activity_desc: Phase 01 execution started
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-13)
+See: .planning/PROJECT.md (updated 2026-08-14)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 01 — pty
+**Current focus:** Phase 02 — 协议基线
 
 ## Current Position
 
-Phase: 01 (pty) — EXECUTING
-Plan: 5 of 5
-Status: Ready to execute
-Last activity: 2026-08-14 — Phase 01 execution started
+Phase: 2 — 协议基线
+Plan: Not started
+Status: Phase 1 shipped — PR #1
+Last activity: 2026-08-14
 
 Progress: [██████████] 100%
 
@@ -38,7 +38,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 5
 - Average duration: -
 - Total execution time: -
 
@@ -46,7 +46,7 @@ Progress: [██████████] 100%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01 | 5 | - | - |
 
 **Recent Trend:**
 
@@ -92,7 +92,6 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 1]: macOS kqueue EVFILT_PROC/NOTE_EXIT 退出监视为 MEDIUM-HIGH 置信、有平台差异风险——Phase 1 需早期原型验证，兜底 SIGCHLD + WNOHANG 循环 reap
 - [Phase 2]: WS 三层上限默认值需实测标定
 - [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）
 
@@ -104,6 +103,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-14T02:38:43.685Z
-Stopped at: Completed 01-05-PLAN.md
+Last session: 2026-08-14
+Stopped at: Phase 01 complete, ready to plan Phase 02（协议基线）
 Resume file: None
