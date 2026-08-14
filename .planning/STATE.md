@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 01
 current_phase_name: pty
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-08-14T02:10:44.416Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-08-14T02:38:43.697Z"
 last_activity: 2026-08-14
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-13)
 ## Current Position
 
 Phase: 01 (pty) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-08-14 — Phase 01 execution started
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [████████░░] 80%
 | Phase 01 P02 | 4min | 2 tasks | 3 files |
 | Phase 01 P03 | 18min | 2 tasks | 3 files |
 | Phase 01 P04 | 4min | 3 tasks | 3 files |
+| Phase 01 P05 | 21min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 01-03]: SIGHUP 送达证据用落盘标记文件（stdout 标记在 WS 断开后被 onChunk 丢弃不可观测）；/usr/bin/gofmt 陈旧须用 GOROOT 版本
 - [Phase ?]: [Phase 01-04]: darwin awaitExit 经包级 sync.Once 单例 watcher，初始化/注册失败均退化为直接 cmd.Wait()（兜底不致命）
 - [Phase ?]: [Phase 01-04]: CI 显式钉 pnpm 11.21.0（web/package.json 无 packageManager 字段，pnpm/action-setup 需版本源）
+- [Phase ?]: [Phase 01-05]: README 按现状描述裸 clone——dist 已提交真实构建产物（非占位），改前端源码才需先 pnpm -C web build
 
 ### Pending Todos
 
@@ -102,6 +104,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-14T02:10:44.404Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-08-14T02:38:43.685Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None

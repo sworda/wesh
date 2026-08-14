@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 拖动浏览器窗口时前端 fit 自适应且服务端同步 TIOCSWINSZ，远端 vim/htop 等全屏应用随 resize 正确重绘
   3. 子进程退出后被正确收割（Linux pidfd / macOS kqueue，零额外线程、无僵尸残留）；Web shell 内 `env` 看不到服务端环境变量（白名单最小集）
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans executed
 **Wave 1**
 
 - [x] 01-01-PLAN.md — 行走骨架 tracer：仓库重命名 + Go module + CLI/proto/embed 契约 + 端到端 PTY 管道（spawn/io/reap/server/生命周期）+ TestEchoPTY + 前端 UI-SPEC 全量接入
@@ -49,7 +49,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-05-PLAN.md — README（无认证警示 + 单次语义）+ 全量收口验证（-race 全量/前端构建/裸 clone embed 链/启动冒烟）+ 浏览器手动 checklist
+- [x] 01-05-PLAN.md — README（无认证警示 + 单次语义）+ 全量收口验证（-race 全量/前端构建/裸 clone embed 链/启动冒烟）+ 浏览器手动 checklist
 
 **UI hint**: yes
 **Research flag**: macOS kqueue EVFILT_PROC/NOTE_EXIT 退出监视需早期原型验证（MEDIUM-HIGH 置信，平台差异风险；失败兜底为 SIGCHLD + WNOHANG 循环 reap）——建议 `/gsd-plan-phase --research-phase 1`
@@ -179,7 +179,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 行走骨架（核心 PTY 管道） | 4/5 | In Progress|  |
+| 1. 行走骨架（核心 PTY 管道） | 5/5 | In Progress|  |
 | 2. 协议基线 | TBD | Not started | - |
 | 3. 认证与传输安全 | TBD | Not started | - |
 | 4. 前端体验 | TBD | Not started | - |
