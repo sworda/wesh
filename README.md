@@ -35,7 +35,7 @@ wesh [flags] -- <cmd> [args...]
 pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 ```
 
-裸 clone 仓库中只有 `web/dist/index.html` 占位文件——可直接 `go test ./...`（编译与测试不依赖真实前端产物），但**运行前必须先构建前端**，否则浏览器只能看到占位页。
+仓库提交了前端构建产物（`web/dist/index.html` 及其 `.gz`，由 `go:embed` 嵌入二进制）——裸 clone 即可直接 `go build` / `go test ./...` 并运行。**修改 `web/` 前端源码后必须先重新 `pnpm -C web build` 再 `go build`**，否则二进制内嵌的仍是旧产物。
 
 ## 安全说明
 
