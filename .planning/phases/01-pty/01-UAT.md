@@ -1,18 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 01-pty
 source: [01-VERIFICATION.md]
 started: 2026-08-14T03:54:12Z
-updated: 2026-08-14T05:10:00Z
+updated: 2026-08-14T09:20:00Z
 ---
 
 ## Current Test
 
-number: 3
-name: CI 首次运行（含 macOS kqueue Q1 裁决）
-expected: |
-  三面全绿；若 TestKqueueExitZombieRace 出现 Q1-VERDICT skip，执行计划内兜底（awaitExit 退化为直接 cmd.Wait()）
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -45,7 +41,15 @@ note: 用户浏览器实测五态全部通过。期间发现 Reload 链接点击
 test: |
   推送仓库，观察 GitHub Actions：ubuntu/macos 双 leg `go vet` + `go test -race -count=1 ./...`，web job `pnpm install --frozen-lockfile && pnpm -C web build`；macos leg 的 TestKqueueExitNormal/TestKqueueExitZombieRace 结果
 expected: 三面全绿；若 TestKqueueExitZombieRace 出现 Q1-VERDICT skip，执行计划内兜底（awaitExit 退化为直接 cmd.Wait()）
-result: [pending]
+result: pass
+verified_at: 2026-08-14
+note: |
+  仓库托管 GitHub（github.com/sworda/wesh，SSH 推送），CI 三面全绿（ubuntu-latest + macos-latest + web）。
+  **Q1 裁决 = watcher 成立**（取最优路径）：
+  - TestKqueueExitNormal PASS (0.12s)——正常路径 NOTE_EXIT 事件到达 + 退出码 42
+  - TestKqueueExitZombieRace PASS (1.09s)——走 <-exited 分支非 SKIP：kqueue 对僵尸进程补发 NOTE_EXIT，共享 watcher 无注册竞态
+  - 兜底路径（awaitExit 退化为 cmd.Wait()）保持休眠，共享 kqueue watcher 经运行时验证，Phase 5 可放心基于其构建
+  - 为读裁决给 CI go test 加了 -v（commit a99980b，包级 ok 无法区分 PASS/SKIP）
 
 ### 4. judgment-tier prohibition 1/3：wesh 无第三方运行时网络请求
 
@@ -89,9 +93,9 @@ evidence: |
 ## Summary
 
 total: 6
-passed: 5
+passed: 6
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
