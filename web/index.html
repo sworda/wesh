@@ -13,6 +13,8 @@
         position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
         display: flex; align-items: center; justify-content: center;
         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        /* 压过 xterm 内部元素（z-index 最高 11），确保遮罩与链接可点 */
+        z-index: 1000;
       }
       #status[hidden] { display: none; }
       .status-panel {

@@ -125,6 +125,11 @@ function showStatus(title: string, body: string, hintPrefix: string): void {
   const a = document.createElement('a');
   a.href = '';
   a.textContent = 'Reload this page';
+  // 显式 reload——不依赖空 href 的隐式导航行为（部分情境下不可靠）
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    location.reload();
+  });
   hint.appendChild(a);
   hint.appendChild(document.createTextNode('.'));
   document.getElementById('status')!.hidden = false;
