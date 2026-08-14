@@ -13,7 +13,8 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       # 注意：不设 CGO_ENABLED（保持默认启用）——-race 需要 cgo（Pitfall 5；该变量只属于 Phase 9 goreleaser 发布构建）
-      - run: go test -race -count=1 ./...
+      # -v：展开单测试 PASS/SKIP——Q1 裁决需读 TestKqueueExitZombieRace 的具体结果（包级 ok 无法区分 PASS/skip）
+      - run: go test -race -count=1 -v ./...
   web:
     runs-on: ubuntu-latest
     steps:
