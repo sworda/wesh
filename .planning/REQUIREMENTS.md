@@ -10,9 +10,9 @@
 - [x] **CORE-01**: 用户可通过命令行指定任意命令及参数，浏览器获得完整交互终端（PTY 双向转发）
 - [x] **CORE-02**: 前端窗口 resize 时服务端同步调整 PTY 尺寸（TIOCSWINSZ）
 - [ ] **CORE-03**: 终端标题变化同步到浏览器标签页标题
-- [ ] **CORE-04**: 默认只读模式（丢弃客户端输入），显式开启可写后才接受输入
+- [x] **CORE-04**: 默认只读模式（丢弃客户端输入），显式开启可写后才接受输入
 - [ ] **CORE-05**: WS 异常断开后前端自动重连并接回同一 PTY 进程（共享进程模型；无滚动回放，屏幕内容靠程序重绘或 tmux/herdr 恢复）
-- [ ] **CORE-06**: WS ping/pong 保活，间隔可配置，防止反代空闲超时断连
+- [x] **CORE-06**: WS ping/pong 保活，间隔可配置，防止反代空闲超时断连
 
 ### 前端（FE）
 
@@ -113,9 +113,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORE-01 | Phase 1 | Complete |
 | CORE-02 | Phase 1 | Complete |
 | CORE-03 | Phase 4 | Pending |
-| CORE-04 | Phase 2 | Pending |
+| CORE-04 | Phase 2 | Complete |
 | CORE-05 | Phase 6 | Pending |
-| CORE-06 | Phase 2 | Pending |
+| CORE-06 | Phase 2 | Complete |
 | FE-01 | Phase 1 | Complete |
 | FE-02 | Phase 4 | Pending |
 | FE-03 | Phase 1 | Complete |
