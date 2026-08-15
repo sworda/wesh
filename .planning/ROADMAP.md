@@ -67,7 +67,20 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 默认只读模式下浏览器键盘输入被丢弃，显式开启可写后输入才生效；线上关闭码只出现在 1000/1008/1009/1011/1013 集合内（1006 永不发送）
   3. WS ping/pong 按可配间隔保活，反代空闲超时下连接不被切断
 
-**Plans**: TBD
+**Plans**: 4 plans
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — wesh.v1 握手 tracer：proto 契约（Hello/Welcome/Error/关闭码表）+ 守卫链与握手状态机 + readCounted 分片计数 + 默认只读 + --writable + 前端握手/onclose 分派 + 负路径与裸帧测试基建
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-02-PLAN.md — per-IP 半开帽 8（429）+ ping/pong 保活（--ping-interval，pong 超时 10s）+ http.Server ReadHeaderTimeout 5s + CLI flag 契约测试
+- [ ] 02-03-PLAN.md — RES-01 三层上限攻击面行为证明（裸帧：17KiB 单帧/恰边界/百万分片洪水/33 分片硬顶/空帧/慢滴完成时限/预认证 4KiB/压缩拒绝/stderr 事件）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 02-04-PLAN.md — README 协议基线（默认只读/两新 flag/wesh.v1）+ 全量收口验证（-race/web 构建/gofmt/CLI 冒烟）+ 浏览器手动 checklist
+
 **Research flag**: WS 三层上限默认值需实测标定（C→S 单帧 16KiB 起步；累积字节与分片帧数硬顶——Bandit CVE 教训：只限字节不限帧数无效）
 
 含：`proto/` 单一事实源（帧类型、版本、错误码、close code 常量）、版本化子协议 `wesh.v1`、Hello/Welcome/Error 握手帧、coder/websocket SetReadLimit、5s 未认证超时、per-IP 未认证连接上限、permessage-deflate 默认关。
@@ -180,7 +193,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
-| 2. 协议基线 | TBD | Not started | - |
+| 2. 协议基线 | 0/4 | Not started | - |
 | 3. 认证与传输安全 | TBD | Not started | - |
 | 4. 前端体验 | TBD | Not started | - |
 | 5. 多客户端共享 | TBD | Not started | - |
