@@ -1,41 +1,50 @@
 ---
 phase: 02-protocol
 verified: 2026-08-15T12:49:47Z
-status: human_needed
+status: passed
 score: 10/10 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 re_view_findings_assessment:
+
   - id: CR-01
     severity_in_review: critical
     verifier_classification: warning
     is_phase_goal_gap: false
     decision_owner: human
+
   - id: WR-01
     severity_in_review: warning
     verifier_classification: warning
     is_phase_goal_gap: false
     addressed_in: "Phase 5"
+
   - id: WR-02
     severity_in_review: warning
     verifier_classification: warning
     is_phase_goal_gap: false
 human_verification:
+
   - test: "只读默认 + 首帧 Hello 顺序：wesh -- bash 后浏览器打开页面，标题带 [ro] 前缀，键盘敲击终端无反应；DevTools → Network → WS 面板确认首帧为 Hello('H') 与 Welcome(mode=ro)，后续每 5s 一对 ping/pong 帧"
     expected: "标题 [ro] 前缀、键盘无响应、首帧 Hello（非 RESIZE）、Welcome mode=ro、周期 ping/pong"
     why_human: "前端 helloSent 门的真实浏览器时序（term.onResize 常驻接线在首次 fit 触发）Go e2e 覆盖不到；disableStdin/[ro] 标题是渲染层行为"
+
   - test: "可写模式：wesh --writable -- bash 刷新页面，键入命令"
     expected: "输入正常回显，Welcome(mode=rw)"
     why_human: "真实浏览器端到端输入回显需人工确认"
+
   - test: "resize：ro 模式下拖动浏览器窗口（可先 --writable 起 vim 观察全屏程序）"
     expected: "无法输入但尺寸跟随重绘；DevTools 可见 RESIZE 帧照常发出"
     why_human: "全屏程序 resize 重绘是视觉行为"
+
   - test: "关闭码文案分派：子进程 exit 显示 Session ended；伪造 wesh.v9 Hello 显示 Connection refused（version_mismatch）；不发 Hello 等 5s 被 1008 关闭"
     expected: "onclose 按码分派人话文案生效"
     why_human: "onclose 文案面板是视觉/交互行为"
+
   - test: "单客户端：另开第二个标签访问同地址"
     expected: "显示 Unable to connect（409 语义不变）"
     why_human: "多标签浏览器交互需人工确认"
+
   - test: "【人工决策·非测试】CR-01 修复时机：Attach 读循环同步写 PTY master 在特定条件下永久阻塞"
     expected: "决定立即做最小缓解（master fd 置 O_NONBLOCK + ErrWouldBlock 走既有收口），或将完整的『有界输入队列 + 独立写 goroutine』背压方案并入 Phase 5"
     why_human: "这是修复范围/时机的工程权衡决策，非自动化可判定；详见『Code Review 发现评估』节"
@@ -148,10 +157,12 @@ REQUIREMENTS.md traceability 表（L116-142）将四条全部映射到 Phase 2 �
 **对码实证（确认缺陷真实存在）：** server.go:352 `s.sess.Master.Write(data[1:])` 是单线程读循环内的**同步阻塞写**；`Master` 为阻塞态 `*os.File`（`pty.StartWithSize` 返回，全仓 grep 无 `O_NONBLOCK`/`SetWriteDeadline`/输入队列/独立写 goroutine）。子进程置 raw 模式且停读 stdin 时，n_tty 缓冲填满后该 Write 永久阻塞。
 
 **两个后果（评审所述，机制成立）：**
+
 1. 读循环卡 Write → `c.Read` 停摆 → 库只在读路径处理 pong（read.go:317-337）→ pinger 在 pongTimeout(10s) 后 `CloseNow` 误杀一条健康连接。
 2. 读循环卡 Write → 客户端断开无法唤醒 → `wsDisconnected`/`terminate`/`exitf` 不触发 → D-11 单次语义退出保证失效，服务端挂死。
 
 **为何判定为『非 phase-goal 缺口』（goal-backward 推理）：**
+
 - **不触三条成功准则任一条：** 准则1（READ 上限）与写路径无关；准则2（ro 默认）在 CR-01 触发前提（`--writable`）之外——默认 ro 模式下 INPUT 在 server.go:349 即被 `continue` 丢弃，**永远到不了 Write**；准则3（保活）的字面场景是『反代空闲超时』——空闲连接无输入、读循环不卡 Write、pong 正常处理，CR-01 不破坏该场景。
 - **协议透明：** CR-01 的修复（有界输入队列 + 写 goroutine，或最小 O_NONBLOCK）是纯服务端数据面实现改动，**不改任何线格式/关闭码/上限/握手**——协议层无需返工，「一次性到位」成立。
 - **非 Phase 2 引入的回归：** 同步 Write 模式自 Phase 1 即存在；Phase 2 的 pinger 只是给这个潜伏缺陷新增了『误杀健康连接』这一后果，并未引入阻塞本身。

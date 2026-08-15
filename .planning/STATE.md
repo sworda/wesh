@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 02
-current_phase_name: protocol
-status: verifying
+current_phase: 3
+current_phase_name: 认证与传输安全
+status: planning
 stopped_at: Completed 02-06-PLAN.md
-last_updated: "2026-08-15T12:02:50.867Z"
+last_updated: "2026-08-15T15:49:43.826Z"
 last_activity: 2026-08-15
 last_activity_desc: Phase 02 planning complete
 progress:
@@ -20,17 +20,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-14)
+See: .planning/PROJECT.md (updated 2026-08-15)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 02 — protocol
+**Current focus:** Phase 3 — 认证与传输安全
 
 ## Current Position
 
-Phase: 02 (protocol) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-08-15 — Phase 02 execution started
+Phase: 3 — 认证与传输安全
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-15 — Phase 02 complete, transitioned to Phase 3
 
 Progress: [██████████] 100%
 
@@ -38,7 +38,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 5
+- Total plans completed: 11
 - Average duration: -
 - Total execution time: -
 
@@ -47,6 +47,7 @@ Progress: [██████████] 100%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 5 | - | - |
+| 02 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -99,6 +100,8 @@ Recent decisions affecting current work:
 - [Phase 02]: [Phase 02-04]: pinger 错误路径精确分类——仅 errors.Is(err, context.DeadlineExceeded) 才 pong_timeout+CloseNow（父 ctx 为 WithCancel 无 deadline，DeadlineExceeded 唯一来源即 pctx 到期）；其余错误静默返回由 reader 路径收口 — 正常终结竞态下初版按 plan 字面 err!=nil 即打事件会误报 pong_timeout（TestPingKeepalive 实测命中），污染 D-12② 事件流可信度
 - [Phase 02]: [Phase 02-04]: pinger 终结挂 Attach 内 WithCancel+defer cancel（ctx 由 Background 直派生改造），pinger 签名为 (ctx,c,remote,interval)——remote 供 logEvent 三要素 — 零新 exitf 分支（CONTEXT L92 硬约束）；plan 三参字面与 logEvent 三要素要求的调和
 - [Phase ?]: [Phase 02-06]: proto.go 02-01 既存 gofmt 差异随段 1 授权分支清零（纯注释排版）；冒烟以 --port 0 随机端口 + 启动行解析驱动断言
+- [Phase 02]: [UAT]: 浏览器渲染层 UAT 在无显示机器上以「Node 原生 WS 客户端协议断言（web/uat/phase02.mjs，零依赖 11/11）+ 用户外部浏览器渲染层确认」分工完成——协议层全自动化，渲染层人工
+- [Phase 02]: [UAT 决策]: CR-01（Attach 读循环同步写 PTY master 可永久阻塞）用户裁决立即最小缓解——master fd O_NONBLOCK + ErrWouldBlock 走既有收口；完整背压（有界输入队列+写 goroutine+1013 踢出）留 Phase 5
 
 ### Pending Todos
 
@@ -106,8 +109,8 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 2]: WS 三层上限默认值需实测标定
-- [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）
+- [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
+- [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5
 
 ## Deferred Items
 
@@ -117,6 +120,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-15T12:02:50.853Z
-Stopped at: Completed 02-06-PLAN.md
+Last session: 2026-08-15
+Stopped at: Phase 02 complete (UAT 6/6 pass, SECURITY threats_open=0), ready to plan Phase 3
 Resume file: None
