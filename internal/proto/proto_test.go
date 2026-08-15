@@ -2,6 +2,7 @@ package proto
 
 import (
 	"encoding/json"
+	"regexp"
 	"testing"
 )
 
@@ -75,5 +76,59 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 	}
 	if ep.Message != msg {
 		t.Errorf("ErrorFrame message = %q, want %q", ep.Message, msg)
+	}
+}
+
+// TestProtocolConstants 逐字锁定协议常量——这些是前后端公开契约（D-01/D-03/D-14），
+// 手滑改码即协议破坏，本测试即红（T-02-01 缓解）。
+func TestProtocolConstants(t *testing.T) {
+	if Subprotocol != "wesh.v1" {
+		t.Errorf("Subprotocol = %q, want %q", Subprotocol, "wesh.v1")
+	}
+
+	// Error code 形状：snake_case 机器串（D-06/D-07）
+	snakeCase := regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	for name, code := range map[string]string{
+		"ErrVersionMismatch": ErrVersionMismatch,
+		"ErrServerError":     ErrServerError,
+	} {
+		if !snakeCase.MatchString(code) {
+			t.Errorf("%s = %q, want snake_case ^[a-z][a-z0-9_]*$", name, code)
+		}
+	}
+
+	// 帧类型字节逐字断死
+	frameBytes := []struct {
+		name string
+		got  rune
+		want rune
+	}{
+		{"Hello", Hello, 'H'},
+		{"Welcome", Welcome, 'W'},
+		{"Error", Error, 'E'},
+		{"Input", Input, '0'},
+		{"Resize", Resize, '1'},
+		{"Output", Output, '0'},
+	}
+	for _, fb := range frameBytes {
+		if fb.got != fb.want {
+			t.Errorf("%s = %#x(%q), want %#x(%q)", fb.name, fb.got, fb.got, fb.want, fb.want)
+		}
+	}
+
+	// Welcome mode 对齐字符串（D-14）
+	if ModeRO != "ro" {
+		t.Errorf("ModeRO = %q, want %q", ModeRO, "ro")
+	}
+	if ModeRW != "rw" {
+		t.Errorf("ModeRW = %q, want %q", ModeRW, "rw")
+	}
+
+	// 读上限两档（D-09 修订/D-11）
+	if ReadLimitPreAuth != 4096 {
+		t.Errorf("ReadLimitPreAuth = %d, want 4096", ReadLimitPreAuth)
+	}
+	if ReadLimitPostAuth != 16384 {
+		t.Errorf("ReadLimitPostAuth = %d, want 16384", ReadLimitPostAuth)
 	}
 }
