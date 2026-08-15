@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: protocol
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-08-15T07:27:10.133Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-08-15T08:05:15.199Z"
 last_activity: 2026-08-15
 last_activity_desc: Phase 02 planning complete
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 11
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-14)
 ## Current Position
 
 Phase: 02 (protocol) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-08-15 — Phase 02 execution started
 
-Progress: [██████░░░░] 64%
+Progress: [███████░░░] 73%
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: [██████░░░░] 64%
 | Phase 01 P05 | 21min | 2 tasks | 2 files |
 | Phase 02 P01 | 5min | 2 tasks | 2 files |
 | Phase 02 P02 | 1h 27m | 2 tasks | 9 files |
+| Phase 02 P03 | 16min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,8 @@ Recent decisions affecting current work:
 - [Phase 02]: [Phase 02-02]: 握手违规路径（empty_frame/frame_before_hello/malformed_hello/version_mismatch）只关 conn 落入读循环，经既有 wsDisconnected→terminate 单一路径收口（CONTEXT L92）；非 plan 字面 return——02-03 TestVersionMismatch waitExit(0) 可达性共同锁定
 - [Phase 02]: [Phase 02-02]: s.conn 推迟到 Welcome 发出后才上线——Welcome 恒为 S→C 首帧无时序竞态，预认证窗口零 PTY 输出
 - [Phase 02]: [Phase 02-02]: pty.Session 增 fdMu+closed 修 Resize↔Close master fd 竞态（creack/pty Setsize 裸 Fd() 不过 fdmu，-race 实测命中）；Resize 见 closed 返回 os.ErrClosed
+- [Phase ?]: [Phase 02-03]: per-IP release 恰好一次实现选型——局部 sync.Once + defer 兜底，显式释放仅挂 409/Accept/assert/升档四时点，其余一切 return 路径由 defer 收口
+- [Phase ?]: [Phase 02-03]: ro 静默窗口测试形态——goroutine Read(context.Background()) + 缓冲 channel + select time.After 竞速，客户端 Read 永不带 deadline ctx（Pitfall 2 回归锁）
 
 ### Pending Todos
 
@@ -108,6 +111,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-15T07:27:10.120Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-08-15T08:04:54.655Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None

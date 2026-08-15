@@ -67,7 +67,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 默认只读模式下浏览器键盘输入被丢弃，显式开启可写后输入才生效；线上关闭码只出现在 1000/1008/1009/1011/1013 集合内（1006 永不发送）
   3. WS ping/pong 按可配间隔保活，反代空闲超时下连接不被切断
 
-**Plans**: 2/6 plans executed
+**Plans**: 3/6 plans executed
 **Wave 1**
 
 - [x] 02-01-PLAN.md — proto 契约：'H'/'W'/'E' 类型字节 + Subprotocol 常量 + Error code 表 + 关闭码注释表（1001/1013 占位）+ 两档读上限常量（D-09 修订分片层注释位）+ Hello/Welcome/Error 编解码 + proto 单测（D-01/D-02/D-05/D-06/D-07/D-08/D-10）
@@ -78,7 +78,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-03-PLAN.md — SEC-08 预认证守卫链：per-IP 半开帽 8（HTTP 429，位于 409 门之前——D-04 可触达性裁决）+ http.Server ReadHeaderTimeout 5s + handshake_test.go 七测（子协议 400×2+多值/429/hello_timeout/抢跑/version_mismatch/ro 丢 INPUT/ro 放行 RESIZE）（SEC-08/CORE-04）
+- [x] 02-03-PLAN.md — SEC-08 预认证守卫链：per-IP 半开帽 8（HTTP 429，位于 409 门之前——D-04 可触达性裁决）+ http.Server ReadHeaderTimeout 5s + handshake_test.go 七测（子协议 400×2+多值/429/hello_timeout/抢跑/version_mismatch/ro 丢 INPUT/ro 放行 RESIZE）（SEC-08/CORE-04）
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -204,7 +204,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
-| 2. 协议基线 | 2/6 | In Progress|  |
+| 2. 协议基线 | 3/6 | In Progress|  |
 | 3. 认证与传输安全 | TBD | Not started | - |
 | 4. 前端体验 | TBD | Not started | - |
 | 5. 多客户端共享 | TBD | Not started | - |
