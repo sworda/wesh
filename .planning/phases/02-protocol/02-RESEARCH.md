@@ -496,19 +496,19 @@ ws.onclose = (ev) => {
 | A3 | 浏览器 WS API 不产生分片（`send()` 一次一消息，JS 无分片控制面） | D-09 依据 / Open Question 1 | 低：MDN send() 文档无分片 API；即使浏览器内部分片巨帧，16KiB 字节顶同样拦截。本轮未逐字核实 MDN send 页 |
 | A4 | 反代部署下 `r.RemoteAddr` 为代理 IP（per-IP 计数误伤 NAT 用户的可能性） | Pitfall 6 | 低：标准 net/http 行为；本期直连部署定位下不影响，Phase 3 SEC-07 再处理可信头 |
 
-**若上表为空则无需用户确认**——本期 4 条均为低风险论证性假设，无阻塞实现者；唯一需用户确认项在 Open Question 1（D-09 分片层）。
+**若上表为空则无需用户确认**——本期 4 条均为低风险论证性假设，无阻塞实现者；唯一需用户确认项在 Open Question 1（D-09 分片层），已经 2026-08-15 用户裁决闭合（见上节 RESOLVED 标记）。
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **D-09 分片数上限 32 在 coder/websocket 上无 API——是否接受等效防线替代？**（须用户裁决，建议在 plan 前确认）
+1. **D-09 分片数上限 32 在 coder/websocket 上无 API——是否接受等效防线替代？** → **RESOLVED 2026-08-15（用户裁决，落 CONTEXT.md D-09 修订）：** 采纳 Recommendation 等效防线——两层硬顶（单帧/累积字节 16KiB，SetReadLimit 库执行）+ 预认证三道闸（400/429/5s）+ 409 单客户端门；proto 常量表保留分片上限注释位并标注"库不暴露、依赖等效防线"；测试断言形态定为"1 字节分片洪水被字节顶 1009 切断"（02-05 TestFragmentedFlood1009）与"空帧洪水服务存活+内存平坦，不断言 1009"（02-05 TestEmptyFragmentFloodResilience）；ROADMAP 准则 1 措辞校正随已 defer 的准则 2 校正一并处理。
    - What we know: 库流式重组吞掉空帧（read.go:457-479），应用层任何手段数不到分片；1 字节×N 帧洪水被 16KiB 累积字节硬顶完整拦截（1009 自动）；Bandit 官方修复同为字节计数非分片计数；fork 库/包 conn 数帧均已被判反模式。
    - What's unclear: 用户对"三层上限"字面完整性的坚持程度；ROADMAP 准则 1"空帧→1009 关闭"措辞是否接受校正为"空帧洪水不崩溃、内存平坦（残余 CPU 消耗带宽受限）"。
    - Recommendation: **接受等效防线**——两层硬顶（单帧/累积字节）+ 预认证三道闸（400/429/5s 超时）+ 409 单客户端门；`proto` 常量表保留分片上限值的注释位但标注"库不暴露、依赖等效防线"，残余风险写入文档。e2e 测试相应断言"1M 空帧洪水下服务存活、内存平坦、其他功能不受影响"而非"连接被 1009 关闭"。
-2. **空完整消息（0 字节 binary message）的处置码**
+2. **空完整消息（0 字节 binary message）的处置码** → **RESOLVED 2026-08-15（planner 裁决）：** 采纳 Recommendation——Hello 前空消息按抢跑/畸形处理（1002 `empty_frame` 直关，不发 Error 帧）；Hello 后维持静默跳过（浏览器永不发空消息，发了也无害）。落 02-02-PLAN Task 1 握手段 action 与 behavior 清单（`empty_frame` 关闭路径 + logEvent 埋点）。
    - What we know: `c.Read` 对空消息返回 `([]byte{}, nil)` 无错误；Phase 1 现状 `len(data)==0 → continue` 静默跳过（server.go:102-104）[VERIFIED: server.go:102-104]；D-05 的 1002 桶含"畸形"。
    - What's unclear: 空消息算"畸形"（1002 关）还是无害噪声（继续静默跳过）。
    - Recommendation: Hello 前的空消息按抢跑/畸形 1002（`empty_frame`）；Hello 后维持静默跳过——浏览器永不发空消息，发了也无害，收紧只为协议洁癖。此为 planner 可定级，无需用户。
-3. **Hello.version 取值形状**
+3. **Hello.version 取值形状** → **RESOLVED 2026-08-15（planner 裁决）：** 采纳 Recommendation——version 取字符串 `"wesh.v1"` 与 `proto.Subprotocol` 常量同源复用，前端 Hello 与 `new WebSocket` 第二参引用同一 TS 常量（双写漂移面最小）。落 02-01-PLAN Task 1（Subprotocol 常量定义）与 02-02-PLAN Task 2（前端 SUBPROTOCOL 常量）。
    - What we know: D-02 只定 schema `{version, cols, rows}`；子协议 token 已是 `wesh.v1`。
    - Recommendation: version 取字符串 `"wesh.v1"` 与子协议常量同源复用（`proto.Subprotocol`），前端 Hello 与 `new WebSocket` 第二参引用同一 TS 常量——双写漂移面最小。planner 可定级。
 

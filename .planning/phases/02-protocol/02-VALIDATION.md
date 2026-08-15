@@ -19,7 +19,7 @@ created: 2026-08-15
 
 | Property | Value |
 |----------|-------|
-| **Framework** | Go stdlib `testing` + `-race`（CI 固化：ubuntu + macOS 双平台）；攻击面用例用裸 WS 帧 helper，正常流程用 coder/websocket 客户端 `Dial` |
+| **Framework** | Go stdlib `testing` + `-race`（CI 固化：ubuntu + macOS 双平台）；攻击面用例经库客户端 `Writer()`/`DialOptions` 构造（D-09 修订后无裸帧 helper），正常流程用 coder/websocket 客户端 `Dial` |
 | **Config file** | none |
 | **Quick run command** | `go test -race -count=1 ./internal/server/ ./internal/proto/` |
 | **Full suite command** | `go vet ./... && go test -race -count=1 -v ./... && pnpm -C web build`（与 CI 两腿一致） |
@@ -48,7 +48,7 @@ created: 2026-08-15
 | 2-01-02 | 02-01 | 1 | D-07 | T-02-02 | TestWelcomeFrameErrorFrame：'W'/'E' 帧形状与 {mode}/{code,message} 往返 | unit | `go test -race -count=1 -run TestWelcomeFrameErrorFrame ./internal/proto/` | ❌ 02-01 新建 | ⬜ pending |
 | 2-01-03 | 02-01 | 1 | D-05/D-09修订 | T-02-01/03 | TestProtocolConstants：Subprotocol/帧字节/上限常量逐字锁定 | unit | `go test -race -count=1 -run TestProtocolConstants ./internal/proto/` | ❌ 02-01 新建 | ⬜ pending |
 | 2-02-01 | 02-02 | 2 | CORE-04 | T-02-04 | TestHelloWelcome：握手全帧校验 + mode ro/rw 与 INPUT echo | e2e | `go test -race -count=1 -run TestHelloWelcome ./internal/server/` | ❌ 02-02 新建（e2e_test.go 内） | ⬜ pending |
-| 2-02-02 | 02-02 | 2 | D-10/D-11 回归 | — | 既有五测（TestEchoPTY/TestSecondClient409/TestExitCodePropagation/TestUnknownFrame1002/TestClientDisconnectSIGHUP）经 dialHello 握手改造保持绿 | e2e | `go test -race -count=1 ./internal/server/` | ✅ 改造（e2e_test.go） | ⬜ pending |
+| 2-02-02 | 02-02 | 2 | D-10/D-11 回归 | — | 既有六测（TestEchoPTY/TestSecondClient409/TestExitCodePropagation/TestUnknownFrame1002/TestClientDisconnectSIGHUP 经 dialHello 握手改造 + TestDrainBeforeAttach 适配 New 签名——无 Dial 不需握手）保持绿 | e2e | `go test -race -count=1 ./internal/server/` | ✅ 改造（e2e_test.go） | ⬜ pending |
 | 2-02-03 | 02-02 | 2 | CORE-04/D-12① | T-02-04 | 前端子协议建连 + Hello 首帧 + Welcome(disableStdin/[ro] 标题) + onclose 按码分派 | 构建 + 人工 | `pnpm -C web build`；浏览器行为并入 02-06 UAT | ✅ 修改（main.ts） | ⬜ pending |
 | 2-03-01 | 02-03 | 3 | SEC-08 | T-02-13 | TestSubprotocolRequired：无子协议 400 / 错子协议 400 / 多值头放行 | e2e | `go test -race -count=1 -run TestSubprotocolRequired ./internal/server/` | ❌ 02-03 新建 | ⬜ pending |
 | 2-03-02 | 02-03 | 3 | SEC-08 | T-02-09/10 | TestHalfOpenPerIP429：半开占帽后第 2 条 429；在先连接不误伤（acquire/release 恰好一次） | e2e | `go test -race -count=1 -run TestHalfOpenPerIP429 ./internal/server/` | ❌ 02-03 新建 | ⬜ pending |
@@ -75,7 +75,7 @@ created: 2026-08-15
 
 无独立 Wave 0——测试基建随首个实现 plan（02-02）共生，planner 回填归属如下：
 
-- [x] `internal/server/e2e_test.go`：`dialHello(t, ctx, wsURL)`（带子协议 Dial + 发 Hello + 收 Welcome 校验 mode）与 `startTestServerWith(t, argv, opts)` 变体——**归属 02-02 Task 1**（与 New 签名变更同任务，编译原子性）
+- [x] `internal/server/e2e_test.go`：`dialHello(t, ctx, wsURL, cols, rows)`（带子协议 Dial + 发 Hello + 收 Welcome 校验 mode；尺寸参数化——02-03 TestReadOnlyAllowsResize 复用同一签名传 111x44，既有测试统一 80x24）与 `startTestServerWith(t, argv, opts)` 变体——**归属 02-02 Task 1**（与 New 签名变更同任务，编译原子性）
 - [x] 超时/上限注入点：采用 `server.Options` struct 字段注入（`HelloTimeout` 02-02 落地、`MaxHalfOpenPerIP` 02-03 追加、`PingInterval`/`PongTimeout` 02-04 追加；零值取生产默认常量）——沿用 exitf 注入模式（server.go:44 先例），替代 export_test.go 包级变量测缝（e2e 为 `package server_test` 外包，且包级变量改写有 -race 并行风险）
 - [x] 裸帧 helper（rawws_test.go）：**不需要**——D-09 修订后测试矩阵全部库客户端可构造（分片流用 `c.Writer()` 逐 Write 产生非 fin 帧；子协议负例用 DialOptions；空帧洪水用空消息近似），PATTERNS.md 的裸帧段随之作废
 - [x] 框架安装：无——stdlib testing 覆盖全部需求
@@ -90,7 +90,7 @@ created: 2026-08-15
 |----------|-------------|------------|-------------------|
 | 预认证内存平坦 | SEC-08 | 内存采样断言脆弱，作参考不门禁 | 代码走查 Accept 前守卫区零分配 + flood 测试内存采样 |
 | 浏览器端 ro 表现 | CORE-04 | 需真实浏览器观察 | DevTools：ro 标题前缀、键盘无响应、WS 帧面板可见 ping/pong、1009 文案 |
-| 空帧洪水残余风险 | RES-01 | 库吞空帧，无应用层钩子（Open Question 1 等效防线） | flood 下服务存活、内存平坦、其他连接功能不受影响 |
+| 空帧洪水残余风险 | RES-01 | 库吞空帧，无应用层钩子（Open Question 1 已 RESOLVED：D-09 修订等效防线） | flood 下服务存活、内存平坦、其他连接功能不受影响 |
 
 ---
 
