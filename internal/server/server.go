@@ -277,6 +277,8 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// 禁止新增 exitf 分支；与 Phase 1 unknown-frame 关闭路径同形）。
 	_, data, err := c.Read(ctx)
 	if err != nil {
+		// 预认证 4KiB 档超限（D-11）：库已自动 1009，补 stderr 事件（D-12②）。
+		s.logIfMessageTooBig(remote, err)
 		// 对端断开与 hello_timeout 关闭后的 reader 终结：走既有 D-11 收口。
 		s.wsDisconnected()
 		return
@@ -331,6 +333,9 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, data, err := c.Read(ctx)
 		if err != nil {
+			// 稳态 16KiB 档超限（D-09 修订两层硬顶）：库已自动 1009，补 stderr
+			// 事件（D-12②）。
+			s.logIfMessageTooBig(remote, err)
 			// 对端关闭（errors.As 可取出 CloseError）与网络断开同等处理：
 			// 单次语义，任何 reader 终结都走 D-11 路径。
 			s.wsDisconnected()
@@ -428,13 +433,26 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, i
 // logEvent 打 D-12② stderr 单行事件，三要素齐全：对端 remote、码值 code、
 // reason 机器串。本期覆盖 hello_timeout/empty_frame/frame_before_hello/
 // malformed_hello/version_mismatch/subprotocol_required（assert 兜底）/
-// pong_timeout（02-04 保活）七处埋点；
-// 库自动 1009 的 ErrMessageTooBig 钩子属 02-05。Phase 8 升级 slog 结构化日志
+// pong_timeout（02-04 保活）/message_too_big（02-05 超限，经 logIfMessageTooBig
+// 挂预认证首读与稳态读循环两处）。Phase 8 升级 slog 结构化日志
 // （OPS-08），本期为过渡形态。remote 由调用方传 Attach 入口保存的 r.RemoteAddr——
 // 反代部署下同键聚合为代理 IP 是已知限制（Pitfall 6），X-Forwarded-For 属
 // Phase 3 SEC-07，本 phase 不解析。
 func (s *Server) logEvent(remote string, code websocket.StatusCode, reason string) {
 	fmt.Fprintf(os.Stderr, "wesh: close remote=%s code=%d reason=%s\n", remote, code, reason)
+}
+
+// logIfMessageTooBig 是 D-12② 超限可见性三腿之二的服务端钩子：库 limitReader
+// 流式截断超限后自动把 1009 送上 wire 且 Read 返回包装 ErrMessageTooBig 的错误
+// （read.go:521-541）——应用在此补 stderr 单行事件。库的 close reason 是库内
+// 字符串 "read limited at N bytes" 不可定制（PATTERNS 注意 7），message_too_big
+// 机器串落点在 stderr 而非线上 reason；禁止包装库或包装 conn 数帧（D-09 修订
+// 反模式清单）。非超限错误（对端关闭/网络断开）不产生事件。稳态 16KiB 与预认证
+// 4KiB 两档共用同一错误标识（SetReadLimit 仅数值不同），两处埋点同一调用形态。
+func (s *Server) logIfMessageTooBig(remote string, err error) {
+	if errors.Is(err, websocket.ErrMessageTooBig) {
+		s.logEvent(remote, websocket.StatusMessageTooBig, "message_too_big")
+	}
 }
 
 // lifecycle 是 D-10 路径触发源：子进程退出 → 带时限 drain（Pitfall 4）→
