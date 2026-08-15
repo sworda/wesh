@@ -21,14 +21,16 @@ import (
 var version = "dev"
 
 type config struct {
-	port        int
-	bind        string
-	showVersion bool
-	writable    bool
+	port         int
+	bind         string
+	showVersion  bool
+	writable     bool
+	pingInterval time.Duration
 }
 
 // parseArgs 解析 flags（Phase 1 契约：--port/--bind/--version；D-15 加入
-// --writable——默认只读，显式开启才接受客户端输入；--help 由 flag 包自带）。
+// --writable——默认只读，显式开启才接受客户端输入；D-16 加入 --ping-interval——
+// 默认 5s WS ping 保活，0 = 禁用；--help 由 flag 包自带）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
 func parseArgs(args []string) (cfg config, argv []string, err error) {
@@ -37,6 +39,7 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	fs.StringVar(&cfg.bind, "bind", "0.0.0.0", "listen address")
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
 	fs.BoolVar(&cfg.writable, "writable", false, "allow client input (default read-only)")
+	fs.DurationVar(&cfg.pingInterval, "ping-interval", 5*time.Second, "WS ping interval (0 = disable)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -77,7 +80,7 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, PingInterval: cfg.pingInterval})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	fmt.Printf("listening on http://%s\n", ln.Addr())
 	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与

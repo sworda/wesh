@@ -29,12 +29,15 @@ type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
 
-	// New 装配期固化、运行期只读，故三个 plain 字段无需 atomic：
+	// New 装配期固化、运行期只读，故五个 plain 字段无需 atomic：
 	// writable 为 D-13 ro 门读端；helloTimeout 为 D-04 未认证超时时长；
-	// maxHalfOpenPerIP 为 D-04 per-IP 半开上限（均 Options 注入）。
+	// maxHalfOpenPerIP 为 D-04 per-IP 半开上限；pingInterval/pongTimeout 为
+	// D-16 保活参数（均 Options 注入）。
 	writable         bool
 	helloTimeout     time.Duration
 	maxHalfOpenPerIP int
+	pingInterval     time.Duration
+	pongTimeout      time.Duration
 
 	attached atomic.Bool                    // D-09：单客户端原子门
 	conn     atomic.Pointer[websocket.Conn] // 当前已完成握手的 WS 连接（onChunk 写端 / 1000 关闭用）
@@ -53,14 +56,16 @@ type Server struct {
 }
 
 // Options 为 New 的装配选项。
-// Writable 为生产直传字段（main.go --writable flag 原样透传，D-15）；
-// HelloTimeout/MaxHalfOpenPerIP 为测试可覆写字段（零值各取默认常量
-// defaultHelloTimeout/defaultMaxHalfOpenPerIP，D-04）。
-// 02-04 将向本 struct 追加 PingInterval/PongTimeout 字段，结构预留。
+// Writable/PingInterval 为生产直传字段（main.go --writable/--ping-interval flag
+// 原样透传，D-15/D-16；PingInterval 0 = 禁用保活）；
+// HelloTimeout/MaxHalfOpenPerIP/PongTimeout 为测试可覆写字段（零值各取默认常量
+// defaultHelloTimeout/defaultMaxHalfOpenPerIP/defaultPongTimeout，D-04/D-16）。
 type Options struct {
 	Writable         bool
+	PingInterval     time.Duration
 	HelloTimeout     time.Duration
 	MaxHalfOpenPerIP int
+	PongTimeout      time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -69,6 +74,11 @@ const defaultHelloTimeout = 5 * time.Second
 // defaultMaxHalfOpenPerIP per-IP 半开（Hello 未完成）连接上限默认值（D-04：8）。
 // 正常浏览器秒发 Hello 不受限；NAT 多人场景 Hello 已完成者不计入。
 const defaultMaxHalfOpenPerIP = 8
+
+// defaultPongTimeout 发出 ping 后等 pong 的时长默认值（D-16：10s——正常 RTT
+// 毫秒级，10s 极宽）。只有 pong 超时才允许断开连接；读路径恒无 deadline
+// （Pitfall 2），健康的长空闲会话永不因保活被误杀。
+const defaultPongTimeout = 10 * time.Second
 
 // New 装配服务端并钉死两个 goroutine 的启动点：
 //   - sess.ReadLoop：自装配起持续 drain master（D-12），attach 前输出直接丢弃，
@@ -84,12 +94,17 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.MaxHalfOpenPerIP <= 0 {
 		opts.MaxHalfOpenPerIP = defaultMaxHalfOpenPerIP
 	}
+	if opts.PongTimeout <= 0 {
+		opts.PongTimeout = defaultPongTimeout
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
 		writable:         opts.Writable,
 		helloTimeout:     opts.HelloTimeout,
 		maxHalfOpenPerIP: opts.MaxHalfOpenPerIP,
+		pingInterval:     opts.PingInterval,
+		pongTimeout:      opts.PongTimeout,
 		frame:            make([]byte, 1+32*1024),
 		halfOpen:         halfOpenCounter{n: make(map[string]int)},
 	}
@@ -233,7 +248,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// ctx 由 context.Background() 派生——禁止 r.Context()（hijack 后行为意外，官方
 	// README 明示）；读路径永不带 deadline（Pitfall 2：deadline ctx 到期经库内
 	// AfterFunc 关整条连接且无关闭帧，conn.go:188-199——长 idle 终端会话会被误杀）。
-	ctx := context.Background()
+	// WithCancel 唯一用途：Attach 返回时 defer cancel 终结 pinger goroutine——
+	// pinger 随本 handler 生命周期同生灭，进既有 wsDisconnected/terminate 单一
+	// 收口，零新 exitf 分支（CONTEXT L92 硬约束）。cancel 只在读循环终结后触发，
+	// 不打断在途读写。
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	// D-11 预认证窗口第一档：4KiB 读上限（Hello JSON ~100B，余量两个数量级）；
 	// 库 limitReader 流式执行，SEC-08 预认证窗口单连接可占内存最小化。
 	c.SetReadLimit(proto.ReadLimitPreAuth)
@@ -284,7 +304,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// Resize（消除 80x24 首帧窗口）→ per-IP release（Hello 完成即不计半开，
 		// D-04：NAT 场景正常浏览器不受限）→ Welcome 下发 mode（D-14）→ 16KiB 稳态档
 		// （SetReadLimit 经库 atomic store 下一条消息起生效，read.go:97-105）→
-		// conn 上线。conn 刻意在握手完成后才上线：此前 OUTPUT 一律 drain——
+		// pinger 保活（D-16）→ conn 上线。conn 刻意在握手完成后才上线：此前 OUTPUT 一律 drain——
 		// Welcome 恒为 S→C 首帧（dialHello 首帧断言无时序竞态），且未认证客户端
 		// 在预认证窗口内收不到任何 PTY 输出。
 		close(helloDone)
@@ -297,6 +317,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// Welcome 写失败不补救——连接已死，读循环下一拍收口。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.WelcomeFrame(mode))
 		c.SetReadLimit(proto.ReadLimitPostAuth)
+		// CORE-06 保活：pinger 挂升档序列尾段（PATTERNS 注意 5），与既有单 reader
+		// 循环并发装配——库硬性要求 Ping 必须与 Reader 并发（conn.go:218-220），
+		// 不得为 ping 再开 reader；pong 由读循环 handleControl 自动处理
+		// （read.go:317-337）；ping 与 onChunk 的 OUTPUT 写并发安全、无帧交错
+		// （库 writeFrameMu 串行化所有帧，write.go:288-293）。
+		go s.pinger(ctx, c, remote, s.pingInterval)
 		s.conn.Store(c)
 		defer s.conn.Store(nil)
 	}
@@ -345,9 +371,58 @@ func (s *Server) onChunk(chunk []byte) {
 	}
 }
 
+// pinger 是 CORE-06 保活 goroutine（D-16，RESEARCH Pattern 3 照抄语义）：
+// 按 interval 周期发 WS ping——反代空闲超时（nginx 60s / Cloudflare 100s /
+// 30s 型 ingress）看的是应用层流量，TCP keepalive 多数反代不计入，WS ping 才是对症解。
+// interval <= 0 直接返回（--ping-interval 0 禁用，D-16：不发任何 ping，长空闲
+// 连接保持——用户显式选择）。
+//
+// 三条源码核实纪律：
+//  1. Ping 必须与 Reader 并发（conn.go:218-220 库硬性要求）——现有单 reader
+//     循环天然满足，本 goroutine 与读循环并行，不得为 ping 再开 reader；
+//  2. Ping 的 ctx 超时只返回错误、不关连接（conn.go:251-258 select 路径无
+//     close）——应用须自行 CloseNow；对端已不应答，关闭握手无意义，客户端见
+//     1006 属本地合成码，不违反 D-05（D-05 约束服务端 wire 发送）；
+//  3. 写并发安全由库 writeFrameMu 串行化所有帧保证（write.go:288-293）——
+//     ping 与 onChunk 的 OUTPUT 写无帧交错；pong 由读循环 handleControl
+//     自动处理（read.go:317-337）。
+//
+// 终结挂点：Attach 返回时 defer cancel 触发 ctx.Done（或在途 Ping 的 pctx 随
+// ctx 取消）——随既有 wsDisconnected/terminate 单一路径同生灭，零新 exitf 分支。
+// ctx 已取消时的在途 Ping 错误是正常终结而非 pong 超时，直接返回不打事件。
+func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, interval time.Duration) {
+	if interval <= 0 {
+		return // D-16：--ping-interval 0 = 禁用
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		pctx, cancel := context.WithTimeout(ctx, s.pongTimeout)
+		err := c.Ping(pctx)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return // Attach 返回 cancel 触发的在途 Ping 取消：正常终结，非 pong 超时
+			}
+			// pong 超时（pongTimeout 内未收到应答）：stderr 单行事件（D-12② 三要素；
+			// code 记 1006 = 客户端将观测到的本地合成码，CloseNow 无关闭帧）+ CloseNow。
+			// 断开后的 reader 终结走既有 wsDisconnected→terminate 收口。
+			s.logEvent(remote, websocket.StatusAbnormalClosure, "pong_timeout")
+			c.CloseNow()
+			return
+		}
+	}
+}
+
 // logEvent 打 D-12② stderr 单行事件，三要素齐全：对端 remote、码值 code、
 // reason 机器串。本期覆盖 hello_timeout/empty_frame/frame_before_hello/
-// malformed_hello/version_mismatch/subprotocol_required（assert 兜底）六处埋点；
+// malformed_hello/version_mismatch/subprotocol_required（assert 兜底）/
+// pong_timeout（02-04 保活）七处埋点；
 // 库自动 1009 的 ErrMessageTooBig 钩子属 02-05。Phase 8 升级 slog 结构化日志
 // （OPS-08），本期为过渡形态。remote 由调用方传 Attach 入口保存的 r.RemoteAddr——
 // 反代部署下同键聚合为代理 IP 是已知限制（Pitfall 6），X-Forwarded-For 属
