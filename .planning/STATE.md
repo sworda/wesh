@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 02
 current_phase_name: protocol
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-08-15T05:46:44.693Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-08-15T07:27:10.133Z"
 last_activity: 2026-08-15
 last_activity_desc: Phase 02 planning complete
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 11
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-14)
 ## Current Position
 
 Phase: 02 (protocol) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-08-15 — Phase 02 execution started
 
-Progress: [██████░░░░] 55%
+Progress: [██████░░░░] 64%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [██████░░░░] 55%
 | Phase 01 P04 | 4min | 3 tasks | 3 files |
 | Phase 01 P05 | 21min | 2 tasks | 2 files |
 | Phase 02 P01 | 5min | 2 tasks | 2 files |
+| Phase 02 P02 | 1h 27m | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 01-04]: darwin awaitExit 经包级 sync.Once 单例 watcher，初始化/注册失败均退化为直接 cmd.Wait()（兜底不致命）
 - [Phase ?]: [Phase 01-04]: CI 显式钉 pnpm 11.21.0（web/package.json 无 packageManager 字段，pnpm/action-setup 需版本源）
 - [Phase ?]: [Phase 01-05]: README 按现状描述裸 clone——dist 已提交真实构建产物（非占位），改前端源码才需先 pnpm -C web build
+- [Phase 02]: [Phase 02-02]: 握手违规路径（empty_frame/frame_before_hello/malformed_hello/version_mismatch）只关 conn 落入读循环，经既有 wsDisconnected→terminate 单一路径收口（CONTEXT L92）；非 plan 字面 return——02-03 TestVersionMismatch waitExit(0) 可达性共同锁定
+- [Phase 02]: [Phase 02-02]: s.conn 推迟到 Welcome 发出后才上线——Welcome 恒为 S→C 首帧无时序竞态，预认证窗口零 PTY 输出
+- [Phase 02]: [Phase 02-02]: pty.Session 增 fdMu+closed 修 Resize↔Close master fd 竞态（creack/pty Setsize 裸 Fd() 不过 fdmu，-race 实测命中）；Resize 见 closed 返回 os.ErrClosed
 
 ### Pending Todos
 
@@ -104,6 +108,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-15T05:46:44.681Z
-Stopped at: Completed 02-01-PLAN.md
+Last session: 2026-08-15T07:27:10.120Z
+Stopped at: Completed 02-02-PLAN.md
 Resume file: None
