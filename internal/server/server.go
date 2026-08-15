@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,14 +29,20 @@ type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
 
-	// New 装配期固化、运行期只读，故两个 plain 字段无需 atomic：
-	// writable 为 D-13 ro 门读端；helloTimeout 为 D-04 未认证超时时长（Options 注入）。
-	writable     bool
-	helloTimeout time.Duration
+	// New 装配期固化、运行期只读，故三个 plain 字段无需 atomic：
+	// writable 为 D-13 ro 门读端；helloTimeout 为 D-04 未认证超时时长；
+	// maxHalfOpenPerIP 为 D-04 per-IP 半开上限（均 Options 注入）。
+	writable         bool
+	helloTimeout     time.Duration
+	maxHalfOpenPerIP int
 
 	attached atomic.Bool                    // D-09：单客户端原子门
 	conn     atomic.Pointer[websocket.Conn] // 当前已完成握手的 WS 连接（onChunk 写端 / 1000 关闭用）
 	frame    []byte                         // OUTPUT 组帧缓冲（仅 ReadLoop 单 goroutine 经 onChunk 访问，无竞争）
+
+	// halfOpen 为 D-04 per-IP 半开（Hello 未完成）连接计数器；
+	// acquire/release 恰好一次不变量见 halfOpenCounter 类型注释。
+	halfOpen halfOpenCounter
 
 	// childExited 区分两条终结路径的触发源：lifecycle 在 Wait 返回后先置位再关 conn，
 	// Attach 读循环随服务端 1000 关闭帧终结时据此前置位识别"非客户端断开"，
@@ -47,15 +54,21 @@ type Server struct {
 
 // Options 为 New 的装配选项。
 // Writable 为生产直传字段（main.go --writable flag 原样透传，D-15）；
-// HelloTimeout 为测试可覆写字段（零值取默认常量 defaultHelloTimeout，D-04）。
-// 02-03/02-04 将向本 struct 追加 MaxHalfOpenPerIP/PingInterval/PongTimeout 字段，结构预留。
+// HelloTimeout/MaxHalfOpenPerIP 为测试可覆写字段（零值各取默认常量
+// defaultHelloTimeout/defaultMaxHalfOpenPerIP，D-04）。
+// 02-04 将向本 struct 追加 PingInterval/PongTimeout 字段，结构预留。
 type Options struct {
-	Writable     bool
-	HelloTimeout time.Duration
+	Writable         bool
+	HelloTimeout     time.Duration
+	MaxHalfOpenPerIP int
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
 const defaultHelloTimeout = 5 * time.Second
+
+// defaultMaxHalfOpenPerIP per-IP 半开（Hello 未完成）连接上限默认值（D-04：8）。
+// 正常浏览器秒发 Hello 不受限；NAT 多人场景 Hello 已完成者不计入。
+const defaultMaxHalfOpenPerIP = 8
 
 // New 装配服务端并钉死两个 goroutine 的启动点：
 //   - sess.ReadLoop：自装配起持续 drain master（D-12），attach 前输出直接丢弃，
@@ -68,12 +81,17 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.HelloTimeout <= 0 {
 		opts.HelloTimeout = defaultHelloTimeout
 	}
+	if opts.MaxHalfOpenPerIP <= 0 {
+		opts.MaxHalfOpenPerIP = defaultMaxHalfOpenPerIP
+	}
 	s := &Server{
-		sess:         sess,
-		exitf:        exitf,
-		writable:     opts.Writable,
-		helloTimeout: opts.HelloTimeout,
-		frame:        make([]byte, 1+32*1024),
+		sess:             sess,
+		exitf:            exitf,
+		writable:         opts.Writable,
+		helloTimeout:     opts.HelloTimeout,
+		maxHalfOpenPerIP: opts.MaxHalfOpenPerIP,
+		frame:            make([]byte, 1+32*1024),
+		halfOpen:         halfOpenCounter{n: make(map[string]int)},
 	}
 	s.frame[0] = proto.Output
 	go sess.ReadLoop(s.onChunk)
@@ -96,6 +114,50 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// halfOpenCounter 是 per-IP 半开（Hello 未完成）连接计数器（D-04）。
+// 不变量（Pitfall 4）：acquire 成功后 release 恰好一次，发生在 Hello 完成或
+// 任一拒绝/失败路径（Accept 失败 / assert 失败 / 409 拒绝 / 连接终结，先到为准）——
+// 不泄漏（计数单调上涨最终正常用户全被 429）也不双重释放（计数归零后后续连接被误放行）。
+type halfOpenCounter struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+// acquire 在 ip 的半开计数未达 max 时 +1 并返回 true，否则返回 false（429 闸）。
+func (h *halfOpenCounter) acquire(ip string, max int) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.n[ip] >= max {
+		return false
+	}
+	h.n[ip]++
+	return true
+}
+
+// release 将 ip 的半开计数 -1；到 0 删除 map key——防 map 随历史连接数单调增长
+// （Pitfall 4 泄漏面）。恰好一次不变量由调用方（Attach 内 sync.Once）保证。
+func (h *halfOpenCounter) release(ip string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.n[ip] <= 1 {
+		delete(h.n, ip)
+		return
+	}
+	h.n[ip]--
+}
+
+// clientIP 取对端 IP 作 per-IP 计数键：net.SplitHostPort 取主机部分（含端口直接
+// 当键会使每连接一个"新 IP"，上限形同虚设——Pitfall 6），失败回退 RemoteAddr 整串。
+// 反代部署下同键聚合为代理 IP 是已知限制（Pitfall 6）；X-Forwarded-For 信任属
+// Phase 3 SEC-07，本 phase 不解析。
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // headerHasToken 按 token 拆分比较逗号分隔头（Split "," + TrimSpace + EqualFold
 // 逐 token），禁止 strings.Contains 整头匹配——防 wesh.v1.evil 前缀绕过
 // （Pitfall 5 硬纪律；库 accept.go:357-368 headerTokens 同语义）。
@@ -112,19 +174,35 @@ func headerHasToken(h http.Header, name, token string) bool {
 
 // Attach 是 /ws 的 attach handler（PATTERNS 称 serveWS）。
 //
-// 守卫区（Accept 前，HTTP 层零 WS 资源分配；02-03 将在 ①② 之间插入 per-IP 半开 429——
-// planner 裁决：per-IP 必须在 409 之前，否则 429 在单客户端模型下结构性不可达）：
+// 守卫区（Accept 前，HTTP 层零 WS 资源分配，顺序敏感）：
 //
 //	① D-03 子协议预检 400（最廉价无状态，扫描器/旧客户端最早被拦）；
-//	② D-09 409 单客户端原子门（Phase 5 才改）。
+//	② D-04 per-IP 半开上限 429（默认 8）——必须在 409 之前：409 在前则 429 在
+//	   单客户端模型下结构性不可达（planner 裁决的 D-04 可触达性形态，RESEARCH 的
+//	   TestHalfOpenPerIP429 映射亦无法构造）；被 409 拒的连接 acquire→release
+//	   恰好一次，不残留计数；
+//	③ D-09 409 单客户端原子门（Phase 5 才改）。
 func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// ① D-03：子协议预检——按 token 拆分精确比较，拒绝整头匹配。
 	if !headerHasToken(r.Header, "Sec-WebSocket-Protocol", proto.Subprotocol) {
 		http.Error(w, "subprotocol wesh.v1 required", http.StatusBadRequest)
 		return
 	}
-	// ② D-09：第二连接在 Accept 之前以 HTTP 409 拒绝。
+	// ② D-04：per-IP 半开上限。不变量：acquire 成功 → release 恰好一次，发生在
+	// Hello 完成或任一拒绝/失败路径（先到为准，Pitfall 4）——局部 sync.Once +
+	// defer 兜底覆盖一切 return 路径（含违规落读循环后的 reader 终结与正常会话终结），
+	// 显式提前调用处理 409/Accept/assert 失败与握手成功升档点。
+	ip := clientIP(r)
+	if !s.halfOpen.acquire(ip, s.maxHalfOpenPerIP) {
+		http.Error(w, "too many pending connections", http.StatusTooManyRequests)
+		return
+	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { s.halfOpen.release(ip) }) }
+	defer release()
+	// ③ D-09：第二连接在 Accept 之前以 HTTP 409 拒绝。
 	if !s.attached.CompareAndSwap(false, true) {
+		release() // 被 409 拒的连接已持有半开名额，先释放不残留计数
 		http.Error(w, "another client is already attached", http.StatusConflict)
 		return
 	}
@@ -137,7 +215,8 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		Subprotocols: []string{proto.Subprotocol},
 	})
 	if err != nil {
-		s.attached.Store(false) // Accept 失败即未 attach，释放门位允许后续客户端
+		release()               // Accept 失败即未 attach，半开名额随拒绝释放
+		s.attached.Store(false) // 释放门位允许后续客户端
 		return                  // Accept 失败已自动写 HTTP 错误响应
 	}
 	defer c.CloseNow()
@@ -147,6 +226,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	if c.Subprotocol() != proto.Subprotocol {
 		s.logEvent(remote, websocket.StatusPolicyViolation, "subprotocol_required")
 		_ = c.Close(websocket.StatusPolicyViolation, "subprotocol_required")
+		release()
 		s.attached.Store(false)
 		return
 	}
@@ -201,13 +281,15 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrVersionMismatch)
 	} else {
 		// 升档序列（顺序敏感，PATTERNS 注意 5/6）：停 5s 计时器 → Hello 携首尺寸
-		// Resize（消除 80x24 首帧窗口）→ Welcome 下发 mode（D-14）→ 16KiB 稳态档
+		// Resize（消除 80x24 首帧窗口）→ per-IP release（Hello 完成即不计半开，
+		// D-04：NAT 场景正常浏览器不受限）→ Welcome 下发 mode（D-14）→ 16KiB 稳态档
 		// （SetReadLimit 经库 atomic store 下一条消息起生效，read.go:97-105）→
 		// conn 上线。conn 刻意在握手完成后才上线：此前 OUTPUT 一律 drain——
 		// Welcome 恒为 S→C 首帧（dialHello 首帧断言无时序竞态），且未认证客户端
 		// 在预认证窗口内收不到任何 PTY 输出。
 		close(helloDone)
 		s.sess.Resize(h.Cols, h.Rows)
+		release()
 		mode := proto.ModeRO
 		if s.writable {
 			mode = proto.ModeRW

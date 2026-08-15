@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/sworda/wesh/internal/pty"
 	"github.com/sworda/wesh/internal/server"
@@ -79,7 +80,11 @@ func run(args []string) int {
 	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	fmt.Printf("listening on http://%s\n", ln.Addr())
-	if err := http.Serve(ln, srv.Handler()); err != nil {
+	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与
+	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
+	// WS 长连接语义（升级后的连接读写在握手后长期空闲/突发均属正常）。
+	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	if err := hs.Serve(ln); err != nil {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
