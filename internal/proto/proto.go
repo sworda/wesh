@@ -27,7 +27,7 @@ const (
 
 // Subprotocol 子协议 token：HTTP 预检（Sec-WebSocket-Protocol 头）、
 // AcceptOptions.Subprotocols 协商值、Hello.version 期望值三处复用同一常量
-//（D-03，Open Question 3 裁决，双写漂移面最小）。
+// （D-03，Open Question 3 裁决，双写漂移面最小）。
 const Subprotocol = "wesh.v1"
 
 // Welcome 帧 mode 取值（D-14，前后端对齐字符串入 proto）。
@@ -67,7 +67,7 @@ const (
 
 // HelloPayload 显式 json tag，防字段名漂移。
 // 未知字段由 json.Unmarshal 默认忽略——D-02 演化纪律的零成本实现
-//（禁止 DisallowUnknownFields；Phase 3 加 ticket、Phase 5 加 attach/mode 只是加字段）。
+// （禁止 DisallowUnknownFields；Phase 3 加 ticket、Phase 5 加 attach/mode 只是加字段）。
 type HelloPayload struct {
 	Version string `json:"version"`
 	Cols    int    `json:"cols"`
@@ -80,7 +80,7 @@ type WelcomePayload struct {
 }
 
 // ErrorPayload 显式 json tag。Code 为 snake_case 机器串，Message 为英文人话
-//（前端直接展示，D-07）。
+// （前端直接展示，D-07）。
 type ErrorPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -100,7 +100,7 @@ func DecodeHello(payload []byte) (HelloPayload, bool) {
 }
 
 // WelcomeFrame 组 Welcome 帧：1 字节类型 + JSON {"mode":M}，调用方直接 c.Write
-//（与 onChunk 的 1+payload 组帧模式同构）。固定 schema 下 json.Marshal 不会失败。
+// （与 onChunk 的 1+payload 组帧模式同构）。固定 schema 下 json.Marshal 不会失败。
 func WelcomeFrame(mode string) []byte {
 	b, _ := json.Marshal(WelcomePayload{Mode: mode})
 	return append([]byte{Welcome}, b...)
