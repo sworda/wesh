@@ -7,25 +7,30 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestParseArgs 表驱动锁定 CLI 解析契约：
 // D-05/D-06 默认值（0.0.0.0:7681）；D-02 `--` 后参数（含以 `-` 开头者）原样进
 // exec 数组不被 flag 包吞掉；子命令自身 flag 不被 wesh 解析；
-// D-15 --writable 默认 false（默认只读），显式传旗标后为 true。
+// D-15 --writable 默认 false（默认只读），显式传旗标后为 true；
+// D-16 --ping-interval 默认 5s，显式传值解析 Duration，0 = 禁用保活。
 func TestParseArgs(t *testing.T) {
 	tests := []struct {
-		name         string
-		args         []string
-		wantBind     string
-		wantPort     int
-		wantWritable bool
-		wantArgv     []string
+		name             string
+		args             []string
+		wantBind         string
+		wantPort         int
+		wantWritable     bool
+		wantPingInterval time.Duration
+		wantArgv         []string
 	}{
-		{"defaults", []string{"--", "bash"}, "0.0.0.0", 7681, false, []string{"bash"}},
-		{"flags before dashdash", []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, "127.0.0.1", 0, false, []string{"ls", "-la"}},
-		{"subcommand flag passthrough", []string{"--port", "7682", "--", "/bin/echo", "--version"}, "0.0.0.0", 7682, false, []string{"/bin/echo", "--version"}},
-		{"writable flag", []string{"--writable", "--", "bash"}, "0.0.0.0", 7681, true, []string{"bash"}},
+		{"defaults", []string{"--", "bash"}, "0.0.0.0", 7681, false, 5 * time.Second, []string{"bash"}},
+		{"flags before dashdash", []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, "127.0.0.1", 0, false, 5 * time.Second, []string{"ls", "-la"}},
+		{"subcommand flag passthrough", []string{"--port", "7682", "--", "/bin/echo", "--version"}, "0.0.0.0", 7682, false, 5 * time.Second, []string{"/bin/echo", "--version"}},
+		{"writable flag", []string{"--writable", "--", "bash"}, "0.0.0.0", 7681, true, 5 * time.Second, []string{"bash"}},
+		{"ping interval", []string{"--ping-interval", "30s", "--", "bash"}, "0.0.0.0", 7681, false, 30 * time.Second, []string{"bash"}},
+		{"ping disabled", []string{"--ping-interval", "0", "--", "bash"}, "0.0.0.0", 7681, false, 0, []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -41,6 +46,9 @@ func TestParseArgs(t *testing.T) {
 			}
 			if cfg.writable != tt.wantWritable {
 				t.Errorf("writable = %v, want %v", cfg.writable, tt.wantWritable)
+			}
+			if cfg.pingInterval != tt.wantPingInterval {
+				t.Errorf("pingInterval = %v, want %v", cfg.pingInterval, tt.wantPingInterval)
 			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
