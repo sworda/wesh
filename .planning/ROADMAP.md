@@ -67,19 +67,26 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 默认只读模式下浏览器键盘输入被丢弃，显式开启可写后输入才生效；线上关闭码只出现在 1000/1008/1009/1011/1013 集合内（1006 永不发送）
   3. WS ping/pong 按可配间隔保活，反代空闲超时下连接不被切断
 
-**Plans**: 4 plans
+**Plans**: 5 plans
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — wesh.v1 握手 tracer：proto 契约（Hello/Welcome/Error/关闭码表）+ 守卫链与握手状态机 + readCounted 分片计数 + 默认只读 + --writable + 前端握手/onclose 分派 + 负路径与裸帧测试基建
+- [ ] 02-01-PLAN.md — 握手与只读基线 tracer：proto 契约（wesh.v1/'H'/'W'/'E'/错误码/关闭码纪律）+ 服务端 Hello/Welcome 状态机 + ro 丢 INPUT 放行 RESIZE + --writable + 前端握手/onclose 按码分派 + 全量测试握手改造（CORE-04）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02-PLAN.md — per-IP 半开帽 8（429）+ ping/pong 保活（--ping-interval，pong 超时 10s）+ http.Server ReadHeaderTimeout 5s + CLI flag 契约测试
-- [ ] 02-03-PLAN.md — RES-01 三层上限攻击面行为证明（裸帧：17KiB 单帧/恰边界/百万分片洪水/33 分片硬顶/空帧/慢滴完成时限/预认证 4KiB/压缩拒绝/stderr 事件）
+- [ ] 02-02-PLAN.md — SEC-08 预认证守卫链：子协议 400 预检 → per-IP 半开帽 8（429）→ 409 → Accept → 4KiB 预认证读限 → 5s Hello 超时 + http.Server ReadHeaderTimeout 5s + 裸帧测试 helper（SEC-08）
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-04-PLAN.md — README 协议基线（默认只读/两新 flag/wesh.v1）+ 全量收口验证（-race/web 构建/gofmt/CLI 冒烟）+ 浏览器手动 checklist
+- [ ] 02-03-PLAN.md — RES-01 三层上限：readCounted 替换 c.Read（分片数 32 硬顶）+ 16KiB 升档 + 每消息完成时限 10s + stderr 超限事件 + 攻击面五测（17KiB/百万分片洪水/33 分片/空帧/慢滴）（RES-01）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 02-04-PLAN.md — CORE-06 保活：pinger goroutine + --ping-interval（默认 5s，0 禁用）+ pong 超时 10s + TestPingKeepalive/TestPongTimeout（CORE-06）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 02-05-PLAN.md — 收口：README 同步新 flag 与协议语义 + 全量验证（-race/web 构建/CLI 冒烟）+ 浏览器手动 checklist
 
 **Research flag**: WS 三层上限默认值需实测标定（C→S 单帧 16KiB 起步；累积字节与分片帧数硬顶——Bandit CVE 教训：只限字节不限帧数无效）
 
