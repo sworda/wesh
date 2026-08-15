@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/creack/pty"
 )
@@ -17,6 +18,14 @@ type Session struct {
 	Master *os.File
 
 	readDone chan struct{} // ReadLoop 退出时关闭（带时限 drain 的等待点，Pitfall 4）
+
+	// fdMu 只护 Resize↔Close：Master.Read/Write 经 os.File 内部 fdmu 与 Close 自同步，
+	// 唯独 creack/pty Setsize 裸取 Fd() 不过 fdmu（winsize_unix.go），与 lifecycle 的
+	// Drain→Close 并发构成 master fd 竞态（02-02 握手 Resize 落地后 -race 实测命中：
+	// fd 关闭后可被内核回收重用，裸 ioctl 可能打到无关 fd）。Read 绝不可入此锁——
+	// 读阻塞期间 Close 会被拖死。
+	fdMu   sync.Mutex
+	closed bool // Close 后置位；Resize 见置位返回 os.ErrClosed（幂等语义）
 }
 
 // Start 以 exec 数组形式 spawn argv（绝不经 shell，D-02/D-15），替换式注入 env

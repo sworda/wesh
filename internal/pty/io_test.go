@@ -1,6 +1,8 @@
 package pty
 
 import (
+	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -36,4 +38,26 @@ func TestResize(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("stty 序列 = %v（raw %q），want %v（24 80 → Resize(132,50) → 50 132）", got, out, want)
 	}
+}
+
+// TestResizeAfterClose（02-02 fd 竞态修复的语义回归锁）：Close 后 Resize 返回
+// os.ErrClosed，重复 Close 幂等返回 nil。并发面（Resize↔Close）由 -race 下的
+// e2e 套件覆盖（02-02 握手 Resize 调用点暴露的原缺陷形态）。
+func TestResizeAfterClose(t *testing.T) {
+	sess, err := Start([]string{"/bin/cat"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := sess.Resize(80, 24); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Resize after Close = %v, want os.ErrClosed", err)
+	}
+	if err := sess.Close(); err != nil {
+		t.Fatalf("second Close = %v, want nil (idempotent)", err)
+	}
+	// 收割子进程防僵尸（master 已关，cat 收 SIGHUP 消亡；Kill 兜底，错误忽略）
+	_ = sess.Cmd.Process.Kill()
+	_ = sess.Wait()
 }

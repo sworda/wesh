@@ -23,16 +23,19 @@ type config struct {
 	port        int
 	bind        string
 	showVersion bool
+	writable    bool
 }
 
-// parseArgs 解析 flags（D-04：仅 --port/--bind/--version 三个显式 flag，
-// --help 由 flag 包自带）。`--` 后参数原样收集为 argv（D-02）；
-// argv 为空（且非 --version/--help）返回错误（D-03：无命令不起登录 shell）。
+// parseArgs 解析 flags（Phase 1 契约：--port/--bind/--version；D-15 加入
+// --writable——默认只读，显式开启才接受客户端输入；--help 由 flag 包自带）。
+// `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
+// 返回错误（D-03：无命令不起登录 shell）。
 func parseArgs(args []string) (cfg config, argv []string, err error) {
 	fs := flag.NewFlagSet("wesh", flag.ContinueOnError)
 	fs.IntVar(&cfg.port, "port", 7681, "listen port (0 = random, actual port is printed)")
 	fs.StringVar(&cfg.bind, "bind", "0.0.0.0", "listen address")
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
+	fs.BoolVar(&cfg.writable, "writable", false, "allow client input (default read-only)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -73,7 +76,7 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	srv := server.New(sess, os.Exit)
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	fmt.Printf("listening on http://%s\n", ln.Addr())
 	if err := http.Serve(ln, srv.Handler()); err != nil {

@@ -11,18 +11,21 @@ import (
 
 // TestParseArgs 表驱动锁定 CLI 解析契约：
 // D-05/D-06 默认值（0.0.0.0:7681）；D-02 `--` 后参数（含以 `-` 开头者）原样进
-// exec 数组不被 flag 包吞掉；子命令自身 flag 不被 wesh 解析。
+// exec 数组不被 flag 包吞掉；子命令自身 flag 不被 wesh 解析；
+// D-15 --writable 默认 false（默认只读），显式传旗标后为 true。
 func TestParseArgs(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		wantBind string
-		wantPort int
-		wantArgv []string
+		name         string
+		args         []string
+		wantBind     string
+		wantPort     int
+		wantWritable bool
+		wantArgv     []string
 	}{
-		{"defaults", []string{"--", "bash"}, "0.0.0.0", 7681, []string{"bash"}},
-		{"flags before dashdash", []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, "127.0.0.1", 0, []string{"ls", "-la"}},
-		{"subcommand flag passthrough", []string{"--port", "7682", "--", "/bin/echo", "--version"}, "0.0.0.0", 7682, []string{"/bin/echo", "--version"}},
+		{"defaults", []string{"--", "bash"}, "0.0.0.0", 7681, false, []string{"bash"}},
+		{"flags before dashdash", []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, "127.0.0.1", 0, false, []string{"ls", "-la"}},
+		{"subcommand flag passthrough", []string{"--port", "7682", "--", "/bin/echo", "--version"}, "0.0.0.0", 7682, false, []string{"/bin/echo", "--version"}},
+		{"writable flag", []string{"--writable", "--", "bash"}, "0.0.0.0", 7681, true, []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,6 +38,9 @@ func TestParseArgs(t *testing.T) {
 			}
 			if cfg.port != tt.wantPort {
 				t.Errorf("port = %d, want %d", cfg.port, tt.wantPort)
+			}
+			if cfg.writable != tt.wantWritable {
+				t.Errorf("writable = %v, want %v", cfg.writable, tt.wantWritable)
 			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
