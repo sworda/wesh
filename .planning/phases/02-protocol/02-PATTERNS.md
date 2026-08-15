@@ -489,7 +489,7 @@ acquire 成功后 release 恰好一次，发生在 Hello 完成或连接/拒绝�
 5. **升档序列顺序敏感**（planner 裁决形态，落 02-02/02-03 action）：close(helloDone) 停计时器 → Resize → per-IP release → Welcome → SetReadLimit(16KiB) → 启动 pinger（02-04）。
 6. **Hello 语义改动影响面：** Hello 携带 cols/rows 后，前端 onopen 不再单独发首帧 RESIZE（被 Hello 取代）；服务端握手完成即 `sess.Resize`，消除 Phase 1 的 80x24 首帧窗口（RESEARCH 数据流主线 162 行）。**前端侧配套硬约束：helloSent 门住 sendResize**（term.onResize 常驻接线在首次 fit 必触发，不门则 RESIZE 抢跑首帧被 1002 frame_before_hello 直关——见 §main.ts 段）。
 7. **D-12③ 落点修正**（RESEARCH §Code Examples 423-436 行）：库自动 1009 的 close reason 不可定制（固定 "read limited at N bytes"），`message_too_big` 机器串落在 stderr 事件而非线上 reason——planner/discuss 知悉即可，禁止包装库。
-8. **测试可注入性**（RESEARCH §测试可注射性注意 559 行）：超时与上限经 `server.Options` 字段注入（零值取生产默认常量：HelloTimeout 02-02 / MaxHalfOpenPerIP 02-03 / PingInterval+PongTimeout 02-04）——planner 已裁决为 Options 注入形态（沿用 exitf 注入模式，server.go:44 先例），替代包级私有变量测缝（e2e 为 `package server_test` 外包且包级变量改写有 -race 并行风险）；不违反 D-10/D-16"常量不开 CLI flag"（可配性指用户面）。
+8. **测试可注入性**（RESEARCH §测试可注射性注意 559 行）：超时与上限经 `server.Options` 字段注入（`PingInterval` 生产直传（0=禁用，D-16）；`HelloTimeout`/`MaxHalfOpenPerIP`/`PongTimeout` 零值取默认常量：HelloTimeout 02-02 / MaxHalfOpenPerIP 02-03 / PingInterval+PongTimeout 02-04）——planner 已裁决为 Options 注入形态（沿用 exitf 注入模式，server.go:44 先例），替代包级私有变量测缝（e2e 为 `package server_test` 外包且包级变量改写有 -race 并行风险）；不违反 D-10/D-16"常量不开 CLI flag"（可配性指用户面）。
 9. **ttyd 源码仅作缺陷对照**——可在注释/测试名中引证行号（protocol.c:288-298 作为三层上限的反面教材），禁止参考其实现方式。
 
 ## Metadata

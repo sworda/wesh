@@ -76,7 +76,7 @@ created: 2026-08-15
 无独立 Wave 0——测试基建随首个实现 plan（02-02）共生，planner 回填归属如下：
 
 - [x] `internal/server/e2e_test.go`：`dialHello(t, ctx, wsURL, cols, rows)`（带子协议 Dial + 发 Hello + 收 Welcome 校验 mode；尺寸参数化——02-03 TestReadOnlyAllowsResize 复用同一签名传 111x44，既有测试统一 80x24）与 `startTestServerWith(t, argv, opts)` 变体——**归属 02-02 Task 1**（与 New 签名变更同任务，编译原子性）
-- [x] 超时/上限注入点：采用 `server.Options` struct 字段注入（`HelloTimeout` 02-02 落地、`MaxHalfOpenPerIP` 02-03 追加、`PingInterval`/`PongTimeout` 02-04 追加；零值取生产默认常量）——沿用 exitf 注入模式（server.go:44 先例），替代 export_test.go 包级变量测缝（e2e 为 `package server_test` 外包，且包级变量改写有 -race 并行风险）
+- [x] 超时/上限注入点：采用 `server.Options` struct 字段注入（`HelloTimeout` 02-02 落地、`MaxHalfOpenPerIP` 02-03 追加、`PingInterval`/`PongTimeout` 02-04 追加；`PingInterval` 为生产直传字段（0=禁用，D-16），`HelloTimeout`/`MaxHalfOpenPerIP`/`PongTimeout` 零值取生产默认常量）——沿用 exitf 注入模式（server.go:44 先例），替代 export_test.go 包级变量测缝（e2e 为 `package server_test` 外包，且包级变量改写有 -race 并行风险）
 - [x] 裸帧 helper（rawws_test.go）：**不需要**——D-09 修订后测试矩阵全部库客户端可构造（分片流用 `c.Writer()` 逐 Write 产生非 fin 帧；子协议负例用 DialOptions；空帧洪水用空消息近似），PATTERNS.md 的裸帧段随之作废
 - [x] 框架安装：无——stdlib testing 覆盖全部需求
 
