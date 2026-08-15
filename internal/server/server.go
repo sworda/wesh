@@ -406,8 +406,14 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, i
 		err := c.Ping(pctx)
 		cancel()
 		if err != nil {
-			if ctx.Err() != nil {
-				return // Attach 返回 cancel 触发的在途 Ping 取消：正常终结，非 pong 超时
+			// 只有真正的 pong 超时才打事件 + CloseNow：Ping 对 pong 等待的 ctx 到期
+			// 返回包装后的 DeadlineExceeded（conn.go:251-258）；父 ctx 是 WithCancel
+			// 无 deadline，DeadlineExceeded 唯一来源即 pctx 到期。其余错误（连接已被
+			// 对端关闭/写失败/Attach 返回 cancel 级联取消）都是正常终结路径，
+			// 静默返回即可——误报 pong_timeout 会污染 stderr 事件流（D-12② 三要素
+			// 语义失真），连接终结由既有 reader 路径收口，pinger 无需也不应补刀。
+			if !errors.Is(err, context.DeadlineExceeded) {
+				return
 			}
 			// pong 超时（pongTimeout 内未收到应答）：stderr 单行事件（D-12② 三要素；
 			// code 记 1006 = 客户端将观测到的本地合成码，CloseNow 无关闭帧）+ CloseNow。
