@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 3
+open_count: 4
 waived_count: 0
 fixed_count: 0
-total_count: 3
-last_updated: 2026-08-14T02:10:23.638Z
+total_count: 4
+last_updated: 2026-08-15T09:18:23.988Z
 ---
 
 # Broken Windows Ledger
@@ -18,6 +18,7 @@ last_updated: 2026-08-14T02:10:23.638Z
 | 1 | 01 | deviation | internal/server/server.go |  | Rule 1 修复：D-10 退出码被 D-11 竞态覆盖，childExited 标志收口（d5f67ab） | open |  | 2026-08-14T01:56:56.364Z |  |
 | 2 | 01 | todo | internal/pty/reap_darwin.go | 76 | loop() 错误路径 TODO(Phase 8) 接 slog——计划内延期（RESEARCH 骨架原文，Phase 1 进程级致命即可） | open |  | 2026-08-14T02:10:23.476Z |  |
 | 3 | 01 | unrun-verify | internal/pty/reap_darwin_test.go |  | TestKqueue* 运行时裁决待 CI macos-latest leg 首推运行（计划内 CI-only，本机无 macOS） | open |  | 2026-08-14T02:10:23.638Z |  |
+| 4 | 02 | deviation | internal/server/limits_test.go |  | TestReadLimitBoundary 载荷 zeros→'A'（PTY ECHOCTL 实测 2× 回显失真） | open |  | 2026-08-15T09:18:23.988Z |  |
 
 ````json
 [
@@ -55,6 +56,18 @@ last_updated: 2026-08-14T02:10:23.638Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-14T02:10:23.638Z",
+    "resolved_at": null
+  },
+  {
+    "id": 4,
+    "kind": "deviation",
+    "phase": "02",
+    "file": "internal/server/limits_test.go",
+    "line": null,
+    "description": "TestReadLimitBoundary 载荷 zeros→'A'（PTY ECHOCTL 实测 2× 回显失真）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-15T09:18:23.988Z",
     "resolved_at": null
   }
 ]

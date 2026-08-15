@@ -47,11 +47,11 @@
 - [ ] **SEC-05**: TLS 最低 1.2（默认 1.3），合理 cipher 套件，安全响应头（HSTS/X-Content-Type-Options 等）
 - [x] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
 - [ ] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名作为子进程环境变量
-- [ ] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
+- [x] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
 
 ### 资源控制（RES）
 
-- [ ] **RES-01**: WS 消息三层上限：单帧长度、分片数量、累积字节数
+- [x] **RES-01**: WS 消息三层上限：单帧长度、分片数量、累积字节数
 - [ ] **RES-02**: 每客户端输入速率限制
 - [ ] **RES-03**: 最大并发客户端数限制，满员拒绝新连接
 - [ ] **RES-04**: PTY 输出背压：客户端消费不及时时暂停读 PTY 或断开慢客户端
@@ -138,8 +138,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEC-05 | Phase 3 | Pending |
 | SEC-06 | Phase 1 | Complete |
 | SEC-07 | Phase 7 | Pending |
-| SEC-08 | Phase 2 | Pending |
-| RES-01 | Phase 2 | Pending |
+| SEC-08 | Phase 2 | Complete |
+| RES-01 | Phase 2 | Complete |
 | RES-02 | Phase 5 | Pending |
 | RES-03 | Phase 5 | Pending |
 | RES-04 | Phase 5 | Pending |
