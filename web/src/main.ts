@@ -92,15 +92,24 @@ ws.onmessage = (ev) => {
       break;
     case WELCOME: {
       // D-14：ro 时键盘层面即不产生 onData（UX 层，真边界在服务端丢 INPUT）+ 标题 [ro] 前缀
-      const w = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
-      if (w.mode === 'ro') {
-        term.options.disableStdin = true;
-        document.title = '[ro] ' + document.title;
+      // 畸形 JSON 负载丢弃该帧——事件处理器抛异常只丢本帧，但 WELCOME 丢失会让 ro 门失效
+      try {
+        const w = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+        if (w.mode === 'ro') {
+          term.options.disableStdin = true;
+          document.title = '[ro] ' + document.title;
+        }
+      } catch {
+        console.warn('discard malformed WELCOME frame');
       }
       break;
     }
     case ERROR: // D-06/D-07：暂存 {code,message}，onclose 按码分派时展示 message
-      lastError = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+      try {
+        lastError = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+      } catch {
+        console.warn('discard malformed ERROR frame');
+      }
       break;
     default: // 未知 S→C 类型静默跳过（前向兼容，D-02 同纪律）
       break;

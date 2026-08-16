@@ -56,9 +56,11 @@ func whitelistEnv() []string {
 		"TERM=xterm-256color", // wesh 前端真实能力；OPS-04 可配置留到 Phase 7
 		"COLORTERM=truecolor",
 	}
-	// 仅继承非机密必需项；LANG/LC_* 前缀匹配继承；其余一律丢弃
+	// 仅继承非机密必需项；LANG/LC_* 前缀匹配继承；其余一律丢弃。
+	// 空串值跳过不继承——否则 PATH="" 会与下方回退项并存，getenv 取首个
+	// 匹配（"PATH=" 在前）使回退失效，子进程 shell 按空 PATH 找不到命令。
 	for _, k := range []string{"PATH", "HOME", "USER", "LOGNAME", "SHELL"} {
-		if v, ok := os.LookupEnv(k); ok {
+		if v, ok := os.LookupEnv(k); ok && v != "" {
 			env = append(env, k+"="+v)
 		}
 	}
@@ -67,7 +69,7 @@ func whitelistEnv() []string {
 			env = append(env, kv)
 		}
 	}
-	if _, ok := os.LookupEnv("PATH"); !ok {
+	if v, ok := os.LookupEnv("PATH"); !ok || v == "" {
 		env = append(env, "PATH=/usr/local/bin:/usr/bin:/bin")
 	}
 	return env

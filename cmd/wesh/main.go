@@ -77,6 +77,9 @@ func run(args []string) int {
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.bind, cfg.port))
 	if err != nil {
+		// 启动失败路径回滚已 spawn 资源：Close master 后子进程（setsid 组长）
+		// 收 SIGHUP 退出，不留孤儿进程。
+		_ = sess.Close()
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}

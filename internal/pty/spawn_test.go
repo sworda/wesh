@@ -103,6 +103,22 @@ func TestEnvWhitelist(t *testing.T) {
 	}
 }
 
+// TestEnvWhitelistEmptyPathFallback（SEC-06 边界）：PATH 存在但为空串时须回退默认
+// PATH，且 env 中不得出现重复 PATH 项——getenv 取首个匹配，"PATH="（空）在前会让
+// 回退项失效，子进程 shell 将按空 PATH 找不到命令。
+func TestEnvWhitelistEmptyPathFallback(t *testing.T) {
+	t.Setenv("PATH", "")
+	var paths []string
+	for _, kv := range whitelistEnv() {
+		if strings.HasPrefix(kv, "PATH=") {
+			paths = append(paths, kv)
+		}
+	}
+	if len(paths) != 1 || paths[0] != "PATH=/usr/local/bin:/usr/bin:/bin" {
+		t.Fatalf("PATH 空值回退异常（须恰好一项默认 PATH）: %v", paths)
+	}
+}
+
 // TestSpawnFailKeepsStdio（VALIDATION 1-01-03，Pitfall 1）：spawn 不存在的二进制必须
 // 返回错误，且服务端自身 fd 0/1/2 保持有效——ttyd pty.c:87,112 close(0) 缺陷回归。
 func TestSpawnFailKeepsStdio(t *testing.T) {
