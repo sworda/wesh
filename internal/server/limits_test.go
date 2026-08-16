@@ -119,8 +119,15 @@ func TestOversize1009(t *testing.T) {
 // PTY 规范模式 ECHOCTL 将其回显为 "^@" 两字节（实测 16383 零字节回显 32766
 // 字节），回显计数断言语义失真；可打印字符回显 1:1（实测 16383 'A' 回显恰
 // 16383 字节、~22ms 收齐）。边界值一律引用 proto 常量而非硬编码数字。
+//
+// 子进程经 `stty raw -echo` 切 raw 模式再 exec cat（macOS CI 实测偏差修正）：
+// 规范模式下无换行的输入永远到不了 cat，回显全来自行规程 ECHO，而 Darwin 规范
+// 缓冲 MAX_CANON=1024——写满后行规程静默丢弃后续输入、回显停在 1024 字节，
+// 测试在 macOS 上必挂（Linux 行规程缓冲满后仍逐字节回显故不受影响）。raw 模式
+// 无 canon 缓冲上限、无行规程回显，16383 字节由 cat 本体 1:1 输出，两平台
+// 行为一致；exec 保持 pid/退出码/收割语义不变。
 func TestReadLimitBoundary(t *testing.T) {
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/sh", "-c", "stty raw -echo; exec cat"}, server.Options{Writable: true})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
