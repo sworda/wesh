@@ -14,7 +14,7 @@
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: 行走骨架（核心 PTY 管道）** - PTY 双向转发 + resize + xterm.js 前端接通 + pidfd/kqueue 零线程收割 (completed 2026-08-14)
-- [ ] **Phase 2: 协议基线** - wesh.v1 类型化帧、WS 三层上限、合规关闭码、默认只读、ping/pong 保活
+- [x] **Phase 2: 协议基线** - wesh.v1 类型化帧、WS 三层上限、合规关闭码、默认只读、ping/pong 保活 (completed 2026-08-15)
 - [ ] **Phase 3: 认证与传输安全** - 一次性 ticket、时序安全比较、失败节流、Origin 白名单、TLS 加固
 - [ ] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发
 - [ ] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接
@@ -63,11 +63,35 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Requirements**: CORE-04, CORE-06, SEC-08, RES-01
 **Success Criteria** (what must be TRUE):
 
-  1. 空帧、百万个 1 字节 continuation 帧、超限帧打过来时，服务端以 1009 合规关闭连接，不崩溃、内存平坦（三层上限：单帧/分片数/累积字节；认证通过前零缓冲分配）
+  1. 百万个 1 字节 continuation 帧、超限帧打过来时，服务端以 1009 合规关闭连接；0 字节空帧洪水下服务存活、不崩溃、内存平坦（两层硬顶：单帧 16KiB / 累积字节 16KiB，SetReadLimit 库执行；分片数层库不暴露、经等效防线覆盖——见 02-CONTEXT.md D-09 修订；认证通过前零缓冲分配）
   2. 默认只读模式下浏览器键盘输入被丢弃，显式开启可写后输入才生效；线上关闭码只出现在 1000/1008/1009/1011/1013 集合内（1006 永不发送）
   3. WS ping/pong 按可配间隔保活，反代空闲超时下连接不被切断
 
-**Plans**: TBD
+**Plans**: 6/6 plans executed
+**Wave 1**
+
+- [x] 02-01-PLAN.md — proto 契约：'H'/'W'/'E' 类型字节 + Subprotocol 常量 + Error code 表 + 关闭码注释表（1001/1013 占位）+ 两档读上限常量（D-09 修订分片层注释位）+ Hello/Welcome/Error 编解码 + proto 单测（D-01/D-02/D-05/D-06/D-07/D-08/D-10）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 02-02-PLAN.md — 握手与只读基线 tracer：服务端握手段（子协议双闸/4KiB/5s 超时/抢跑与空消息 1002/version_mismatch Error+1008/Welcome/升档 16KiB）+ ro INPUT 门 + --writable + 前端握手/onclose 按码分派 + e2e 全量握手改造（dialHello）+ TestHelloWelcome（CORE-04/SEC-08/RES-01）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 02-03-PLAN.md — SEC-08 预认证守卫链：per-IP 半开帽 8（HTTP 429，位于 409 门之前——D-04 可触达性裁决）+ http.Server ReadHeaderTimeout 5s + handshake_test.go 七测（子协议 400×2+多值/429/hello_timeout/抢跑/version_mismatch/ro 丢 INPUT/ro 放行 RESIZE）（SEC-08/CORE-04）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 02-04-PLAN.md — CORE-06 保活：pinger goroutine（Welcome 升档后启动，pong 超时 10s CloseNow）+ --ping-interval（默认 5s，0 禁用）+ keepalive_test.go 三测（存活/pong 超时/禁用反证）（CORE-06）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 02-05-PLAN.md — RES-01 攻击面与超限可见性：ErrMessageTooBig → stderr 单行事件钩子（D-12②）+ limits_test.go 五测（17KiB 1009/16384·16385 边界/1 字节分片洪水 1009/0 字节空消息洪水存活/预认证 4KiB 档 1009）（RES-01/SEC-08）
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [x] 02-06-PLAN.md — 收口：README 同步 wesh.v1 协议语义与新 flag（无认证警示保持）+ 全量验证六段式（GOROOT gofmt/vet/-race/web 构建/裸 clone/冒烟）+ 浏览器人工 UAT 清单
+
 **Research flag**: WS 三层上限默认值需实测标定（C→S 单帧 16KiB 起步；累积字节与分片帧数硬顶——Bandit CVE 教训：只限字节不限帧数无效）
 
 含：`proto/` 单一事实源（帧类型、版本、错误码、close code 常量）、版本化子协议 `wesh.v1`、Hello/Welcome/Error 握手帧、coder/websocket SetReadLimit、5s 未认证超时、per-IP 未认证连接上限、permessage-deflate 默认关。
@@ -180,7 +204,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
-| 2. 协议基线 | TBD | Not started | - |
+| 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | TBD | Not started | - |
 | 4. 前端体验 | TBD | Not started | - |
 | 5. 多客户端共享 | TBD | Not started | - |

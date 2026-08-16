@@ -3,10 +3,16 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 
-// 帧常量与 internal/proto/proto.go 手工对齐（D-16）：'0' INPUT / '1' RESIZE / '0' OUTPUT
+// 帧常量与 internal/proto/proto.go 手工对齐（D-16，两侧注释互相指路）：
+// '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error；
+// SUBPROTOCOL 同时是 WS 子协议 token 与 Hello.version 期望值（D-03，同源复用防双写漂移）
 const OUTPUT = 0x30,
   INPUT = 0x30,
-  RESIZE = 0x31;
+  RESIZE = 0x31,
+  HELLO = 0x48,
+  WELCOME = 0x57,
+  ERROR = 0x45,
+  SUBPROTOCOL = 'wesh.v1';
 
 // Terminal Options 按 UI-SPEC §Terminal Options Contract 逐项显式钉死，不依赖库默认值
 const term = new Terminal({
@@ -61,8 +67,10 @@ try {
 }
 
 let opened = false; // 是否曾成功 onopen——三态文案分派依据（UI-SPEC §Copywriting）
+let helloSent = false; // Hello 首帧发出后才置位——此前 sendResize 门吞掉全部数据帧（防 RESIZE 抢跑被 1002 直关）
+let lastError: { code: string; message: string } | null = null; // 最近一帧 Error{code,message}，onclose 展示用（D-07）
 
-const ws = new WebSocket('ws://' + location.host + '/ws');
+const ws = new WebSocket('ws://' + location.host + '/ws', [SUBPROTOCOL]); // D-03：wesh.v1 子协议建连
 ws.binaryType = 'arraybuffer';
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -75,11 +83,27 @@ function concat(...parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-// S→C：OUTPUT 二进制帧直写（Uint8Array 二进制安全）
+// S→C：按帧类型 switch 分派（与 server 握手段/数据面对称，D-01）
 ws.onmessage = (ev) => {
   const buf = new Uint8Array(ev.data as ArrayBuffer);
-  if (buf[0] === OUTPUT) {
-    term.write(buf.subarray(1));
+  switch (buf[0]) {
+    case OUTPUT: // 二进制帧直写（Uint8Array 二进制安全）
+      term.write(buf.subarray(1));
+      break;
+    case WELCOME: {
+      // D-14：ro 时键盘层面即不产生 onData（UX 层，真边界在服务端丢 INPUT）+ 标题 [ro] 前缀
+      const w = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+      if (w.mode === 'ro') {
+        term.options.disableStdin = true;
+        document.title = '[ro] ' + document.title;
+      }
+      break;
+    }
+    case ERROR: // D-06/D-07：暂存 {code,message}，onclose 按码分派时展示 message
+      lastError = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+      break;
+    default: // 未知 S→C 类型静默跳过（前向兼容，D-02 同纪律）
+      break;
   }
 };
 
@@ -96,6 +120,9 @@ term.onData((s) => {
 // onResize → RESIZE 帧（JSON {"cols","rows"}，服务端钳制 [1,1000]）。
 // 发送前防护：display:none 时 proposeDimensions 返回无效值（PITFALLS C10）。
 function sendResize(cols: number, rows: number): void {
+  // Hello 完成前禁发任何数据帧：term.onResize 常驻接线在首次 fit.fit() 几乎必然触发
+  // sendResize——不门住则 RESIZE 抢跑首帧，服务端握手段以 1002 frame_before_hello 直关
+  if (!helloSent) return;
   if (ws.readyState !== WebSocket.OPEN) return;
   if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0) return;
   ws.send(concat(new Uint8Array([RESIZE]), enc.encode(JSON.stringify({ cols, rows }))));
@@ -107,11 +134,20 @@ window.addEventListener('resize', () => {
   timer = window.setTimeout(() => fit.fit(), 100);
 });
 
-// 启动聚焦：页面打开即键盘可用，无需先点击
+// 启动聚焦：页面打开即键盘可用，无需先点击。
+// 顺序硬约束：线上首帧必须 Hello（D-02 携首尺寸）——fit 先行的尺寸由 Hello cols/rows
+// 承载（消除 80x24 首帧窗口），此间 onResize 触发的 sendResize 被 helloSent 门吞掉；
+// Hello 发出后窗口拖动经 onResize → sendResize 正常发送（握手已完成，协议合法）。
 ws.onopen = () => {
   opened = true;
   fit.fit();
-  sendResize(term.cols, term.rows);
+  ws.send(
+    concat(
+      new Uint8Array([HELLO]),
+      enc.encode(JSON.stringify({ version: SUBPROTOCOL, cols: term.cols, rows: term.rows })),
+    ),
+  );
+  helloSent = true;
   term.focus();
 };
 
@@ -146,6 +182,9 @@ ws.onerror = () => {
   }
 };
 
+// onclose 按 ev.code 分派人话文案（D-12①）——只认 code 不认 reason（库自动 1009 的
+// reason 是库内字符串不可控，RESEARCH Anti-Patterns）；1006 永不作为分派依据
+//（RFC6455 §7.4，无码异常断开落 default）。
 ws.onclose = (ev) => {
   if (!opened) {
     showStatus(
@@ -153,17 +192,50 @@ ws.onclose = (ev) => {
       'The wesh server is unreachable. It may have exited, or another client is already attached (wesh currently allows a single client).',
       'Check the shell where wesh is running, then',
     );
-  } else if (ev.code === 1000) {
-    showStatus(
-      'Session ended',
-      'The process exited and the wesh server has stopped.',
-      'Start wesh again from your shell, then',
-    );
-  } else {
-    showStatus(
-      'Connection lost',
-      'The connection closed unexpectedly. In this phase the server exits when the connection drops.',
-      'Start wesh again from your shell, then',
-    );
+    return;
+  }
+  switch (ev.code) {
+    case 1000:
+      showStatus(
+        'Session ended',
+        'The process exited and the wesh server has stopped.',
+        'Start wesh again from your shell, then',
+      );
+      break;
+    case 1008: // 策略违反（version_mismatch 等）——Error 帧 message 优先展示（D-07）
+      showStatus(
+        'Connection refused',
+        lastError?.message ?? 'The server refused this connection.',
+        'Start wesh again from your shell, then',
+      );
+      break;
+    case 1009: // 超限（D-12① 不提 flag——本 phase 无可调 flag）
+      showStatus(
+        'Message too large',
+        'Input exceeded the server message size limit and the connection was closed.',
+        'Start wesh again from your shell, then',
+      );
+      break;
+    case 1011:
+      showStatus(
+        'Server error',
+        lastError?.message ?? 'The server hit an internal error.',
+        'Start wesh again from your shell, then',
+      );
+      break;
+    case 1013: // Phase 5 背压踢出占位路径——文案先行不占协议
+      showStatus(
+        'Disconnected',
+        'The server asked this client to retry later.',
+        'Start wesh again from your shell, then',
+      );
+      break;
+    default: // 含 1002 协议错误与无码异常断开
+      showStatus(
+        'Connection lost',
+        'The connection closed unexpectedly. In this phase the server exits when the connection drops.',
+        'Start wesh again from your shell, then',
+      );
+      break;
   }
 };

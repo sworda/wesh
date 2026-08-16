@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -21,15 +22,16 @@ import (
 	"github.com/sworda/wesh/internal/server"
 )
 
-// TestEchoPTY（VALIDATION 1-01-06）：`wesh -- /bin/cat` 下 WS 客户端发 INPUT 帧
-// 应收同字节 OUTPUT 帧；随后断开客户端，断言 exitf 以退出码 0 被调用（D-11 触发面）。
+// TestEchoPTY（VALIDATION 1-01-06）：`wesh --writable -- /bin/cat` 下 WS 客户端发
+// INPUT 帧应收同字节 OUTPUT 帧；随后断开客户端，断言 exitf 以退出码 0 被调用（D-11 触发面）。
+// 02-02 起建连经 dialHello 过 wesh.v1 握手（writable 装配保持 echo 语义）。
 func TestEchoPTY(t *testing.T) {
 	sess, err := pty.Start([]string{"/bin/cat"})
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}
 	exitCh := make(chan int, 1)
-	srv := server.New(sess, func(code int) { exitCh <- code })
+	srv := server.New(sess, func(code int) { exitCh <- code }, server.Options{Writable: true})
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -40,10 +42,7 @@ func TestEchoPTY(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, "ws://"+ln.Addr().String()+"/ws", nil)
-	if err != nil {
-		t.Fatalf("websocket.Dial: %v", err)
-	}
+	c, _ := dialHello(t, ctx, "ws://"+ln.Addr().String()+"/ws", 80, 24)
 
 	payload := []byte("hello wesh")
 	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
@@ -87,7 +86,7 @@ func TestDrainBeforeAttach(t *testing.T) {
 		t.Fatalf("pty.Start: %v", err)
 	}
 	exitCh := make(chan int, 1)
-	server.New(sess, func(code int) { exitCh <- code }) // 不连接任何 WS 客户端
+	server.New(sess, func(code int) { exitCh <- code }, server.Options{}) // 不连接任何 WS 客户端（零值 Options 仅需编译适配 New 签名）
 
 	select {
 	case code := <-exitCh:
@@ -101,16 +100,16 @@ func TestDrainBeforeAttach(t *testing.T) {
 
 // ====== plan 01-03 增量：生命周期 e2e 四测（D-09/D-10/D-11 + 关闭码纪律）======
 
-// startTestServer 复用 plan 01-01 的构造模式：sess + New(sess, exitf 捕获桩)
-// + 127.0.0.1:0 监听，返回 exitf 捕获通道与 /ws URL。统一收口四个生命周期测试的装配。
-func startTestServer(t *testing.T, argv []string) (exitCh chan int, wsURL string) {
+// startTestServerWith 复用 plan 01-01 的构造模式：sess + New(sess, exitf 捕获桩, opts)
+// + 127.0.0.1:0 监听，返回 exitf 捕获通道与 /ws URL。统一收口各生命周期/握手测试的装配。
+func startTestServerWith(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string) {
 	t.Helper()
 	sess, err := pty.Start(argv)
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}
 	exitCh = make(chan int, 1)
-	srv := server.New(sess, func(code int) { exitCh <- code })
+	srv := server.New(sess, func(code int) { exitCh <- code }, opts)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -119,6 +118,43 @@ func startTestServer(t *testing.T, argv []string) (exitCh chan int, wsURL string
 	t.Cleanup(func() { ln.Close() })
 	go http.Serve(ln, srv.Handler())
 	return exitCh, "ws://" + ln.Addr().String() + "/ws"
+}
+
+// startTestServer 兼容包装：Writable:true 装配，保持既有五个 Dial 测试的 echo 语义。
+func startTestServer(t *testing.T, argv []string) (exitCh chan int, wsURL string) {
+	t.Helper()
+	return startTestServerWith(t, argv, server.Options{Writable: true})
+}
+
+// dialHello 统一收口握手（RESEARCH §Wave 0）：以 wesh.v1 子协议 Dial → 发 Hello 首帧
+// → 读首帧断言为 Welcome 且 JSON 解码取 mode → 返回 (conn, mode)。
+// cols/rows 参数化是签名硬要求——02-03 TestReadOnlyAllowsResize 以 (111, 44) 复用
+// 同一签名验证 Hello 携尺寸生效，禁止硬编码 80x24；既有测试调用处统一传 (80, 24)。
+func dialHello(t *testing.T, ctx context.Context, wsURL string, cols, rows int) (*websocket.Conn, string) {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: cols, Rows: rows})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	var wp proto.WelcomePayload
+	if err := json.Unmarshal(data[1:], &wp); err != nil {
+		t.Fatalf("decode Welcome: %v", err)
+	}
+	return c, wp.Mode
 }
 
 // waitExit 断言 exitf 在 5s 内以 want 码被调用（两条终结路径的收口断言点）。
@@ -200,18 +236,17 @@ func TestHelperProcess(t *testing.T) {
 
 // TestSecondClient409（D-09）：第二个 WS 连接 attach 请求在 Accept 之前收到 HTTP 409；
 // 已 attach 的第一条连接不受影响（Phase 1 单客户端临时语义，T-03-01 缓解固化）。
+// 02-02 起第一连接经 dialHello 完成握手；第二次 Dial 同样携带 wesh.v1 子协议——
+// 否则会被子协议预检以 400 拦截而非到达 409（负例语义漂移防空断言）。
 func TestSecondClient409(t *testing.T) {
 	exitCh, wsURL := startTestServer(t, []string{"/bin/cat"})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c1, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("first dial: %v", err)
-	}
+	c1, _ := dialHello(t, ctx, wsURL, 80, 24)
 
 	// 第二次握手必须在 Accept 之前被拒（HTTP 409，不消耗 PTY/WS 资源）
-	_, resp, err := websocket.Dial(ctx, wsURL, nil)
+	_, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
 	if err == nil {
 		t.Fatal("second dial unexpectedly succeeded — D-09 violated")
 	}
@@ -254,10 +289,7 @@ func TestExitCodePropagation(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
 	// 触发 helper 自杀：helper 读到 '\n' 后 os.Exit(42)
 	if err := c.Write(ctx, websocket.MessageBinary, []byte{proto.Input, 'x', '\n'}); err != nil {
 		t.Fatalf("write INPUT: %v", err)
@@ -287,10 +319,7 @@ func TestUnknownFrame1002(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
 	if err := c.Write(ctx, websocket.MessageBinary, []byte{'9', 'x'}); err != nil {
 		t.Fatalf("write unknown frame: %v", err)
 	}
@@ -323,10 +352,7 @@ func TestClientDisconnectSIGHUP(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
 	// 等 helper 就绪（SIGHUP 处理器已安装）——READY 经 PTY → OUTPUT 帧到达
 	ready := make([]byte, 0, 64)
 	for !strings.Contains(string(ready), "READY") {
@@ -355,4 +381,50 @@ func TestClientDisconnectSIGHUP(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// ====== plan 02-02 增量：握手 tracer 端到端 ======
+
+// TestHelloWelcome（02-02 tracer）：Hello→Welcome 握手端到端——Welcome mode 与服务端
+// writable 配置一致（D-14）；rw 半侧补 INPUT echo 全链路断言（沿用 TestEchoPTY 累积模式）。
+// 两个半侧各自独立装配（ro/rw 由 New 装配期固化），均以客户端正常关闭 + waitExit(0) 收口。
+func TestHelloWelcome(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// ro 半侧：默认只读（D-14 Welcome{mode:"ro"}）
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: false})
+	c, mode := dialHello(t, ctx, wsURL, 80, 24)
+	if mode != proto.ModeRO {
+		t.Fatalf("welcome mode = %q, want %q (writable=false)", mode, proto.ModeRO)
+	}
+	c.Close(websocket.StatusNormalClosure, "")
+	waitExit(t, exitCh, 0) // D-11：客户端断开收口
+
+	// rw 半侧：--writable 等价装配（D-15）→ Welcome{mode:"rw"} + INPUT 正常 echo
+	exitChRW, wsURLRW := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+	cRW, modeRW := dialHello(t, ctx, wsURLRW, 80, 24)
+	if modeRW != proto.ModeRW {
+		t.Fatalf("welcome mode = %q, want %q (writable=true)", modeRW, proto.ModeRW)
+	}
+	payload := []byte("hello wesh")
+	if err := cRW.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+		t.Fatalf("write INPUT: %v", err)
+	}
+	got := make([]byte, 0, len(payload))
+	for len(got) < len(payload) {
+		_, data, err := cRW.Read(ctx)
+		if err != nil {
+			t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
+		}
+		if len(data) == 0 || data[0] != proto.Output {
+			t.Fatalf("unexpected frame: %v", data)
+		}
+		got = append(got, data[1:]...)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("echo payload = %q, want %q", got, payload)
+	}
+	cRW.Close(websocket.StatusNormalClosure, "")
+	waitExit(t, exitChRW, 0)
 }

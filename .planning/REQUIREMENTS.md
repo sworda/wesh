@@ -10,9 +10,9 @@
 - [x] **CORE-01**: 用户可通过命令行指定任意命令及参数，浏览器获得完整交互终端（PTY 双向转发）
 - [x] **CORE-02**: 前端窗口 resize 时服务端同步调整 PTY 尺寸（TIOCSWINSZ）
 - [ ] **CORE-03**: 终端标题变化同步到浏览器标签页标题
-- [ ] **CORE-04**: 默认只读模式（丢弃客户端输入），显式开启可写后才接受输入
+- [x] **CORE-04**: 默认只读模式（丢弃客户端输入），显式开启可写后才接受输入
 - [ ] **CORE-05**: WS 异常断开后前端自动重连并接回同一 PTY 进程（共享进程模型；无滚动回放，屏幕内容靠程序重绘或 tmux/herdr 恢复）
-- [ ] **CORE-06**: WS ping/pong 保活，间隔可配置，防止反代空闲超时断连
+- [x] **CORE-06**: WS ping/pong 保活，间隔可配置，防止反代空闲超时断连
 
 ### 前端（FE）
 
@@ -47,11 +47,11 @@
 - [ ] **SEC-05**: TLS 最低 1.2（默认 1.3），合理 cipher 套件，安全响应头（HSTS/X-Content-Type-Options 等）
 - [x] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
 - [ ] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名作为子进程环境变量
-- [ ] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
+- [x] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
 
 ### 资源控制（RES）
 
-- [ ] **RES-01**: WS 消息三层上限：单帧长度、分片数量、累积字节数
+- [x] **RES-01**: WS 消息三层上限：单帧长度、分片数量、累积字节数
 - [ ] **RES-02**: 每客户端输入速率限制
 - [ ] **RES-03**: 最大并发客户端数限制，满员拒绝新连接
 - [ ] **RES-04**: PTY 输出背压：客户端消费不及时时暂停读 PTY 或断开慢客户端
@@ -113,9 +113,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORE-01 | Phase 1 | Complete |
 | CORE-02 | Phase 1 | Complete |
 | CORE-03 | Phase 4 | Pending |
-| CORE-04 | Phase 2 | Pending |
+| CORE-04 | Phase 2 | Complete |
 | CORE-05 | Phase 6 | Pending |
-| CORE-06 | Phase 2 | Pending |
+| CORE-06 | Phase 2 | Complete |
 | FE-01 | Phase 1 | Complete |
 | FE-02 | Phase 4 | Pending |
 | FE-03 | Phase 1 | Complete |
@@ -138,8 +138,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEC-05 | Phase 3 | Pending |
 | SEC-06 | Phase 1 | Complete |
 | SEC-07 | Phase 7 | Pending |
-| SEC-08 | Phase 2 | Pending |
-| RES-01 | Phase 2 | Pending |
+| SEC-08 | Phase 2 | Complete |
+| RES-01 | Phase 2 | Complete |
 | RES-02 | Phase 5 | Pending |
 | RES-03 | Phase 5 | Pending |
 | RES-04 | Phase 5 | Pending |

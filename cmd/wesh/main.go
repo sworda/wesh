@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/sworda/wesh/internal/pty"
 	"github.com/sworda/wesh/internal/server"
@@ -20,19 +21,25 @@ import (
 var version = "dev"
 
 type config struct {
-	port        int
-	bind        string
-	showVersion bool
+	port         int
+	bind         string
+	showVersion  bool
+	writable     bool
+	pingInterval time.Duration
 }
 
-// parseArgs 解析 flags（D-04：仅 --port/--bind/--version 三个显式 flag，
-// --help 由 flag 包自带）。`--` 后参数原样收集为 argv（D-02）；
-// argv 为空（且非 --version/--help）返回错误（D-03：无命令不起登录 shell）。
+// parseArgs 解析 flags（Phase 1 契约：--port/--bind/--version；D-15 加入
+// --writable——默认只读，显式开启才接受客户端输入；D-16 加入 --ping-interval——
+// 默认 5s WS ping 保活，0 = 禁用；--help 由 flag 包自带）。
+// `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
+// 返回错误（D-03：无命令不起登录 shell）。
 func parseArgs(args []string) (cfg config, argv []string, err error) {
 	fs := flag.NewFlagSet("wesh", flag.ContinueOnError)
 	fs.IntVar(&cfg.port, "port", 7681, "listen port (0 = random, actual port is printed)")
 	fs.StringVar(&cfg.bind, "bind", "0.0.0.0", "listen address")
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
+	fs.BoolVar(&cfg.writable, "writable", false, "allow client input (default read-only)")
+	fs.DurationVar(&cfg.pingInterval, "ping-interval", 5*time.Second, "WS ping interval (0 = disable)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -73,10 +80,14 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	srv := server.New(sess, os.Exit)
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, PingInterval: cfg.pingInterval})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	fmt.Printf("listening on http://%s\n", ln.Addr())
-	if err := http.Serve(ln, srv.Handler()); err != nil {
+	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与
+	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
+	// WS 长连接语义（升级后的连接读写在握手后长期空闲/突发均属正常）。
+	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	if err := hs.Serve(ln); err != nil {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}

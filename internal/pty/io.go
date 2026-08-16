@@ -1,6 +1,7 @@
 package pty
 
 import (
+	"os"
 	"time"
 
 	"github.com/creack/pty"
@@ -27,13 +28,26 @@ func (s *Session) ReadLoop(onChunk func([]byte)) {
 
 // Resize 经 TIOCSWINSZ 同步 PTY 尺寸；ws_xpixel/ws_ypixel 置 0 是 ttyd 与
 // creack/pty 共同实践。cols/rows 已由 proto.DecodeResize 钳制到 [1,1000]（D-16），
-// uint16 转换安全。
+// uint16 转换安全。经 fdMu 与 Close 互斥（见 Session.fdMu 注释）；Close 后调用
+// 返回 os.ErrClosed（Attach 读循环忽略 Resize 错误，语义不变）。
 func (s *Session) Resize(cols, rows int) error {
+	s.fdMu.Lock()
+	defer s.fdMu.Unlock()
+	if s.closed {
+		return os.ErrClosed
+	}
 	return pty.Setsize(s.Master, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 }
 
 // Close 关闭 master（有效指针判空，非零值推断——Pitfall 1"只关成功打开且登记在册的 fd"）。
+// 经 fdMu 与 Resize 互斥并置 closed——幂等，重复关闭安全。
 func (s *Session) Close() error {
+	s.fdMu.Lock()
+	defer s.fdMu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	if s.Master != nil {
 		return s.Master.Close()
 	}
