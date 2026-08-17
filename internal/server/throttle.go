@@ -90,3 +90,18 @@ func (t *throttleStore) recordSuccess(ip string) {
 	defer t.mu.Unlock()
 	delete(t.m, ip)
 }
+
+// retryAfter 返回该 IP 当前退避窗口的剩余等待：无条目或 now 不早于 notBefore
+// 返回 (0, false)；窗口内返回 (notBefore.Sub(now), true)。只读不改条目——与
+// allow 同纪律：窗口内命中不延长 notBefore（恢复期可预期，不给攻击者窗口操控面）。
+// 消费契约（03-03 追加——03-01 组件无读取 notBefore 的导出面）：basicAuth 的 429
+// 响应 Retry-After 头 = ceil(剩余等待) 秒（最小 1）。
+func (t *throttleStore) retryAfter(ip string, now time.Time) (time.Duration, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, ok := t.m[ip]
+	if !ok || !now.Before(e.notBefore) {
+		return 0, false
+	}
+	return e.notBefore.Sub(now), true
+}

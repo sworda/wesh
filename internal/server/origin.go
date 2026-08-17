@@ -77,3 +77,17 @@ func originAllowed(r *http.Request, allowed map[string]struct{}) bool {
 	_, ok := allowed[n]
 	return ok
 }
+
+// originMiddleware 是 /api/attach 守卫链的 Origin 闸（SEC-04/D-13 双端点之一；
+// /ws 侧为 Attach 守卫区 ⓪ + 库 AcceptOptions.OriginPatterns 二次校验）。拒绝
+// 形态与 /ws ⓪ 一致：403 + 通用文案（不回显 Origin 值——无反射面）。静态页 GET
+// 不挂本中间件（无副作用，D-13）。
+func originMiddleware(next http.Handler, allowed map[string]struct{}) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !originAllowed(r, allowed) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

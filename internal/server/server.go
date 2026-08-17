@@ -4,8 +4,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -39,6 +41,20 @@ type Server struct {
 	pingInterval     time.Duration
 	pongTimeout      time.Duration
 
+	// 认证与传输安全装配（Phase 3，均 New 装配期固化、运行期只读）：
+	// credentials 为 D-02 整站 Basic 凭据集（空 = 无认证模式）；
+	// origins/originList 为 D-12 Origin 白名单（规范化集合查 originAllowed、
+	// 规范化串切片喂 AcceptOptions.OriginPatterns，二者同源于 opts.Origins）；
+	// tickets/throttle 为 SEC-02 一次性 ticket 表与 SEC-03 per-IP 退避计数器
+	//（仅认证模式构造，无认证模式为 nil——核销分支整体跳过）；
+	// tlsOn 仅驱动 securityHeaders 的 HSTS 分支（D-06）。
+	credentials []Credential
+	origins     map[string]struct{}
+	originList  []string
+	tickets     *ticketStore
+	throttle    *throttleStore
+	tlsOn       bool
+
 	attached atomic.Bool                    // D-09：单客户端原子门
 	conn     atomic.Pointer[websocket.Conn] // 当前已完成握手的 WS 连接（onChunk 写端 / 1000 关闭用）
 	frame    []byte                         // OUTPUT 组帧缓冲（仅 ReadLoop 单 goroutine 经 onChunk 访问，无竞争）
@@ -60,12 +76,23 @@ type Server struct {
 // 原样透传，D-15/D-16；PingInterval 0 = 禁用保活）；
 // HelloTimeout/MaxHalfOpenPerIP/PongTimeout 为测试可覆写字段（零值各取默认常量
 // defaultHelloTimeout/defaultMaxHalfOpenPerIP/defaultPongTimeout，D-04/D-16）。
+// Phase 3 新增：Credentials/Origins/TLS 为生产直传字段（main 经 ParseCredential/
+// NormalizeOrigin 构造，D-01/D-12；Credentials 空 = 无认证模式，Origins 与凭据
+// 正交——--origin 无凭据也生效；TLS 仅驱动 HSTS 分支，D-06）；
+// TicketTTL/ThrottleBase/ThrottleCap 为测试可覆写字段（零值各取
+// defaultTicketTTL/defaultThrottleBase/defaultThrottleCap）。
 type Options struct {
 	Writable         bool
 	PingInterval     time.Duration
 	HelloTimeout     time.Duration
 	MaxHalfOpenPerIP int
 	PongTimeout      time.Duration
+	Credentials      []Credential
+	Origins          []string
+	TLS              bool
+	TicketTTL        time.Duration
+	ThrottleBase     time.Duration
+	ThrottleCap      time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -107,6 +134,26 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		pongTimeout:      opts.PongTimeout,
 		frame:            make([]byte, 1+32*1024),
 		halfOpen:         halfOpenCounter{n: make(map[string]int)},
+		credentials:      opts.Credentials,
+		tlsOn:            opts.TLS,
+	}
+	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
+	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
+	// 切片供 AcceptOptions.OriginPatterns。零配置时两字段为 nil——库默认同源
+	// 校验与无 Origin 放行行为零漂移（D-12）。
+	if len(opts.Origins) > 0 {
+		s.origins = make(map[string]struct{}, len(opts.Origins))
+		s.originList = make([]string, 0, len(opts.Origins))
+		for _, o := range opts.Origins {
+			s.origins[o] = struct{}{}
+			s.originList = append(s.originList, o)
+		}
+	}
+	// 认证模式（len(Credentials)>0）才构造 ticket/throttle 两 store；无认证模式
+	// 两 store 为 nil——checkTicket 核销分支整体跳过（既有行为零漂移）。
+	if len(opts.Credentials) > 0 {
+		s.tickets = newTicketStore(opts.TicketTTL)
+		s.throttle = newThrottleStore(opts.ThrottleBase, opts.ThrottleCap)
 	}
 	s.frame[0] = proto.Output
 	go sess.ReadLoop(s.onChunk)
@@ -114,7 +161,13 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	return s
 }
 
-// Handler 挂两条路由：/ 走 go:embed 静态伺服，/ws 走 Attach。
+// Handler 挂三条路由：/ 走 go:embed 静态伺服，/ws 走 Attach，POST /api/attach
+// 走 ticket 签发。认证模式（D-02 整站 Basic）：/ 与 /api/attach 挂 basicAuth
+//（/ws 不挂——ticket 即其认证）；/api/attach 守卫链 = ServeMux 方法模式 405 →
+// Origin 403 → 节流 429 → Basic 401 → 签发 200。无认证模式 /api/attach 显式
+// 注册 404（前端探测信号：跳过 fetch 直连 WS；显式注册避免依赖静态 handler 对
+// POST 的偶发行为，RESEARCH Pattern 1 决策）。最外层 securityHeaders 包裹全部
+// 路由（含 /ws，D-06）。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	wh, err := web.Handler()
@@ -124,9 +177,42 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "embedded assets unavailable", http.StatusInternalServerError)
 		})
 	}
-	mux.Handle("/", wh)
+	if len(s.credentials) > 0 {
+		mux.Handle("/", basicAuth(wh, s.credentials, s.throttle))
+		mux.Handle("POST /api/attach", originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle), s.origins))
+	} else {
+		mux.Handle("/", wh)
+		mux.HandleFunc("POST /api/attach", func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r) // 无认证模式探测信号（404 → 前端跳过 fetch 直连）
+		})
+	}
 	mux.HandleFunc("/ws", s.Attach)
-	return mux
+	return securityHeaders(mux, s.tlsOn)
+}
+
+// attachHandler 是 POST /api/attach 的 ticket 签发端点（SEC-02）：Basic 认证
+// 通过后签发一次性 ticket（60s TTL、单次使用、绑定全局 --writable 模式，D-11）。
+// D-11 请求体为空——MaxBytesReader 1KiB 上限纯防御，超限 413；响应
+// Cache-Control: no-store（ticket 不可落缓存，RESEARCH Pattern 6 表）。
+// 红线（SEC-01）：ticket 值禁止作为任何日志参数。
+func (s *Server) attachHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	mode := proto.ModeRO
+	if s.writable {
+		mode = proto.ModeRW
+	}
+	ticket := s.tickets.issue(mode, time.Now())
+	body, _ := json.Marshal(struct {
+		Ticket string `json:"ticket"`
+	}{Ticket: ticket}) // 固定 schema，json.Marshal 不会失败
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 // halfOpenCounter 是 per-IP 半开（Hello 未完成）连接计数器（D-04）。
@@ -164,7 +250,7 @@ func (h *halfOpenCounter) release(ip string) {
 // clientIP 取对端 IP 作 per-IP 计数键：net.SplitHostPort 取主机部分（含端口直接
 // 当键会使每连接一个"新 IP"，上限形同虚设——Pitfall 6），失败回退 RemoteAddr 整串。
 // 反代部署下同键聚合为代理 IP 是已知限制（Pitfall 6）；X-Forwarded-For 信任属
-// Phase 3 SEC-07，本 phase 不解析。
+// Phase 7 SEC-07，本 phase 不解析。
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -191,6 +277,9 @@ func headerHasToken(h http.Header, name, token string) bool {
 //
 // 守卫区（Accept 前，HTTP 层零 WS 资源分配，顺序敏感）：
 //
+//	⓪ D-13 Origin 白名单 403——与库 Accept 内检查同语义前置，拒绝形态与
+//	   /api/attach 一致且 HTTP 层可测（AcceptOptions.OriginPatterns 为库内
+//	   二次校验，纵深防御，SEC-04）；
 //	① D-03 子协议预检 400（最廉价无状态，扫描器/旧客户端最早被拦）；
 //	② D-04 per-IP 半开上限 429（默认 8）——必须在 409 之前：409 在前则 429 在
 //	   单客户端模型下结构性不可达（planner 裁决的 D-04 可触达性形态，RESEARCH 的
@@ -198,6 +287,12 @@ func headerHasToken(h http.Header, name, token string) bool {
 //	   恰好一次，不残留计数；
 //	③ D-09 409 单客户端原子门（Phase 5 才改）。
 func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
+	// ⓪ D-13：Origin 白名单检查（Accept 前拒绝，HTTP 层可测）——通用文案不回显
+	// Origin 值（无反射面）；无 Origin 头放行（非浏览器客户端零摩擦）。
+	if !originAllowed(r, s.origins) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return
+	}
 	// ① D-03：子协议预检——按 token 拆分精确比较，拒绝整头匹配。
 	if !headerHasToken(r.Header, "Sec-WebSocket-Protocol", proto.Subprotocol) {
 		http.Error(w, "subprotocol wesh.v1 required", http.StatusBadRequest)
@@ -222,12 +317,15 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// logEvent 对端取值（D-12②）：Attach 入口保存 RemoteAddr。反代部署下聚合为
-	// 代理 IP 是已知限制（Pitfall 6）；X-Forwarded-For 信任属 Phase 3 SEC-07，本 phase 不解析。
+	// 代理 IP 是已知限制（Pitfall 6）；X-Forwarded-For 信任属 Phase 7 SEC-07，本 phase 不解析。
 	remote := r.RemoteAddr
 	// AcceptOptions：Subprotocols 一行开启协商回显（D-03）；压缩默认禁用（终端高熵
-	// 数据无收益，D-17）；不跳过 Origin 校验——库默认同源校验（同 Host 放行、跨源拒绝）。
+	// 数据无收益，D-17）；OriginPatterns 为 D-12 白名单的库内二次校验（⓪ 已前置
+	// 同语义检查，纵深防御）——nil 时保持库默认同源校验（同 Host 放行、跨源拒绝，
+	// 零配置零漂移）。
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		Subprotocols: []string{proto.Subprotocol},
+		Subprotocols:   []string{proto.Subprotocol},
+		OriginPatterns: s.originList,
 	})
 	if err != nil {
 		release()               // Accept 失败即未 attach，半开名额随拒绝释放
@@ -239,7 +337,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// logEvent 埋点在此建立，02-05 复核清单以此为准）。防御性退化：释放门位直返，
 	// 不消耗单次生命周期。
 	if c.Subprotocol() != proto.Subprotocol {
-		s.logEvent(remote, websocket.StatusPolicyViolation, "subprotocol_required")
+		logEvent(remote, websocket.StatusPolicyViolation, "subprotocol_required")
 		_ = c.Close(websocket.StatusPolicyViolation, "subprotocol_required")
 		release()
 		s.attached.Store(false)
@@ -265,7 +363,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-helloDone:
 		default:
-			s.logEvent(remote, websocket.StatusPolicyViolation, "hello_timeout")
+			logEvent(remote, websocket.StatusPolicyViolation, "hello_timeout")
 			_ = c.Close(websocket.StatusPolicyViolation, "hello_timeout")
 		}
 	})
@@ -285,26 +383,37 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(data) == 0 {
 		// OQ2 裁决：Hello 前空消息按畸形处理（1002 桶）。
-		s.logEvent(remote, websocket.StatusProtocolError, "empty_frame")
+		logEvent(remote, websocket.StatusProtocolError, "empty_frame")
 		_ = c.Close(websocket.StatusProtocolError, "empty_frame")
 	} else if data[0] != proto.Hello {
 		// D-04 抢跑帧：1002 直关，不发 Error 帧。
-		s.logEvent(remote, websocket.StatusProtocolError, "frame_before_hello")
+		logEvent(remote, websocket.StatusProtocolError, "frame_before_hello")
 		_ = c.Close(websocket.StatusProtocolError, "frame_before_hello")
 	} else if h, ok := proto.DecodeHello(data[1:]); !ok {
 		// D-05 1002 桶含畸形 Hello（DecodeHello 的未知字段忽略纪律不受影响）。
-		s.logEvent(remote, websocket.StatusProtocolError, "malformed_hello")
+		logEvent(remote, websocket.StatusProtocolError, "malformed_hello")
 		_ = c.Close(websocket.StatusProtocolError, "malformed_hello")
 	} else if h.Version != proto.Subprotocol {
 		// D-06 正常客户端路径：先 Error 帧后 1008；close reason 与 code 同名机器串
 		// （D-07）。Error 写失败不补救——连接已死，Close 仍把码值送上。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrVersionMismatch, "protocol version wesh.v1 required"))
-		s.logEvent(remote, websocket.StatusPolicyViolation, proto.ErrVersionMismatch)
+		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrVersionMismatch)
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrVersionMismatch)
+	} else if mode, tok := s.checkTicket(ip, h.Ticket); !tok {
+		// D-10 统一口径：节流中/过期/非法/重放 ticket → 同 Error{auth_failed}+1008，
+		// close reason 与 code 同名机器串（D-07），各形态响应不可区分（无 oracle）。
+		// 分支位置：version 检查之后、升档之前（Open Question 2 裁决——version 为
+		// 公开协议信息先查，核销紧随其后）；核销全部在预认证 4KiB 读上限档内完成
+		// （Hello JSON +ticket ~120B，D-11 两档纪律不变）。
+		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrAuthFailed, "authentication failed"))
+		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrAuthFailed)
+		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 	} else {
 		// 升档序列（顺序敏感，PATTERNS 注意 5/6）：停 5s 计时器 → Hello 携首尺寸
 		// Resize（消除 80x24 首帧窗口）→ per-IP release（Hello 完成即不计半开，
-		// D-04：NAT 场景正常浏览器不受限）→ Welcome 下发 mode（D-14）→ 16KiB 稳态档
+		// D-04：NAT 场景正常浏览器不受限）→ Welcome 下发 mode（D-14——认证模式取
+		// checkTicket 核销返回的 ticket 绑定值（D-11），无认证模式为其返回的
+		// s.writable 派生值）→ 16KiB 稳态档
 		// （SetReadLimit 经库 atomic store 下一条消息起生效，read.go:97-105）→
 		// pinger 保活（D-16）→ conn 上线。conn 刻意在握手完成后才上线：此前 OUTPUT 一律 drain——
 		// Welcome 恒为 S→C 首帧（dialHello 首帧断言无时序竞态），且未认证客户端
@@ -312,10 +421,6 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		close(helloDone)
 		s.sess.Resize(h.Cols, h.Rows)
 		release()
-		mode := proto.ModeRO
-		if s.writable {
-			mode = proto.ModeRW
-		}
 		// Welcome 写失败不补救——连接已死，读循环下一拍收口。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.WelcomeFrame(mode))
 		c.SetReadLimit(proto.ReadLimitPostAuth)
@@ -360,6 +465,36 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			_ = c.Close(websocket.StatusProtocolError, "unknown frame type") // 1002，协议演化无歧义
 		}
 	}
+}
+
+// checkTicket 收口 Hello 携 ticket 的核销闸（D-08/D-10）：返回升档 mode 与是否
+// 放行。无认证模式（s.tickets == nil）核销分支整体跳过——返回 s.writable 派生
+// mode 且恒放行（既有行为零漂移）。认证模式顺序敏感：
+//  1. 节流窗口内（throttle.allow false）→ 拒绝且不 recordFail——节流命中不延长
+//     窗口，ticket 也不核销（wire 上与过期/非法同口径，D-10）；
+//  2. redeem 失败（过期/非法/重放同归 false）→ throttle.recordFail 计入 D-08
+//     统一计数器（与 /api/attach 凭据失败同一 per-IP store）后拒绝；
+//  3. 核销成功 → 返回 ticket 绑定的 mode（D-11）。
+//
+// 红线（SEC-01）：ticket 值禁止作为任何日志参数——本方法与调用方均不打印。
+func (s *Server) checkTicket(ip, ticket string) (string, bool) {
+	mode := proto.ModeRO
+	if s.writable {
+		mode = proto.ModeRW
+	}
+	if s.tickets == nil {
+		return mode, true // 无认证模式：核销分支整体跳过
+	}
+	now := time.Now()
+	if !s.throttle.allow(ip, now) {
+		return "", false // 节流命中：不 recordFail（不延长窗口），ticket 不核销
+	}
+	m, ok := s.tickets.redeem(ticket, now)
+	if !ok {
+		s.throttle.recordFail(ip, now) // D-08 统一计数器
+		return "", false
+	}
+	return m, true
 }
 
 // onChunk 是 S→C 数据泵（ReadLoop 回调，独占 WS 写端）：
@@ -423,7 +558,7 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, i
 			// pong 超时（pongTimeout 内未收到应答）：stderr 单行事件（D-12② 三要素；
 			// code 记 1006 = 客户端将观测到的本地合成码，CloseNow 无关闭帧）+ CloseNow。
 			// 断开后的 reader 终结走既有 wsDisconnected→terminate 收口。
-			s.logEvent(remote, websocket.StatusAbnormalClosure, "pong_timeout")
+			logEvent(remote, websocket.StatusAbnormalClosure, "pong_timeout")
 			c.CloseNow()
 			return
 		}
@@ -434,11 +569,18 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, i
 // reason 机器串。本期覆盖 hello_timeout/empty_frame/frame_before_hello/
 // malformed_hello/version_mismatch/subprotocol_required（assert 兜底）/
 // pong_timeout（02-04 保活）/message_too_big（02-05 超限，经 logIfMessageTooBig
-// 挂预认证首读与稳态读循环两处）。Phase 8 升级 slog 结构化日志
+// 挂预认证首读与稳态读循环两处）/auth_failed（03-03 ticket 核销失败）/
+// throttled（03-03 HTTP 层 429 节流闸，basicAuth）。Phase 8 升级 slog 结构化日志
 // （OPS-08），本期为过渡形态。remote 由调用方传 Attach 入口保存的 r.RemoteAddr——
 // 反代部署下同键聚合为代理 IP 是已知限制（Pitfall 6），X-Forwarded-For 属
-// Phase 3 SEC-07，本 phase 不解析。
-func (s *Server) logEvent(remote string, code websocket.StatusCode, reason string) {
+// Phase 7 SEC-07，本 phase 不解析。
+//
+// 红线（SEC-01）：凭据、ticket、Authorization 头任何形态（含 base64）禁止作为
+// 任何参数传入（ttyd server.c:142 反例）——三要素只有 remote/code/reason。
+// 包级函数（无 Server 状态依赖）：HTTP 层中间件（basicAuth）与 WS 握手段共用
+// 唯一出口；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int，
+// PATTERNS Shared Patterns 裁决）。
+func logEvent(remote string, code websocket.StatusCode, reason string) {
 	fmt.Fprintf(os.Stderr, "wesh: close remote=%s code=%d reason=%s\n", remote, code, reason)
 }
 
@@ -451,7 +593,7 @@ func (s *Server) logEvent(remote string, code websocket.StatusCode, reason strin
 // 4KiB 两档共用同一错误标识（SetReadLimit 仅数值不同），两处埋点同一调用形态。
 func (s *Server) logIfMessageTooBig(remote string, err error) {
 	if errors.Is(err, websocket.ErrMessageTooBig) {
-		s.logEvent(remote, websocket.StatusMessageTooBig, "message_too_big")
+		logEvent(remote, websocket.StatusMessageTooBig, "message_too_big")
 	}
 }
 

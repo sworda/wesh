@@ -4,7 +4,14 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/sworda/wesh/internal/proto"
 )
 
 // Credential 是一组启动时预哈希的凭据（SHA-256 摘要对，32B 定长）。
@@ -55,4 +62,46 @@ func matchCredential(creds []Credential, user, pass string) bool {
 			subtle.ConstantTimeCompare(ph[:], c.passHash[:])
 	}
 	return matched == 1
+}
+
+// basicAuth 整站 Basic 认证中间件（D-02：/ 与 /api/attach 挂载；/ws 不挂——
+// ticket 即其认证）。守卫顺序（敏感，与 /api/attach 守卫链口径一致）：
+//
+//	① 429 节流闸：retryAfter 命中 → 429 + Retry-After（ceil(剩余等待) 秒，
+//	  窗口内恒 ≥1）+ 通用文案；retryAfter 只读不延长窗口（429 短路不
+//	  recordFail——节流命中不再追加惩罚）；
+//	② Basic 解析与常数时间比较：r.BasicAuth()（stdlib 解析器，禁止手拆
+//	  Authorization base64——RESEARCH Don't Hand-Roll 表）+ matchCredential；
+//	  无/错凭据完全同文 401（WWW-Authenticate: Basic realm="wesh",
+//	  charset="UTF-8"，RFC 7617 + 通用 body——无枚举 oracle，OWASP 纪律）+
+//	  recordFail（D-08 统一计数器：与 Hello ticket 核销失败同一 per-IP store）；
+//	③ 认证成功 → recordSuccess 清零（D-08）→ next。
+//
+// 红线（SEC-01）：凭据/Authorization 头任何形态（含 base64）永不入日志参数——
+// logEvent 三要素只有 remote/code/reason；HTTP 层事件 code 复用 HTTP 状态码值
+//（websocket.StatusCode 底层 int，三要素结构不变，PATTERNS Shared Patterns 裁决）。
+// Hello 侧节流闸仍用 allow（无 Retry-After 需求），两处闸共享同一 store（D-08）。
+// 401/403/429 body 恒为通用文案——不回显用户名、Origin 值或任何请求细节。
+func basicAuth(next http.Handler, creds []Credential, th *throttleStore) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r)
+		if wait, throttled := th.retryAfter(ip, time.Now()); throttled {
+			// ceil 秒整数向上取整；窗口内 wait>0 故商恒 ≥1。
+			retry := int64((wait + time.Second - 1) / time.Second)
+			w.Header().Set("Retry-After", strconv.FormatInt(retry, 10))
+			logEvent(r.RemoteAddr, websocket.StatusCode(http.StatusTooManyRequests), "throttled")
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok || !matchCredential(creds, u, p) {
+			th.recordFail(ip, time.Now())
+			w.Header().Set("WWW-Authenticate", `Basic realm="wesh", charset="UTF-8"`) // RFC 7617
+			logEvent(r.RemoteAddr, websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed)
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		th.recordSuccess(ip) // D-08：认证成功清零
+		next.ServeHTTP(w, r)
+	})
 }

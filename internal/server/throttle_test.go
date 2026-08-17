@@ -128,4 +128,31 @@ func TestThrottleStore(t *testing.T) {
 			t.Errorf("100 次爆破累计等待 = %v, want ≥47min（可观测退避锚点）", total)
 		}
 	})
+
+	// 03-03 追加：retryAfter 只读访问器（429 Retry-After 头数据源）。
+	t.Run("retryAfter 剩余等待只读不延长窗口", func(t *testing.T) {
+		ts := newThrottleStore(time.Second, 30*time.Second)
+		now := base
+		ip := "203.0.113.17"
+		// 未知 IP：(0, false)。
+		if wait, ok := ts.retryAfter(ip, now); ok || wait != 0 {
+			t.Errorf("未知 IP retryAfter = (%v, %v), want (0, false)", wait, ok)
+		}
+		// fail#1 后窗口内：返回剩余等待（base - 已逝）。
+		ts.recordFail(ip, now)
+		if wait, ok := ts.retryAfter(ip, now.Add(250*time.Millisecond)); !ok || wait != 750*time.Millisecond {
+			t.Errorf("窗口内 retryAfter = (%v, %v), want (750ms, true)", wait, ok)
+		}
+		// 窗口内重复调用后 notBefore 不变（只读纪律，与 allow 同款不延长不变量）。
+		nb := ts.m[ip].notBefore
+		ts.retryAfter(ip, now.Add(300*time.Millisecond))
+		ts.retryAfter(ip, now.Add(400*time.Millisecond))
+		if got := ts.m[ip].notBefore; !got.Equal(nb) {
+			t.Errorf("retryAfter 重复调用后 notBefore = %v, want %v（只读不延长）", got, nb)
+		}
+		// 窗口已过（now 不早于 notBefore）：(0, false)。
+		if wait, ok := ts.retryAfter(ip, now.Add(time.Second)); ok || wait != 0 {
+			t.Errorf("窗口过 retryAfter = (%v, %v), want (0, false)", wait, ok)
+		}
+	})
 }

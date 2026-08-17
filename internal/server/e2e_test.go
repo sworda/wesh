@@ -170,6 +170,65 @@ func waitExit(t *testing.T, exitCh chan int, want int) {
 	}
 }
 
+// ====== plan 03-03 增量：认证集成 helper（Phase 3 集成组复用，同包 server_test）======
+
+// dialHelloTicket 是 dialHello 的 ticket 变体：逐字复制其形态，HelloPayload 加
+// Ticket 字段（03-03 起认证模式建连形态）。dialHello 本体不动（既有调用零漂移）。
+func dialHelloTicket(t *testing.T, ctx context.Context, wsURL string, ticket string, cols, rows int) (*websocket.Conn, string) {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: cols, Rows: rows, Ticket: ticket})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	var wp proto.WelcomePayload
+	if err := json.Unmarshal(data[1:], &wp); err != nil {
+		t.Fatalf("decode Welcome: %v", err)
+	}
+	return c, wp.Mode
+}
+
+// attachURL 把 startTestServerWith 返回的 /ws URL 映射为 /api/attach 的 http URL
+//（ws:// → http://  scheme 替换 + /ws → /api/attach 路径替换）。
+func attachURL(wsURL string) string {
+	return strings.TrimSuffix(strings.Replace(wsURL, "ws://", "http://", 1), "/ws") + "/api/attach"
+}
+
+// postAttach 发 POST /api/attach 并返回响应（调用方负责读取并 Close body）。
+// user/pass 均为空串时跳过 SetBasicAuth（无凭据负例开关）；headers 逐对注入
+//（Origin 等场景头）。请求体恒空（D-11），大 body 负例由调用方自建请求。
+func postAttach(t *testing.T, url, user, pass string, headers map[string]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatalf("new POST request: %v", err)
+	}
+	if user != "" || pass != "" {
+		req.SetBasicAuth(user, pass)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	return resp
+}
+
 // helperArgv 构造 TestHelperProcess 子进程 argv。
 // 守卫走 argv 标记而非 env 变量（钉死）：spawn 路径 cmd.Env = whitelistEnv() 为替换式
 // 注入，自定义守卫变量（如 GO_WANT_HELPER_PROCESS）不在 SEC-06 白名单内会被剥离——
