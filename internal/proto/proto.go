@@ -39,10 +39,14 @@ const (
 // Error codes（D-06 受众分治：仅正常客户端可见的错误发 Error 帧 + 关闭码；
 // 攻击面路径 unknown_frame/抢跑帧/超限/hello_timeout 只发关闭码不发 Error 帧——
 // 不给攻击者反馈面）。code 为 snake_case 机器串，主动关闭的 close reason 带同名
-// 机器串（RFC6455 ≤123 字节，D-07）。auth_failed/permission_denied 属 Phase 3/5（deferred）。
+// 机器串（RFC6455 ≤123 字节，D-07）。auth_failed 已于 Phase 3 兑现；
+// permission_denied 属 Phase 5（deferred）。
 const (
 	ErrVersionMismatch = "version_mismatch" // 正常客户端可见，发 Error 帧 + 1008
 	ErrServerError     = "server_error"     // 发 Error 帧 + 1011
+	// ticket 核销失败统一口径（Phase 3 D-10）：过期/非法/重放/节流中同口径，
+	// 无 oracle；发 Error 帧 + 1008，正常客户端可见码（D-06 受众分治）。
+	ErrAuthFailed = "auth_failed"
 )
 
 // 读上限两档（D-10 一律常量不开 CLI flag；单帧与累积字节同由 SetReadLimit 库执行，
@@ -67,11 +71,14 @@ const (
 
 // HelloPayload 显式 json tag，防字段名漂移。
 // 未知字段由 json.Unmarshal 默认忽略——D-02 演化纪律的零成本实现
-// （禁止 DisallowUnknownFields；Phase 3 加 ticket、Phase 5 加 attach/mode 只是加字段）。
+// （禁止 DisallowUnknownFields；ticket 已于 Phase 3 落地，Phase 5 加 attach/mode
+// 仍只是加字段）。Ticket 为一次性认证票（omitempty：无认证模式前端省略字段，
+// JSON 不出 ticket 键；唯一传输通道，禁止走 URL query/子协议头——ARCHITECTURE §2.8）。
 type HelloPayload struct {
 	Version string `json:"version"`
 	Cols    int    `json:"cols"`
 	Rows    int    `json:"rows"`
+	Ticket  string `json:"ticket,omitempty"`
 }
 
 // WelcomePayload 显式 json tag。Mode 取值见 ModeRO/ModeRW（D-14）。
