@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -468,4 +469,224 @@ func TestLogRedaction(t *testing.T) {
 
 	// (c) 后服务端关 conn 落入读循环，reader 终结 → D-11 收口。
 	waitExit(t, exitCh, 0)
+}
+
+// ====== Task 3：429 闸 / D-08 共享计数器 / 双端点 Origin ======
+
+// TestThrottleHTTP（SEC-03，D-08/D-09）：HTTP 层指数退避的完整生命周期——
+// ThrottleBase=200ms 注入（节流语义锚点 03-01：fail#1 后 notBefore=+1×base，
+// 窗口内第 2 次请求即 429——「×2→401 后 #3→429」编排必红，严禁按旧序列写）：
+// #1 错凭据 → 401（fails=1，notBefore=+200ms）→ sleep 250ms 过窗 →
+// #2 错凭据 → 401（fails=2，notBefore=+400ms）→ #3 立即正确凭据 → 429 +
+// Retry-After ≥1（正确凭据也 429 证明节流闸在 Basic 之前；429 短路不
+// recordFail、notBefore 不延长）→ sleep 450ms 过 400ms 窗 →
+// 正确凭据 → 200（recordSuccess 清零生效）→ 紧接错凭据 → 401（级数从 base
+// 重启，fail#1 仍可请求）→ sleep 250ms 过窗 → 末次正确凭据 → 200 收口
+//（避开 +200ms 窗口防 429；清零防状态污染——每测试独立实例）。
+// 本测试只验 HTTP 层：不 dial WS，exitf 不断言。
+func TestThrottleHTTP(t *testing.T) {
+	cred, err := server.ParseCredential("th-erin:throttle-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	_, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:     true,
+		Credentials:  []server.Credential{cred},
+		ThrottleBase: 200 * time.Millisecond,
+	})
+	url := attachURL(wsURL)
+	post := func(user, pass string) *http.Response {
+		t.Helper()
+		resp := postAttach(t, url, user, pass, nil)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp
+	}
+
+	// #1 错凭据 → 401（fails=1，notBefore=+200ms）。
+	if resp := post("th-erin", "wrong-1"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("#1 status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	time.Sleep(250 * time.Millisecond) // 过 200ms 窗口
+	// #2 错凭据 → 401（fails=2，notBefore=+400ms）。
+	if resp := post("th-erin", "wrong-2"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("#2 status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	// #3 立即正确凭据 → 429 + Retry-After ≥1（节流闸在 Basic 之前；短路不
+	// recordFail、notBefore 不延长——窗口内第 1 次请求即 429）。
+	resp := post("th-erin", "throttle-pass")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("#3 status = %d, want %d (429)", resp.StatusCode, http.StatusTooManyRequests)
+	}
+	ra, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+	if err != nil || ra < 1 {
+		t.Fatalf("Retry-After = %q, want ≥1 整数（ceil(剩余等待) 秒）", resp.Header.Get("Retry-After"))
+	}
+	time.Sleep(450 * time.Millisecond) // 过 400ms 窗口
+	// 正确凭据 → 200（窗口过 + recordSuccess 清零）。
+	if resp := post("th-erin", "throttle-pass"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("post-window status = %d, want %d (200)", resp.StatusCode, http.StatusOK)
+	}
+	// 紧接错凭据 → 401（清零后级数从 base 重启：fail#1 仍可请求，非 429）。
+	if resp := post("th-erin", "wrong-3"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("post-reset status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	time.Sleep(250 * time.Millisecond) // 过 fail#1 的 +200ms 窗口
+	// 末次正确凭据 → 200 收口。
+	if resp := post("th-erin", "throttle-pass"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("final status = %d, want %d (200)", resp.StatusCode, http.StatusOK)
+	}
+}
+
+// TestThrottleHelloSharedCounter（D-08 统一计数器行为级反证）：HTTP 侧凭据失败
+// 把 WS 侧 Hello 核销闸住——先取合法 ticket，再编排 #1 错凭据 401（fails=1，
+// notBefore=+200ms）→ #2 立即错凭据 429（窗口内命中，不 recordFail 不延长
+// 窗口——429 起于 fail 后的第 1 次窗口内请求）→ 立即 Hello 携合法 ticket →
+// Error{auth_failed}+1008。
+// 反证逻辑：无共享计数器时令牌闸不拦 WS 侧，合法 ticket 必核销成功收
+// Welcome——被拒即 HTTP 失败与 Hello 核销计入同一 per-IP store 的直接证据。
+// 走查点：节流命中短路在 redeem 之前，ticket 未核销（wire 上按 D-10 不可区分）。
+func TestThrottleHelloSharedCounter(t *testing.T) {
+	cred, err := server.ParseCredential("sc-frank:shared-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:     true,
+		Credentials:  []server.Credential{cred},
+		ThrottleBase: 200 * time.Millisecond,
+	})
+	url := attachURL(wsURL)
+
+	// 正确凭据取合法 ticket（recordSuccess，计数器干净）。
+	resp := postAttach(t, url, "sc-frank", "shared-pass", nil)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("issue ticket status = %d, want %d (200)", resp.StatusCode, http.StatusOK)
+	}
+	var issued struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode ticket response: %v", err)
+	}
+	resp.Body.Close()
+	if issued.Ticket == "" {
+		t.Fatal("ticket empty in 200 response")
+	}
+
+	// #1 错凭据 → 401（fails=1，notBefore=+200ms）。
+	resp = postAttach(t, url, "sc-frank", "wrong-pass", nil)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("#1 status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	// #2 立即错凭据 → 429（窗口内命中，不 recordFail 不延长窗口）。
+	resp = postAttach(t, url, "sc-frank", "wrong-pass", nil)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("#2 status = %d, want %d (429)", resp.StatusCode, http.StatusTooManyRequests)
+	}
+
+	// 立即 Hello 携合法 ticket → auth_failed + 1008（共享计数器闸住 WS 核销）。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dialHelloTicketWantAuthFailed(t, ctx, wsURL, issued.Ticket)
+
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
+	waitExit(t, exitCh, 0)
+}
+
+// TestOriginEndpoints（SEC-04，D-12/D-13 双端点执行）：--origin 等效装配
+//（Origins: ["https://portal.example"] 已规范化形态 + ThrottleBase:50ms——
+// /api/attach 侧 g)→h) 为连续失败编排需 pacing）。全部场景均为 HTTP 层拒绝
+//（400/403/401，零 attach）——无终结路径触发，WS 与 HTTP 场景共用一个实例，
+// exitf 不断言（注释钉死，区别于单会话约束需独立实例的成功握手场景）。
+//
+// /ws 侧（⓪ 守卫 + 库 OriginPatterns 二次校验）：
+// a) 无 Origin + 无子协议 → 400（过 ⓪ 到达 ①——无 Origin 放行证明，优先 400
+// 路径：不与 ticket 核销/节流交互）；
+// b) 邪恶源 https://evil.example + wesh.v1 子协议 → 403（⓪ 拒绝）；
+// c) Origin: null + 子协议 → 403（沙箱 iframe 载体，规范化失败按拒绝）；
+// d) Origin = 同源值（http://<r.Host>）→ 400（过 ⓪ 到达 ①，非 403 即放行证明）；
+// e) 白名单 https://portal.example → 400（过 ⓪ 到达 ①，D-12 白名单放行）。
+//
+// /api/attach 侧（originMiddleware 在 basicAuth 之前）：
+// f) 邪恶源 POST 错凭据 → 403（Origin 闸先拒，不 recordFail——g) 仍是 fail#1）；
+// g) 无 Origin POST 错凭据 → 401（过 Origin 闸达 Basic；fails=1，notBefore=+50ms）；
+// sleep 100ms 过窗；
+// h) 白名单源 POST 错凭据 → 401（f)→g) 之间无需 sleep——403 不计数）。
+func TestOriginEndpoints(t *testing.T) {
+	cred, err := server.ParseCredential("or-grace:origin-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	_, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:     true,
+		Credentials:  []server.Credential{cred},
+		Origins:      []string{"https://portal.example"},
+		ThrottleBase: 50 * time.Millisecond,
+	})
+	url := attachURL(wsURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// dialWantStatus 负例三段式（handshake_test.go 同款）：dial 失败 + resp 非 nil
+	// + 状态码相等。
+	dialWantStatus := func(origin string, subprotocols []string, want int, what string) {
+		t.Helper()
+		opts := &websocket.DialOptions{Subprotocols: subprotocols}
+		if origin != "" {
+			opts.HTTPHeader = http.Header{"Origin": []string{origin}}
+		}
+		_, resp, err := websocket.Dial(ctx, wsURL, opts)
+		if err == nil {
+			t.Fatalf("%s dial unexpectedly succeeded — Origin gate missing (SEC-04/D-13)", what)
+		}
+		if resp == nil {
+			t.Fatalf("%s dial failed without HTTP response: %v", what, err)
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("%s dial status = %d, want %d", what, resp.StatusCode, want)
+		}
+	}
+
+	// /ws 侧五场景。
+	dialWantStatus("", nil, http.StatusBadRequest, "no-origin")                                       // a) 过 ⓪ 达 ①
+	dialWantStatus("https://evil.example", []string{proto.Subprotocol}, http.StatusForbidden, "evil") // b) ⓪ 拒绝
+	dialWantStatus("null", []string{proto.Subprotocol}, http.StatusForbidden, "null-origin")          // c) null 拒绝
+	sameOrigin := "http://" + strings.TrimSuffix(strings.TrimPrefix(wsURL, "ws://"), "/ws")
+	dialWantStatus(sameOrigin, nil, http.StatusBadRequest, "same-origin")                    // d) 同源放行（非 403）
+	dialWantStatus("https://portal.example", nil, http.StatusBadRequest, "whitelist-origin") // e) 白名单放行（非 403）
+
+	// /api/attach 侧三场景。
+	resp := postAttach(t, url, "or-grace", "wrong-pass", map[string]string{"Origin": "https://evil.example"})
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read 403 body: %v", err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("attach evil-origin status = %d, want %d (403)", resp.StatusCode, http.StatusForbidden)
+	}
+	if strings.Contains(string(body), "evil.example") {
+		t.Fatalf("403 body echoes Origin value（反射面）: %q", body)
+	}
+	resp = postAttach(t, url, "or-grace", "wrong-pass", nil) // g) 无 Origin → 过 Origin 闸达 Basic（fail#1）
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("attach no-origin status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	time.Sleep(100 * time.Millisecond) // 过窗（fail#1 窗口 = 50ms）
+	resp = postAttach(t, url, "or-grace", "wrong-pass", map[string]string{"Origin": "https://portal.example"}) // h) 白名单源
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("attach whitelist-origin status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
 }
