@@ -41,8 +41,8 @@
 ### 安全（SEC）
 
 - [ ] **SEC-01**: 凭据时序安全比较（crypto/subtle），凭据不明文出现在任何日志
-- [ ] **SEC-02**: WS 认证采用一次性短时令牌（单次使用、短 TTL、绑定会话与权限级别），替代 ttyd 的 /token 明文下发
-- [ ] **SEC-03**: 认证失败节流（指数退避/速率限制），防止暴力破解
+- [x] **SEC-02**: WS 认证采用一次性短时令牌（单次使用、短 TTL、绑定会话与权限级别），替代 ttyd 的 /token 明文下发
+- [x] **SEC-03**: 认证失败节流（指数退避/速率限制），防止暴力破解
 - [ ] **SEC-04**: WS 握手 Origin 允许列表校验，不在列表内拒绝
 - [ ] **SEC-05**: TLS 最低 1.2（默认 1.3），合理 cipher 套件，安全响应头（HSTS/X-Content-Type-Options 等）
 - [x] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
@@ -132,8 +132,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MULTI-04 | Phase 5 | Pending |
 | MULTI-05 | Phase 5 | Pending |
 | SEC-01 | Phase 3 | Pending |
-| SEC-02 | Phase 3 | Pending |
-| SEC-03 | Phase 3 | Pending |
+| SEC-02 | Phase 3 | Complete |
+| SEC-03 | Phase 3 | Complete |
 | SEC-04 | Phase 3 | Pending |
 | SEC-05 | Phase 3 | Pending |
 | SEC-06 | Phase 1 | Complete |

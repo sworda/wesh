@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 3
-current_phase_name: 认证与传输安全
-status: "Phase 02 shipped — PR #2"
-stopped_at: Phase 3 context gathered
-last_updated: "2026-08-17T06:10:33.445Z"
+current_phase: 03
+current_phase_name: auth
+status: executing
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-08-17T07:24:21.756Z"
 last_activity: 2026-08-17
 last_activity_desc: Phase 3 planning complete
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-15)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 3 — 认证与传输安全
+**Current focus:** Phase 03 — auth
 
 ## Current Position
 
-Phase: 3 — 认证与传输安全
-Plan: Not started
-Status: Phase 02 shipped — PR #2
-Last activity: 2026-08-17 — Phase 3 planning complete
+Phase: 03 (auth) — EXECUTING
+Plan: 2 of 6
+Status: Ready to execute
+Last activity: 2026-08-17 — Phase 03 execution started
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 71%
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [██████████] 100%
 | Phase 02 P04 | 13min | 2 tasks | 4 files |
 | Phase 02 P05 | 9min | 2 tasks | 2 files |
 | Phase 02 P06 | 2h 36m | 2 tasks | 2 files |
+| Phase 03 P01 | 18min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 02-06]: proto.go 02-01 既存 gofmt 差异随段 1 授权分支清零（纯注释排版）；冒烟以 --port 0 随机端口 + 启动行解析驱动断言
 - [Phase 02]: [UAT]: 浏览器渲染层 UAT 在无显示机器上以「Node 原生 WS 客户端协议断言（web/uat/phase02.mjs，零依赖 11/11）+ 用户外部浏览器渲染层确认」分工完成——协议层全自动化，渲染层人工
 - [Phase 02]: [UAT 决策]: CR-01（Attach 读循环同步写 PTY master 可永久阻塞）用户裁决立即最小缓解——master fd O_NONBLOCK + ErrWouldBlock 走既有收口；完整背压（有界输入队列+写 goroutine+1013 踢出）留 Phase 5
+- [Phase ?]: [Phase 03-01]: TestDecodeHello ticket 断言加 checkTicket 闸——plan 三约束（wantTicket 字段+既有行补零值+禁止改 unknown 行）与统一断言冲突（unknown 行 ticket:"secret" 加字段后解码入 Ticket），闸化后仅两新行断言 Ticket，D-02 回归锁逐字不动
+- [Phase ?]: [Phase 03-01]: ErrAuthFailed 入 TestProtocolConstants 逐字+形状锁定——D-10 costly 级公开契约常量按文件既定职责入锁（T-02-01 缓解形态）
 
 ### Pending Todos
 
@@ -120,6 +123,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-17T02:41:47.328Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-auth/03-CONTEXT.md
+Last session: 2026-08-17T07:24:21.742Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: None
