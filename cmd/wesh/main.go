@@ -106,6 +106,43 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	return cfg, argv, nil
 }
 
+// isLoopbackBind 判定 bind 地址是否仅本机可达（RESEARCH Pattern 7 裁决）：
+// 空串视为全网卡（非 loopback）；net.ParseIP 成功取 IsLoopback()（127.0.0.0/8
+// 与 ::1）；localhost 特判 loopback；0.0.0.0/:: 与其他主机名保守按非 loopback——
+// 保守方向出错的代价是多要一个显式逃生门，不削弱安全。
+func isLoopbackBind(bind string) bool {
+	if bind == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(bind)
+	return ip != nil && ip.IsLoopback()
+}
+
+// validateStartup 是 D-03/D-05 启动校验矩阵（RESEARCH Pattern 7 八行）的纯函数
+// 落地——无任何副作用（禁止 listen/spawn/写文件），必须先于 pty.Start/net.Listen
+// 执行：拒绝路径零资源占用，测试不挂死（main_test.go captureFd 纪律）。
+// 返回 warn（放行但需 stderr 醒目警告的逃生门/明文场景）或 err（拒绝启动）。
+// cert/key 成对校验在 parseArgs 已落 parse 期（D-04 分层，此处不重复）。
+// 红线：warn/err 文案不得含凭据值（SEC-01 日志红线延伸到启动面）。
+func validateStartup(cfg config) (warn string, err error) {
+	if isLoopbackBind(cfg.bind) {
+		return "", nil // loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05）
+	}
+	if len(cfg.credentials) == 0 {
+		if !cfg.noAuth {
+			return "", errors.New("refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication") // D-03
+		}
+		return "wesh: warning: listening on non-loopback address with NO authentication (--no-auth); anyone who can reach this port gets a terminal", nil
+	}
+	if cfg.tlsCert == "" {
+		if !cfg.insecureHTTP {
+			return "", errors.New("refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key") // D-05
+		}
+		return "wesh: warning: serving credentials over plaintext HTTP on non-loopback address (--insecure-http); prefer --tls-cert/--tls-key or a TLS-terminating reverse proxy", nil
+	}
+	return "", nil // 非 loopback + 凭据 + TLS：最强形态免警告
+}
+
 func run(args []string) int {
 	cfg, argv, err := parseArgs(args)
 	if err != nil {
@@ -118,6 +155,16 @@ func run(args []string) int {
 	if cfg.showVersion {
 		fmt.Printf("wesh %s\n", version)
 		return 0
+	}
+	// D-03/D-05 启动校验矩阵：先于 pty.Start/net.Listen——拒绝路径零资源占用；
+	// 逃生门放行路径 stderr 醒目警告（裸奔/明文语义，警告不含凭据值）。
+	warn, err := validateStartup(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
+		return 2
+	}
+	if warn != "" {
+		fmt.Fprintln(os.Stderr, warn)
 	}
 	sess, err := pty.Start(argv)
 	if err != nil {
@@ -132,14 +179,28 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, PingInterval: cfg.pingInterval})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != ""})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
-	fmt.Printf("listening on http://%s\n", ln.Addr())
+	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
+	scheme := "http"
+	if cfg.tlsCert != "" {
+		scheme = "https"
+	}
+	fmt.Printf("listening on %s://%s\n", scheme, ln.Addr())
 	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与
 	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
 	// WS 长连接语义（升级后的连接读写在握手后长期空闲/突发均属正常）。
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	if err := hs.Serve(ln); err != nil {
+	// D-04/D-06：显式证书才 TLS（parseArgs 已保证成对）——TLSConfig 声明式下限
+	//（MinVersion 1.2 + 显式 AEAD 清单，03-02 组件复用，无二手配置路径）；
+	// 否则明文 Serve（D-03/D-05 矩阵已先行约束 + 上方 stderr 醒目警告）。
+	if cfg.tlsCert != "" {
+		hs.TLSConfig = server.TLSConfig()
+		err = hs.ServeTLS(ln, cfg.tlsCert, cfg.tlsKey)
+	} else {
+		err = hs.Serve(ln)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
