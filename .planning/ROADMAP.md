@@ -107,7 +107,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 脚本爆破 100 次错误凭据触发指数退避节流；凭据比较走 `crypto/subtle` 常数时间（先哈希等长）；凭据/ticket/Authorization 头任何形态不出现在任何日志（有日志脱敏测试）
   3. 不在 Origin 允许列表内的 WS 握手被拒绝；TLS 仅协商 1.2+（默认 1.3），响应含 HSTS/X-Content-Type-Options 等安全头，testssl.sh 无弱项
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans executed
 **Wave 1**
 
 - [x] 03-01-PLAN.md — 协议契约增量（ErrAuthFailed/HelloPayload.Ticket）+ ticketStore（单次使用/60s TTL/mode 绑定）+ throttleStore（1s×2 封顶 30s/成功清零/惰性过期）纯组件（SEC-02/SEC-03）
@@ -124,7 +124,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 03-06-PLAN.md — 收口：phase03.mjs 六场景 UAT + phase02.mjs 的 D-03 适配 + README 认证/TLS 与行为变更明示 + 03-UAT.md 人工清单 + 全量验证六段式（SEC-01..SEC-05）
+- [x] 03-06-PLAN.md — 收口：phase03.mjs 六场景 UAT + phase02.mjs 的 D-03 适配 + README 认证/TLS 与行为变更明示 + 03-UAT.md 人工清单 + 全量验证六段式（SEC-01..SEC-05）
 
 ### Phase 4: 前端体验
 
@@ -222,7 +222,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
-| 3. 认证与传输安全 | 5/6 | In Progress|  |
+| 3. 认证与传输安全 | 6/6 | In Progress|  |
 | 4. 前端体验 | TBD | Not started | - |
 | 5. 多客户端共享 | TBD | Not started | - |
 | 6. 会话生命周期与重连 | TBD | Not started | - |

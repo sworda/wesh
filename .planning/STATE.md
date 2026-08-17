@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 03
 current_phase_name: auth
-status: executing
-stopped_at: Completed 03-05-PLAN.md
-last_updated: "2026-08-17T09:44:59.949Z"
+status: verifying
+stopped_at: Completed 03-06-PLAN.md (Phase 3 ready for verification)
+last_updated: "2026-08-17T11:58:14.266Z"
 last_activity: 2026-08-17
 last_activity_desc: Phase 3 planning complete
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 17
-  completed_plans: 16
+  completed_plans: 17
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-08-15)
 
 Phase: 03 (auth) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-17 — Phase 03 execution started
 
-Progress: [█████████░] 94%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -75,6 +75,7 @@ Progress: [█████████░] 94%
 | Phase 03-auth P03 | 52min | 3 tasks | 7 files |
 | Phase 03 P04 | 18min | 2 tasks | 3 files |
 | Phase 03 P05 | 14min | 2 tasks | 2 files |
+| Phase 03 P06 | 2h 05m | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -119,6 +120,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 03-04]: TestParseArgs 表结构扩展走命名字段转换——Go 位置初始化不可扩展字段的唯一调和形态，既有行值/断言零改动
 - [Phase ?]: [Phase 03-05]: ws 声明为模块级 WebSocket | null（非 plan 字面 let ws: WebSocket）+ onData/sendResize null 闸——fetch 异步窗口期用户敲击 ws.readyState 的 TypeError 回归（Rule 1）；connect() 内 const sock = ws 供 handler 闭包（TS 严格模式闭包不收窄可空 let）
 - [Phase ?]: [Phase 03-05]: dist .gz 不入库按 .gitignore 既定策略（web/dist/*.gz 自建仓起生效，gzip 头嵌 mtime 每次构建字节漂移；embed.go 设计即 index.html 入库、gz 缺失明文伺服降级）；README:40 陈旧声明登记 deferred-items.md
+- [Phase ?]: [Phase 03-06]: 场景 1 pacing 采用爬梯 sleep（1.15s/2.15s/4.3s）优先于独立实例备选——同时证明退避窗口恢复语义；场景 3 无 Origin 断言取 400 形态（不建 WS 连接不触发单次语义退出）；S1f 非法 ticket 独立 spawn 实例（单会话约束）
+- [Phase ?]: [Phase 03-06]: 六段式段 1 gofmt 清零授权沿用 02-06 先例——4 文件纯注释排版差异 -w 修正后独立 style 提交（87f6e17），零语义改动
 
 ### Pending Todos
 
@@ -137,6 +140,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-17T09:44:59.934Z
-Stopped at: Completed 03-05-PLAN.md
+Last session: 2026-08-17T11:58:14.251Z
+Stopped at: Completed 03-06-PLAN.md (Phase 3 ready for verification)
 Resume file: None
