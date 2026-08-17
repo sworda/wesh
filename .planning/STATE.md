@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 03
 current_phase_name: auth
 status: executing
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-08-17T07:47:19.175Z"
+stopped_at: Completed 03-03-PLAN.md
+last_updated: "2026-08-17T08:53:12.480Z"
 last_activity: 2026-08-17
 last_activity_desc: Phase 3 planning complete
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 13
+  completed_plans: 14
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-15)
 ## Current Position
 
 Phase: 03 (auth) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-08-17 — Phase 03 execution started
 
-Progress: [████████░░] 76%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Progress: [████████░░] 76%
 | Phase 02 P06 | 2h 36m | 2 tasks | 2 files |
 | Phase 03 P01 | 18min | 3 tasks | 6 files |
 | Phase 03 P02 | 15min | 3 tasks | 7 files |
+| Phase 03-auth P03 | 52min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 03-01]: ErrAuthFailed 入 TestProtocolConstants 逐字+形状锁定——D-10 costly 级公开契约常量按文件既定职责入锁（T-02-01 缓解形态）
 - [Phase ?]: [Phase 03-02]: matchCredential 按 planner erratum 修正形态落地（|= 位或累积不短路；RESEARCH Pattern 2 的 &= 初值 0 恒 false 不可照抄），TestCredentialMatch 多组各自命中锁死该回归
 - [Phase ?]: [Phase 03-02]: 空 pass 合法（ParseCredential("user:") 不额外禁止，passHash 为空串摘要）——文档化决策；空 user 仍拒（RFC 7617）
+- [Phase ?]: [Phase 03-03]: logEvent 提为包级函数——plan 指定的 basicAuth 三参自由函数签名需调用日志唯一出口，logEvent 无 Server 状态依赖；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int）
+- [Phase ?]: [Phase 03-03]: ServeMux 方法模式内建 405 被 / 子树吞掉（GOROOT server.go:2699-2710 n==nil 分支）——显式注册 /api/attach path-only 405 fallback（Allow: POST，与内建回退同文）补齐守卫链第一闸（Rule 1）
+- [Phase ?]: [Phase 03-03]: TestOriginEndpoints 全 HTTP 层拒绝场景共用单实例（零 attach 零终结路径，waitExit 结构性不可达）；captureStderr 复用 limits_test.go 既有 helper；originMiddleware 落位 origin.go 与 originAllowed 内聚
 
 ### Pending Todos
 
@@ -126,6 +130,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-17T07:47:19.161Z
-Stopped at: Completed 03-02-PLAN.md
+Last session: 2026-08-17T08:52:44.619Z
+Stopped at: Completed 03-03-PLAN.md
 Resume file: None
