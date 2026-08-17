@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sworda/wesh/internal/server"
 )
 
 // TestParseArgs 表驱动锁定 CLI 解析契约：
@@ -188,6 +190,88 @@ func TestNoCommandError(t *testing.T) {
 		if !strings.Contains(out, "usage: wesh [flags] -- <cmd> [args...]") {
 			t.Errorf("run(%v) stderr = %q, want usage line", args, out)
 		}
+	}
+}
+
+// TestStartupMatrix（D-03/D-05，RESEARCH Pattern 7 八行矩阵）：直调 validateStartup
+// 纯函数全覆盖。wantErr 行断言与 RESEARCH 逐字一致的拒绝文案；wantWarnSub 行断言
+// 警告非空且含对应逃生门 flag 名（D-03/D-05 显式确认语义）；全部行断言 warn/err
+// 不含凭据值——SEC-01 日志红线延伸到启动面（启动输出任何形态不得泄露凭据）。
+func TestStartupMatrix(t *testing.T) {
+	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	creds := []server.Credential{cred}
+	tests := []struct {
+		name        string
+		cfg         config
+		wantErrSub  string // 非空 = 拒绝启动，文案须含此子串
+		wantWarnSub string // 非空 = 放行但 stderr 醒目警告须含此子串（逃生门 flag 名）
+	}{
+		// loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05 现状保持）。
+		{"loopback no creds plaintext", config{bind: "127.0.0.1"}, "", ""},
+		{"loopback creds plaintext", config{bind: "127.0.0.1", credentials: creds}, "", ""},
+		{"loopback creds TLS", config{bind: "localhost", credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", ""},
+		// 非 loopback + 无凭据：拒绝（D-03 逐字文案），TLS 不救无凭据。
+		{"non-loopback no creds refused", config{bind: "0.0.0.0"}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", ""},
+		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", noAuth: true}, "", "--no-auth"},
+		// 非 loopback + 凭据 + 明文：拒绝（D-05 逐字文案）；逃生门放行 + 醒目警告。
+		{"non-loopback creds plaintext refused", config{bind: "0.0.0.0", credentials: creds}, "refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key", ""},
+		{"non-loopback creds plaintext insecure-http escape", config{bind: "0.0.0.0", credentials: creds, insecureHTTP: true}, "", "--insecure-http"},
+		// 非 loopback + 凭据 + TLS：最强形态免警告。
+		{"non-loopback creds TLS", config{bind: "0.0.0.0", credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warn, err := validateStartup(tt.cfg)
+			errStr := ""
+			if err != nil {
+				errStr = err.Error()
+			}
+			if tt.wantErrSub == "" && err != nil {
+				t.Errorf("validateStartup = err %v, want nil", err)
+			}
+			if tt.wantErrSub != "" {
+				if err == nil {
+					t.Errorf("validateStartup = nil err, want containing %q", tt.wantErrSub)
+				} else if !strings.Contains(errStr, tt.wantErrSub) {
+					t.Errorf("err = %q, want containing %q", errStr, tt.wantErrSub)
+				}
+				if warn != "" {
+					t.Errorf("refusal path warn = %q, want empty", warn)
+				}
+			}
+			if tt.wantWarnSub == "" && warn != "" {
+				t.Errorf("warn = %q, want empty", warn)
+			}
+			if tt.wantWarnSub != "" {
+				if warn == "" {
+					t.Errorf("warn empty, want containing escape-hatch flag %q", tt.wantWarnSub)
+				} else if !strings.Contains(warn, tt.wantWarnSub) {
+					t.Errorf("warn = %q, want containing %q", warn, tt.wantWarnSub)
+				}
+			}
+			// 启动面红线：警告/拒绝文案任何形态不得含凭据值。
+			if strings.Contains(warn, "matrix-secret-7d1f") || strings.Contains(errStr, "matrix-secret-7d1f") {
+				t.Errorf("startup output leaks credential value: warn=%q err=%q", warn, errStr)
+			}
+		})
+	}
+}
+
+// TestStartupRefusalNoResource（D-03 拒绝路径零资源占用）：默认 bind 0.0.0.0 无
+// 凭据时 run 必须先于 pty.Start/net.Listen 返回非零 + stderr 含拒绝文案——正常
+// 快速返回即证明未 spawn 未 listen（误启动监听会 hang 或经 lifecycle os.Exit，
+// TestNoCommandError 同构纪律）。t.Setenv 隔离宿主 WESH_CREDENTIAL 兜底干扰。
+func TestStartupRefusalNoResource(t *testing.T) {
+	t.Setenv("WESH_CREDENTIAL", "")
+	code, out := captureFd(t, &os.Stderr, func() int { return run([]string{"--", "true"}) })
+	if code == 0 {
+		t.Error("run(-- true) = 0, want non-zero (startup refusal)")
+	}
+	if !strings.Contains(out, "refusing to listen on non-loopback address without credentials") {
+		t.Errorf("run(-- true) stderr = %q, want D-03 refusal text", out)
 	}
 }
 
