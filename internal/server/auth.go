@@ -79,7 +79,7 @@ func matchCredential(creds []Credential, user, pass string) bool {
 //
 // 红线（SEC-01）：凭据/Authorization 头任何形态（含 base64）永不入日志参数——
 // logEvent 三要素只有 remote/code/reason；HTTP 层事件 code 复用 HTTP 状态码值
-//（websocket.StatusCode 底层 int，三要素结构不变，PATTERNS Shared Patterns 裁决）。
+// （websocket.StatusCode 底层 int，三要素结构不变，PATTERNS Shared Patterns 裁决）。
 // Hello 侧节流闸仍用 allow（无 Retry-After 需求），两处闸共享同一 store（D-08）。
 // 401/403/429 body 恒为通用文案——不回显用户名、Origin 值或任何请求细节。
 func basicAuth(next http.Handler, creds []Credential, th *throttleStore) http.Handler {

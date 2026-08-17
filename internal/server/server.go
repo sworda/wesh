@@ -163,7 +163,7 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 
 // Handler 挂三条路由：/ 走 go:embed 静态伺服，/ws 走 Attach，POST /api/attach
 // 走 ticket 签发。认证模式（D-02 整站 Basic）：/ 与 /api/attach 挂 basicAuth
-//（/ws 不挂——ticket 即其认证）；/api/attach 守卫链 = 非 POST 405（方法模式 +
+// （/ws 不挂——ticket 即其认证）；/api/attach 守卫链 = 非 POST 405（方法模式 +
 // 显式同文 fallback，见下）→ Origin 403 → 节流 429 → Basic 401 → 签发 200。
 // 无认证模式 /api/attach 显式注册 404（前端探测信号：跳过 fetch 直连 WS；
 // 显式注册避免依赖静态 handler 对 POST 的偶发行为，RESEARCH Pattern 1 决策）。

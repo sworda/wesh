@@ -96,13 +96,13 @@ func dialHelloTicketWantAuthFailed(t *testing.T, ctx context.Context, wsURL, tic
 
 // TestAttachFlow（03-03 tracer）：认证主链路端到端——401 无凭据 → sleep 过窗 →
 // 401 错凭据（与无凭据同文，无枚举 oracle）→ sleep 过窗 → 200 正确凭据取 ticket
-//（Cache-Control: no-store）→ Hello 核销 → Welcome{mode:"rw"}（D-11 ticket 绑定
+// （Cache-Control: no-store）→ Hello 核销 → Welcome{mode:"rw"}（D-11 ticket 绑定
 // = 全局 writable）→ 正常关闭 → waitExit(0)。单一 happy path 证明
 // Basic → ticket → Hello → Welcome 全链路可达（ROADMAP 准则 1 行为落地）。
 //
 // ThrottleBase 必须注入 ms 级覆写：本编排含 ≥2 次连续失败请求，生产默认 base=1s
 // 下 #1 的 401 会使该 IP 进入 1s 窗口，后续请求确定性 429 而非预期断言形态
-//（镜像 TestThrottleHTTP 的 pacing 模式）。
+// （镜像 TestThrottleHTTP 的 pacing 模式）。
 func TestAttachFlow(t *testing.T) {
 	cred, err := server.ParseCredential("uat-alice:correct-horse")
 	if err != nil {
@@ -189,7 +189,7 @@ func TestAttachFlow(t *testing.T) {
 // 但表内无键）→ 首帧 Error{auth_failed} → 1008 且 close reason 同名机器串。
 // wire 级非法 ticket 与重放（已删除键）走同一代码路径——重放拒绝由此路径 +
 // 03-01 ticketStore 单元测重放 false + 03-06 UAT 端到端三层组合证明
-//（单会话模型约束下 wire 级重放不可构造，plan objective 裁决）。
+// （单会话模型约束下 wire 级重放不可构造，plan objective 裁决）。
 func TestTicketInvalid(t *testing.T) {
 	cred, err := server.ParseCredential("uat-bob:hunter2-pass")
 	if err != nil {
@@ -482,7 +482,7 @@ func TestLogRedaction(t *testing.T) {
 // recordFail、notBefore 不延长）→ sleep 450ms 过 400ms 窗 →
 // 正确凭据 → 200（recordSuccess 清零生效）→ 紧接错凭据 → 401（级数从 base
 // 重启，fail#1 仍可请求）→ sleep 250ms 过窗 → 末次正确凭据 → 200 收口
-//（避开 +200ms 窗口防 429；清零防状态污染——每测试独立实例）。
+// （避开 +200ms 窗口防 429；清零防状态污染——每测试独立实例）。
 // 本测试只验 HTTP 层：不 dial WS，exitf 不断言。
 func TestThrottleHTTP(t *testing.T) {
 	cred, err := server.ParseCredential("th-erin:throttle-pass")
@@ -601,9 +601,9 @@ func TestThrottleHelloSharedCounter(t *testing.T) {
 }
 
 // TestOriginEndpoints（SEC-04，D-12/D-13 双端点执行）：--origin 等效装配
-//（Origins: ["https://portal.example"] 已规范化形态 + ThrottleBase:50ms——
+// （Origins: ["https://portal.example"] 已规范化形态 + ThrottleBase:50ms——
 // /api/attach 侧 g)→h) 为连续失败编排需 pacing）。全部场景均为 HTTP 层拒绝
-//（400/403/401，零 attach）——无终结路径触发，WS 与 HTTP 场景共用一个实例，
+// （400/403/401，零 attach）——无终结路径触发，WS 与 HTTP 场景共用一个实例，
 // exitf 不断言（注释钉死，区别于单会话约束需独立实例的成功握手场景）。
 //
 // /ws 侧（⓪ 守卫 + 库 OriginPatterns 二次校验）：
@@ -682,7 +682,7 @@ func TestOriginEndpoints(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("attach no-origin status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
 	}
-	time.Sleep(100 * time.Millisecond) // 过窗（fail#1 窗口 = 50ms）
+	time.Sleep(100 * time.Millisecond)                                                                         // 过窗（fail#1 窗口 = 50ms）
 	resp = postAttach(t, url, "or-grace", "wrong-pass", map[string]string{"Origin": "https://portal.example"}) // h) 白名单源
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()

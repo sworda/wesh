@@ -202,14 +202,14 @@ func dialHelloTicket(t *testing.T, ctx context.Context, wsURL string, ticket str
 }
 
 // attachURL 把 startTestServerWith 返回的 /ws URL 映射为 /api/attach 的 http URL
-//（ws:// → http://  scheme 替换 + /ws → /api/attach 路径替换）。
+// （ws:// → http://  scheme 替换 + /ws → /api/attach 路径替换）。
 func attachURL(wsURL string) string {
 	return strings.TrimSuffix(strings.Replace(wsURL, "ws://", "http://", 1), "/ws") + "/api/attach"
 }
 
 // postAttach 发 POST /api/attach 并返回响应（调用方负责读取并 Close body）。
 // user/pass 均为空串时跳过 SetBasicAuth（无凭据负例开关）；headers 逐对注入
-//（Origin 等场景头）。请求体恒空（D-11），大 body 负例由调用方自建请求。
+// （Origin 等场景头）。请求体恒空（D-11），大 body 负例由调用方自建请求。
 func postAttach(t *testing.T, url, user, pass string, headers map[string]string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url, nil)
