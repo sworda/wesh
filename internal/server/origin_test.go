@@ -29,6 +29,9 @@ func TestNormalizeOrigin(t *testing.T) {
 		{name: "含 userinfo 拒绝", in: "https://user@example.com", wantErr: true},
 		{name: "含 glob 星号拒绝", in: "https://*.example.com", wantErr: true},
 		{name: "含 glob 方括号拒绝", in: "https://exa[mp]le.com", wantErr: true},
+		// WR-02 裁决钉死：合法 IPv6 字面量 Origin 因 [ 命中 glob 拒绝——显式
+		// 不支持白名单配置（同源 IPv6 访问走 originAllowed ②，不受影响）。
+		{name: "IPv6 字面量 Origin 拒绝（WR-02 裁决）", in: "https://[::1]:8443", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

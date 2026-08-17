@@ -16,7 +16,10 @@ import (
 //   - scheme 仅 http/https 且 Host 非空；
 //   - path（裸 "/" 除外）/query/fragment/userinfo 任一非空即拒；
 //   - 含 glob 字符 *?[\\ 即拒——coder/websocket 的 OriginPatterns 走 path.Match
-//     glob 语义，拒掉模式字符使其退化为精确比较；
+//     glob 语义，拒掉模式字符使其退化为精确比较。已知代价（WR-02 裁决）：
+//     IPv6 字面量 Origin（如 https://[::1]:8443）因含 [ 同被拒，即 IPv6
+//     字面量不支持配置进白名单；同源 IPv6 访问经 originAllowed ② 的
+//     EqualFold(r.Host, u.Host) 命中，不受影响；
 //   - 默认端口剥离（http:80/https:443）——浏览器 Origin 序列化省略默认端口
 //     （RFC 6454），不剥则配置了 --origin https://foo.com:443 永不命中
 //     （Pitfall 3 默认端口不对称）。

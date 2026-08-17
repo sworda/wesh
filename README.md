@@ -33,7 +33,7 @@ wesh [flags] -- <cmd> [args...]
 | `--tls-key` | — | TLS 私钥文件；必须与 `--tls-cert` 成对给出 |
 | `--no-auth` | `false` | 逃生门：允许无凭据监听非 loopback 地址（显式声明"我知道我在裸奔"） |
 | `--insecure-http` | `false` | 逃生门：允许非 loopback 明文 HTTP 携带凭据（典型场景：TLS 终止型反代之后） |
-| `--origin` | — | 允许的 Origin `scheme://host[:port]`，可重复；不配则维持同源校验（无 Origin 头放行） |
+| `--origin` | — | 允许的 Origin `scheme://host[:port]`，可重复；不配则维持同源校验（无 Origin 头放行）。IPv6 字面量 Origin（如 `https://[::1]:8443`）不支持配置进白名单——同源 IPv6 访问不受影响 |
 | `--version` | — | 打印版本并退出 |
 | `--help` | — | 打印用法 |
 
