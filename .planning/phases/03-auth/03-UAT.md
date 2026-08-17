@@ -1,14 +1,20 @@
 ---
-status: pending-human
+status: testing
 phase: 03-auth
-source: [03-06-PLAN.md]
+source: [03-VERIFICATION.md]
 started: 2026-08-17T09:49:00Z
-updated: 2026-08-17T09:49:00Z
+updated: 2026-08-17T10:30:00Z
 ---
 
 ## Current Test
 
-[awaiting human verification — end-of-phase 人工确认清单]
+number: 1
+name: 凭据弹窗与缓存（准则 1 + A2 验证点）
+expected: |
+  浏览器弹**原生** Basic 登录框（非页面内自建表单）；输入一次凭据即进入终端；
+  DevTools → Network 可见 `POST /api/attach` 返回 200（同源 fetch 自动携带缓存凭据，
+  A2 假设验证点——若 401 则 D-02 流程断裂需复盘）；刷新页面不再弹窗（凭据缓存生效）
+awaiting: user response
 
 ## 自动化层说明
 
