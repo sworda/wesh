@@ -864,8 +864,8 @@ Step 2.5 Runtime State Inventory: **SKIPPED**——本 phase 为纯增量功能�
 |--------|----------|-----------|-------------------|-------------|
 | SEC-01 | 常数时间比较（正/错 user/pass、多组轮询） | unit | `go test ./internal/server/ -run TestCredentialMatch -count=1` | ❌ 新建 auth_test.go |
 | SEC-01 | 日志红线：stderr 不含 base64/凭据/ticket/Authorization | integration（os.Pipe 捕获） | `go test ./internal/server/ -run TestLogRedaction -count=1` | ❌ 新建（Pattern 8） |
-| SEC-02 | /api/attach：401/405/429/200+JSON+no-store | integration（httptest 级） | `go test ./internal/server/ -run TestAttachEndpoint -count=1` | ❌ 新建 auth_test.go |
-| SEC-02 | ticket 单次使用：重放同一 ticket → auth_failed+1008 | e2e（WS 握手级） | `go test ./internal/server/ -run TestTicketReplay -count=1` | ❌ 新建 |
+| SEC-02 | /api/attach：401/405/429/200+JSON+no-store | integration（黑盒 server_test） | `go test ./internal/server/ -run TestAttachEndpoint -count=1` | ❌ 新建 auth_e2e_test.go（黑盒拆分——集成测依赖 server_test 包 helper，03-03 裁决） |
+| SEC-02 | ticket 单次使用：重放拒绝由三层组合证明——ticketStore 单元重放 false + wire 级非法 ticket auth_failed（重放即已删除键同一代码路径）+ UAT 端到端（单会话模型下 wire 级重放不可构造，03-03 objective 裁决） | unit + e2e + UAT | `go test ./internal/server/ -run 'TestTicketStore\|TestTicketInvalid' -count=1` | ❌ 新建 tickets_test.go / auth_e2e_test.go |
 | SEC-02 | ticket 60s TTL 过期拒绝（Options 注入短 TTL） | e2e | `go test ./internal/server/ -run TestTicketExpiry -count=1` | ❌ 新建 |
 | SEC-03 | 爆破 N 次 → 429+Retry-After；成功清零；Hello 失败同计数器 | integration（Options 注入 ms 级 base） | `go test ./internal/server/ -run TestThrottle -count=1` | ❌ 新建 throttle_test.go |
 | SEC-04 | /ws 与 /api/attach：无 Origin 放行/同源放行/白名单放行/邪恶源 403/null 拒绝 | integration | `go test ./internal/server/ -run TestOrigin -count=1` | ❌ 新建 origin_test.go |
