@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 03
 current_phase_name: auth
 status: executing
-stopped_at: Completed 03-03-PLAN.md
-last_updated: "2026-08-17T08:53:12.480Z"
+stopped_at: Completed 03-04-PLAN.md
+last_updated: "2026-08-17T09:23:53.453Z"
 last_activity: 2026-08-17
 last_activity_desc: Phase 3 planning complete
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-15)
 ## Current Position
 
 Phase: 03 (auth) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-08-17 — Phase 03 execution started
 
-Progress: [████████░░] 82%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -73,6 +73,7 @@ Progress: [████████░░] 82%
 | Phase 03 P01 | 18min | 3 tasks | 6 files |
 | Phase 03 P02 | 15min | 3 tasks | 7 files |
 | Phase 03-auth P03 | 52min | 3 tasks | 7 files |
+| Phase 03 P04 | 18min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -112,6 +113,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 03-03]: logEvent 提为包级函数——plan 指定的 basicAuth 三参自由函数签名需调用日志唯一出口，logEvent 无 Server 状态依赖；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int）
 - [Phase ?]: [Phase 03-03]: ServeMux 方法模式内建 405 被 / 子树吞掉（GOROOT server.go:2699-2710 n==nil 分支）——显式注册 /api/attach path-only 405 fallback（Allow: POST，与内建回退同文）补齐守卫链第一闸（Rule 1）
 - [Phase ?]: [Phase 03-03]: TestOriginEndpoints 全 HTTP 层拒绝场景共用单实例（零 attach 零终结路径，waitExit 结构性不可达）；captureStderr 复用 limits_test.go 既有 helper；originMiddleware 落位 origin.go 与 originAllowed 内聚
+- [Phase ?]: [Phase 03-04]: parse 期校验（TLS 成对/env 凭据）插入点在 showVersion 早退之后——纯信息路径不被配置校验阻断
+- [Phase ?]: [Phase 03-04]: 启动警告串自含 wesh: warning: 前缀由 validateStartup 返回完整行；warn/err 文案不含凭据值（启动面红线，矩阵全行断言）
+- [Phase ?]: [Phase 03-04]: TestParseArgs 表结构扩展走命名字段转换——Go 位置初始化不可扩展字段的唯一调和形态，既有行值/断言零改动
 
 ### Pending Todos
 
@@ -130,6 +134,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-17T08:52:44.619Z
-Stopped at: Completed 03-03-PLAN.md
+Last session: 2026-08-17T09:23:53.439Z
+Stopped at: Completed 03-04-PLAN.md
 Resume file: None
