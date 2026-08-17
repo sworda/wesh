@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/sworda/wesh/internal/pty"
@@ -171,7 +172,9 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.bind, cfg.port))
+	// JoinHostPort 对 IPv4/主机名输出与 %s:%d 逐字相同，仅对 IPv6 字面量
+	// 加方括号（--bind ::1 拼出 [::1]:7681）——WR-01：IPv6 行为零漂移修复。
+	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.bind, strconv.Itoa(cfg.port)))
 	if err != nil {
 		// 启动失败路径回滚已 spawn 资源：Close master 后子进程（setsid 组长）
 		// 收 SIGHUP 退出，不留孤儿进程。

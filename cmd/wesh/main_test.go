@@ -41,6 +41,8 @@ func TestParseArgs(t *testing.T) {
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
+		// WR-01：IPv6 bind 值 parse 期原样接收（listen 侧由 net.JoinHostPort 加方括号）。
+		{name: "ipv6 bind", args: []string{"--bind", "::1", "--", "bash"}, wantBind: "::1", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "subcommand flag passthrough", args: []string{"--port", "7682", "--", "/bin/echo", "--version"}, wantBind: "0.0.0.0", wantPort: 7682, wantPingInterval: 5 * time.Second, wantArgv: []string{"/bin/echo", "--version"}},
 		{name: "writable flag", args: []string{"--writable", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantWritable: true, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "ping interval", args: []string{"--ping-interval", "30s", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 30 * time.Second, wantArgv: []string{"bash"}},
@@ -213,6 +215,8 @@ func TestStartupMatrix(t *testing.T) {
 		{"loopback no creds plaintext", config{bind: "127.0.0.1"}, "", ""},
 		{"loopback creds plaintext", config{bind: "127.0.0.1", credentials: creds}, "", ""},
 		{"loopback creds TLS", config{bind: "localhost", credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", ""},
+		// WR-01：IPv6 loopback（::1）与 IPv4 loopback 同等待遇——无凭据明文放行免警告。
+		{"loopback ipv6 no creds plaintext", config{bind: "::1"}, "", ""},
 		// 非 loopback + 无凭据：拒绝（D-03 逐字文案），TLS 不救无凭据。
 		{"non-loopback no creds refused", config{bind: "0.0.0.0"}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", ""},
 		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", noAuth: true}, "", "--no-auth"},
