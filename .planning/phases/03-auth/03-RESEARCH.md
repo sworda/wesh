@@ -814,20 +814,23 @@ docker run --rm -ti drwetter/testssl.sh -U <host>:<port>
 | A7 | 测试内生成自签 ECDSA 证书（crypto/x509）为 stdlib 通行测试模式 | Pitfall 9 | 低：stdlib 自身测试用 internal/testcert，外部项目等效自生成 ~40 行 |
 | A8 | loopback 判定规则（空=非 loopback、localhost=loopback、其他主机名保守非 loopback） | Pattern 7 | 低：保守方向出错=多要一个显式逃生门 flag，不削弱安全 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **"5 个新 CLI flag"与实际 6 个名字的计数口径**
+1. **"5 个新 CLI flag"与实际 6 个名字的计数口径** — RESOLVED（03-04 闭合）
    - What we know: CONTEXT domain 节写"5 个新 CLI flag"；D-01/D-03/D-04/D-05/D-12 共 5 个决策点，但注册名为 6 个（--credential/--tls-cert/--tls-key/--no-auth/--insecure-http/--origin）
    - What's unclear: 纯计数口径，无实质分歧
    - Recommendation: 按 6 个注册名实现；planner 不必回头确认
-2. **Hello 核销与 version 检查的先后顺序**
+   - Resolution: 03-04 按 6 个注册名落地（flag 注册与启动矩阵锁定）
+2. **Hello 核销与 version 检查的先后顺序** — RESOLVED（03-03 闭合）
    - What we know: D-10 要求核销失败统一 auth_failed；version_mismatch 是既有独立码（非秘密信息）
    - What's unclear: version 先查（不匹配报 version_mismatch）还是先核销
    - Recommendation: version 先查（公开协议信息，无 oracle），核销紧随其后；planner 最终定夺（CONTEXT 已授权）
-3. **HSTS max-age 取值**
+   - Resolution: 03-03 Task 1 step 7 裁决 version 先查、核销紧随其后（握手段 else-if 分支顺序锁定）
+3. **HSTS max-age 取值** — RESOLVED（03-02 闭合）
    - What we know: OWASP 推荐 63072000（2 年）；自托管工具主机名/证书生命周期短
    - What's unclear: 2 年承诺对临时实例过重（换 HTTP 后用户浏览器仍强制 HTTPS 至过期）
    - Recommendation: 按 OWASP 基线 63072000 落地（D-06 授权"按 OWASP 基线定稿"）；UAT 文档注明 HSTS 粘性风险
+   - Resolution: 03-02 按 63072000 落地（securityHeaders TLS 分支）；粘性风险提示由 03-06 的 03-UAT.md 文档化
 
 ## Environment Availability
 
