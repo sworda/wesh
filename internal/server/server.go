@@ -163,11 +163,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 
 // Handler 挂三条路由：/ 走 go:embed 静态伺服，/ws 走 Attach，POST /api/attach
 // 走 ticket 签发。认证模式（D-02 整站 Basic）：/ 与 /api/attach 挂 basicAuth
-//（/ws 不挂——ticket 即其认证）；/api/attach 守卫链 = ServeMux 方法模式 405 →
-// Origin 403 → 节流 429 → Basic 401 → 签发 200。无认证模式 /api/attach 显式
-// 注册 404（前端探测信号：跳过 fetch 直连 WS；显式注册避免依赖静态 handler 对
-// POST 的偶发行为，RESEARCH Pattern 1 决策）。最外层 securityHeaders 包裹全部
-// 路由（含 /ws，D-06）。
+//（/ws 不挂——ticket 即其认证）；/api/attach 守卫链 = 非 POST 405（方法模式 +
+// 显式同文 fallback，见下）→ Origin 403 → 节流 429 → Basic 401 → 签发 200。
+// 无认证模式 /api/attach 显式注册 404（前端探测信号：跳过 fetch 直连 WS；
+// 显式注册避免依赖静态 handler 对 POST 的偶发行为，RESEARCH Pattern 1 决策）。
+// 最外层 securityHeaders 包裹全部路由（含 /ws，D-06）。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	wh, err := web.Handler()
@@ -180,6 +180,14 @@ func (s *Server) Handler() http.Handler {
 	if len(s.credentials) > 0 {
 		mux.Handle("/", basicAuth(wh, s.credentials, s.throttle))
 		mux.Handle("POST /api/attach", originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle), s.origins))
+		// 非 POST /api/attach → 405 + Allow: POST。方法模式的内建 405 回退仅在
+		// 没有任何其它模式匹配时触发（GOROOT server.go:2699-2710 的 n==nil 分支）——
+		// 会被 "/" 子树匹配吞掉，故显式注册同文 fallback 补齐守卫链第一闸；
+		// "POST /api/attach" 比 "/api/attach" 更具体，POST 仍走上方完整链。
+		mux.HandleFunc("/api/attach", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		})
 	} else {
 		mux.Handle("/", wh)
 		mux.HandleFunc("POST /api/attach", func(w http.ResponseWriter, r *http.Request) {

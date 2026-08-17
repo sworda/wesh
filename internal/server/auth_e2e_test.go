@@ -1,7 +1,9 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -231,5 +233,239 @@ func TestNoAuthMode(t *testing.T) {
 
 	// 正常关闭 → D-11 收口。
 	c.Close(websocket.StatusNormalClosure, "")
+	waitExit(t, exitCh, 0)
+}
+
+// ====== Task 2：端点守卫链 / ticket 过期 / 日志红线 ======
+
+// TestAttachEndpoint（SEC-02 端点守卫链）：/api/attach 的 HTTP 层守卫形态——
+// a) GET → 405 + Allow: POST（ServeMux 方法模式白拿，处理器未达）；
+// b) POST 超 1KiB body → 413（MaxBytesReader 纯防御上限，D-11 请求体为空语义）；
+// c) POST 邪恶 Origin → 403 且正文不回显 Origin 值（无反射面）；
+// d) POST 正确凭据（无 Origin——D-13 非浏览器放行）→ 200 + Content-Type:
+// application/json + Cache-Control: no-store + 22 字符 ticket；
+// e) 200 响应同时携带 X-Content-Type-Options: nosniff（securityHeaders 最外层
+// 装配的横向证据）。
+// 本测试只验 HTTP 层：全程不 dial WS（无终结路径触发，exitf 不断言）；b)/d)
+// 均认证成功（recordSuccess），c) 在 basicAuth 之前 403——无失败计数编排，
+// 生产默认节流参数下无 pacing 需求。
+func TestAttachEndpoint(t *testing.T) {
+	cred, err := server.ParseCredential("ep-carol:endpoint-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	_, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		Credentials: []server.Credential{cred},
+	})
+	url := attachURL(wsURL)
+
+	// a) GET → 405 + Allow 头含 POST（方法模式在 mux 层拒绝，不进任何中间件）。
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want %d (405)", resp.StatusCode, http.StatusMethodNotAllowed)
+	}
+	if allow := resp.Header.Get("Allow"); !strings.Contains(allow, http.MethodPost) {
+		t.Fatalf("Allow = %q, want 含 POST（ServeMux 方法模式）", allow)
+	}
+
+	// b) POST 2KiB body（正确凭据）→ 413（1KiB MaxBytesReader 上限）。
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(make([]byte, 2048)))
+	if err != nil {
+		t.Fatalf("new POST request: %v", err)
+	}
+	req.SetBasicAuth("ep-carol", "endpoint-pass")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST 2KiB body: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want %d (413)", resp.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+
+	// c) POST 邪恶 Origin（正确凭据）→ 403（Origin 闸在 basicAuth 之前）且
+	// 正文不回显 Origin 值。
+	resp = postAttach(t, url, "ep-carol", "endpoint-pass", map[string]string{"Origin": "https://evil.example"})
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read 403 body: %v", err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("evil-origin status = %d, want %d (403)", resp.StatusCode, http.StatusForbidden)
+	}
+	if strings.Contains(string(body), "evil.example") {
+		t.Fatalf("403 body echoes Origin value（反射面）: %q", body)
+	}
+
+	// d)+e) POST 正确凭据（无 Origin——D-13 非浏览器放行）→ 200 三头 + ticket 形态。
+	resp = postAttach(t, url, "ep-carol", "endpoint-pass", nil)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("correct-credential status = %d, want %d (200)", resp.StatusCode, http.StatusOK)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		resp.Body.Close()
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		resp.Body.Close()
+		t.Fatalf("Cache-Control = %q, want no-store", cc)
+	}
+	if nosniff := resp.Header.Get("X-Content-Type-Options"); nosniff != "nosniff" {
+		resp.Body.Close()
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff（securityHeaders 最外层装配证据）", nosniff)
+	}
+	var issued struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode ticket response: %v", err)
+	}
+	resp.Body.Close()
+	if len(issued.Ticket) != 22 {
+		t.Fatalf("ticket length = %d, want 22（base64.RawURLEncoding(16B)）", len(issued.Ticket))
+	}
+	// 收口：d) 的 ticket 不使用——本测试只验 HTTP 层，不 dial 即无终结路径触发，直接 return。
+}
+
+// TestTicketExpiry（SEC-02 TTL/D-10）：TicketTTL=100ms 注入 → 取 ticket 后
+// sleep 200ms 过期 → Hello 携该 ticket 与非法 ticket 同口径
+// Error{auth_failed} + 1008 + reason 同名（过期不可区分，无 oracle）。
+// 真实 sleep 仅此一处——TTL 相对语义由 now 注入无法跨进程模拟；200ms 对 10s
+// 护栏余量充足。
+func TestTicketExpiry(t *testing.T) {
+	cred, err := server.ParseCredential("exp-dave:expiry-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		Credentials: []server.Credential{cred},
+		TicketTTL:   100 * time.Millisecond,
+	})
+
+	resp := postAttach(t, attachURL(wsURL), "exp-dave", "expiry-pass", nil)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("issue ticket status = %d, want %d (200)", resp.StatusCode, http.StatusOK)
+	}
+	var issued struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode ticket response: %v", err)
+	}
+	resp.Body.Close()
+	if issued.Ticket == "" {
+		t.Fatal("ticket empty in 200 response")
+	}
+
+	time.Sleep(200 * time.Millisecond) // 等 TTL 过期（100ms 的 2 倍余量）
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dialHelloTicketWantAuthFailed(t, ctx, wsURL, issued.Ticket)
+
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
+	waitExit(t, exitCh, 0)
+}
+
+// TestLogRedaction（SEC-01 红线，RESEARCH Pattern 8 定稿）：os.Pipe 捕获 stderr
+// 跑完整失败轮——(0) 正确凭据取一张 ticket 作对照样本（200，recordSuccess 清零
+// 计数器，不影响后续编排）；(a) 错凭据 → 401（fails=1，notBefore=+1s 生产默认
+// base）；(b) 立即再错凭据 → 429（窗口内第 1 次请求即命中节流——429 起于 fail 后
+// 窗口内请求，无需 sleep 确定性成立；429 短路不 recordFail 不延长窗口）；
+// (c) Hello 携非法 ticket → auth_failed（窗口内节流命中与非法 ticket 同口径，
+// D-10——事件行照出）。
+// 恢复 stderr 后断言四类禁出串：base64(错凭据)、明文错密码、已签发 ticket 值、
+// "authorization"（大小写不敏感）；正向对照：auth_failed/throttled 事件行确实
+// 在捕获中（捕获有效性证明，防空捕获假绿）。
+// 捕获复用 limits_test.go 的 captureStderr（os.Pipe 置换，进程全局不并行纪律）。
+func TestLogRedaction(t *testing.T) {
+	cred, err := server.ParseCredential("redact-user:redact-pass-9f2c")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		Credentials: []server.Credential{cred},
+	})
+	url := attachURL(wsURL)
+
+	restore := captureStderr(t)
+	defer func() { _ = restore() }() // Fatal 路径兜底恢复（幂等，正常路径二次调用空过）
+
+	// (0) 对照样本 ticket（凭据值本身不得出现在任何日志）。
+	resp := postAttach(t, url, "redact-user", "redact-pass-9f2c", nil)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("control ticket status = %d, want %d (200)", resp.StatusCode, http.StatusOK)
+	}
+	var issued struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode control ticket: %v", err)
+	}
+	resp.Body.Close()
+	ticket := issued.Ticket
+	if ticket == "" {
+		t.Fatal("control ticket empty")
+	}
+	// (a) 错凭据 → 401（fails=1，notBefore=+1s）。
+	resp = postAttach(t, url, "redact-user", "redact-WRONG-9f2c", nil)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("wrong-credential status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	// (b) 立即再错凭据 → 429（fail 后窗口内第 1 次请求即命中）。
+	resp = postAttach(t, url, "redact-user", "redact-WRONG-9f2c", nil)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("in-window status = %d, want %d (429)", resp.StatusCode, http.StatusTooManyRequests)
+	}
+	// (c) Hello 携非法 ticket → auth_failed（窗口内节流命中同口径，D-10）。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	dialHelloTicketWantAuthFailed(t, ctx, wsURL, "AAAAAAAAAAAAAAAAAAAAAA")
+	cancel()
+
+	out := restore()
+
+	// 四类禁出串（SEC-01 红线；authorization 大小写不敏感）。
+	b64Wrong := base64.StdEncoding.EncodeToString([]byte("redact-user:redact-WRONG-9f2c"))
+	if strings.Contains(out, b64Wrong) {
+		t.Errorf("stderr contains base64(credential) %q — 日志红线（ttyd server.c:142 反例）:\n%s", b64Wrong, out)
+	}
+	if strings.Contains(out, "redact-WRONG-9f2c") {
+		t.Errorf("stderr contains plaintext password — 日志红线:\n%s", out)
+	}
+	if strings.Contains(out, ticket) {
+		t.Errorf("stderr contains issued ticket value — 日志红线:\n%s", out)
+	}
+	if strings.Contains(strings.ToLower(out), "authorization") {
+		t.Errorf("stderr contains \"authorization\"（大小写不敏感）— 日志红线:\n%s", out)
+	}
+	// 正向对照：事件行确实被捕获（防空捕获假绿）。
+	if !strings.Contains(out, proto.ErrAuthFailed) {
+		t.Errorf("stderr missing auth_failed event line — 捕获失效或事件缺失:\n%s", out)
+	}
+	if !strings.Contains(out, "throttled") {
+		t.Errorf("stderr missing throttled event line — 捕获失效或事件缺失:\n%s", out)
+	}
+
+	// (c) 后服务端关 conn 落入读循环，reader 终结 → D-11 收口。
 	waitExit(t, exitCh, 0)
 }
