@@ -398,58 +398,72 @@ async function connect(): Promise<void> {
           // prefs 缺省（非对象）则整段跳过——nil 兼容（omitempty 缺席即无下发）
           const prefs = w.prefs && typeof w.prefs === 'object' ? (w.prefs as Record<string, unknown>) : null;
           if (prefs !== null) {
-            const parts = splitPrefs(prefs);
-            for (const [k, v] of Object.entries(parts.xterm)) {
-              if (queryKeys.has(k)) {
-                continue; // query 优先（D-16——queryKeys 跳过机制即优先级实现）
-              }
-              if (k === 'theme') {
-                // D-19 整体替换语义 + RESEARCH §Pitfall 3 合并修正：未指定键保留 wesh 调色板
-                // （部分 theme 不再把 tango 冲成 xterm 内建默认）；非对象 theme 值忽略 + warn
-                if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-                  term.options.theme = { ...defaultTheme, ...(v as Record<string, string>) };
-                } else {
-                  console.warn('ignoring non-object theme pref');
+            // 整段独立 try：服务端只验白名单键+合法 JSON 不验值域，本段任何异常只丢 prefs
+            // 应用，绝不拖累下方 welcomeDone/beforeunload 会话建立门（FE-06 不被单点污染）
+            try {
+              const parts = splitPrefs(prefs);
+              for (const [k, v] of Object.entries(parts.xterm)) {
+                if (queryKeys.has(k)) {
+                  continue; // query 优先（D-16——queryKeys 跳过机制即优先级实现）
                 }
-              } else {
-                // 白名单已保证键合法性，经一次收窄 cast；ITerminalOptions 运行时逐键赋值
-                // xterm 原生支持（RESEARCH §Pattern 6 核实注：OptionsService 通知各订阅方）
-                (term.options as unknown as Record<string, unknown>)[k] = v;
+                // xterm setter 对值域非法值抛异常（cursorStyle 非 block/underline/bar、
+                // lineHeight<1、scrollback<0——OptionsService._sanitizeAndValidateOption）；
+                // 逐键 try/catch 与 query 通道构造路径容错对称（其构造器逐键隔离），
+                // 单个非法键只丢该键；值内容不入日志（SEC-01 同纪律）
+                try {
+                  if (k === 'theme') {
+                    // D-19 整体替换语义 + RESEARCH §Pitfall 3 合并修正：未指定键保留 wesh 调色板
+                    // （部分 theme 不再把 tango 冲成 xterm 内建默认）；非对象 theme 值忽略 + warn
+                    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+                      term.options.theme = { ...defaultTheme, ...(v as Record<string, string>) };
+                    } else {
+                      console.warn('ignoring non-object theme pref');
+                    }
+                  } else {
+                    // 白名单已保证键合法性，经一次收窄 cast；ITerminalOptions 运行时逐键赋值
+                    // xterm 原生支持（RESEARCH §Pattern 6 核实注：OptionsService 通知各订阅方）
+                    (term.options as unknown as Record<string, unknown>)[k] = v;
+                  }
+                } catch {
+                  console.warn(`ignoring invalid pref value: ${k}`);
+                }
               }
-            }
-            // 全部应用完重算（D-13 + RESEARCH §Pitfall 7：fontSize/lineHeight/letterSpacing
-            // 改变单元格尺寸，不 fit 则 cols/rows 与视口不符远端 TUI 画错）；
-            // 既有 onResize→RESIZE 帧链路自动同步服务端
-            fit.fit();
-            // behavior 键写前端开关量（非 xterm 选项——禁止写 term.options，UI-SPEC 步骤 4）；
-            // queryKeys 同跳过；typeof boolean 校验同 query 通道（服务端只验 JSON 不验类型）；
-            // 位置必须在下方 welcomeDone/beforeunload 注册点之前——开关值在注册点已是最终态
-            for (const [k, v] of Object.entries(parts.behavior)) {
-              if (queryKeys.has(k)) {
-                continue;
+              // 全部应用完重算（D-13 + RESEARCH §Pitfall 7：fontSize/lineHeight/letterSpacing
+              // 改变单元格尺寸，不 fit 则 cols/rows 与视口不符远端 TUI 画错）；
+              // 既有 onResize→RESIZE 帧链路自动同步服务端
+              fit.fit();
+              // behavior 键写前端开关量（非 xterm 选项——禁止写 term.options，UI-SPEC 步骤 4）；
+              // queryKeys 同跳过；typeof boolean 校验同 query 通道（服务端只验 JSON 不验类型）；
+              // 位置必须在下方 welcomeDone/beforeunload 注册点之前——开关值在注册点已是最终态
+              for (const [k, v] of Object.entries(parts.behavior)) {
+                if (queryKeys.has(k)) {
+                  continue;
+                }
+                if (typeof v !== 'boolean') {
+                  console.warn(`ignoring non-boolean behavior pref: ${k}`);
+                  continue;
+                }
+                if (k === 'resizeOverlay') {
+                  resizeOverlayOn = v;
+                } else if (k === 'confirmBeforeUnload') {
+                  confirmBeforeUnloadOn = v;
+                }
               }
-              if (typeof v !== 'boolean') {
-                console.warn(`ignoring non-boolean behavior pref: ${k}`);
-                continue;
+              // OSC52（D-12：仅 --osc52 服务端可开启，只写不读——Warp CVE-2025-48725 教训）：
+              // prefs.osc52===true 且 clipboardOK（非安全上下文不加载，OSC52 惰性）时加载；
+              // readText 恒 resolve '' 而非 reject（RESEARCH §Pitfall 4：核心异步 OSC 链对
+              // rejected promise rethrow 成 unhandled rejection，resolve 空串协议完整且零泄露
+              // 同等安全）；provider 是构造第二参（§Pattern 4③；核心无内建 OSC52 handler——
+              // 不加载则惰性无害）。签名以 addon-clipboard d.ts IClipboardProvider 为准
+              if (prefs.osc52 === true && clipboardOK) {
+                const writeOnly: IClipboardProvider = {
+                  readText: (): Promise<string> => Promise.resolve(''),
+                  writeText: (_sel, text): Promise<void> => navigator.clipboard.writeText(text),
+                };
+                term.loadAddon(new ClipboardAddon(undefined, writeOnly));
               }
-              if (k === 'resizeOverlay') {
-                resizeOverlayOn = v;
-              } else if (k === 'confirmBeforeUnload') {
-                confirmBeforeUnloadOn = v;
-              }
-            }
-            // OSC52（D-12：仅 --osc52 服务端可开启，只写不读——Warp CVE-2025-48725 教训）：
-            // prefs.osc52===true 且 clipboardOK（非安全上下文不加载，OSC52 惰性）时加载；
-            // readText 恒 resolve '' 而非 reject（RESEARCH §Pitfall 4：核心异步 OSC 链对
-            // rejected promise rethrow 成 unhandled rejection，resolve 空串协议完整且零泄露
-            // 同等安全）；provider 是构造第二参（§Pattern 4③；核心无内建 OSC52 handler——
-            // 不加载则惰性无害）。签名以 addon-clipboard d.ts IClipboardProvider 为准
-            if (prefs.osc52 === true && clipboardOK) {
-              const writeOnly: IClipboardProvider = {
-                readText: (): Promise<string> => Promise.resolve(''),
-                writeText: (_sel, text): Promise<void> => navigator.clipboard.writeText(text),
-              };
-              term.loadAddon(new ClipboardAddon(undefined, writeOnly));
+            } catch {
+              console.warn('discard prefs application of WELCOME frame');
             }
           }
           // FE-06：WELCOME 处理完成——会话建立门置位（浮层驱动自此响应 resize）；
