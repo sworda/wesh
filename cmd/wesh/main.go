@@ -5,6 +5,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -167,6 +168,21 @@ func run(args []string) int {
 	if warn != "" {
 		fmt.Fprintln(os.Stderr, warn)
 	}
+	// G-03-5 根因①：TLS 证书启动预检——先于 pty.Start/net.Listen/listening 打印，
+	// 坏证书路径在零资源占用阶段报错退出（无 spawn/无 listen/无 listening 打印），
+	// 与 validateStartup「拒绝路径零资源占用」纪律一致；exit 1 与 pty.Start/
+	// net.Listen 失败路径同档（运行时 I/O 错误，非 validateStartup 的 exit 2
+	// 配置矩阵错误）。预加载的证书对留存供下方 ServeTLS 复用（单一事实源）。
+	// 红线：错误文案只含证书路径与 OS/tls 包错误（fmt %v 透传），绝不含凭据值
+	// （SEC-01 日志红线延伸到启动面，与 TestStartupMatrix 同纪律）。
+	var cert tls.Certificate
+	if cfg.tlsCert != "" {
+		cert, err = tls.LoadX509KeyPair(cfg.tlsCert, cfg.tlsKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
+			return 1
+		}
+	}
 	sess, err := pty.Start(argv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
@@ -199,11 +215,20 @@ func run(args []string) int {
 	// 否则明文 Serve（D-03/D-05 矩阵已先行约束 + 上方 stderr 醒目警告）。
 	if cfg.tlsCert != "" {
 		hs.TLSConfig = server.TLSConfig()
-		err = hs.ServeTLS(ln, cfg.tlsCert, cfg.tlsKey)
+		// G-03-5：复用上方预检加载的证书对——证书加载单一事实源，ServeTLS 不再
+		// 二次读盘；stdlib 约定 TLSConfig.Certificates 非空时 certFile/keyFile
+		// 传空串即可。
+		hs.TLSConfig.Certificates = []tls.Certificate{cert}
+		err = hs.ServeTLS(ln, "", "")
 	} else {
 		err = hs.Serve(ln)
 	}
 	if err != nil {
+		// G-03-5 根因②：serve 失败路径与 net.Listen 失败路径（上方）逐字对称
+		// 回滚——Close master 后 setsid 组长子进程收 SIGHUP 退出，不留孤儿进程。
+		// 该路径无单测故障注入手段（Serve 阻塞语义 + lifecycle os.Exit 不可在
+		// 单测驱动），以逐字对称 + 代码评审锁定（TestBadCertPreflight 注释同述）。
+		_ = sess.Close()
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
