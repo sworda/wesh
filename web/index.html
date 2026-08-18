@@ -25,9 +25,23 @@
       .status-body { margin-top: 8px; font-size: 14px; font-weight: 400; line-height: 1.5; color: #a3a3a3; }
       .status-hint { margin-top: 16px; font-size: 12px; font-weight: 400; line-height: 1.5; color: #a3a3a3; }
       .status-hint a { color: #729fcf; }
+      /* resize 浮层（FE-06 resize 期间右上角 COLSxROWS，D-17 默认开）：样式逐字按
+         UI-SPEC §Resize Overlay Spec；内容由 main.ts onResize handler 驱动显隐
+         （600ms 静止后 opacity 0，经 transition 200ms 淡出）。
+         z-index 序：浮层 900 < tooltip 901 < 状态面板 1000（终态最高层不变） */
+      #resize-overlay {
+        position: fixed; top: 8px; right: 8px;
+        padding: 4px 8px;
+        background: rgba(0, 0, 0, 0.6); color: #ffffff; border-radius: 4px;
+        font-size: 12px; font-weight: 400; line-height: 1.5;
+        /* 与 main.ts 构造选项 fontFamily 同栈（终端等宽） */
+        font-family: Menlo, Monaco, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+        pointer-events: none; user-select: none; z-index: 900;
+        transition: opacity 200ms ease;
+      }
+      #resize-overlay[hidden] { display: none; }
       /* link tooltip（FE-04 hover 展示真实 URL，D-06 钓鱼辨别）：div 由 JS 创建于 Terminal.element
-         内并带 xterm-hover class（核心 hover 路径对该 class 提前 return 防抖动）。
-         z-index 序：resize 浮层 900（04-03）< tooltip 901 < 状态面板 1000（终态最高层不变） */
+         内并带 xterm-hover class（核心 hover 路径对该 class 提前 return 防抖动） */
       .xterm-hover {
         position: fixed; padding: 4px 8px;
         background: #161616; border: 1px solid #2a2a2a; border-radius: 4px;
@@ -40,7 +54,7 @@
     </style>
   </head>
   <body>
-    <!-- 页面仅两个顶层元素：#terminal（始终存在）与 #status（默认 hidden） -->
+    <!-- 页面共三个顶层元素：#terminal（始终存在）、#status（默认 hidden）、#resize-overlay（默认 hidden，FE-06） -->
     <div id="terminal"></div>
     <div id="status" hidden>
       <div class="status-panel">
@@ -49,6 +63,8 @@
         <div class="status-hint" id="status-hint"></div>
       </div>
     </div>
+    <!-- UI-SPEC §Page Shell 增量：resize 浮层为 body 直属第三个顶层元素，默认 hidden -->
+    <div id="resize-overlay" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

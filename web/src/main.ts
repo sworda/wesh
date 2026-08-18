@@ -139,6 +139,19 @@ let retriedAuth = false; // auth_failed 静默重试仅一次的门闩（D-10；
 let isRO = false;
 // 最近一次远程标题的 sanitize 后形态——[ro] 前缀组合与 auth_failed 重试重前缀防御的单一事实源
 let remoteTitle = 'wesh';
+// FE-06 三开关量（04-05 经 query/prefs 翻转接线，本 plan 先取默认值）：
+// welcomeDone —— WELCOME 处理完成置位（浮层与离开确认的会话建立门）；
+// resizeOverlayOn —— resize 浮层默认开（D-17）；confirmBeforeUnloadOn —— 离开页面前确认默认开（D-18）
+let welcomeDone = false;
+let resizeOverlayOn = true;
+let confirmBeforeUnloadOn = true;
+
+// FE-06 离开页面前确认（D-18）：仅 preventDefault() 触发浏览器标准确认框——自定义文案
+// 被现代浏览器一律忽略故不写（MDN beforeunload_event，RESEARCH §Pattern 5 核实注）；
+// 零交互直接关页不弹框为浏览器预期语义（sticky activation，RESEARCH §Open Questions 3 已裁决接受）
+const onBeforeUnload = (e: BeforeUnloadEvent): void => {
+  e.preventDefault();
+};
 
 // CORE-03 标题单一写口（D-02 前缀恒最前 + D-04 无品牌后缀）：
 // document.title 只允许经本函数写入，sanitize 已在 onTitleChange 入口完成不可旁路
@@ -176,7 +189,22 @@ function sendResize(cols: number, rows: number): void {
   if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0) return;
   ws.send(concat(new Uint8Array([RESIZE]), enc.encode(JSON.stringify({ cols, rows }))));
 }
-term.onResize(({ cols, rows }) => sendResize(cols, rows));
+let overlayTimer: number | undefined;
+term.onResize(({ cols, rows }) => {
+  sendResize(cols, rows);
+  // FE-06 resize 浮层：welcomeDone && resizeOverlayOn 双门——onopen 初次 fit 不触发
+  //（welcomeDone 门：浮层是会话辅助不是启动尺寸指示器）；ro 模式同样显示
+  //（ro 下 RESIZE 帧本就放行，P2 协议基线）
+  if (!welcomeDone || !resizeOverlayOn) return;
+  const overlay = document.getElementById('resize-overlay')!;
+  overlay.textContent = `${cols}x${rows}`; // 服务端钳制 1000×1000 → 最长 9 字符无溢出（UI-SPEC §Resize Overlay Spec）
+  overlay.hidden = false;
+  overlay.style.opacity = '1';
+  clearTimeout(overlayTimer);
+  overlayTimer = window.setTimeout(() => {
+    overlay.style.opacity = '0'; // 静止 600ms 后置 0，经 transition 200ms 淡出
+  }, 600);
+});
 let timer: number | undefined;
 window.addEventListener('resize', () => {
   clearTimeout(timer);
@@ -316,6 +344,13 @@ async function connect(): Promise<void> {
             // WELCOME 不产生 '[ro] [ro] …' 双重前缀（D-02 前缀恒最前的回归意图）
             setTitle();
           }
+          // FE-06：WELCOME 处理完成——会话建立门置位（浮层驱动自此响应 resize）；
+          // 条件注册 beforeunload（默认开 ro 同启，D-18；04-05 在本注册点之前接入
+          // query/prefs 开关翻转——从本 plan 起即为开关驱动形态）
+          welcomeDone = true;
+          if (confirmBeforeUnloadOn) {
+            window.addEventListener('beforeunload', onBeforeUnload);
+          }
         } catch {
           console.warn('discard malformed WELCOME frame');
         }
@@ -367,6 +402,9 @@ async function connect(): Promise<void> {
   // reason 是库内字符串不可控，RESEARCH Anti-Patterns）；1006 永不作为分派依据
   //（RFC6455 §7.4，无码异常断开落 default）。
   sock.onclose = (ev) => {
+    // WS close 任意路径移除 beforeunload——含状态面板展示后与 auth_failed 重试前；
+    // Session ended 后关页不再被拦截（D-18）；重试成功的新 WELCOME 会按开关重注册，无残留无双重
+    window.removeEventListener('beforeunload', onBeforeUnload);
     // auth_failed 守卫（D-10）：ticket 60s 过期是正常场景（页面放置超 TTL）——
     // 静默重取 ticket 重试一次；重试再失败时 retriedAuth 已置位，落下方 switch 的
     // 1008 分支展示 lastError.message（非无限循环，T-03-25 缓解）
