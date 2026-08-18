@@ -31,15 +31,18 @@ type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
 
-	// New 装配期固化、运行期只读，故五个 plain 字段无需 atomic：
+	// New 装配期固化、运行期只读，故六个 plain 字段无需 atomic：
 	// writable 为 D-13 ro 门读端；helloTimeout 为 D-04 未认证超时时长；
 	// maxHalfOpenPerIP 为 D-04 per-IP 半开上限；pingInterval/pongTimeout 为
-	// D-16 保活参数（均 Options 注入）。
+	// D-16 保活参数（均 Options 注入）；
+	// clientPrefs 为 P4 D-13 客户端偏好 blob（Welcome 内嵌一次性下发，空 = 不出
+	// prefs 键）——服务端不透明透传不解析（白名单/JSON 校验已在 parse 期完成）。
 	writable         bool
 	helloTimeout     time.Duration
 	maxHalfOpenPerIP int
 	pingInterval     time.Duration
 	pongTimeout      time.Duration
+	clientPrefs      json.RawMessage
 
 	// 认证与传输安全装配（Phase 3，均 New 装配期固化、运行期只读）：
 	// credentials 为 D-02 整站 Basic 凭据集（空 = 无认证模式）；
@@ -81,6 +84,9 @@ type Server struct {
 // 正交——--origin 无凭据也生效；TLS 仅驱动 HSTS 分支，D-06）；
 // TicketTTL/ThrottleBase/ThrottleCap 为测试可覆写字段（零值各取
 // defaultTicketTTL/defaultThrottleBase/defaultThrottleCap）。
+// Phase 4 新增：ClientPrefs 为生产直传字段（main 经 aggregateClientPrefs 聚合
+// --client-option + --osc52，P4 D-13 Welcome 内嵌一次性下发；空 = 不下发——
+// 服务端对 prefs 不透明透传不解析，白名单/JSON 校验已在 --client-option parse 期完成）。
 type Options struct {
 	Writable         bool
 	PingInterval     time.Duration
@@ -93,6 +99,7 @@ type Options struct {
 	TicketTTL        time.Duration
 	ThrottleBase     time.Duration
 	ThrottleCap      time.Duration
+	ClientPrefs      json.RawMessage
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -136,6 +143,7 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		halfOpen:         halfOpenCounter{n: make(map[string]int)},
 		credentials:      opts.Credentials,
 		tlsOn:            opts.TLS,
+		clientPrefs:      opts.ClientPrefs,
 	}
 	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
 	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
@@ -421,7 +429,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// Resize（消除 80x24 首帧窗口）→ per-IP release（Hello 完成即不计半开，
 		// D-04：NAT 场景正常浏览器不受限）→ Welcome 下发 mode（D-14——认证模式取
 		// checkTicket 核销返回的 ticket 绑定值（D-11），无认证模式为其返回的
-		// s.writable 派生值）→ 16KiB 稳态档
+		// s.writable 派生值）并携 prefs（P4 D-13，空则不出键——旧前端零漂移）→ 16KiB 稳态档
 		// （SetReadLimit 经库 atomic store 下一条消息起生效，read.go:97-105）→
 		// pinger 保活（D-16）→ conn 上线。conn 刻意在握手完成后才上线：此前 OUTPUT 一律 drain——
 		// Welcome 恒为 S→C 首帧（dialHello 首帧断言无时序竞态），且未认证客户端
@@ -430,7 +438,8 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		s.sess.Resize(h.Cols, h.Rows)
 		release()
 		// Welcome 写失败不补救——连接已死，读循环下一拍收口。
-		_ = c.Write(ctx, websocket.MessageBinary, proto.WelcomeFrame(mode))
+		// Welcome 携 prefs（P4 D-13，s.clientPrefs 空则 JSON 不出 prefs 键）。
+		_ = c.Write(ctx, websocket.MessageBinary, proto.WelcomeFrame(mode, s.clientPrefs))
 		c.SetReadLimit(proto.ReadLimitPostAuth)
 		// CORE-06 保活：pinger 挂升档序列尾段（PATTERNS 注意 5），与既有单 reader
 		// 循环并发装配——库硬性要求 Ping 必须与 Reader 并发（conn.go:218-220），

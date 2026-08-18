@@ -60,7 +60,7 @@ func TestDecodeHello(t *testing.T) {
 // TestWelcomeFrameErrorFrame 锁定 S→C 控制帧组帧形状：
 // 1 字节类型 + JSON 载荷，解码往返后字段精确相等。
 func TestWelcomeFrameErrorFrame(t *testing.T) {
-	wf := WelcomeFrame(ModeRO)
+	wf := WelcomeFrame(ModeRO, nil)
 	if len(wf) == 0 || wf[0] != Welcome {
 		t.Fatalf("WelcomeFrame[0] = %#x, want 'W'(%#x)", wf[0], Welcome)
 	}
