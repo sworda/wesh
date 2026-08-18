@@ -1,7 +1,9 @@
 package proto
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"testing"
 )
@@ -86,6 +88,58 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 	}
 	if ep.Message != msg {
 		t.Errorf("ErrorFrame message = %q, want %q", ep.Message, msg)
+	}
+
+	// P4 D-13：prefs 往返与 omitempty 缺席两回归锁（各自独立 subtest，回归可定位）。
+	t.Run("prefs round-trip", func(t *testing.T) {
+		wf := WelcomeFrame(ModeRW, json.RawMessage(`{"fontSize":16,"resizeOverlay":false}`))
+		var wp WelcomePayload
+		if err := json.Unmarshal(wf[1:], &wp); err != nil {
+			t.Fatalf("WelcomeFrame prefs payload unmarshal: %v", err)
+		}
+		if string(wp.Prefs) != `{"fontSize":16,"resizeOverlay":false}` {
+			t.Errorf("WelcomeFrame prefs = %s, want %s", wp.Prefs, `{"fontSize":16,"resizeOverlay":false}`)
+		}
+	})
+	t.Run("prefs omitted when nil (omitempty)", func(t *testing.T) {
+		// 旧前端零漂移回归锁：nil prefs 组帧后帧体无 "prefs" 键（P2 D-02 加字段纪律）。
+		wf := WelcomeFrame(ModeRO, nil)
+		if bytes.Contains(wf, []byte("prefs")) {
+			t.Errorf("WelcomeFrame(ModeRO, nil) = %s, must not contain %q key", wf[1:], "prefs")
+		}
+	})
+}
+
+// TestValidClientOptionKey 表驱动锁定客户端偏好白名单（P4 D-14）：恰 10 键通过；
+// osc52（D-12 安全不对称——只能经服务端 --osc52 开启）、allowProposedApi（危险面
+// 注入）、空串、大小写变体（fontsize——大小写敏感）与任意未知键一律拒绝。
+func TestValidClientOptionKey(t *testing.T) {
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"fontSize", true},
+		{"fontFamily", true},
+		{"cursorBlink", true},
+		{"cursorStyle", true},
+		{"scrollback", true},
+		{"lineHeight", true},
+		{"letterSpacing", true},
+		{"theme", true},
+		{"resizeOverlay", true},
+		{"confirmBeforeUnload", true},
+		{"osc52", false},            // D-12：安全敏感项只能经服务端 --osc52 开启
+		{"allowProposedApi", false}, // D-14：危险面结构性排除
+		{"", false},
+		{"fontsize", false}, // 大小写敏感
+		{"fontWeight", false},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("key=%q", tt.key), func(t *testing.T) {
+			if got := ValidClientOptionKey(tt.key); got != tt.want {
+				t.Errorf("ValidClientOptionKey(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
 	}
 }
 

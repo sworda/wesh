@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -21,7 +22,8 @@ import (
 // D-16 --ping-interval 默认 5s，显式传值解析 Duration，0 = 禁用保活；
 // Phase 3：D-01 --credential 可重复（计数断言——摘要不导出，计数即契约）、
 // D-04 --tls-cert/--tls-key 成对装配、D-12 --origin parse 期规范化
-// （小写 host + 剥默认端口）、D-03/D-05 两逃生门默认 false。
+// （小写 host + 剥默认端口）、D-03/D-05 两逃生门默认 false；
+// Phase 4：P4 D-15 --client-option 可重复（计数断言）、P4 D-12 --osc52 默认 false。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
@@ -39,7 +41,11 @@ func TestParseArgs(t *testing.T) {
 		wantNoAuth       bool
 		wantInsecureHTTP bool
 		wantOrigins      []string // D-12：断言规范化后形态
-		wantArgv         []string
+		// P4：照 wantCredentials 先例的计数断言（clientOption.value 是
+		// json.RawMessage，计数即契约）；wantOSC52 直断言布尔。
+		wantClientOptions int  // P4 D-15：--client-option 组数
+		wantOSC52         bool // P4 D-12：--osc52 默认 false
+		wantArgv          []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -53,6 +59,8 @@ func TestParseArgs(t *testing.T) {
 		{name: "tls cert key pair", args: []string{"--tls-cert", "/tmp/cert.pem", "--tls-key", "/tmp/key.pem", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantTLSCert: "/tmp/cert.pem", wantTLSKey: "/tmp/key.pem", wantArgv: []string{"bash"}},
 		{name: "origin normalized", args: []string{"--origin", "https://EXAMPLE.com:443", "--origin", "http://Foo.bar:8080", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantOrigins: []string{"https://example.com", "http://foo.bar:8080"}, wantArgv: []string{"bash"}},
 		{name: "escape hatches", args: []string{"--no-auth", "--insecure-http", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantNoAuth: true, wantInsecureHTTP: true, wantArgv: []string{"bash"}},
+		{name: "client options", args: []string{"--client-option", "fontSize=16", "--client-option", "cursorBlink=false", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantClientOptions: 2, wantArgv: []string{"bash"}},
+		{name: "osc52 flag", args: []string{"--osc52", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantOSC52: true, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,6 +97,12 @@ func TestParseArgs(t *testing.T) {
 			}
 			if !reflect.DeepEqual(cfg.origins, tt.wantOrigins) {
 				t.Errorf("origins = %v, want %v", cfg.origins, tt.wantOrigins)
+			}
+			if len(cfg.clientOptions) != tt.wantClientOptions {
+				t.Errorf("clientOptions count = %d, want %d", len(cfg.clientOptions), tt.wantClientOptions)
+			}
+			if cfg.osc52 != tt.wantOSC52 {
+				t.Errorf("osc52 = %v, want %v", cfg.osc52, tt.wantOSC52)
 			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
@@ -159,6 +173,91 @@ func TestTLSKeyPairError(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestClientOptionError（P4 D-14/D-15 + SEC-01 启动面红线）：--client-option 的
+// 非白名单 key（含 osc52——D-12 安全不对称，安全敏感项只能经服务端 --osc52 开启）、
+// 非法 JSON 值、缺 '=' 均在 parse 期报错（照 TestTLSKeyPairError 错误子串表形态）。
+// 红线断言：err.Error() 只含 key 名与错误类别，不含值内容（值内容禁入错误串——
+// "not valid JSON" 子串本身合法，禁入的是用户给的值）。missing-equals 行无值可禁
+// （回显的 s 即 key 位），forbiddenSub 置空跳过。
+func TestClientOptionError(t *testing.T) {
+	t.Setenv("WESH_CREDENTIAL", "")
+	tests := []struct {
+		name         string
+		args         []string
+		wantSub      string
+		forbiddenSub string // 值内容禁入错误串（SEC-01 启动面红线延伸）
+	}{
+		{"bad key", []string{"--client-option", "allowProposedApi=true", "--", "bash"}, "invalid --client-option key", "true"},
+		{"bad JSON", []string{"--client-option", "fontSize=abc", "--", "bash"}, "not valid JSON", "abc"},
+		{"osc52 key rejected (D-12)", []string{"--client-option", "osc52=true", "--", "bash"}, "invalid --client-option key", "true"},
+		{"missing equals", []string{"--client-option", "fontSize", "--", "bash"}, "must be key=value", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := parseArgs(tt.args)
+			if err == nil {
+				t.Fatalf("parseArgs(%v) = nil error, want containing %q", tt.args, tt.wantSub)
+			}
+			if !strings.Contains(err.Error(), tt.wantSub) {
+				t.Errorf("parseArgs(%v) error = %q, want containing %q", tt.args, err, tt.wantSub)
+			}
+			if tt.forbiddenSub != "" && strings.Contains(err.Error(), tt.forbiddenSub) {
+				t.Errorf("parseArgs(%v) error = %q, must not contain value content %q", tt.args, err, tt.forbiddenSub)
+			}
+		})
+	}
+}
+
+// TestAggregateClientPrefs（P4 D-13 聚合语义表）：零配置 → nil（Welcome JSON 不出
+// prefs 键，旧前端零漂移）；keys + osc52=true → 含各 key 值与 osc52:true；同 key
+// 重复 → last-wins。断言经 json.Unmarshal 为 map 进行（不逐字节——map marshal
+// 键序确定性不依赖断言顺序）。各语义独立 subtest，回归可定位。
+func TestAggregateClientPrefs(t *testing.T) {
+	t.Run("zero config returns nil", func(t *testing.T) {
+		if got := aggregateClientPrefs(nil, false); got != nil {
+			t.Errorf("aggregateClientPrefs(nil, false) = %s, want nil (no prefs key on wire)", got)
+		}
+	})
+	t.Run("keys and osc52 merged", func(t *testing.T) {
+		opts := []clientOption{
+			{key: "fontSize", value: json.RawMessage("18")},
+			{key: "theme", value: json.RawMessage(`{"background":"#000"}`)},
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(aggregateClientPrefs(opts, true), &m); err != nil {
+			t.Fatalf("aggregate result unmarshal: %v", err)
+		}
+		if len(m) != 3 {
+			t.Errorf("prefs keys = %d, want 3 (fontSize, theme, osc52)", len(m))
+		}
+		if string(m["fontSize"]) != "18" {
+			t.Errorf("fontSize = %s, want 18", m["fontSize"])
+		}
+		if string(m["theme"]) != `{"background":"#000"}` {
+			t.Errorf("theme = %s, want %s", m["theme"], `{"background":"#000"}`)
+		}
+		if string(m["osc52"]) != "true" {
+			t.Errorf("osc52 = %s, want true (D-12 并入)", m["osc52"])
+		}
+	})
+	t.Run("same key last-wins", func(t *testing.T) {
+		opts := []clientOption{
+			{key: "fontSize", value: json.RawMessage("14")},
+			{key: "fontSize", value: json.RawMessage("22")},
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(aggregateClientPrefs(opts, false), &m); err != nil {
+			t.Fatalf("aggregate result unmarshal: %v", err)
+		}
+		if len(m) != 1 {
+			t.Errorf("prefs keys = %d, want 1 (collapsed)", len(m))
+		}
+		if string(m["fontSize"]) != "22" {
+			t.Errorf("fontSize = %s, want 22 (last-wins)", m["fontSize"])
+		}
+	})
 }
 
 // captureFd 临时替换目标 *os.File（os.Stdout/os.Stderr）执行 f 并捕获其输出。
