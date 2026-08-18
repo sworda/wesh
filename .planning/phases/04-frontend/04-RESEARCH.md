@@ -455,22 +455,25 @@ term.loadAddon(new WebLinksAddon(undefined, { hover: showLinkTooltip, leave: hid
 | A3 | 纯函数单测可用 `node --test` + Node 24 内建 type stripping 跑 .ts（零新依赖） | §Validation Architecture | 若 type stripping 对所选模块布局不适用，回退手动 UAT + Go 侧覆盖（vitest 引入是更重备选） |
 | A4 | Chromium transient activation 窗口（秒级）远大于 150ms 防抖 | §Pattern 4① | 几乎无风险：防抖 150ms 相对任何实现的 activation 窗口都有两个数量级余量；写失败路径本就静默 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **theme 部分对象：合并保留 wesh 调色板 vs ttyd parity 整体替换**
    - What we know: xterm 运行时 theme 赋值对未指定键回退 xterm 内建默认（产物源码核实）；ttyd 经构造选项传入 theme 时行为相同（同一 _setTheme 路径）——"对标 ttyd" 的字面结果就是部分 theme 丢自定义调色板。
    - What's unclear: D-19 "完整 JSON 对象整体替换" 的意图是"用户应给完整对象"还是"机制上整体替换即可"。
    - Recommendation: 前端合并覆盖（`{...defaultTheme, ...incoming}`）——保留 D-19 语义且消除 surprising 面；plan 定稿，若用户在意 ttyd 严格 parity 则记文档。
+   - **RESOLVED**（Phase 4 plan 定稿，04-05 Task 2）：采纳合并——WELCOME prefs 通道 `term.options.theme = {...defaultTheme, ...prefs.theme}`，defaultTheme 常量化同源（04-05 Task 1）；query 通道构造段同形态特判（mergeTheme），两通道部分 theme 未指定键均保留 wesh tango 调色板。
 
 2. **OSC52 readText：resolve '' vs reject**
    - What we know: reject 在核心异步 OSC 链是 unhandled rejection（机制核实）；resolve '' 协议完整且安全等价。
    - What's unclear: UI-SPEC "恒 reject" 是安全意图表述还是机制指定。
    - Recommendation: resolve ''，在 UI-SPEC 修订注记；plan 定稿。
+   - **RESOLVED**（Phase 4 plan 定稿，04-05 Task 2）：采纳 resolve '' —— reject 会在 xterm 核心异步 OSC 链 rethrow 成 unhandled rejection，resolve '' 协议完整且零泄露，安全姿态相同；UI-SPEC §Clipboard Contract 已加修订注记。
 
 3. **beforeunload sticky activation 的零交互不弹框**
    - What we know: MDN 明示无用户手势不弹确认框（"no user data to save" 理据）。
    - What's unclear: 是否需要任何补偿（如页面加载即标记"会话已开始"）。
    - Recommendation: 接受浏览器语义——零交互即无会话投入，不弹合理；写入 UAT 人工确认项，不做代码补偿。
+   - **RESOLVED**（Phase 4 plan 定稿，04-06 UAT T9）：接受浏览器语义，零交互不弹框不做代码补偿，入人工 UAT 确认项（04-06 04-UAT.md T9）。
 
 ## Environment Availability
 

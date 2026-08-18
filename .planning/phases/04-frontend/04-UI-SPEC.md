@@ -161,6 +161,7 @@ IME（中文/日文输入法组合输入）不引入 addon：xterm 内部 textar
 - **粘贴**：`Ctrl+Shift+V` keydown → `navigator.clipboard.readText()` → `term.paste(text)`（走既有 onData→INPUT 帧链路，保留 bracketed paste 语义；权限由浏览器门控）。读拒绝/不可用 → `console.warn` 静默。**ro 模式不触发读剪贴板**（D-10：无谓权限弹窗）。
 - **非安全上下文降级（D-11）**：启动时检测 `navigator.clipboard` 存在性；缺失（明文 HTTP 非 localhost）则选中复制与 Ctrl+Shift+V 整体静默不生效；README 明示剪贴板需 HTTPS/localhost。
 - **OSC52（D-12）**：仅当 Welcome prefs 携 `osc52: true`（源自 CLI `--osc52`，默认关）时加载 `ClipboardAddon`，且构造传入**自定义 write-only provider**——`writeText` 委托 `navigator.clipboard.writeText`，`readText` 恒 reject（只写不读，Warp CVE-2025-48725 教训）。`osc52` 不在 URL query 白名单（安全敏感项不允许用户侧绕过服务端意图）。
+  - 修订（Phase 4 plan 定稿）：`readText` resolve `''` —— reject 会在 xterm 核心异步 OSC 链 rethrow 成 unhandled rejection；安全姿态相同（04-RESEARCH §Pitfall 4）。执行以 plan 为准。
 
 ---
 
