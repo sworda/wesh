@@ -191,6 +191,39 @@ term.onTitleChange((t) => {
   setTitle();
 });
 
+// FE-05：现代剪贴板（D-09/D-10/D-11）。clipboardOK 存在性门控——navigator.clipboard 是
+// [SecureContext] 接口，明文 HTTP 非 localhost 下属性本身 undefined，不检测即调用抛 TypeError
+//（RESEARCH §Pitfall 5）；缺失时选中复制与粘贴整体静默不生效，不落已废弃的旧 API（D-11）
+const clipboardOK = typeof navigator.clipboard !== 'undefined';
+
+// 选中即复制（D-09）：150ms trailing debounce——拖动选择期间合并只写最终选区
+//（UI-SPEC §Clipboard Contract 防抖定稿）；空选区或与上次写入相同不写；
+// 写失败（权限/焦点）.catch → console.warn 静默，不弹错不打断终端主流程（D-11）
+let selTimer: number | undefined;
+let lastCopied = '';
+term.onSelectionChange(() => {
+  if (!clipboardOK) return;
+  clearTimeout(selTimer);
+  selTimer = window.setTimeout(() => {
+    const text = term.getSelection();
+    if (text === '' || text === lastCopied) return;
+    lastCopied = text;
+    navigator.clipboard.writeText(text).catch((e) => console.warn('clipboard write failed', e));
+  }, 150);
+});
+
+// Ctrl+Shift+V 粘贴（D-10）：clipboardOK 与 isRO 双门——ro 下 INPUT 本就被服务端丢弃，
+// 读剪贴板只会换来无谓权限弹窗；preventDefault 阻断浏览器原生粘贴路径防双重粘贴；
+// term.paste 保留 bracketed paste 语义走既有 onData→INPUT 链路（RESEARCH §Pattern 4 核实注：
+// 产物 paste 路径检查 bracketedPasteMode 后 triggerDataEvent）；读拒绝 .catch 静默
+window.addEventListener('keydown', (e) => {
+  if (!clipboardOK || isRO) return;
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'v') {
+    e.preventDefault();
+    navigator.clipboard.readText().then((t) => term.paste(t)).catch((err) => console.warn('clipboard read failed', err));
+  }
+});
+
 // #status 三态面板（UI-SPEC §Copywriting 逐字文案）：title/body + 提示行
 // （提示行尾部为 accent 色 <a href="">Reload this page</a> 原地刷新链接）。
 // 幂等：textContent 赋值先清空子节点再重建，onerror/onclose 双触发不重复渲染。
