@@ -17,6 +17,13 @@ test('DEL(U+007F) 与 C1(U+0080-009F) 被剥离', () => {
   assert.equal(sanitizeTitle('x\u0085y\u009fz'), 'xyz');
 });
 
+test('Cf 格式控制字符（零宽/bidi 覆盖/isolate/BOM）被剥离', () => {
+  assert.equal(sanitizeTitle('\u202emoc.live'), 'moc.live'); // RLO 视觉反转钓鱼
+  assert.equal(sanitizeTitle('a\u200bb\u200fc'), 'abc'); // ZWSP / RLM
+  assert.equal(sanitizeTitle('x\u2066y\u2069z'), 'xyz'); // bidi isolate
+  assert.equal(sanitizeTitle('\ufeffhost'), 'host'); // BOM/ZWNBSP
+});
+
 test('超出 128 code point 截断且长度恰 128', () => {
   const out = sanitizeTitle('a'.repeat(200));
   assert.equal(out.length, 128);
