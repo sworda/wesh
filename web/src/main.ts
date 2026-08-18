@@ -1,11 +1,12 @@
 import '@xterm/xterm/css/xterm.css'; // xterm 必需样式，singlefile 内联
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITerminalOptions } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 // ClipboardAddon 不在此导入——仅 WELCOME prefs osc52===true 时条件加载（04-05 随用随加，noUnusedLocals）
 import { sanitizeTitle } from './lib/title';
+import { parseQueryPrefs, splitPrefs, mergeTheme } from './lib/prefs';
 
 // 帧常量与 internal/proto/proto.go 手工对齐（D-16，两侧注释互相指路）：
 // '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error；
@@ -21,6 +22,57 @@ const OUTPUT = 0x30,
   ERROR = 0x45,
   SUBPROTOCOL = 'wesh.v1';
 
+// wesh tango 调色板常量化（RESEARCH §Pitfall 3 修正前提——运行期与构造期
+// {...defaultTheme, ...incoming} 合并需要构造时对象可引用；调色板单一事实源：
+// 构造初值、query theme 特判合并与 WELCOME prefs theme 合并三处同源）
+const defaultTheme = {
+  foreground: '#ffffff',
+  background: '#000000',
+  cursor: '#ffffff',
+  cursorAccent: '#000000',
+  selectionBackground: 'rgba(255,255,255,0.3)',
+  black: '#2e3436',
+  brightBlack: '#555753',
+  red: '#cc0000',
+  brightRed: '#ef2929',
+  green: '#4e9a06',
+  brightGreen: '#8ae234',
+  yellow: '#c4a000',
+  brightYellow: '#fce94f',
+  blue: '#3465a4',
+  brightBlue: '#729fcf',
+  magenta: '#75507b',
+  brightMagenta: '#ad7fa8',
+  cyan: '#06989a',
+  brightCyan: '#34e2e2',
+  white: '#d3d7cf',
+  brightWhite: '#eeeeec',
+} as const;
+
+// FE-07 query 通道（UI-SPEC §Prefs Contract 装配顺序步骤 1）：Terminal 构造前解析
+// location.search——白名单键经 JSON.parse 成功者记入 queryKeys（WELCOME prefs 应用时跳过，
+// 优先级 URL query > --client-option > 内置默认，D-16）并作构造选项初值；
+// 非法 JSON/白名单外键静默忽略 + console.warn（用户侧输入不该让终端不可用，D-16）
+const query = parseQueryPrefs(location.search);
+// WELCOME prefs 应用段经 queryKeys 跳过 query 已设键——export 防 noUnusedLocals 在接线前误报
+export const queryKeys = query.keys;
+for (const k of query.invalid) {
+  console.warn('ignoring invalid query pref:', k);
+}
+const queryParts = splitPrefs(query.prefs);
+// query theme 构造特判（RESEARCH §Pitfall 3 修正覆盖 query 通道——部分 theme 丢调色板问题
+// 不止 WELCOME 路径，两通道行为须一致）：部分 theme 与 defaultTheme 合并后作构造 theme，
+// 未指定键保留 tango 调色板；非对象 theme 值中和为默认调色板（D-16 容错终端不挂）
+if ('theme' in queryParts.xterm) {
+  const merged = mergeTheme(defaultTheme, queryParts.xterm.theme);
+  if (merged !== null) {
+    queryParts.xterm.theme = merged;
+  } else {
+    console.warn('ignoring non-object query theme, falling back to default palette');
+    queryParts.xterm.theme = defaultTheme;
+  }
+}
+
 // Terminal Options 按 UI-SPEC §Terminal Options Contract 逐项显式钉死，不依赖库默认值
 const term = new Terminal({
   fontSize: 14,
@@ -34,29 +86,10 @@ const term = new Terminal({
   cursorBlink: true, // 有意覆盖 xterm 默认 false——闪烁光标是输入点的关键可见性提示
   scrollback: 10000,
   allowTransparency: false,
-  theme: {
-    foreground: '#ffffff',
-    background: '#000000',
-    cursor: '#ffffff',
-    cursorAccent: '#000000',
-    selectionBackground: 'rgba(255,255,255,0.3)',
-    black: '#2e3436',
-    brightBlack: '#555753',
-    red: '#cc0000',
-    brightRed: '#ef2929',
-    green: '#4e9a06',
-    brightGreen: '#8ae234',
-    yellow: '#c4a000',
-    brightYellow: '#fce94f',
-    blue: '#3465a4',
-    brightBlue: '#729fcf',
-    magenta: '#75507b',
-    brightMagenta: '#ad7fa8',
-    cyan: '#06989a',
-    brightCyan: '#34e2e2',
-    white: '#d3d7cf',
-    brightWhite: '#eeeeec',
-  },
+  theme: defaultTheme,
+  // query 的 xterm 键作构造初值（内置默认 ← query 覆盖先行，UI-SPEC 装配顺序步骤 1）；
+  // 白名单已保证键合法性，经一次收窄 cast（lib/prefs.ts 与 Go 侧 ValidClientOptionKey 同源）
+  ...queryParts.xterm as Partial<ITerminalOptions>,
 });
 
 const fit = new FitAddon();
@@ -145,6 +178,21 @@ let remoteTitle = 'wesh';
 let welcomeDone = false;
 let resizeOverlayOn = true;
 let confirmBeforeUnloadOn = true;
+
+// query 的 behavior 键即 startup 应用（typeof boolean 校验——服务端对值只验 JSON 不验类型，
+// 前端防御性应用；非布尔忽略 + console.warn）；位置在 WELCOME 分支 welcomeDone 置位与
+// beforeunload 条件注册点之前——开关值在注册点已是最终态
+for (const [k, v] of Object.entries(queryParts.behavior)) {
+  if (typeof v !== 'boolean') {
+    console.warn(`ignoring non-boolean behavior pref: ${k}`);
+    continue;
+  }
+  if (k === 'resizeOverlay') {
+    resizeOverlayOn = v;
+  } else if (k === 'confirmBeforeUnload') {
+    confirmBeforeUnloadOn = v;
+  }
+}
 
 // FE-06 离开页面前确认（D-18）：仅 preventDefault() 触发浏览器标准确认框——自定义文案
 // 被现代浏览器一律忽略故不写（MDN beforeunload_event，RESEARCH §Pattern 5 核实注）；
