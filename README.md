@@ -34,6 +34,8 @@ wesh [flags] -- <cmd> [args...]
 | `--no-auth` | `false` | 逃生门：允许无凭据监听非 loopback 地址（显式声明"我知道我在裸奔"） |
 | `--insecure-http` | `false` | 逃生门：允许非 loopback 明文 HTTP 携带凭据（典型场景：TLS 终止型反代之后） |
 | `--origin` | — | 允许的 Origin `scheme://host[:port]`，可重复；不配则维持同源校验（无 Origin 头放行）。IPv6 字面量 Origin（如 `https://[::1]:8443`）不支持配置进白名单——同源 IPv6 访问不受影响 |
+| `--client-option` | — | 客户端偏好 `key=value`，可重复；白名单键：`fontSize`/`fontFamily`/`cursorBlink`/`cursorStyle`/`scrollback`/`lineHeight`/`letterSpacing`/`theme`/`resizeOverlay`/`confirmBeforeUnload`；值为 JSON（如 `fontSize=16`、`cursorBlink=false`、`theme={"background":"#000"}`）；key 不在白名单或值非法 JSON 启动报错 |
+| `--osc52` | `false` | 开启 OSC52 剪贴板写入（只写不读，默认关）；只能经本 flag 开启——URL query 与 `--client-option` 均不可设置 |
 | `--version` | — | 打印版本并退出 |
 | `--help` | — | 打印用法 |
 
@@ -81,12 +83,20 @@ ExecStart=/usr/local/bin/wesh --tls-cert /etc/wesh/cert.pem --tls-key /etc/wesh/
 
 **TLS 验证与证书**：手动安全审计用 testssl.sh（docker）：`docker run --rm -ti drwetter/testssl.sh --protocols --std --server-defaults --header host:port`（全量漏洞扫描加 `-U`）。自签证书请走 mkcert 或私有 CA 方向。⚠️ **HSTS 粘性提示**：`max-age` 为两年——访问过 TLS 实例的浏览器在过期前会对该 host:port 强制 HTTPS，改回 HTTP 部署需清除浏览器 HSTS 缓存或更换端口。
 
-**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw"}`。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
+**前端体验（Phase 4）**：
+
+- **标题同步**：终端程序经 OSC 0/2 设置的标题同步到浏览器标签页；只读模式下 `[ro] ` 前缀恒在最前（标题多次变化前缀不丢）。标题写入前经控制字符剥离与 128 字符截断防注入。
+- **超链接**：终端输出中的 http(s) URL 自动识别为可点击链接；hover 悬停显示完整真实地址（可辨别显示文本与目标不一致的链接），单击在新标签页打开（noopener 形态）。
+- **剪贴板**：选中即复制 + `Ctrl+Shift+V` 粘贴（现代 `navigator.clipboard` API）。**需 HTTPS 或 localhost 访问**——明文 HTTP 非 localhost 下浏览器不暴露剪贴板 API，选中复制与粘贴静默不生效（终端其余功能不受影响）。只读模式不读取剪贴板（不产生权限弹窗）。OSC52 远程写剪贴板默认关闭，`--osc52` 开启后只写不读。
+- **辅助交互**：resize 期间右上角显示 `COLSxROWS` 浮层、离开页面前浏览器标准确认框拦截（均默认开；经 `--client-option resizeOverlay=false` / `confirmBeforeUnload=false` 或同名 URL query 关闭）。
+- **偏好下发与覆盖**：上表白名单键可经 `--client-option` 下发；URL query 同键覆盖（如 `?fontSize=16&cursorBlink=false`，字符串值需 JSON 引号并 URL 编码）；优先级 URL query > `--client-option` > 内置默认；`theme` 为完整 JSON 对象，未指定的色键保留内置调色板；非法 query 静默忽略（终端不受影响）。
+
+**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw","prefs":{...}?}`（`prefs` 为可选键）。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
 
 | 类型字节 | 含义 | 载荷 |
 |----------|------|------|
 | `'H'` | Hello（C→S，必须为首帧） | JSON `{"version":"wesh.v1","cols":N,"rows":N,"ticket":"..."?}`（ticket 可选，仅认证模式） |
-| `'W'` | Welcome（S→C，握手成功） | JSON `{"mode":"ro"\|"rw"}` |
+| `'W'` | Welcome（S→C，握手成功） | JSON `{"mode":"ro"\|"rw","prefs":{...}?}`（`prefs` 可选——`--client-option`/`--osc52` 下发时携带，无配置时该键缺席） |
 | `'E'` | Error（S→C） | JSON `{"code":"...","message":"..."}` |
 | `'0'` | INPUT（C→S）/ OUTPUT（S→C） | 原始字节 |
 | `'1'` | RESIZE（C→S） | JSON `{"cols":N,"rows":N}`，钳制 [1,1000] |
