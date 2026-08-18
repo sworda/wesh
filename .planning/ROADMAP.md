@@ -107,7 +107,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 脚本爆破 100 次错误凭据触发指数退避节流；凭据比较走 `crypto/subtle` 常数时间（先哈希等长）；凭据/ticket/Authorization 头任何形态不出现在任何日志（有日志脱敏测试）
   3. 不在 Origin 允许列表内的 WS 握手被拒绝；TLS 仅协商 1.2+（默认 1.3），响应含 HSTS/X-Content-Type-Options 等安全头，testssl.sh 无弱项
 
-**Plans**: 6/6 plans executed
+**Plans**: 7 plans（6 executed + 03-07 gap closure）
 **Wave 1**
 
 - [x] 03-01-PLAN.md — 协议契约增量（ErrAuthFailed/HelloPayload.Ticket）+ ticketStore（单次使用/60s TTL/mode 绑定）+ throttleStore（1s×2 封顶 30s/成功清零/惰性过期）纯组件（SEC-02/SEC-03）
@@ -125,6 +125,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [x] 03-06-PLAN.md — 收口：phase03.mjs 六场景 UAT + phase02.mjs 的 D-03 适配 + README 认证/TLS 与行为变更明示 + 03-UAT.md 人工清单 + 全量验证六段式（SEC-01..SEC-05）
+
+**Gap closure** *(UAT G-03-5，wave 1 独立可执行)*
+
+- [ ] 03-07-PLAN.md — G-03-5 闭合：TLS 证书启动预检（print-then-die 修复）+ serve 失败 sess.Close() 回滚（pty 孤儿修复）+ 文档复现命令 --writable 清扫（SEC-05/SEC-01）
 
 ### Phase 4: 前端体验
 
