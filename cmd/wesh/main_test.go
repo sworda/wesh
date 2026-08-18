@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"io"
+	"net"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -277,6 +279,66 @@ func TestStartupRefusalNoResource(t *testing.T) {
 	if !strings.Contains(out, "refusing to listen on non-loopback address without credentials") {
 		t.Errorf("run(-- true) stderr = %q, want D-03 refusal text", out)
 	}
+}
+
+// TestBadCertPreflight（G-03-5 根因①回归锁）：坏 --tls-cert/--tls-key 路径时
+// run 必须在零资源占用阶段报错退出（exit 1）——先于 pty.Start/net.Listen/
+// listening 打印三者，与 validateStartup「拒绝路径零资源占用」纪律一致
+// （exit 1 档位：运行时 I/O 错误，非 validateStartup 的 exit 2 配置矩阵错误）。
+// 两子场景共用：--bind 127.0.0.1 loopback 免 validateStartup 拦截、证书路径
+// 指向不存在文件、命令 `-- true`；t.Setenv 清空 WESH_CREDENTIAL 隔离宿主环境。
+// 两场景均即时返回即证明无 spawn/无 listen 挂起（TestStartupRefusalNoResource
+// 同构纪律——误启动监听会 hang 或经 lifecycle os.Exit，正常返回即未占用）。
+// G-03-5 根因②（serve 失败 sess.Close() 回滚）无单测故障注入手段（Serve
+// 阻塞语义 + lifecycle os.Exit 不可在单测驱动），以与 listen 失败路径
+// （main.go net.Listen 错误分支）逐字对称 + 代码评审锁定。
+func TestBadCertPreflight(t *testing.T) {
+	t.Setenv("WESH_CREDENTIAL", "")
+	args := func(port string) []string {
+		return []string{"--bind", "127.0.0.1", "--port", port,
+			"--tls-cert", "/nonexistent/cert.pem", "--tls-key", "/nonexistent/key.pem",
+			"--", "true"}
+	}
+	// 场景 A（free port，--port 0）：print-then-die 回归锁——stdout 不得含
+	// "listening on"（坏证书必须先于 listening 打印报错）；stderr 含所给
+	// cert 路径（错误文案红线：只含路径与 OS/tls 错误，SEC-01 启动面同纪律）。
+	t.Run("free port no print-then-die", func(t *testing.T) {
+		code, stdout := captureFd(t, &os.Stdout, func() int { return run(args("0")) })
+		if code != 1 {
+			t.Errorf("run = %d, want 1 (bad cert preflight refusal)", code)
+		}
+		if strings.Contains(stdout, "listening on") {
+			t.Errorf("stdout = %q, must not contain %q (print-then-die, G-03-5)", stdout, "listening on")
+		}
+		code, stderr := captureFd(t, &os.Stderr, func() int { return run(args("0")) })
+		if code != 1 {
+			t.Errorf("run = %d, want 1 (bad cert preflight refusal)", code)
+		}
+		if !strings.Contains(stderr, "/nonexistent/cert.pem") {
+			t.Errorf("stderr = %q, want containing cert path %q", stderr, "/nonexistent/cert.pem")
+		}
+	})
+	// 场景 B（occupied port）：锁预检先于 net.Listen 的顺序——测试内占住
+	// 127.0.0.1:0 取实际端口，--port 传该端口；run 仍须报证书错（stderr 含
+	// cert 路径、不含 "already in use"）。若预检晚于 listen，此处先撞地址冲突。
+	t.Run("occupied port preflight precedes listen", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("net.Listen: %v", err)
+		}
+		defer func() { _ = ln.Close() }()
+		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+		code, stderr := captureFd(t, &os.Stderr, func() int { return run(args(port)) })
+		if code != 1 {
+			t.Errorf("run = %d, want 1 (bad cert preflight refusal)", code)
+		}
+		if !strings.Contains(stderr, "/nonexistent/cert.pem") {
+			t.Errorf("stderr = %q, want containing cert path %q", stderr, "/nonexistent/cert.pem")
+		}
+		if strings.Contains(stderr, "already in use") {
+			t.Errorf("stderr = %q, must not contain %q (preflight must precede net.Listen)", stderr, "already in use")
+		}
+	})
 }
 
 // TestVersionFlag：`--version` 返回 0 且 stdout 含 wesh 与版本字符串
