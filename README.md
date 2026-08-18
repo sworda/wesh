@@ -34,7 +34,7 @@ wesh [flags] -- <cmd> [args...]
 | `--no-auth` | `false` | 逃生门：允许无凭据监听非 loopback 地址（显式声明"我知道我在裸奔"） |
 | `--insecure-http` | `false` | 逃生门：允许非 loopback 明文 HTTP 携带凭据（典型场景：TLS 终止型反代之后） |
 | `--origin` | — | 允许的 Origin `scheme://host[:port]`，可重复；不配则维持同源校验（无 Origin 头放行）。IPv6 字面量 Origin（如 `https://[::1]:8443`）不支持配置进白名单——同源 IPv6 访问不受影响 |
-| `--client-option` | — | 客户端偏好 `key=value`，可重复；白名单键：`fontSize`/`fontFamily`/`cursorBlink`/`cursorStyle`/`scrollback`/`lineHeight`/`letterSpacing`/`theme`/`resizeOverlay`/`confirmBeforeUnload`；值为 JSON（如 `fontSize=16`、`cursorBlink=false`、`theme={"background":"#000"}`）；key 不在白名单或值非法 JSON 启动报错 |
+| `--client-option` | — | 客户端偏好 `key=value`，可重复；白名单键：`fontSize`/`fontFamily`/`cursorBlink`/`cursorStyle`/`scrollback`/`lineHeight`/`letterSpacing`/`theme`/`resizeOverlay`/`confirmBeforeUnload`；值为 JSON（如 `fontSize=16`、`cursorBlink=false`、`'theme={"background":"#000"}'`——含引号的 JSON 值需整体单引号包裹，防 shell 剥引号）；key 不在白名单或值非法 JSON 启动报错 |
 | `--osc52` | `false` | 开启 OSC52 剪贴板写入（只写不读，默认关）；只能经本 flag 开启——URL query 与 `--client-option` 均不可设置 |
 | `--version` | — | 打印版本并退出 |
 | `--help` | — | 打印用法 |
