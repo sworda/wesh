@@ -1,6 +1,6 @@
 ---
 phase: 03-auth
-verified: 2026-08-17T12:39:36Z
+verified: 2026-08-18T02:41:16Z
 status: passed
 score: 7/8 must-haves verified
 behavior_unverified: 0
@@ -181,3 +181,28 @@ human_verification:
 
 _Verified: 2026-08-17T12:39:36Z_
 _Verifier: Claude (gsd-verifier)_
+
+---
+
+## Re-verification after 03-07 gap closure
+
+**Re-verified:** 2026-08-18T02:41:16Z
+**Trigger:** G-03-5 gap closure by plan 03-07 (commits de7ccbf..5620d46)
+
+### Gap closure verification
+
+| Missing item | Status | Evidence |
+|---|---|---|
+| TLS 证书预检（pty.Start/net.Listen/listening 打印三者之前，零资源占用 exit 1） | ✓ VERIFIED | TestBadCertPreflight 两场景 PASS（cmd/wesh/main_test.go，本次复跑 0.006s）；main.go:171-185 预检原位走查，stderr 实测 `wesh: open /nonexistent/cert.pem: no such file or directory`（只含路径+OS 错误，SEC-01 启动面红线守住） |
+| Serve/ServeTLS 失败 sess.Close() 回滚（与 listen 失败路径逐字对称） | ✓ VERIFIED | main.go:231 `_ = sess.Close()` 与 listen 失败路径 :197 逐字对称；:221-222 `hs.TLSConfig.Certificates = []tls.Certificate{cert}` + `ServeTLS(ln, "", "")` 证书加载单一事实源；code review Info IN-01 竞态判定可接受 |
+| 03-VERIFICATION.md / 03-UAT.md 命令 --writable | ✓ VERIFIED | grep 计数门全过（VERIFICATION `--credential user:pass --writable -- bash`=2，UAT `key.pem --writable`=1），README 零改动（git diff --quiet 通过） |
+
+### Regression spot-check
+
+- `go test ./... -race -count=1` 五包全 ok（cmd 1.0s / proto 1.0s / pty 2.0s / server 6.6s / web 1.0s，7.0s 总耗时）
+- `node web/uat/phase03.mjs /tmp/wesh-uat/wesh` 18/18 PASS（当前代码 `go build` 产物）
+- `node web/uat/phase02.mjs /tmp/wesh-uat/wesh` 11/11 PASS
+
+### Conclusion
+
+初次验证的 7/8 truths 与 requirements SEC-01..SEC-05 维持 SATISFIED；G-03-5 三条 missing 全部 VERIFIED 闭合；truth 8 (testssl.sh) 仍为声明的人工补充验证项（Human Verification #4 不动）。G-03-5 可关闭。
