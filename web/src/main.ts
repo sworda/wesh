@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 // ClipboardAddon 不在此导入——仅 WELCOME prefs osc52===true 时条件加载（04-05 随用随加，noUnusedLocals）
+import { sanitizeTitle } from './lib/title';
 
 // 帧常量与 internal/proto/proto.go 手工对齐（D-16，两侧注释互相指路）：
 // '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error；
@@ -134,6 +135,16 @@ let lastError: { code: string; message: string } | null = null; // 最近一帧 
 // 首连前 fetch 窗口内为 null（此间用户敲击被 null 闸静默吞掉，不抛 TypeError）
 let ws: WebSocket | null = null;
 let retriedAuth = false; // auth_failed 静默重试仅一次的门闩（D-10；无限重试会把 60s TTL 正常过期放大成重试风暴）
+// ro 判定模块级化——标题写口/04-03 粘贴门/04-05 osc52 门三处共用（RESEARCH §Pattern 6 核实注）
+let isRO = false;
+// 最近一次远程标题的 sanitize 后形态——[ro] 前缀组合与 auth_failed 重试重前缀防御的单一事实源
+let remoteTitle = 'wesh';
+
+// CORE-03 标题单一写口（D-02 前缀恒最前 + D-04 无品牌后缀）：
+// document.title 只允许经本函数写入，sanitize 已在 onTitleChange 入口完成不可旁路
+function setTitle(): void {
+  document.title = (isRO ? '[ro] ' : '') + remoteTitle;
+}
 
 function concat(...parts: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -170,6 +181,14 @@ let timer: number | undefined;
 window.addEventListener('resize', () => {
   clearTimeout(timer);
   timer = window.setTimeout(() => fit.fit(), 100);
+});
+
+// CORE-03：OSC 0/2 标题变化 → sanitize → 单一写口（D-01 纯前端解析，服务端 OUTPUT 零拷贝
+// 不跑 OSC 状态机）。onTitleChange 实际由 OSC 0/2 触发——OSC 1 只设 icon name 不触发
+//（RESEARCH §Pitfall 6 修正理解；真实世界标题程序均用 OSC 0/2，不为 OSC 1 写兼容代码）
+term.onTitleChange((t) => {
+  remoteTitle = sanitizeTitle(t);
+  setTitle();
 });
 
 // #status 三态面板（UI-SPEC §Copywriting 逐字文案）：title/body + 提示行
@@ -253,13 +272,16 @@ async function connect(): Promise<void> {
         term.write(buf.subarray(1));
         break;
       case WELCOME: {
-        // D-14：ro 时键盘层面即不产生 onData（UX 层，真边界在服务端丢 INPUT）+ 标题 [ro] 前缀
+        // D-14：ro 时键盘层面即不产生 onData（UX 层，真边界在服务端丢 INPUT）
         // 畸形 JSON 负载丢弃该帧——事件处理器抛异常只丢本帧，但 WELCOME 丢失会让 ro 门失效
         try {
           const w = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
           if (w.mode === 'ro') {
+            isRO = true;
             term.options.disableStdin = true;
-            document.title = '[ro] ' + document.title;
+            // 经单一写口补 [ro] 前缀——remoteTitle 不含前缀，auth_failed 重试再收
+            // WELCOME 不产生 '[ro] [ro] …' 双重前缀（D-02 前缀恒最前的回归意图）
+            setTitle();
           }
         } catch {
           console.warn('discard malformed WELCOME frame');
