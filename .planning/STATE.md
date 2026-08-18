@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 04
 current_phase_name: frontend
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-08-18T15:50:00.134Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-08-18T16:18:31.541Z"
 last_activity: 2026-08-18
 last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 24
-  completed_plans: 19
+  completed_plans: 20
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-15)
 ## Current Position
 
 Phase: 04 (frontend) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-08-18 — Phase 04 execution started
 
-Progress: [████████░░] 79%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -78,6 +78,7 @@ Progress: [████████░░] 79%
 | Phase 03 P05 | 14min | 2 tasks | 2 files |
 | Phase 03 P06 | 2h 05m | 2 tasks | 8 files |
 | Phase 04 P01 | 25min | 2 tasks | 6 files |
+| Phase 04 P02 | 16min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -125,6 +126,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 03-06]: 场景 1 pacing 采用爬梯 sleep（1.15s/2.15s/4.3s）优先于独立实例备选——同时证明退避窗口恢复语义；场景 3 无 Origin 断言取 400 形态（不建 WS 连接不触发单次语义退出）；S1f 非法 ticket 独立 spawn 实例（单会话约束）
 - [Phase ?]: [Phase 03-06]: 六段式段 1 gofmt 清零授权沿用 02-06 先例——4 文件纯注释排版差异 -w 修正后独立 style 提交（87f6e17），零语义改动
 - [Phase 04]: --client-option 校验错误记录式上报（clientOptErr + Parse 后统一返回）——避开 flag 包 invalid value %q 包装回显值内容，守 SEC-01 启动面红线（04-01） — flag 包 failf 将回调错误包装为 invalid value %q（原始 key=value 串）并打印 stderr，plan 字面 return 形态必违反值内容红线；记录式两通道干净且 exit 2 语义不变
+- [Phase 04]: js-base64 override 落 web/pnpm-workspace.yaml 而非 package.json pnpm 字段——pnpm 11.21.0（CI 同钉）WARN 明示不再读该字段，overrides 官方新家即 pnpm-workspace.yaml；钉 3.9.2 避 1 天新包意图逐字保持（04-02） — pnpm 11 settings 迁移导致 plan 字面机制不生效；迁移后 lockfile 三处解析均 3.9.2
 
 ### Pending Todos
 
@@ -143,6 +145,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-18T15:49:07.807Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-08-18T16:14:03.687Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
