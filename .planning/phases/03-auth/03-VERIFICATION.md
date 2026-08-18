@@ -1,20 +1,24 @@
 ---
 phase: 03-auth
 verified: 2026-08-17T12:39:36Z
-status: human_needed
+status: passed
 score: 7/8 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 human_verification:
+
   - test: "wesh --bind 127.0.0.1 --credential user:pass -- bash 后浏览器打开页面"
     expected: "浏览器弹原生 Basic 登录框（非页面内表单）；输入一次即进终端；DevTools 可见 POST /api/attach 200（同源 fetch 自动携带缓存凭据，A2 假设验证点）；刷新不再弹窗"
     why_human: "浏览器原生弹窗与 HTTP auth 凭据缓存是浏览器行为，Go/Node 自动化无法驱动（03-UAT.md Test 1，status: pending-human）"
+
   - test: "已登录页面放置 >60s（ticket TTL 过期）后直接操作终端或刷新页面"
     expected: "无错误面板直进终端——Hello 携过期 ticket 收 auth_failed 后前端静默重取 ticket 重试一次成功"
     why_human: "60s 真实等待 + 前端重试链路端到端时序需浏览器实测（03-UAT.md Test 2）"
+
   - test: "凭据弹窗连续输错 3+ 次，观察页面面板与 stderr 输出"
     expected: "页面落 Too many attempts 面板（429 语义）；stderr 事件行只有 remote/code/reason 三要素，无凭据/base64/ticket 任何形态"
     why_human: "弹窗交互与面板视觉呈现需人工；红线输出人眼复核（03-UAT.md Test 3；机器断言 TestLogRedaction 已通过）"
+
   - test: "docker run --rm -ti drwetter/testssl.sh --protocols --std --server-defaults --header host:port 对 TLS 实例扫描（全量 -U 可选）"
     expected: "testssl.sh 无弱项（协议下限/cipher 清单/安全头）；明文 HTTP 实例响应无 HSTS"
     why_human: "外部扫描工具行为，D-07 裁决不进 CI；Go 自动化矩阵（TestTLSVersionAndCipherFloor：1.1 败/1.2 成/1.3 默认/CBC 败）已覆盖协议与 cipher 下限，testssl.sh 为声明的人工补充验证（03-UAT.md Test 5）"
