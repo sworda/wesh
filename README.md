@@ -66,7 +66,7 @@ pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 - **失败节流（SEC-03）**：凭据失败与 ticket 核销失败计入同一 per-IP 指数退避计数器（1s 起翻倍、封顶 30s、认证成功清零），窗口内请求收到 429 + `Retry-After`——爆破 100 次累计等待 ≥47 分钟。
 - **常数时间比较（SEC-01）**：凭据先 SHA-256 等长化再用 `crypto/subtle` 逐组比较（不短路，耗时与组数正交）；**凭据、ticket、Authorization 头任何形态（含 base64）永不进入任何日志**。
 - **Origin 白名单（SEC-04）**：无 Origin 头放行（curl/脚本等非浏览器客户端）；有 Origin 必查——同源放行，`--origin` 列表内放行，否则 `/ws` 与 `/api/attach` 一律 403。
-- **TLS 加固（SEC-05）**：`--tls-cert`/`--tls-key` 成对启用；MinVersion TLS 1.2（默认协商 1.3）、仅 AEAD cipher；安全响应头集合（CSP/X-Frame-Options/nosniff/Referrer-Policy/COOP/CORP 恒在，**HSTS `max-age=63072000` 仅 TLS 时发送**）。
+- **TLS 加固（SEC-05）**：`--tls-cert`/`--tls-key` 成对启用；MinVersion TLS 1.2（默认协商 1.3）、仅 AEAD cipher；安全响应头集合（CSP/X-Frame-Options/nosniff/Referrer-Policy/COOP/CORP 恒在，**HSTS `max-age=63072000` 仅 TLS 时发送**）。**CSP trade-off 说明**：`script-src`/`style-src` 含 `'unsafe-inline'` 是单文件全内联（`vite-plugin-singlefile` 产物）现实的已裁决接受项——`go:embed` 单 HTML 内联全部 JS/CSS 使部署只需一个二进制，代价是放弃 inline script/style 的 CSP 防护；后续阶段将评估把可行脚本拆为外部文件以移除 `'unsafe-inline'`。
 - **启动校验矩阵**：默认 `0.0.0.0` 无凭据 → 拒绝启动（`--no-auth` 放行并 stderr 醒目警告）；非 loopback + 凭据 + 明文 → 拒绝启动（`--insecure-http` 放行并警告）；loopback 裸跑不受限。
 
 **已知残余风险（DNS rebinding / CSWSH）**：同源 Origin 检查基于 Host 与 Origin host 比较，无 Host 白名单兜底——loopback 裸跑（无凭据）模式下，攻击者可经 DNS rebinding 借受害者浏览器绕过同源检查：默认只读下可实时观看终端输出，`--writable` 下升级为完整交互 shell。认证模式下一次性 ticket 闸使该路径实际不可利用——**在不可信网页浏览环境使用 loopback 裸跑时，建议配置凭据**。Host 白名单校验将随 Phase 7 SEC-07 落地。
@@ -94,6 +94,8 @@ ExecStart=/usr/local/bin/wesh --tls-cert /etc/wesh/cert.pem --tls-key /etc/wesh/
 **`POST /api/attach` 端点契约**（认证模式）：仅接受 POST（其他方法 405 + `Allow: POST`）；请求体须为空（上限 1KiB，超限 413）；认证通过返回 `200 {"ticket":"..."}` + `Cache-Control: no-store`；无/错凭据 401；Origin 不允许 403；节流窗口内 429 + `Retry-After`。无认证模式（`--no-auth`/loopback 裸跑）该端点返回 404——前端据此探测并跳过取 ticket 直连 WS。
 
 Error 帧含三个正常客户端可见码：`version_mismatch`（随后以 1008 关闭）、`auth_failed`（ticket 过期/非法/重放/节流中统一口径，随后以 1008 关闭——前端收到后静默重取 ticket 重试一次，失败才展示）、`server_error`（随后以 1011 关闭）；攻击面路径（未知/抢跑/畸形帧、超限）直接关闭连接、不发 Error 帧——不给攻击者反馈面。
+
+> **wire 协议稳定性契约**：`auth_failed` / `version_mismatch` / `server_error` 三个 Error code 常量字符串与「Error 帧 + 关闭码 + close reason 与 Error code 同名」的组合行为属**公开协议契约**——前端 `auth_failed` 静默重试、运维排障脚本与第三方客户端依赖该形态。变更这些常量或组合行为是向后不兼容的破坏性改动，需在 CHANGELOG/RELEASE NOTES 显著标注并同步前端实现。
 
 关闭码全集：
 
