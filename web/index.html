@@ -25,6 +25,18 @@
       .status-body { margin-top: 8px; font-size: 14px; font-weight: 400; line-height: 1.5; color: #a3a3a3; }
       .status-hint { margin-top: 16px; font-size: 12px; font-weight: 400; line-height: 1.5; color: #a3a3a3; }
       .status-hint a { color: #729fcf; }
+      /* link tooltip（FE-04 hover 展示真实 URL，D-06 钓鱼辨别）：div 由 JS 创建于 Terminal.element
+         内并带 xterm-hover class（核心 hover 路径对该 class 提前 return 防抖动）。
+         z-index 序：resize 浮层 900（04-03）< tooltip 901 < 状态面板 1000（终态最高层不变） */
+      .xterm-hover {
+        position: fixed; padding: 4px 8px;
+        background: #161616; border: 1px solid #2a2a2a; border-radius: 4px;
+        color: #ffffff; font-size: 12px; font-weight: 400; line-height: 1.5;
+        /* 与 main.ts 构造选项 fontFamily 同栈（终端等宽） */
+        font-family: Menlo, Monaco, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+        max-width: 480px; word-break: break-all; /* 长 URL 折行展示全文不截断——钓鱼辨别需完整 URL */
+        pointer-events: none; z-index: 901; display: none;
+      }
     </style>
   </head>
   <body>

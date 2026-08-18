@@ -2,6 +2,9 @@ import '@xterm/xterm/css/xterm.css'; // xterm 必需样式，singlefile 内联
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+// ClipboardAddon 不在此导入——仅 WELCOME prefs osc52===true 时条件加载（04-05 随用随加，noUnusedLocals）
 
 // 帧常量与 internal/proto/proto.go 手工对齐（D-16，两侧注释互相指路）：
 // '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error；
@@ -67,6 +70,61 @@ try {
   term.loadAddon(webglAddon);
 } catch (e) {
   console.warn('webgl addon load failed, stay on DOM renderer', e);
+}
+
+// FE-02：Unicode 11 宽度测量（CJK/emoji 正确占两格）。硬顺序（RESEARCH §Pitfall 2）——
+// loadAddon 仅注册 provider，必须紧随 activeVersion='11' 激活；仅加载不激活等于没装
+// （宽度仍走 Unicode 6），顺序颠倒则 setter 抛 unknown Unicode version "11"
+term.loadAddon(new Unicode11Addon());
+term.unicode.activeVersion = '11';
+// FE-04 通道①：文本 URL 链接化。第一参 undefined = 库默认 handler（window.open →
+// opener=null → location.href，等价 target=_blank rel=noopener，单击激活无修饰键）——
+// 不传自定义 handler、不自定义正则（D-05/D-07 锁定库默认：自维护正则与自写打开包装都是
+// 重复造轮子且易丢 opener=null 防 reverse tabnapping）；0.12.0 默认正则实为仅 http(s)
+term.loadAddon(new WebLinksAddon(undefined, { hover: showLinkTooltip, leave: hideLinkTooltip }));
+
+// FE-04 通道②：OSC 8 显式超链接。必须显式设 linkHandler——不设则核心回退 confirm() 原生
+// 警告框（xterm.d.ts 明示，D-06）；activate 走与库默认 handleLink 同形态（window.open +
+// opener=null）。allowNonHttpProtocols 不写保持默认 false——javascript:/file: 等 OSC8
+// 被结构性忽略（钓鱼面纵深防御）
+term.options.linkHandler = {
+  activate: (_event, uri) => {
+    const w = window.open();
+    if (w) {
+      w.opener = null;
+      w.location.href = uri;
+    }
+  },
+  hover: (event, text) => showLinkTooltip(event, text),
+  leave: () => hideLinkTooltip(),
+};
+
+// hover 真实 URL tooltip（D-06 钓鱼辨别：OSC8 显示文本可与真实 uri 不同，双通道统一展示）。
+// div 带 xterm-hover class 创建于 term.element 内——核心 hover 路径对该 class 提前 return，
+// 防 tooltip 自身触发链接 enter/leave 抖动（RESEARCH §Pattern 3 核实注）；
+// hover 即显 leave 即隐，无延迟定时器（UI-SPEC §Link Tooltip Spec）
+const linkTooltip = document.createElement('div');
+linkTooltip.classList.add('xterm-hover');
+term.element!.appendChild(linkTooltip);
+
+function showLinkTooltip(event: MouseEvent, text: string): void {
+  linkTooltip.textContent = text; // 完整 URL 原文，无前缀不截断（CSS break-all 折行展示全文）
+  linkTooltip.style.display = 'block';
+  // 指针右下 +8px 偏移；视口右/下边缘不足时向左/上翻转防溢出
+  let left = event.clientX + 8;
+  let top = event.clientY + 8;
+  if (left + linkTooltip.offsetWidth > window.innerWidth) {
+    left = event.clientX - 8 - linkTooltip.offsetWidth;
+  }
+  if (top + linkTooltip.offsetHeight > window.innerHeight) {
+    top = event.clientY - 8 - linkTooltip.offsetHeight;
+  }
+  linkTooltip.style.left = `${Math.max(0, left)}px`;
+  linkTooltip.style.top = `${Math.max(0, top)}px`;
+}
+
+function hideLinkTooltip(): void {
+  linkTooltip.style.display = 'none';
 }
 
 let opened = false; // 是否曾成功 onopen——三态文案分派依据（UI-SPEC §Copywriting）
