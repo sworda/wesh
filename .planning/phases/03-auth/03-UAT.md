@@ -3,7 +3,7 @@ status: complete
 phase: 03-auth
 source: [03-VERIFICATION.md]
 started: 2026-08-17T09:49:00Z
-updated: 2026-08-18T08:35:00Z
+updated: 2026-08-18T02:35:00Z
 ---
 
 ## Current Test
@@ -130,13 +130,26 @@ pending: 0
 skipped: 0
 blocked: 0
 
-附注：5/5 测试通过；G-03-5（minor）为 Test 5 复测期间顺带发现的产品缺陷，不影响测试判定，已诊断待修复。
+附注：5/5 测试通过；G-03-5（minor）为 Test 5 复测期间顺带发现的产品缺陷，不影响测试判定；2026-08-18 经 03-07 plan 闭合（见下方 status: resolved）。
 
 ## Gaps
 
 - gap_id: G-03-5
   truth: "坏证书路径应在打印 listening 之前报错退出，且不泄漏已 spawn 的 pty 子进程"
-  status: failed
+  status: resolved
+  resolved_at: 2026-08-18
+  resolved_by: 03-07-PLAN.md（gap_closure: true）
+  resolution_evidence: |
+    ①预检落地：cmd/wesh/main.go run() 内 tls.LoadX509KeyPair 预检位于 pty.Start/net.Listen/
+      listening 打印三者之前（main.go:178-185），坏证书零资源占用 exit 1；
+      TestBadCertPreflight 两场景（free_port_no_print-then-die + occupied_port_preflight_precedes_listen）
+      TDD RED→GREEN 锁定（commit de7ccbf RED → 481d741 GREEN）
+    ②回滚落地：Serve/ServeTLS 共享错误路径补 _ = sess.Close()（main.go:230-233），与
+      net.Listen 失败路径（main.go:196-199）逐字对称；无故障注入手段以对称 + code review 锁定
+      （03-07-SUMMARY.md coverage D2 + reviewer Info IN-01 竞态备注判定可接受）
+    ③文档清扫：03-VERIFICATION.md 两处（frontmatter + Human Verification Required #1）与
+      03-UAT.md Test 5 复现命令补 --writable（commit e319cbc）；README.md 经核查零改动
+    回归锁：go test ./... -race -count=1 五包全 ok；phase02 UAT 11/11；phase03 UAT 18/18
   reason: "用户报告: --tls-cert cert.pem 相对路径不存在时，先打印 listening on https://[::]:10112 再报 open cert.pem: no such file or directory"
   severity: minor
   test: 5
