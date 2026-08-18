@@ -7,7 +7,7 @@ behavior_unverified: 0
 overrides_applied: 0
 human_verification:
 
-  - test: "wesh --bind 127.0.0.1 --credential user:pass -- bash 后浏览器打开页面"
+  - test: "wesh --bind 127.0.0.1 --credential user:pass --writable -- bash 后浏览器打开页面"
     expected: "浏览器弹原生 Basic 登录框（非页面内表单）；输入一次即进终端；DevTools 可见 POST /api/attach 200（同源 fetch 自动携带缓存凭据，A2 假设验证点）；刷新不再弹窗"
     why_human: "浏览器原生弹窗与 HTTP auth 凭据缓存是浏览器行为，Go/Node 自动化无法驱动（03-UAT.md Test 1，status: pending-human）"
 
@@ -151,7 +151,7 @@ human_verification:
 
 ### 1. 浏览器 Basic 弹窗与凭据缓存（A2 假设验证点）
 
-**Test:** `wesh --bind 127.0.0.1 --credential user:pass -- bash` 后浏览器打开页面
+**Test:** `wesh --bind 127.0.0.1 --credential user:pass --writable -- bash` 后浏览器打开页面
 **Expected:** 浏览器弹原生 Basic 登录框（非页面内表单）；输入一次即进终端；DevTools 可见 `POST /api/attach` 200（同源 fetch 自动携带缓存凭据）；刷新不再弹窗
 **Why human:** 浏览器原生弹窗与 HTTP auth 凭据缓存是浏览器行为，Go/Node 自动化无法驱动。若 401 则 D-02 流程断裂需复盘（03-UAT.md Test 1，auto_evidence：phase03.mjs S1 全绿）
 

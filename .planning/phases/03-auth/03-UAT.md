@@ -89,7 +89,7 @@ result: pass
 source: automated+manual
 
 ### 5. TLS 与安全头（准则 3，SEC-05）
-test: mkcert/自签起 TLS 实例（`--credential user:pass --tls-cert cert.pem --tls-key key.pem`），浏览器 https 访问正常进终端；跑 testssl.sh docker 快速组；另起明文 HTTP 实例核对响应头
+test: mkcert/自签起 TLS 实例（`--credential user:pass --tls-cert cert.pem --tls-key key.pem --writable`），浏览器 https 访问正常进终端；跑 testssl.sh docker 快速组；另起明文 HTTP 实例核对响应头
 expected:
   - 浏览器 https 访问弹 Basic 后进终端，WS 走 wss 正常
   - testssl.sh 快速组无弱项：
