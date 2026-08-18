@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 current_phase_name: frontend
-status: executing
-stopped_at: Completed 04-05-PLAN.md
-last_updated: "2026-08-18T17:17:24.529Z"
+status: verifying
+stopped_at: Completed 04-06-PLAN.md
+last_updated: "2026-08-18T23:21:10.765Z"
 last_activity: 2026-08-18
 last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 24
-  completed_plans: 23
+  completed_plans: 24
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-08-15)
 
 Phase: 04 (frontend) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-18 — Phase 04 execution started
 
-Progress: [██████████] 96%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -82,6 +82,7 @@ Progress: [██████████] 96%
 | Phase 04 P03 | 11min | 3 tasks | 3 files |
 | Phase 04 P04 | 6min | 2 tasks | 1 files |
 | Phase 04 P05 | 14min | 3 tasks | 4 files |
+| Phase 04 P06 | 5h 57m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,7 @@ Recent decisions affecting current work:
 - [Phase 04]: js-base64 override 落 web/pnpm-workspace.yaml 而非 package.json pnpm 字段——pnpm 11.21.0（CI 同钉）WARN 明示不再读该字段，overrides 官方新家即 pnpm-workspace.yaml；钉 3.9.2 避 1 天新包意图逐字保持（04-02） — pnpm 11 settings 迁移导致 plan 字面机制不生效；迁移后 lockfile 三处解析均 3.9.2
 - [Phase ?]: [Phase 04-04]: UAT 新 phase 脚本起步式——逐字复用 phase03.mjs 骨架件 + 单次语义独立 spawn + detail 红线延伸（prefs/theme 值内容永不进测试输出） — plan startWesh([]) 字面为简写，无命令 wesh exit 2 到不了 Welcome；S 场景命令尾照 phase03 既定形态补 '-- bash --norc --noprofile'，断言面零影响
 - [Phase ?]: [Phase 04-05]: queryKeys 以 export 标记防 noUnusedLocals 在 Task 2 接线前误报；query xterm spread 经 as Partial<ITerminalOptions> 收窄（Record<string,unknown> 直接展开 tsc 必红）；OSC52 provider 以 IClipboardProvider 注解对齐 d.ts（_sel 上下文推断为 ClipboardSelectionType，避开 const enum isolatedModules 导入复杂性）
+- [Phase ?]: [Phase 04-06]: README 协议节正文 inline Welcome JSON 与表格行同步补 prefs 可选键（同节形状一致性）；裸 clone 归档前置 rm -rf 防残留污染证据
 
 ### Pending Todos
 
@@ -150,6 +152,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-18T17:17:24.512Z
-Stopped at: Completed 04-05-PLAN.md
+Last session: 2026-08-18T23:20:49.039Z
+Stopped at: Completed 04-06-PLAN.md
 Resume file: None

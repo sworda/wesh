@@ -141,7 +141,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 选中即复制走 `navigator.clipboard` 现代 API（替代已废弃的 execCommand）；终端标题变化同步到浏览器标签页标题
   3. resize 时显示 COLSxROWS 浮层、离开页面前确认（均可开关）；服务端下发的 fontSize/theme 等偏好生效，URL query 可覆盖
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans executed
 **Wave 1**
 
 - [x] 04-01-PLAN.md — FE-07 偏好下发 Go 通道 tracer：WelcomePayload.Prefs（omitempty）+ ValidClientOptionKey 白名单 + server 注入 + --client-option/--osc52 + 聚合 + 握手 e2e（FE-07）
@@ -158,7 +158,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 04-06-PLAN.md — 收口：README 前端体验节 + 04-UAT.md 人工清单 + 全量六段式验证 + 三套 UAT 回归（CORE-03/FE-02/FE-04/FE-05/FE-06/FE-07）
+- [x] 04-06-PLAN.md — 收口：README 前端体验节 + 04-UAT.md 人工清单 + 全量六段式验证 + 三套 UAT 回归（CORE-03/FE-02/FE-04/FE-05/FE-06/FE-07）
 
 **UI hint**: yes
 
@@ -245,7 +245,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
-| 4. 前端体验 | 5/6 | In Progress|  |
+| 4. 前端体验 | 6/6 | In Progress|  |
 | 5. 多客户端共享 | TBD | Not started | - |
 | 6. 会话生命周期与重连 | TBD | Not started | - |
 | 7. 部署与配置 | TBD | Not started | - |
