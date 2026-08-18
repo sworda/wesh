@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: 行走骨架（核心 PTY 管道）** - PTY 双向转发 + resize + xterm.js 前端接通 + pidfd/kqueue 零线程收割 (completed 2026-08-14)
 - [x] **Phase 2: 协议基线** - wesh.v1 类型化帧、WS 三层上限、合规关闭码、默认只读、ping/pong 保活 (completed 2026-08-15)
-- [ ] **Phase 3: 认证与传输安全** - 一次性 ticket、时序安全比较、失败节流、Origin 白名单、TLS 加固
+- [x] **Phase 3: 认证与传输安全** - 一次性 ticket、时序安全比较、失败节流、Origin 白名单、TLS 加固 (completed 2026-08-18)
 - [ ] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发
 - [ ] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接
 - [ ] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程
@@ -107,7 +107,28 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 脚本爆破 100 次错误凭据触发指数退避节流；凭据比较走 `crypto/subtle` 常数时间（先哈希等长）；凭据/ticket/Authorization 头任何形态不出现在任何日志（有日志脱敏测试）
   3. 不在 Origin 允许列表内的 WS 握手被拒绝；TLS 仅协商 1.2+（默认 1.3），响应含 HSTS/X-Content-Type-Options 等安全头，testssl.sh 无弱项
 
-**Plans**: TBD
+**Plans**: 7 plans（6 executed + 03-07 gap closure）
+**Wave 1**
+
+- [x] 03-01-PLAN.md — 协议契约增量（ErrAuthFailed/HelloPayload.Ticket）+ ticketStore（单次使用/60s TTL/mode 绑定）+ throttleStore（1s×2 封顶 30s/成功清零/惰性过期）纯组件（SEC-02/SEC-03）
+- [x] 03-02-PLAN.md — 凭据预哈希 subtle 比较（含 RESEARCH `&=` erratum 修正为 `|=`）+ Origin 规范化/检查 + 安全头中间件 + TLSConfig（MinVersion 1.2 + 6 AEAD）纯组件（SEC-01/SEC-04/SEC-05）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 03-03-PLAN.md — server.go 集成 tracer：/api/attach 守卫链（405/403/429/401/签发）+ 整站 Basic + 守卫区 ⓪ Origin + Hello 核销 auth_failed 统一口径 + 集成测试组（含日志红线运行时捕获）（SEC-01..SEC-04）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 03-04-PLAN.md — main.go：6 新 flag（--credential/--tls-cert/--tls-key/--no-auth/--insecure-http/--origin）+ WESH_CREDENTIAL 兜底 + 启动校验矩阵（D-03/D-05 拒绝路径）+ ServeTLS 分岔（SEC-01/SEC-04/SEC-05）
+- [x] 03-05-PLAN.md — 前端 connect() 改造：fetch ticket → Hello{ticket} → auth_failed 静默重试一次 + wss scheme + dist 重建提交（SEC-02）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 03-06-PLAN.md — 收口：phase03.mjs 六场景 UAT + phase02.mjs 的 D-03 适配 + README 认证/TLS 与行为变更明示 + 03-UAT.md 人工清单 + 全量验证六段式（SEC-01..SEC-05）
+
+**Gap closure** *(UAT G-03-5，wave 1 独立可执行)*
+
+- [x] 03-07-PLAN.md — G-03-5 闭合：TLS 证书启动预检（print-then-die 修复）+ serve 失败 sess.Close() 回滚（pty 孤儿修复）+ 文档复现命令 --writable 清扫（SEC-05/SEC-01）
 
 ### Phase 4: 前端体验
 
@@ -205,7 +226,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
-| 3. 认证与传输安全 | TBD | Not started | - |
+| 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | TBD | Not started | - |
 | 5. 多客户端共享 | TBD | Not started | - |
 | 6. 会话生命周期与重连 | TBD | Not started | - |

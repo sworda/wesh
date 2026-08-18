@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 3
-current_phase_name: 认证与传输安全
-status: "Phase 02 shipped — PR #2"
-stopped_at: Completed 02-06-PLAN.md
-last_updated: "2026-08-15T23:44:14.187Z"
-last_activity: 2026-08-16
+current_phase: 4
+current_phase_name: 前端体验
+status: "Phase 03 shipped — PR #4"
+stopped_at: Completed 03-06-PLAN.md (Phase 3 ready for verification)
+last_updated: "2026-08-18T07:19:01.066Z"
+last_activity: 2026-08-18
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 11
-last_activity_desc: Phase 02 planning complete
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 18
+  completed_plans: 18
+last_activity_desc: Phase 03 execution started
 ---
 
 # Project State
@@ -23,14 +23,14 @@ last_activity_desc: Phase 02 planning complete
 See: .planning/PROJECT.md (updated 2026-08-15)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 3 — 认证与传输安全
+**Current focus:** Phase 03 — auth
 
 ## Current Position
 
-Phase: 3 — 认证与传输安全
+Phase: 4 — 前端体验
 Plan: Not started
-Status: Phase 02 shipped — PR #2
-Last activity: 2026-08-16
+Status: Phase 03 shipped — PR #4
+Last activity: 2026-08-18
 
 Progress: [██████████] 100%
 
@@ -38,7 +38,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 11
+- Total plans completed: 18
 - Average duration: -
 - Total execution time: -
 
@@ -48,6 +48,7 @@ Progress: [██████████] 100%
 |-------|-------|-------|----------|
 | 01 | 5 | - | - |
 | 02 | 6 | - | - |
+| 03 | 7 | - | - |
 
 **Recent Trend:**
 
@@ -70,6 +71,12 @@ Progress: [██████████] 100%
 | Phase 02 P04 | 13min | 2 tasks | 4 files |
 | Phase 02 P05 | 9min | 2 tasks | 2 files |
 | Phase 02 P06 | 2h 36m | 2 tasks | 2 files |
+| Phase 03 P01 | 18min | 3 tasks | 6 files |
+| Phase 03 P02 | 15min | 3 tasks | 7 files |
+| Phase 03-auth P03 | 52min | 3 tasks | 7 files |
+| Phase 03 P04 | 18min | 2 tasks | 3 files |
+| Phase 03 P05 | 14min | 2 tasks | 2 files |
+| Phase 03 P06 | 2h 05m | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -102,6 +109,20 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 02-06]: proto.go 02-01 既存 gofmt 差异随段 1 授权分支清零（纯注释排版）；冒烟以 --port 0 随机端口 + 启动行解析驱动断言
 - [Phase 02]: [UAT]: 浏览器渲染层 UAT 在无显示机器上以「Node 原生 WS 客户端协议断言（web/uat/phase02.mjs，零依赖 11/11）+ 用户外部浏览器渲染层确认」分工完成——协议层全自动化，渲染层人工
 - [Phase 02]: [UAT 决策]: CR-01（Attach 读循环同步写 PTY master 可永久阻塞）用户裁决立即最小缓解——master fd O_NONBLOCK + ErrWouldBlock 走既有收口；完整背压（有界输入队列+写 goroutine+1013 踢出）留 Phase 5
+- [Phase ?]: [Phase 03-01]: TestDecodeHello ticket 断言加 checkTicket 闸——plan 三约束（wantTicket 字段+既有行补零值+禁止改 unknown 行）与统一断言冲突（unknown 行 ticket:"secret" 加字段后解码入 Ticket），闸化后仅两新行断言 Ticket，D-02 回归锁逐字不动
+- [Phase ?]: [Phase 03-01]: ErrAuthFailed 入 TestProtocolConstants 逐字+形状锁定——D-10 costly 级公开契约常量按文件既定职责入锁（T-02-01 缓解形态）
+- [Phase ?]: [Phase 03-02]: matchCredential 按 planner erratum 修正形态落地（|= 位或累积不短路；RESEARCH Pattern 2 的 &= 初值 0 恒 false 不可照抄），TestCredentialMatch 多组各自命中锁死该回归
+- [Phase ?]: [Phase 03-02]: 空 pass 合法（ParseCredential("user:") 不额外禁止，passHash 为空串摘要）——文档化决策；空 user 仍拒（RFC 7617）
+- [Phase ?]: [Phase 03-03]: logEvent 提为包级函数——plan 指定的 basicAuth 三参自由函数签名需调用日志唯一出口，logEvent 无 Server 状态依赖；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int）
+- [Phase ?]: [Phase 03-03]: ServeMux 方法模式内建 405 被 / 子树吞掉（GOROOT server.go:2699-2710 n==nil 分支）——显式注册 /api/attach path-only 405 fallback（Allow: POST，与内建回退同文）补齐守卫链第一闸（Rule 1）
+- [Phase ?]: [Phase 03-03]: TestOriginEndpoints 全 HTTP 层拒绝场景共用单实例（零 attach 零终结路径，waitExit 结构性不可达）；captureStderr 复用 limits_test.go 既有 helper；originMiddleware 落位 origin.go 与 originAllowed 内聚
+- [Phase ?]: [Phase 03-04]: parse 期校验（TLS 成对/env 凭据）插入点在 showVersion 早退之后——纯信息路径不被配置校验阻断
+- [Phase ?]: [Phase 03-04]: 启动警告串自含 wesh: warning: 前缀由 validateStartup 返回完整行；warn/err 文案不含凭据值（启动面红线，矩阵全行断言）
+- [Phase ?]: [Phase 03-04]: TestParseArgs 表结构扩展走命名字段转换——Go 位置初始化不可扩展字段的唯一调和形态，既有行值/断言零改动
+- [Phase ?]: [Phase 03-05]: ws 声明为模块级 WebSocket | null（非 plan 字面 let ws: WebSocket）+ onData/sendResize null 闸——fetch 异步窗口期用户敲击 ws.readyState 的 TypeError 回归（Rule 1）；connect() 内 const sock = ws 供 handler 闭包（TS 严格模式闭包不收窄可空 let）
+- [Phase ?]: [Phase 03-05]: dist .gz 不入库按 .gitignore 既定策略（web/dist/*.gz 自建仓起生效，gzip 头嵌 mtime 每次构建字节漂移；embed.go 设计即 index.html 入库、gz 缺失明文伺服降级）；README:40 陈旧声明登记 deferred-items.md
+- [Phase ?]: [Phase 03-06]: 场景 1 pacing 采用爬梯 sleep（1.15s/2.15s/4.3s）优先于独立实例备选——同时证明退避窗口恢复语义；场景 3 无 Origin 断言取 400 形态（不建 WS 连接不触发单次语义退出）；S1f 非法 ticket 独立 spawn 实例（单会话约束）
+- [Phase ?]: [Phase 03-06]: 六段式段 1 gofmt 清零授权沿用 02-06 先例——4 文件纯注释排版差异 -w 修正后独立 style 提交（87f6e17），零语义改动
 
 ### Pending Todos
 
@@ -120,6 +141,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-15
-Stopped at: Phase 02 complete (UAT 6/6 pass, SECURITY threats_open=0), ready to plan Phase 3
+Last session: 2026-08-17T11:58:14.251Z
+Stopped at: Completed 03-06-PLAN.md (Phase 3 ready for verification)
 Resume file: None

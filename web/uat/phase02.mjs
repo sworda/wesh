@@ -31,7 +31,9 @@ const check = (id, name, ok, detail = '') => {
 // 启动 wesh 实例，解析实际端口，返回 { port, kill }
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // D-03 适配（Phase 3 裸跑收口）：显式 loopback bind——无凭据起服的合法前提
+    //（默认 0.0.0.0 无凭据自 Phase 3 起拒绝启动）；协议断言语义零改动。
+    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });

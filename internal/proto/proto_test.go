@@ -18,12 +18,19 @@ func TestDecodeHello(t *testing.T) {
 		wantVersion string
 		wantCols    int
 		wantRows    int
+		// ticket 专项断言：仅 checkTicket=true 的行断言 hp.Ticket == wantTicket。
+		// unknown-fields 行载荷含 ticket:"secret"（Phase 3 起解码入 Ticket），
+		// 该行只承担 D-02 未知字段（attach）忽略回归，零值补位不参与 ticket 断言。
+		wantTicket  string
+		checkTicket bool
 	}{
-		{"standard", `{"version":"wesh.v1","cols":80,"rows":24}`, true, "wesh.v1", 80, 24},
-		{"unknown fields ignored (D-02)", `{"version":"wesh.v1","cols":100,"rows":40,"ticket":"secret","attach":2}`, true, "wesh.v1", 100, 40},
-		{"malformed JSON", `{not json`, false, "", 0, 0},
-		{"clamp lower bound", `{"version":"wesh.v1","cols":0,"rows":0}`, true, "wesh.v1", 1, 1},
-		{"clamp upper bound", `{"version":"wesh.v1","cols":9999,"rows":9999}`, true, "wesh.v1", 1000, 1000},
+		{"standard", `{"version":"wesh.v1","cols":80,"rows":24}`, true, "wesh.v1", 80, 24, "", false},
+		{"unknown fields ignored (D-02)", `{"version":"wesh.v1","cols":100,"rows":40,"ticket":"secret","attach":2}`, true, "wesh.v1", 100, 40, "", false},
+		{"malformed JSON", `{not json`, false, "", 0, 0, "", false},
+		{"clamp lower bound", `{"version":"wesh.v1","cols":0,"rows":0}`, true, "wesh.v1", 1, 1, "", false},
+		{"clamp upper bound", `{"version":"wesh.v1","cols":9999,"rows":9999}`, true, "wesh.v1", 1000, 1000, "", false},
+		{"ticket round-trip", `{"version":"wesh.v1","cols":80,"rows":24,"ticket":"abc123"}`, true, "wesh.v1", 80, 24, "abc123", true},
+		{"ticket omitted", `{"version":"wesh.v1","cols":80,"rows":24}`, true, "wesh.v1", 80, 24, "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,6 +49,9 @@ func TestDecodeHello(t *testing.T) {
 			}
 			if hp.Rows != tt.wantRows {
 				t.Errorf("Rows = %d, want %d", hp.Rows, tt.wantRows)
+			}
+			if tt.checkTicket && hp.Ticket != tt.wantTicket {
+				t.Errorf("Ticket = %q, want %q", hp.Ticket, tt.wantTicket)
 			}
 		})
 	}
@@ -91,10 +101,16 @@ func TestProtocolConstants(t *testing.T) {
 	for name, code := range map[string]string{
 		"ErrVersionMismatch": ErrVersionMismatch,
 		"ErrServerError":     ErrServerError,
+		"ErrAuthFailed":      ErrAuthFailed,
 	} {
 		if !snakeCase.MatchString(code) {
 			t.Errorf("%s = %q, want snake_case ^[a-z][a-z0-9_]*$", name, code)
 		}
+	}
+	// ErrAuthFailed 逐字钉死（Phase 3 D-10 兑现 P2 deferred 挂账；
+	// 前后端公开契约，close reason 同名机器串）。
+	if ErrAuthFailed != "auth_failed" {
+		t.Errorf("ErrAuthFailed = %q, want %q", ErrAuthFailed, "auth_failed")
 	}
 
 	// 帧类型字节逐字断死

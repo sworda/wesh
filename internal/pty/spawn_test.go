@@ -68,13 +68,19 @@ func TestExecArrayNoShell(t *testing.T) {
 // TestEnvWhitelist（VALIDATION 1-01-02，SEC-06）：宿主注入 AWS_SECRET_ACCESS_KEY 后
 // 双层断言——(a) 白名单构造函数输出不含该键；(b) 子进程实际 env 输出不含该键
 // （ttyd pty.c:441-444 全继承缺陷的对照回归）。
+// 03-04 追加 WESH_CREDENTIAL 针对断言：替换式注入天然剥离该键，此断言防未来
+// 有人改累加式注入把凭据透传进 Web shell 子进程（SEC-06 回归锁，T-03-22）。
 func TestEnvWhitelist(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-leak-value")
+	t.Setenv("WESH_CREDENTIAL", "test-cred-leak-value")
 
 	// (a) 单元层：白名单构造函数
 	env := whitelistEnv()
 	for _, kv := range env {
 		if strings.Contains(kv, "AWS_SECRET_ACCESS_KEY") {
+			t.Fatalf("whitelistEnv 泄露宿主注入键: %q", kv)
+		}
+		if strings.Contains(kv, "WESH_CREDENTIAL") {
 			t.Fatalf("whitelistEnv 泄露宿主注入键: %q", kv)
 		}
 	}
@@ -96,6 +102,9 @@ func TestEnvWhitelist(t *testing.T) {
 	}
 	if strings.Contains(out, "AWS_SECRET_ACCESS_KEY") {
 		t.Fatal("子进程 env 输出泄露宿主注入键 AWS_SECRET_ACCESS_KEY")
+	}
+	if strings.Contains(out, "WESH_CREDENTIAL") {
+		t.Fatal("子进程 env 输出泄露宿主注入键 WESH_CREDENTIAL")
 	}
 	// 阳性对照：证明确实捕获到了子进程 env 输出，而非空串假绿
 	if !strings.Contains(out, "TERM=xterm-256color") {
