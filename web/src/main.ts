@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-// ClipboardAddon 不在此导入——仅 WELCOME prefs osc52===true 时条件加载（04-05 随用随加，noUnusedLocals）
+import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard'; // 仅 WELCOME prefs osc52===true 时条件加载（D-12）
 import { sanitizeTitle } from './lib/title';
 import { parseQueryPrefs, splitPrefs, mergeTheme } from './lib/prefs';
 
@@ -12,8 +12,9 @@ import { parseQueryPrefs, splitPrefs, mergeTheme } from './lib/prefs';
 // '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error；
 // SUBPROTOCOL 同时是 WS 子协议 token 与 Hello.version 期望值（D-03，同源复用防双写漂移）。
 // Hello 载荷 {version, cols, rows, ticket?}——ticket 为 Phase 3 认证核销一次性票（可选，
-// 无认证模式省略该键，proto.go HelloPayload.Ticket omitempty 同形）；Error code 含
-// auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）。
+// 无认证模式省略该键，proto.go HelloPayload.Ticket omitempty 同形）；
+// Welcome 载荷 {mode, prefs?}——prefs 为可选偏好下发字段（D-13 omitempty，proto.go WelcomePayload.Prefs 同形）；
+// Error code 含 auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）。
 const OUTPUT = 0x30,
   INPUT = 0x30,
   RESIZE = 0x31,
@@ -392,9 +393,68 @@ async function connect(): Promise<void> {
             // WELCOME 不产生 '[ro] [ro] …' 双重前缀（D-02 前缀恒最前的回归意图）
             setTitle();
           }
+          // FE-07 prefs 应用段（UI-SPEC §Prefs Contract 步骤 2-4 逐字顺序：
+          // xterm 键 → fit.fit() → behavior 键 → osc52 条件加载）；
+          // prefs 缺省（非对象）则整段跳过——nil 兼容（omitempty 缺席即无下发）
+          const prefs = w.prefs && typeof w.prefs === 'object' ? (w.prefs as Record<string, unknown>) : null;
+          if (prefs !== null) {
+            const parts = splitPrefs(prefs);
+            for (const [k, v] of Object.entries(parts.xterm)) {
+              if (queryKeys.has(k)) {
+                continue; // query 优先（D-16——queryKeys 跳过机制即优先级实现）
+              }
+              if (k === 'theme') {
+                // D-19 整体替换语义 + RESEARCH §Pitfall 3 合并修正：未指定键保留 wesh 调色板
+                // （部分 theme 不再把 tango 冲成 xterm 内建默认）；非对象 theme 值忽略 + warn
+                if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+                  term.options.theme = { ...defaultTheme, ...(v as Record<string, string>) };
+                } else {
+                  console.warn('ignoring non-object theme pref');
+                }
+              } else {
+                // 白名单已保证键合法性，经一次收窄 cast；ITerminalOptions 运行时逐键赋值
+                // xterm 原生支持（RESEARCH §Pattern 6 核实注：OptionsService 通知各订阅方）
+                (term.options as unknown as Record<string, unknown>)[k] = v;
+              }
+            }
+            // 全部应用完重算（D-13 + RESEARCH §Pitfall 7：fontSize/lineHeight/letterSpacing
+            // 改变单元格尺寸，不 fit 则 cols/rows 与视口不符远端 TUI 画错）；
+            // 既有 onResize→RESIZE 帧链路自动同步服务端
+            fit.fit();
+            // behavior 键写前端开关量（非 xterm 选项——禁止写 term.options，UI-SPEC 步骤 4）；
+            // queryKeys 同跳过；typeof boolean 校验同 query 通道（服务端只验 JSON 不验类型）；
+            // 位置必须在下方 welcomeDone/beforeunload 注册点之前——开关值在注册点已是最终态
+            for (const [k, v] of Object.entries(parts.behavior)) {
+              if (queryKeys.has(k)) {
+                continue;
+              }
+              if (typeof v !== 'boolean') {
+                console.warn(`ignoring non-boolean behavior pref: ${k}`);
+                continue;
+              }
+              if (k === 'resizeOverlay') {
+                resizeOverlayOn = v;
+              } else if (k === 'confirmBeforeUnload') {
+                confirmBeforeUnloadOn = v;
+              }
+            }
+            // OSC52（D-12：仅 --osc52 服务端可开启，只写不读——Warp CVE-2025-48725 教训）：
+            // prefs.osc52===true 且 clipboardOK（非安全上下文不加载，OSC52 惰性）时加载；
+            // readText 恒 resolve '' 而非 reject（RESEARCH §Pitfall 4：核心异步 OSC 链对
+            // rejected promise rethrow 成 unhandled rejection，resolve 空串协议完整且零泄露
+            // 同等安全）；provider 是构造第二参（§Pattern 4③；核心无内建 OSC52 handler——
+            // 不加载则惰性无害）。签名以 addon-clipboard d.ts IClipboardProvider 为准
+            if (prefs.osc52 === true && clipboardOK) {
+              const writeOnly: IClipboardProvider = {
+                readText: (): Promise<string> => Promise.resolve(''),
+                writeText: (_sel, text): Promise<void> => navigator.clipboard.writeText(text),
+              };
+              term.loadAddon(new ClipboardAddon(undefined, writeOnly));
+            }
+          }
           // FE-06：WELCOME 处理完成——会话建立门置位（浮层驱动自此响应 resize）；
-          // 条件注册 beforeunload（默认开 ro 同启，D-18；04-05 在本注册点之前接入
-          // query/prefs 开关翻转——从本 plan 起即为开关驱动形态）
+          // 条件注册 beforeunload（默认开 ro 同启，D-18；上方 prefs/behavior 段已在
+          // 本注册点之前完成开关翻转——从本 plan 起即为开关驱动形态）
           welcomeDone = true;
           if (confirmBeforeUnloadOn) {
             window.addEventListener('beforeunload', onBeforeUnload);
