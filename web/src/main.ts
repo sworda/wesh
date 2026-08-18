@@ -453,12 +453,15 @@ async function connect(): Promise<void> {
               // prefs.osc52===true 且 clipboardOK（非安全上下文不加载，OSC52 惰性）时加载；
               // readText 恒 resolve '' 而非 reject（RESEARCH §Pitfall 4：核心异步 OSC 链对
               // rejected promise rethrow 成 unhandled rejection，resolve 空串协议完整且零泄露
-              // 同等安全）；provider 是构造第二参（§Pattern 4③；核心无内建 OSC52 handler——
-              // 不加载则惰性无害）。签名以 addon-clipboard d.ts IClipboardProvider 为准
+              // 同等安全）；writeText 同链路——页面失焦时 clipboard.writeText 以 NotAllowedError
+              // 拒绝，不 catch 会被核心微任务硬抛成页面级未捕获异常，catch 告警后 resolve
+              // （与选中复制失败静默同纪律）；provider 是构造第二参（§Pattern 4③；核心无内建
+              // OSC52 handler——不加载则惰性无害）。签名以 addon-clipboard d.ts IClipboardProvider 为准
               if (prefs.osc52 === true && clipboardOK) {
                 const writeOnly: IClipboardProvider = {
                   readText: (): Promise<string> => Promise.resolve(''),
-                  writeText: (_sel, text): Promise<void> => navigator.clipboard.writeText(text),
+                  writeText: (_sel, text): Promise<void> =>
+                    navigator.clipboard.writeText(text).catch((e) => console.warn('osc52 clipboard write failed', e)),
                 };
                 term.loadAddon(new ClipboardAddon(undefined, writeOnly));
               }
