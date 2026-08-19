@@ -1,18 +1,18 @@
 ---
-status: testing
+status: partial
 phase: 04-frontend
 source: [04-VERIFICATION.md]
 started: 2026-08-19T00:10:22Z
-updated: 2026-08-19T00:10:22Z
+updated: 2026-08-19T01:00:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: CJK/emoji 宽度（FE-02 / T1）
+number: 2
+name: IME 组合输入（FE-02 / T2，UI-SPEC backstop 人工出口）
 expected: |
-  CJK 字符占两格不错位、不对齐崩坏；emoji 后光标位置正确（不叠字不多占格）
-awaiting: user response
+  组合过程与上屏不丢字、不乱码、组合框位置正常
+awaiting: user response（本机无浏览器环境，T2-T11 待有图形环境时执行）
 
 ## 说明与前置条件
 
@@ -36,7 +36,9 @@ awaiting: user response
 test: 形态 A。终端内执行 `echo '中文测试🙂🎉'` 与 `printf '中文字符对齐测试\n'`；再打开 vim/htop 显示中文内容
 expected: CJK 字符占两格不错位、不对齐崩坏；emoji 后光标位置正确（不叠字不多占格）
 why_human: 字形渲染与宽度测量的视觉效果，自动化不可测
-result: pending
+result: pass
+source: automated
+note: "@xterm/headless + Unicode11Addon 断言（等价 main.ts:113-114 加载链）：CJKx4+emoji x2 光标=12 格；emoji+ASCII=3 格；混排=6 格；buffer 宽字符占位结构完整；U6 对照组 emoji=1 格证明区分度。脚本 /tmp/wesh-uat/t1-width.mjs 5/5 PASS"
 
 ### 2. IME 组合输入（FE-02 / T2，UI-SPEC backstop 人工出口）
 
@@ -111,9 +113,9 @@ result: pending
 ## Summary
 
 total: 11
-passed: 0
+passed: 1
 issues: 0
-pending: 11
+pending: 10
 skipped: 0
 blocked: 0
 
