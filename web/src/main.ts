@@ -87,6 +87,8 @@ const term = new Terminal({
   cursorBlink: true, // 有意覆盖 xterm 默认 false——闪烁光标是输入点的关键可见性提示
   scrollback: 10000,
   allowTransparency: false,
+  allowProposedApi: true, // Unicode11Addon 依赖的 unicode API 在 xterm 6 仍为 EXPERIMENTAL——
+  // 不设 true 则 loadAddon 即抛错，模块顶层无 try 整个前端中止（04-UAT jsdom 自动化抓到的 P0）
   theme: defaultTheme,
   // query 的 xterm 键作构造初值（内置默认 ← query 覆盖先行，UI-SPEC 装配顺序步骤 1）；
   // 白名单已保证键合法性，经一次收窄 cast（lib/prefs.ts 与 Go 侧 ValidClientOptionKey 同源）
