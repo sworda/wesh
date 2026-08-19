@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: 行走骨架（核心 PTY 管道）** - PTY 双向转发 + resize + xterm.js 前端接通 + pidfd/kqueue 零线程收割 (completed 2026-08-14)
 - [x] **Phase 2: 协议基线** - wesh.v1 类型化帧、WS 三层上限、合规关闭码、默认只读、ping/pong 保活 (completed 2026-08-15)
 - [x] **Phase 3: 认证与传输安全** - 一次性 ticket、时序安全比较、失败节流、Origin 白名单、TLS 加固 (completed 2026-08-18)
-- [ ] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发
+- [x] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发 (completed 2026-08-19)
 - [ ] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接
 - [ ] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程
 - [ ] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传
@@ -245,7 +245,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
-| 4. 前端体验 | 6/6 | In Progress|  |
+| 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
 | 5. 多客户端共享 | TBD | Not started | - |
 | 6. 会话生命周期与重连 | TBD | Not started | - |
 | 7. 部署与配置 | TBD | Not started | - |
