@@ -21,23 +21,24 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ WS 消息长度上限与分片重组缓冲上限（两档字节硬顶 4KiB/16KiB 库流式执行，超限 1009；预认证内存放大消除）— Phase 2（RES-01/SEC-08；limits 五测 -race PASS）
 - ✓ WS ping/pong 保活（可配间隔，默认 5s，0 禁用；仅 pong 超时断开，读路径恒无 deadline）— Phase 2（CORE-06；保活三测 PASS + UAT 自动化 11s+ 存活）
 - ✓ 版本化 WS 协议 wesh.v1（类型化握手/错误帧、子协议双闸、合规关闭码 {1000,1002,1008,1009}、1006 永不发送）— Phase 2（SEC-08；守卫链七测 + UAT 关闭路径自动化实测）
+- ✓ 认证：时序安全比较、凭据不明文进日志、一次性短时令牌（单次使用/60s TTL/mode 绑定）— Phase 3（SEC-01/02/03；ticketStore+subtle 比较 + phase03.mjs 六场景 UAT）
+- ✓ 认证失败节流防爆破（1s×2 封顶 30s 指数退避/成功清零）— Phase 3（SEC-03；throttleStore + UAT 退避窗口实测）
+- ✓ Origin 允许列表校验（规范化比对）— Phase 3（SEC-04；03-02/03-03 守卫链 ⓪ 位）
+- ✓ TLS（MinVersion 1.2 + 6 AEAD cipher + 安全响应头 + 证书启动预检）— Phase 3（SEC-05；03-02/03-04/03-07）
+- ✓ 窗口标题同步（OSC 2 单一写口，ro 形态恒 `[ro] ` 前缀最前）— Phase 4（CORE-03；UAT T3 5/5）
+- ✓ 前端 xterm.js 生态：Unicode 11/CJK/IME、超链接（裸 URL + OSC 8 双通道）、现代剪贴板（选中即复制 150ms 防抖/Ctrl+Shift+V/安全上下文静默降级/OSC52 write-only）— Phase 4（FE-02/FE-04/FE-05；UAT T1-T2/T4-T7 全过）
+- ✓ 客户端偏好下发（--client-option 白名单 + Welcome prefs + query 覆盖 + theme 合并不丢内置调色板）— Phase 4（FE-07；UAT T10 6/6）
 
 ### Active
 
 **核心终端（对标 ttyd）**
-- [ ] 窗口标题同步
-- [ ] 前端基于 xterm.js 生态：WebGL 渲染、Unicode 11/CJK/IME、fit 自适应、超链接、剪贴板（WebGL 渲染回落 + fit 自适应已于 Phase 1 验证；CJK/IME/超链接/剪贴板 Phase 4）
 - [ ] 断线自动重连接回同一进程（共享进程模型；历史现场恢复依赖 tmux/herdr）
 
 **多客户端共享（改进 ttyd 限制 #2）**
 - [ ] 原生多客户端 attach 同一会话，写入权限可配置（全员可写 / 主写旁观）
 
 **安全（改进 ttyd 限制 #3 + 源码核实的新发现）**
-- [ ] 认证：时序安全比较、凭据不明文进日志、一次性短时令牌替代 ttyd 的 /token 明文下发
-- [ ] 认证失败节流防爆破
-- [ ] Origin 允许列表校验
-- [ ] TLS（禁旧协议、合理 cipher、安全响应头）
-- [ ] URL 传参严格校验与上限（若保留该能力）
+（Phase 3 已全部闭合，见 Validated）
 
 **资源控制（改进 ttyd 限制 #4/#5）**
 - [ ] 背压控制与每客户端限速
@@ -66,6 +67,7 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - **服务端重启后会话恢复** — 需 CRIU 类技术，复杂度极高；断线保活已覆盖主要痛点
 - **多租户 / 嵌入产品的 API 平台化** — 定位为个人运维工具，不做 SaaS 化
 - **ttyd CLI 参数兼容** — 用户明确选择全新设计，不背兼容包袱
+- **ttyd 式 ?arg= URL 传参** — 已核实注入面，v1 砍掉（Key Decisions）；v2 以命令模板安全替代。Phase 4 的 query 覆盖仅限 --client-option 白名单键，非命令注入面
 
 ## Context
 
@@ -124,6 +126,9 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 | darwin 收割用共享 kqueue exit watcher（非 SIGCHLD+WNOHANG 手动 reap） | EVFILT_PROC/NOTE_EXIT 早知 + cmd.Wait() 唯一收割；Q1 僵尸注册竞态由 CI 裁决 | ✓ Q1 裁决=watcher 成立（kqueue 对僵尸进程补发 NOTE_EXIT，TestKqueueExitNormal/ZombieRace CI 双 PASS），兜底路径休眠 |
 | WS 上限三层改两层（D-09 修订） | coder/websocket SetReadLimit 流式截断已覆盖单帧+累积字节两层；分片数层库不暴露，以 1 字节分片洪水测试构成等效防线 | ✓ Phase 2 limits 五测 -race PASS；空帧洪水残余风险用户裁决接受 |
 | CR-01（Attach 读循环同步写 PTY master 可永久阻塞）立即最小缓解 | 非协议层缺口（协议透明）但破坏 D-11 退出保证+可误杀健康连接；O_NONBLOCK+ErrWouldBlock 走既有收口，完整背压（有界输入队列+写 goroutine+1013）留 Phase 5 | — Pending（最小缓解待执行） |
+| --client-option 校验错误记录式上报（clientOptErr + Parse 后统一返回） | flag 包 failf 会将回调错误包装为 `invalid value %q` 并把原始 key=value 串打到 stderr，必然违反启动面"值内容不外泄"红线；记录式两通道干净且 exit 2 语义不变 | ✓ Phase 4 落地，client-option 负场景 UAT 全过 |
+| js-base64 等 overrides 落 web/pnpm-workspace.yaml 而非 package.json | pnpm 11 不再读 package.json 的 pnpm 字段（CI 钉 11.21.0 同版），overrides 官方新家即 pnpm-workspace.yaml | ✓ Phase 4 落地，lockfile 三处解析均 3.9.2 |
+| 前端 Terminal 构造必须 `allowProposedApi: true` | xterm 6.0 的 unicode API 仍标 EXPERIMENTAL，缺省 false 时 loadAddon(Unicode11Addon) 模块顶层同步抛错 → connect() 永不执行、终端黑屏（UAT 自动化抓到的 P0） | ✓ Phase 4 修复并重建 dist，jsdom 套件即回归测试 |
 
 ## Evolution
 
@@ -143,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-15 after Phase 2*
+*Last updated: 2026-08-19 after Phase 4（含 Phase 3 演化补录）*

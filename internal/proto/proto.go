@@ -20,9 +20,10 @@ const (
 	Output = '0' // 0x30, S→C, master 读块直发
 
 	Hello   = 'H' // 0x48, C→S, JSON {"version":V,"cols":C,"rows":R}
-	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw"}
+	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw","prefs"?}——P4 起可携可选 prefs（D-13 一次性下发）
 	Error   = 'E' // 0x45, S→C, JSON {"code":C,"message":M}
-	// 'X' EXIT / 'T' TITLE / 'P' PREFS —— 类型字节本 phase 占住，语义分属 Phase 6/4（D-01）
+	// 'X' EXIT / 'T' TITLE / 'P' PREFS —— 类型字节本 phase 占住，语义分属 Phase 6/4（D-01）；
+	// 'P' 帧运行期推送仍 v2 再议——P4 prefs 仅经 Welcome 内嵌一次性下发（D-13）。
 )
 
 // Subprotocol 子协议 token：HTTP 预检（Sec-WebSocket-Protocol 头）、
@@ -82,8 +83,12 @@ type HelloPayload struct {
 }
 
 // WelcomePayload 显式 json tag。Mode 取值见 ModeRO/ModeRW（D-14）。
+// Prefs 为 P4 D-13 客户端偏好一次性下发通道（--client-option 聚合 + osc52 并入），
+// 服务端不透明透传不解析；omitempty：nil/空时 JSON 不出 prefs 键——旧前端零漂移
+// （P2 D-02 加字段不动协议纪律，与 HelloPayload.Ticket 同形态）。
 type WelcomePayload struct {
-	Mode string `json:"mode"`
+	Mode  string          `json:"mode"`
+	Prefs json.RawMessage `json:"prefs,omitempty"`
 }
 
 // ErrorPayload 显式 json tag。Code 为 snake_case 机器串，Message 为英文人话
@@ -106,11 +111,33 @@ func DecodeHello(payload []byte) (HelloPayload, bool) {
 	return hp, true
 }
 
-// WelcomeFrame 组 Welcome 帧：1 字节类型 + JSON {"mode":M}，调用方直接 c.Write
-// （与 onChunk 的 1+payload 组帧模式同构）。固定 schema 下 json.Marshal 不会失败。
-func WelcomeFrame(mode string) []byte {
-	b, _ := json.Marshal(WelcomePayload{Mode: mode})
+// WelcomeFrame 组 Welcome 帧：1 字节类型 + JSON {"mode":M,"prefs"?}，调用方直接
+// c.Write（与 onChunk 的 1+payload 组帧模式同构）。prefs 为 P4 D-13 内嵌下发的
+// 客户端偏好 blob——nil/空时 omitempty 使 JSON 不出 prefs 键（旧前端零漂移）。
+// 固定 schema 下 json.Marshal 不会失败。
+func WelcomeFrame(mode string, prefs json.RawMessage) []byte {
+	b, _ := json.Marshal(WelcomePayload{Mode: mode, Prefs: prefs})
 	return append([]byte{Welcome}, b...)
+}
+
+// ValidClientOptionKey 判定 key 是否在客户端偏好白名单内（P4 D-14 白名单制防任意
+// option 注入——allowProposedApi 等危险面结构性排除）：恰 10 键 = 8 个 xterm 视觉键
+// + resizeOverlay/confirmBeforeUnload 2 个前端行为键（FE-06 开关）。osc52 刻意不在
+// 内（D-12 安全不对称——安全敏感项只能经服务端 --osc52 开启，--client-option 与
+// URL query 均不得触碰）。刻意用直白 switch，不引入新类型/注册表抽象（反过度设计）。
+func ValidClientOptionKey(key string) bool {
+	switch key {
+	case "fontSize", "fontFamily", "cursorBlink", "cursorStyle",
+		"scrollback", "lineHeight", "letterSpacing", "theme",
+		"resizeOverlay", "confirmBeforeUnload":
+		{
+			return true
+		}
+	default:
+		{
+			return false
+		}
+	}
 }
 
 // ErrorFrame 组 Error 帧：1 字节类型 + JSON {"code":C,"message":M}，调用方直接

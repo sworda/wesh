@@ -201,6 +201,36 @@ func dialHelloTicket(t *testing.T, ctx context.Context, wsURL string, ticket str
 	return c, wp.Mode
 }
 
+// dialHelloPayload 是 dialHello 的载荷变体（P4 D-13）：握手形态相同，但返回完整
+// Welcome 载荷 map——供 prefs 键级断言（dialHello 只解码 mode 不够）。dialHello
+// 本体不动（既有调用零漂移）。
+func dialHelloPayload(t *testing.T, ctx context.Context, wsURL string, cols, rows int) (*websocket.Conn, map[string]any) {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: cols, Rows: rows})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	var wm map[string]any
+	if err := json.Unmarshal(data[1:], &wm); err != nil {
+		t.Fatalf("decode Welcome: %v", err)
+	}
+	return c, wm
+}
+
 // attachURL 把 startTestServerWith 返回的 /ws URL 映射为 /api/attach 的 http URL
 // （ws:// → http://  scheme 替换 + /ws → /api/attach 路径替换）。
 func attachURL(wsURL string) string {
@@ -486,4 +516,49 @@ func TestHelloWelcome(t *testing.T) {
 	}
 	cRW.Close(websocket.StatusNormalClosure, "")
 	waitExit(t, exitChRW, 0)
+}
+
+// ====== plan 04-01 增量：Welcome prefs 端到端 ======
+
+// TestWelcomePrefs（P4 D-13 端到端两半侧）：Options.ClientPrefs 注入时握手收到的
+// Welcome JSON 含 prefs 键且逐键值相等；未注入（零值默认装配）时无 prefs 键——
+// omitempty 缺席回归，旧前端零漂移（P2 D-02 加字段纪律）。两半侧各自独立装配，
+// 均以客户端正常关闭 + waitExit(0) 收口。
+func TestWelcomePrefs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 注入半侧：ClientPrefs 非空 → Welcome 携 prefs 键，逐键值相等
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		ClientPrefs: json.RawMessage(`{"fontSize":18,"osc52":true}`),
+	})
+	c, wm := dialHelloPayload(t, ctx, wsURL, 80, 24)
+	if wm["mode"] != proto.ModeRW {
+		t.Errorf("welcome mode = %v, want %q (writable=true)", wm["mode"], proto.ModeRW)
+	}
+	prefs, ok := wm["prefs"].(map[string]any)
+	if !ok {
+		t.Fatalf("Welcome prefs = %v, want JSON object (ClientPrefs injected)", wm["prefs"])
+	}
+	if got := prefs["fontSize"]; got != float64(18) {
+		t.Errorf("prefs.fontSize = %v, want 18", got)
+	}
+	if got := prefs["osc52"]; got != true {
+		t.Errorf("prefs.osc52 = %v, want true", got)
+	}
+	if len(prefs) != 2 {
+		t.Errorf("prefs keys = %v, want exactly {fontSize, osc52}", prefs)
+	}
+	c.Close(websocket.StatusNormalClosure, "")
+	waitExit(t, exitCh, 0)
+
+	// 未注入半侧：ClientPrefs 零值 → Welcome JSON 无 "prefs" 键（omitempty 缺席）
+	exitChNil, wsURLNil := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+	cNil, wmNil := dialHelloPayload(t, ctx, wsURLNil, 80, 24)
+	if _, present := wmNil["prefs"]; present {
+		t.Errorf("Welcome JSON = %v, must not contain %q key (omitempty, zero ClientPrefs)", wmNil, "prefs")
+	}
+	cNil.Close(websocket.StatusNormalClosure, "")
+	waitExit(t, exitChNil, 0)
 }

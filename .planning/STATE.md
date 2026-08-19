@@ -2,35 +2,35 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 4
-current_phase_name: 前端体验
-status: "Phase 03 shipped — PR #4"
-stopped_at: Completed 03-06-PLAN.md (Phase 3 ready for verification)
-last_updated: "2026-08-18T07:19:01.066Z"
-last_activity: 2026-08-18
+current_phase: 5
+current_phase_name: 多客户端共享
+status: "Phase 04 shipped — PR #5"
+stopped_at: Completed 04-06-PLAN.md
+last_updated: "2026-08-19T10:35:38.434Z"
+last_activity: 2026-08-19
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 18
-  completed_plans: 18
-last_activity_desc: Phase 03 execution started
+  total_phases: 4
+  completed_phases: 4
+  total_plans: 24
+  completed_plans: 24
+last_activity_desc: Phase 04 complete, transitioned to Phase 5
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-15)
+See: .planning/PROJECT.md (updated 2026-08-19)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 03 — auth
+**Current focus:** Phase 05 — 多客户端共享
 
 ## Current Position
 
-Phase: 4 — 前端体验
+Phase: 5 — 多客户端共享
 Plan: Not started
-Status: Phase 03 shipped — PR #4
-Last activity: 2026-08-18
+Status: Phase 04 shipped — PR #5
+Last activity: 2026-08-19
 
 Progress: [██████████] 100%
 
@@ -38,7 +38,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 18
+- Total plans completed: 24
 - Average duration: -
 - Total execution time: -
 
@@ -49,6 +49,7 @@ Progress: [██████████] 100%
 | 01 | 5 | - | - |
 | 02 | 6 | - | - |
 | 03 | 7 | - | - |
+| 04 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -77,6 +78,12 @@ Progress: [██████████] 100%
 | Phase 03 P04 | 18min | 2 tasks | 3 files |
 | Phase 03 P05 | 14min | 2 tasks | 2 files |
 | Phase 03 P06 | 2h 05m | 2 tasks | 8 files |
+| Phase 04 P01 | 25min | 2 tasks | 6 files |
+| Phase 04 P02 | 16min | 3 tasks | 9 files |
+| Phase 04 P03 | 11min | 3 tasks | 3 files |
+| Phase 04 P04 | 6min | 2 tasks | 1 files |
+| Phase 04 P05 | 14min | 3 tasks | 4 files |
+| Phase 04 P06 | 5h 57m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -123,6 +130,11 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 03-05]: dist .gz 不入库按 .gitignore 既定策略（web/dist/*.gz 自建仓起生效，gzip 头嵌 mtime 每次构建字节漂移；embed.go 设计即 index.html 入库、gz 缺失明文伺服降级）；README:40 陈旧声明登记 deferred-items.md
 - [Phase ?]: [Phase 03-06]: 场景 1 pacing 采用爬梯 sleep（1.15s/2.15s/4.3s）优先于独立实例备选——同时证明退避窗口恢复语义；场景 3 无 Origin 断言取 400 形态（不建 WS 连接不触发单次语义退出）；S1f 非法 ticket 独立 spawn 实例（单会话约束）
 - [Phase ?]: [Phase 03-06]: 六段式段 1 gofmt 清零授权沿用 02-06 先例——4 文件纯注释排版差异 -w 修正后独立 style 提交（87f6e17），零语义改动
+- [Phase 04]: --client-option 校验错误记录式上报（clientOptErr + Parse 后统一返回）——避开 flag 包 invalid value %q 包装回显值内容，守 SEC-01 启动面红线（04-01） — flag 包 failf 将回调错误包装为 invalid value %q（原始 key=value 串）并打印 stderr，plan 字面 return 形态必违反值内容红线；记录式两通道干净且 exit 2 语义不变
+- [Phase 04]: js-base64 override 落 web/pnpm-workspace.yaml 而非 package.json pnpm 字段——pnpm 11.21.0（CI 同钉）WARN 明示不再读该字段，overrides 官方新家即 pnpm-workspace.yaml；钉 3.9.2 避 1 天新包意图逐字保持（04-02） — pnpm 11 settings 迁移导致 plan 字面机制不生效；迁移后 lockfile 三处解析均 3.9.2
+- [Phase ?]: [Phase 04-04]: UAT 新 phase 脚本起步式——逐字复用 phase03.mjs 骨架件 + 单次语义独立 spawn + detail 红线延伸（prefs/theme 值内容永不进测试输出） — plan startWesh([]) 字面为简写，无命令 wesh exit 2 到不了 Welcome；S 场景命令尾照 phase03 既定形态补 '-- bash --norc --noprofile'，断言面零影响
+- [Phase ?]: [Phase 04-05]: queryKeys 以 export 标记防 noUnusedLocals 在 Task 2 接线前误报；query xterm spread 经 as Partial<ITerminalOptions> 收窄（Record<string,unknown> 直接展开 tsc 必红）；OSC52 provider 以 IClipboardProvider 注解对齐 d.ts（_sel 上下文推断为 ClipboardSelectionType，避开 const enum isolatedModules 导入复杂性）
+- [Phase ?]: [Phase 04-06]: README 协议节正文 inline Welcome JSON 与表格行同步补 prefs 可选键（同节形状一致性）；裸 clone 归档前置 rm -rf 防残留污染证据
 
 ### Pending Todos
 
@@ -141,6 +153,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-17T11:58:14.251Z
-Stopped at: Completed 03-06-PLAN.md (Phase 3 ready for verification)
+Last session: 2026-08-19
+Stopped at: Phase 04 complete（UAT 11/11 全过 + transition 收尾），ready to plan Phase 5
 Resume file: None
