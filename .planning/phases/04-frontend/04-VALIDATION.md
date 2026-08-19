@@ -3,9 +3,9 @@ phase: 04
 slug: frontend
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
 # audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
-status: draft
+status: validated
 nyquist_compliant: true
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-08-18
 ---
 
@@ -41,23 +41,23 @@ created: 2026-08-18
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 04-01-1 | 01 | 1 | FE-07 | T-04-01/02 | 白名单 fail-fast；osc52 不入用户侧通道 | e2e+unit | `go test ./internal/server -run TestWelcomePrefs -count=1 && go test ./internal/proto ./cmd/wesh -count=1` | ✅（e2e_test.go 扩） | ⬜ pending |
-| 04-01-2 | 01 | 1 | FE-07 | T-04-01/02/03 | 错误文案不含值；白名单边界锁定 | unit | `go test ./internal/proto ./cmd/wesh -count=1` | ✅（两测试文件扩） | ⬜ pending |
-| 04-02-1 | 02 | 1 | FE-02/FE-04 | T-04-05/06/SC | 库默认 handler opener=null；linkHandler 显式设置 | build | `pnpm -C web install && pnpm -C web exec tsc --noEmit` | ✅ | ⬜ pending |
-| 04-02-2 | 02 | 1 | CORE-03 | T-04-04 | sanitize 剥离+截断防标题注入 | unit | `node --test web/src/lib/title.test.ts && pnpm -C web exec tsc --noEmit` | ❌ W0（lib/title.ts+test 随任务创建） | ⬜ pending |
-| 04-02-3 | 02 | 1 | CORE-03/FE-02/FE-04 | — | N/A | build | `time pnpm -C web build && go build ./...` | ✅ | ⬜ pending |
-| 04-03-1 | 03 | 2 | FE-05 | T-04-08/09 | 手势外不读剪贴板；失败静默 | build | `pnpm -C web exec tsc --noEmit` | ✅ | ⬜ pending |
-| 04-03-2 | 03 | 2 | FE-06 | T-04-10 | 会话终结移除 beforeunload listener | build | `pnpm -C web exec tsc --noEmit` | ✅ | ⬜ pending |
-| 04-03-3 | 03 | 2 | FE-05/FE-06 | — | N/A | build | `time pnpm -C web build && go build ./...` | ✅ | ⬜ pending |
-| 04-04-1 | 04 | 2 | FE-07 | T-04-11 | detail 不打值内容 | e2e | `node --check web/uat/phase04.mjs` | ❌ W0（随任务创建） | ⬜ pending |
-| 04-04-2 | 04 | 2 | FE-07 | T-04-12 | 测试实例隔离（临时端口/路径） | e2e | `node web/uat/phase04.mjs /tmp/wesh-uat/wesh && node web/uat/phase02.mjs /tmp/wesh-uat/wesh && node web/uat/phase03.mjs /tmp/wesh-uat/wesh` | ❌ W0（同上） | ⬜ pending |
-| 04-05-1 | 05 | 3 | FE-07 | T-04-13/16 | osc52 排除出 query；非法 query 静默 | unit | `node --test web/src/lib/prefs.test.ts && pnpm -C web exec tsc --noEmit` | ❌ W0（lib/prefs.ts+test 随任务创建） | ⬜ pending |
-| 04-05-2 | 05 | 3 | FE-06/FE-07 | T-04-14/15 | OSC52 write-only；theme 合并 | build | `pnpm -C web exec tsc --noEmit` | ✅ | ⬜ pending |
-| 04-05-3 | 05 | 3 | FE-06/FE-07 | — | N/A | e2e | `time pnpm -C web build && node web/uat/phase04.mjs /tmp/wesh-uat/wesh` | ✅ | ⬜ pending |
-| 04-06-1 | 06 | 4 | 全部 | T-04-17/18 | 文档不含 osc52 用户侧路径暗示 | docs | `grep -q '\-\-client-option' README.md && ! grep -q '?osc52' README.md` | ✅ | ⬜ pending |
-| 04-06-2 | 06 | 4 | 全部 | — | N/A | full | 六段式全量 + 三套 UAT（见 Full suite command） | ❌ W0（04-UAT.md 随任务创建） | ⬜ pending |
+| 04-01-1 | 01 | 1 | FE-07 | T-04-01/02 | 白名单 fail-fast；osc52 不入用户侧通道 | e2e+unit | `go test ./internal/server -run TestWelcomePrefs -count=1 && go test ./internal/proto ./cmd/wesh -count=1` | ✅（e2e_test.go 扩） | ✅ green |
+| 04-01-2 | 01 | 1 | FE-07 | T-04-01/02/03 | 错误文案不含值；白名单边界锁定 | unit | `go test ./internal/proto ./cmd/wesh -count=1` | ✅（两测试文件扩） | ✅ green |
+| 04-02-1 | 02 | 1 | FE-02/FE-04 | T-04-05/06/SC | 库默认 handler opener=null；linkHandler 显式设置 | build | `pnpm -C web install && pnpm -C web exec tsc --noEmit` | ✅ | ✅ green |
+| 04-02-2 | 02 | 1 | CORE-03 | T-04-04 | sanitize 剥离+截断防标题注入 | unit | `node --test web/src/lib/title.test.ts && pnpm -C web exec tsc --noEmit` | ❌ W0（lib/title.ts+test 随任务创建） | ✅ green |
+| 04-02-3 | 02 | 1 | CORE-03/FE-02/FE-04 | — | N/A | build | `time pnpm -C web build && go build ./...` | ✅ | ✅ green |
+| 04-03-1 | 03 | 2 | FE-05 | T-04-08/09 | 手势外不读剪贴板；失败静默 | build | `pnpm -C web exec tsc --noEmit` | ✅ | ✅ green |
+| 04-03-2 | 03 | 2 | FE-06 | T-04-10 | 会话终结移除 beforeunload listener | build | `pnpm -C web exec tsc --noEmit` | ✅ | ✅ green |
+| 04-03-3 | 03 | 2 | FE-05/FE-06 | — | N/A | build | `time pnpm -C web build && go build ./...` | ✅ | ✅ green |
+| 04-04-1 | 04 | 2 | FE-07 | T-04-11 | detail 不打值内容 | e2e | `node --check web/uat/phase04.mjs` | ❌ W0（随任务创建） | ✅ green |
+| 04-04-2 | 04 | 2 | FE-07 | T-04-12 | 测试实例隔离（临时端口/路径） | e2e | `node web/uat/phase04.mjs /tmp/wesh-uat/wesh && node web/uat/phase02.mjs /tmp/wesh-uat/wesh && node web/uat/phase03.mjs /tmp/wesh-uat/wesh` | ❌ W0（同上） | ✅ green |
+| 04-05-1 | 05 | 3 | FE-07 | T-04-13/16 | osc52 排除出 query；非法 query 静默 | unit | `node --test web/src/lib/prefs.test.ts && pnpm -C web exec tsc --noEmit` | ❌ W0（lib/prefs.ts+test 随任务创建） | ✅ green |
+| 04-05-2 | 05 | 3 | FE-06/FE-07 | T-04-14/15 | OSC52 write-only；theme 合并 | build | `pnpm -C web exec tsc --noEmit` | ✅ | ✅ green |
+| 04-05-3 | 05 | 3 | FE-06/FE-07 | — | N/A | e2e | `time pnpm -C web build && node web/uat/phase04.mjs /tmp/wesh-uat/wesh` | ✅ | ✅ green |
+| 04-06-1 | 06 | 4 | 全部 | T-04-17/18 | 文档不含 osc52 用户侧路径暗示 | docs | `grep -q '\-\-client-option' README.md && ! grep -q '?osc52' README.md` | ✅ | ✅ green |
+| 04-06-2 | 06 | 4 | 全部 | — | N/A | full | 六段式全量 + 三套 UAT（见 Full suite command） | ❌ W0（04-UAT.md 随任务创建） | ✅ green |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: ✅ green · ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
@@ -97,4 +97,29 @@ created: 2026-08-18
 - [x] Feedback latency < 90s
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending（validate-phase §6 复核后置 validated）
+**Approval:** validated 2026-08-19（validate-phase §6 复核：16/16 自动断言绿，无 gap）
+
+---
+
+## Validation Audit 2026-08-19
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+
+### 执行结果快照
+
+| 测试 | 结果 |
+|------|------|
+| `go test ./internal/... ./cmd/...` | 4/4 包 ok |
+| `node --test web/src/lib/{title,prefs}.test.ts` | 16/16 pass |
+| `pnpm -C web exec tsc --noEmit` | clean |
+| `web/uat/phase04.mjs`（S1-S6 + E1-E4） | 10/10 pass |
+| `web/uat/phase02.mjs`（回归） | 11/11 pass |
+| `web/uat/phase03.mjs`（回归） | 18/18 pass |
+| `web/uat/phase04-t1-width.mjs`（@xterm/headless 宽度断言） | 5/5 pass |
+| `web/uat/phase04-dom.mjs`（jsdom DOM 面） | 37/37 pass |
+
+Wave 0 五项全部产出并就位；Manual-Only 8 项已在 04-UAT.md 记录并按项目约束风险接受（headless 环境豁免）。
