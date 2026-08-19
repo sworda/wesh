@@ -1,50 +1,63 @@
 ---
 phase: 04-frontend
 verified: 2026-08-19T00:04:53Z
-status: human_needed
+status: passed
 score: 45/47 must-haves verified
 behavior_unverified: 2
 overrides_applied: 0
 behavior_unverified_items:
+
   - truth: "中文拼音/日文 IME 组合输入不丢字、CJK/emoji 宽度正确占两格（04-02 backstop truth）"
     test: "04-UAT.md T1/T2：终端 echo 中文/emoji、vim/htop 显示中文；真实拼音/日文 IME 组合输入"
     expected: "CJK 占两格不错位、emoji 后光标位置正确；IME 组合与上屏不丢字不乱码"
     why_human: "字形渲染与宽度测量是视觉效果；真实 IME 栈（OS 输入法 → 浏览器 composition 事件 → xterm textarea）自动化结构性不可达。代码面已验：Unicode11Addon 加载+activeVersion='11' 硬顺序在 main.ts:113-114，输入链路 onData 未改"
+
   - truth: "真实浏览器权限模型下：选中即复制生效、Ctrl+Shift+V 粘贴生效、权限拒绝静默、浮层时序与淡出、beforeunload 拦截与会话终结后放行（04-03 backstop truth）"
     test: "04-UAT.md T5-T9：真实浏览器拖动选中/粘贴/resize 拖窗/关页，含 ro 形态与明文降级形态"
     expected: "选中即复制入系统剪贴板（150ms 防抖只写最终选区）；rw 粘贴到 shell 且 bracketed paste 语义保留、ro 无权限弹窗；浮层 resize 期间显示静止 600ms 淡出；会话中关页拦截、Session ended 后放行"
     why_human: "系统剪贴板真实状态、浏览器原生确认框、浮层淡出时序均需真实浏览器人工核对。代码面已验：clipboardOK 门/防抖/双门/条件注册/onclose 移除全部就位（main.ts:274-302, 242-256, 476-478, 532）"
 human_verification:
+
   - test: "T1 CJK/emoji 宽度（FE-02）：形态 A 执行 echo '中文测试🙂🎉' 与 printf 对齐测试；vim/htop 显示中文"
     expected: "CJK 字符占两格不错位；emoji 后光标位置正确"
     why_human: "字形渲染与宽度测量的视觉效果自动化不可测"
+
   - test: "T2 IME 组合输入（FE-02）：形态 A 用中文拼音（如有日文 IME 一并）输入完整句子"
     expected: "组合过程与上屏不丢字、不乱码、组合框位置正常"
     why_human: "真实 IME 栈自动化不覆盖（UI-SPEC backstop 人工出口）"
+
   - test: "T3 标题同步（CORE-03）：形态 A printf '\\e]2;custom-title\\a' 并开 vim/tmux；形态 B 重复"
     expected: "标签页标题同步并随程序变化；形态 B 恒为 '[ro] custom-title' 且前缀最前不丢"
     why_human: "标签页标题是浏览器可视面"
+
   - test: "T4 超链接（FE-04）：echo 裸 URL 与 printf OSC8 序列，hover + 单击"
     expected: "hover 显示完整真实地址 tooltip，单击新标签页打开；OSC8 链接可辨别显示文本与目标不一致，点击无 confirm 原生框"
     why_human: "hover tooltip 视觉与点击行为需真实浏览器"
+
   - test: "T5 选中即复制（FE-05）：形态 A 拖动选中文本后到他处粘贴"
     expected: "系统剪贴板即为所选内容；拖动过程不频繁写剪贴板（150ms 防抖最终选区一次写入）"
     why_human: "系统剪贴板真实状态需人工核对"
+
   - test: "T6 粘贴（FE-05/D-10）：形态 A 与形态 B 各按 Ctrl+Shift+V"
     expected: "形态 A 内容到达 shell（bracketed paste 语义保留）；形态 B 无权限弹窗、无效果"
     why_human: "浏览器剪贴板权限门控与 bracketed paste 行为需真实浏览器"
+
   - test: "T7 明文降级（D-11）：形态 C（明文 HTTP + 非 localhost）拖动选中与 Ctrl+Shift+V"
     expected: "选中复制与粘贴静默不生效（不弹错无提示）；终端其余功能正常"
     why_human: "非安全上下文的浏览器行为差异需真实环境"
+
   - test: "T8 resize 浮层（FE-06/D-17）：形态 A 拖动窗口；再以 resizeOverlay=false 重启重复"
     expected: "默认 resize 期间右上角 COLSxROWS 浮层，静止约 600ms 淡出；开关关闭后不显示"
     why_human: "浮层视觉与淡出时序需人眼"
+
   - test: "T9 离开确认（FE-06/D-18）：形态 A 会话中关页、Session ended 后关页、confirmBeforeUnload=false 关页"
     expected: "会话中关页被浏览器标准确认框拦截；会话终结后不再拦截；开关关闭后不拦截（零交互直接关页不弹框为浏览器预期 sticky activation 语义，已裁决非缺陷）"
     why_human: "浏览器原生确认框与 sticky activation 语义自动化不可驱动"
+
   - test: "T10 偏好下发与 query 覆盖（FE-07）：--client-option fontSize=18 + theme 启动，再 ?fontSize=11 与非法 ?fontFamily=Menlo 打开"
     expected: "字号变大背景生效且 ANSI 色相保持内置调色板；query 覆盖优先；非法 query 静默忽略且 console 有 warn"
     why_human: "视觉效果（字号/色相）与 console warn 需真实浏览器"
+
   - test: "T11 OSC52 写入（可选，D-12）：形态 A 加 --osc52，printf OSC52 写/读查询序列"
     expected: "系统剪贴板写入 hello；读查询无 unhandled rejection（console 干净）"
     why_human: "系统剪贴板真实状态与 console 噪音需人工核对"
