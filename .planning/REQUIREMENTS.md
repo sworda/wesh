@@ -36,7 +36,7 @@
 - [x] **MULTI-02**: 写入权限可配置：全员可写（协作排障）/ 仅 owner 可写其余只读（演示旁观）
 - [x] **MULTI-03**: 慢客户端不阻塞其他客户端：每客户端有界 outbox，写满则以 1013 断开该客户端（重连后从最新输出看起）
 - [x] **MULTI-04**: 多客户端 resize 仲裁（单客户端 last-wins；≥2 客户端最小公共矩形；2→1 恢复）
-- [ ] **MULTI-05**: 服务端启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
+- [x] **MULTI-05**: 服务端启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
 
 ### 安全（SEC）
 
@@ -130,7 +130,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MULTI-02 | Phase 5 | Complete |
 | MULTI-03 | Phase 5 | Complete |
 | MULTI-04 | Phase 5 | Complete |
-| MULTI-05 | Phase 5 | Pending |
+| MULTI-05 | Phase 5 | Complete |
 | SEC-01 | Phase 3 | Complete |
 | SEC-02 | Phase 3 | Complete |
 | SEC-03 | Phase 3 | Complete |

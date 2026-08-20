@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-05-PLAN.md
-last_updated: "2026-08-20T14:30:41.997Z"
+stopped_at: Completed 05-06-PLAN.md
+last_updated: "2026-08-20T15:46:13.003Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 33
-  completed_plans: 29
+  completed_plans: 30
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 6 of 9
+Plan: 7 of 9
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 91%
 
 ## Performance Metrics
 
@@ -89,6 +89,7 @@ Progress: [█████████░] 88%
 | Phase 05 P03 | 53min | 3 tasks | 8 files |
 | Phase 05 P04 | 41min | 2 tasks | 6 files |
 | Phase 05 P05 | 45min | 2 tasks | 6 files |
+| Phase 05 P06 | 42min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -156,6 +157,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-05]: input-writer 终结双通道——lifecycle 内 Drain→Close 先关 master fd（在途 Write 经 runtime poller 解除阻塞返回错误即 return），close(inputDone) 解除 select 等待；队列残余随会话消亡
 - [Phase ?]: [Phase 05-05]: TestInputRateLimit 回显计数模型——/bin/cat 默认 canonical+ECHO 使每送达帧产双份 'x'（1022/帧），ONLCR 不影响 'x' 计数；帧长 512B ≤ burst（AllowN 对 n>burst 恒 false）且 ≪ MAX_CANON 4096；对照子测取显式 1MiB/1MiB 覆写消去零裕度边界
 - [Phase ?]: [Phase 05-05]: 依赖引入顺序纪律——先落码（import 存在）再 go get + go mod tidy，否则 tidy 回收无引用依赖（本 plan 实测命中）
+- [Phase ?]: [Phase 05-06]: sharePage 有效 token 委托 embed handler（wh）而非 / 链根——Task 2 初版委托 root 使有效 token 反收 401（TestShareToken 首跑捕获）；无效 token 同样改写 / 后委托 root（凭据模式 401 逐字节不变、无认证模式给页——不改写落 404 违背 plan『直接给页』锁定）
+- [Phase ?]: [Phase 05-06]: 补斜杠重定向 301→307 实证修正（RESEARCH Pattern 6 笔误）——go1.22+ 新 mux matchOrRedirect 恒用 307 保方法（GOROOT go1.26.3 server.go:2687），GET 下两码语义等价；D-03 Location 暴露面结论不变
+- [Phase ?]: [Phase 05-06]: checkTicket 无认证模式携票必核销——ro 票过期/重放后若落入 writable 派生 mode 等于降权闸门失效；携票即走核销语义与认证模式一致（throttle nil 守卫），未携票原样放行（探测直连链路不变）
 
 ### Pending Todos
 
@@ -174,6 +178,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T14:30:41.977Z
-Stopped at: Completed 05-05-PLAN.md
+Last session: 2026-08-20T15:46:12.983Z
+Stopped at: Completed 05-06-PLAN.md
 Resume file: None
