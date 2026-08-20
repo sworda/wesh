@@ -12,6 +12,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -547,4 +548,144 @@ func TestSuccessionKickRace(t *testing.T) {
 	// 升格后 cA2 INPUT 生效。
 	sendInput(t, ctx, cA2, []byte("a2-promoted"))
 	accumPayload(t, ctx, cA2, []byte("a2-promoted"))
+}
+
+// ====== plan 05-05 增量：RES-02 每客户端输入限速测试（VALIDATION 05-01-05）======
+
+// TestInputRateLimit（VALIDATION 05-01-05，RES-02 + 裁断 R-02 丢弃语义 + CR-01
+// 队列化行为锁定）：Options 覆写 InputRate=1024（1KiB/s）+ InputBurst=1024（1KiB）
+// 加速；Hello 完成后连续发送总计 64KiB INPUT（128 帧 × 512B 载荷——帧长 ≤ burst
+// 才有帧可通过：AllowN 对 n > burst 恒 false，rate.go godoc）→ 读 OUTPUT 累积
+// 回显 → 断言三件套：
+//  1. 送达回显 'x' 字节数 > 0（未超限部分送达——burst 内容纳的首批 2 帧）；
+//  2. 送达字节数显著小于发送量（< 发送量的 25%——超限部分被丢弃。宽界时序论证：
+//     令牌桶 1KiB/s refill，送达达 25%（32 帧）需 ~15s 连续 refill，而收集窗口
+//     仅 1.5s（窗内至多 ~5 帧）——窗口滑动与调度迟滞的时序不确定性由宽界免疫）；
+//  3. 连接存活（洪水后 Ping 收 pong——未被踢未 1011；refill 1.2s 后发小量
+//     marker INPUT 有回显——输入路径未降权）。
+// 对照子测：InputRate/InputBurst 调大（1MiB/1MiB）下同量 INPUT 全量送达（'x'
+// 计数精确 == 发送量——证明丢弃确由限速器而非队列/其他路径）。
+//
+// 回显计数模型：/bin/cat 默认 canonical+ECHO——每送达一帧产生双份 'x'（行规
+// ECHO 即时回显 + cat 读后 stdout 拷贝），ONLCR 只把 '\n' 展开为 \r\n、不影响
+// 'x' 计数；每帧 511 'x' × 2 份 = 1022。
+func TestInputRateLimit(t *testing.T) {
+	// 帧载荷：511 'x' + '\n' = 512B（'\n' 使 canonical 行完结、cat 可读后拷贝；
+	// 行长 512B ≪ MAX_CANON 4096 不触顶）。
+	frame := append(bytes.Repeat([]byte{'x'}, 511), '\n')
+	const frames = 128        // 总计 64KiB INPUT
+	const xPerFrame = 2 * 511 // 行规 ECHO + cat 拷贝双份
+	const sentX = frames * xPerFrame
+
+	// outputAccumulator 形态（Pitfall 2：客户端 Read 永不带 deadline ctx）：
+	// goroutine 持续读 OUTPUT 把载荷累积进互斥锁保护的缓冲，主测试经快照轮询
+	// 收口；conn 关闭后 Read 出错 goroutine 自终结。
+	accum := func(c *websocket.Conn) (snapshot func() []byte) {
+		var mu sync.Mutex
+		var buf []byte
+		go func() {
+			for {
+				_, data, err := c.Read(context.Background())
+				if err != nil {
+					return
+				}
+				if len(data) > 0 && data[0] == proto.Output {
+					mu.Lock()
+					buf = append(buf, data[1:]...)
+					mu.Unlock()
+				}
+			}
+		}()
+		return func() []byte {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]byte(nil), buf...)
+		}
+	}
+
+	t.Run("超限丢弃且连接存活", func(t *testing.T) {
+		exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+			Writable:   true,
+			InputRate:  1024, // 1KiB/s
+			InputBurst: 1024, // 1KiB burst——恰容纳首批 2 帧（512B/帧）
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		c, mode := dialHello(t, ctx, wsURL, 80, 24)
+		if mode != proto.ModeRW {
+			t.Fatalf("welcome mode = %q, want %q（owner 默认策略单客户端立 owner）", mode, proto.ModeRW)
+		}
+		defer c.CloseNow()
+		snap := accum(c)
+
+		// Hello 完成后连续发送 64KiB INPUT 洪水（128 帧 × 512B）。
+		for i := 0; i < frames; i++ {
+			sendInput(t, ctx, c, frame)
+		}
+
+		// 1.5s 收集窗口：窗内可送达 = burst 首批 2 帧 + refill（1 帧/0.5s × 1.5s
+		// ≈ 3 帧）≈ 5 帧（'x' 上限 5×1022=5110，占发送量 ~3.9%）。
+		time.Sleep(1500 * time.Millisecond)
+		got := bytes.Count(snap(), []byte{'x'})
+		if got == 0 {
+			t.Fatal("未收到任何回显——burst 内容纳的首批帧未送达（限速器误杀合法输入）")
+		}
+		if got >= sentX/4 {
+			t.Fatalf("回显 'x' = %d, want < %d（发送量 25%%）——超限帧未被限速器丢弃", got, sentX/4)
+		}
+
+		// 存活断言一：洪水后 Ping 收 pong（未被踢未 1011；库硬性要求 Ping 与
+		// Reader 并发——accum goroutine 即并发 reader，conn.go:218-220）。
+		if err := c.Ping(ctx); err != nil {
+			t.Fatalf("洪水后 Ping: %v——连接被限速路径断开（R-02：超限唯一动作是丢弃）", err)
+		}
+		// 存活断言二：refill 1.2s（令牌回填 ≥1KiB）后发小量 marker INPUT，回显
+		// 送达——输入路径未降权。
+		time.Sleep(1200 * time.Millisecond)
+		sendInput(t, ctx, c, []byte("tail-ok\n"))
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if bytes.Contains(snap(), []byte("tail-ok")) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("marker 回显未达——洪水后输入路径未恢复（连接存活但输入失效）")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		// 洪水不拖死会话：服务端零退出（RES-02 是资源保护非策略违例）。
+		assertNoExit(t, exitCh)
+	})
+
+	t.Run("对照大限额全量送达", func(t *testing.T) {
+		_, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+			Writable:   true,
+			InputRate:  1 << 20, // 1MiB/s
+			InputBurst: 1 << 20, // 1MiB burst——整批 64KiB 洪水一次性容纳
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		c, _ := dialHello(t, ctx, wsURL, 80, 24)
+		defer c.CloseNow()
+		snap := accum(c)
+
+		for i := 0; i < frames; i++ {
+			sendInput(t, ctx, c, frame)
+		}
+		// 全量送达精确断言：'x' 计数 == 发送量（128 帧 × 1022）；证明限速子测的
+		// 丢弃确由限速器而非 inputQ/其他路径（队列 256KiB ≫ 64KiB 洪水上限）。
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			got := bytes.Count(snap(), []byte{'x'})
+			if got == sentX {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("回显 'x' = %d, want %d（大限额下同量 INPUT 应全量送达）", got, sentX)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
 }
