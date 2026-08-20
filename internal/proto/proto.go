@@ -8,7 +8,9 @@
 // 关闭码纪律（D-05 全集 {1000,1001,1002,1008,1009,1011,1013}）：
 // 发送侧取值直接用库常量 websocket.StatusNormalClosure/StatusProtocolError/
 // StatusPolicyViolation/StatusMessageTooBig/StatusInternalError；
-// 1001 优雅下线 Phase 7 启用、1013 背压踢出 Phase 5 启用，本期占位不实现（D-08）；
+// 1013 背压踢出已于 Phase 5 启用（D-08 占位兑现——发送路径 =
+// server/clients.go kickSlowConsumerLocked，库常量 websocket.StatusTryAgainLater，
+// close reason 机器串 slow_consumer）；1001 优雅下线 Phase 7 启用，本期占位不实现；
 // 1005/1006/1015 永不发送（库层 validWireCloseCode 兜底）；禁止自定义 4000 段私码。
 package proto
 
@@ -66,7 +68,8 @@ const (
 // coder/websocket 不暴露分片计数 API（read.go:457-479 空 continuation 帧在
 // mr.read 内部循环被吞掉，应用层数不到分片），本层由等效防线覆盖——
 // 两层字节硬顶（ReadLimitPreAuth/ReadLimitPostAuth）+ 预认证三道闸
-//（D-03 400 / D-04 429 / 5s 超时）+ 409 单客户端门；
+//（D-03 400 / D-04 429 / 5s 超时）；409 单客户端门已于 Phase 5 拆除（多客户端
+// 注册表取代，max-clients 503 闸由 05-07 重建）；
 // Bandit CVE-2026-65623 官方修复同为 running byte count 而非分片计数。
 // 残余风险：0 字节空帧洪水（纯 CPU、带宽受限、内存平坦）无应用层钩子。
 

@@ -1,5 +1,7 @@
-// Package server 提供 HTTP + WS 网关、数据泵与 Phase 1 单次语义生命周期：
-// 任意终结路径（子进程退出 / WS 断开）都使服务端经 exitf 整体退出（D-10/D-11）。
+// Package server 提供 HTTP + WS 网关、数据泵与多客户端生命周期：
+// 子进程退出是唯一终结路径（D-10——lifecycle 广播 1000 关闭全部客户端后 exitf）；
+// 客户端断开只做注册表移除，不再触发 exitf/SIGHUP（Phase 5 多客户端必然推论，
+// P1 D-11 单次语义终结）。
 package server
 
 import (
@@ -14,8 +16,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -25,14 +25,16 @@ import (
 	"github.com/sworda/wesh/web"
 )
 
-// Server 持有会话、attach 原子门与生命周期收口件。
+// Server 持有会话、客户端注册表与生命周期收口件。
 // exitf 由 main 注入 os.Exit、测试注入捕获桩——生命周期必须可测，这是硬约束。
 type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
 
 	// New 装配期固化、运行期只读，故六个 plain 字段无需 atomic：
-	// writable 为 D-13 ro 门读端；helloTimeout 为 D-04 未认证超时时长；
+	// writable 为 checkTicket/attachHandler 派生 per-client mode 的全局来源
+	//（D-13/D-14；INPUT/RESIZE 门已多客户端化为 per-client c.mode 判定）；
+	// helloTimeout 为 D-04 未认证超时时长；
 	// maxHalfOpenPerIP 为 D-04 per-IP 半开上限；pingInterval/pongTimeout 为
 	// D-16 保活参数（均 Options 注入）；
 	// clientPrefs 为 P4 D-13 客户端偏好 blob（Welcome 内嵌一次性下发，空 = 不出
@@ -58,20 +60,26 @@ type Server struct {
 	throttle    *throttleStore
 	tlsOn       bool
 
-	attached atomic.Bool                    // D-09：单客户端原子门
-	conn     atomic.Pointer[websocket.Conn] // 当前已完成握手的 WS 连接（onChunk 写端 / 1000 关闭用）
-	frame    []byte                         // OUTPUT 组帧缓冲（仅 ReadLoop 单 goroutine 经 onChunk 访问，无竞争）
+	// hubMu 护注册表与 hub 临界区（R-07 单锁纪律；锁序 hubMu > outbox.mu——
+	// writer drain 不持 hubMu，绝不反序同持）。registry 结构见 clients.go。
+	hubMu    sync.Mutex
+	registry registry
+
+	// 多客户端参数（New 装配期固化、运行期只读；零值兜底见 New，默认常量声明
+	// 在 clients.go 并挂 Phase 9 标定注释）：outboxBytes 本 plan 消费（outbox
+	// 字节容量）；maxClients/inputRate/inputBurst/resizeDebounce 本 plan 仅立
+	// 字段，消费点分别在 05-07（503 闸）/05-05（INPUT 限速）/05-04（仲裁防抖）。
+	outboxBytes    int
+	maxClients     int
+	inputRate      int
+	inputBurst     int
+	resizeDebounce time.Duration
 
 	// halfOpen 为 D-04 per-IP 半开（Hello 未完成）连接计数器；
 	// acquire/release 恰好一次不变量见 halfOpenCounter 类型注释。
 	halfOpen halfOpenCounter
 
-	// childExited 区分两条终结路径的触发源：lifecycle 在 Wait 返回后先置位再关 conn，
-	// Attach 读循环随服务端 1000 关闭帧终结时据此前置位识别"非客户端断开"，
-	// 不得走 D-11 竞争 exitf——否则 D-10 退出码会被 terminate(true, 0) 抢跑覆盖
-	// （plan 01-03 TestExitCodePropagation 暴露：exitf(0) 顶替 exitf(42)）。
-	childExited atomic.Bool
-	termOnce    sync.Once // 两条终结路径收口，exitf 只触发一次
+	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
 }
 
 // Options 为 New 的装配选项。
@@ -87,6 +95,10 @@ type Server struct {
 // Phase 4 新增：ClientPrefs 为生产直传字段（main 经 aggregateClientPrefs 聚合
 // --client-option + --osc52，P4 D-13 Welcome 内嵌一次性下发；空 = 不下发——
 // 服务端对 prefs 不透明透传不解析，白名单/JSON 校验已在 --client-option parse 期完成）。
+// Phase 5 新增：OutboxBytes/MaxClients/InputRate/InputBurst/ResizeDebounce 为
+// 测试可覆写字段（HelloTimeout 先例形态——零值各取默认常量，常量声明与 Phase 9
+// 负载标定回填注释见 clients.go）；MaxClients/InputRate/InputBurst/ResizeDebounce
+// 本 plan 仅立字段，消费点分别在 05-07/05-05/05-04。
 type Options struct {
 	Writable         bool
 	PingInterval     time.Duration
@@ -100,6 +112,11 @@ type Options struct {
 	ThrottleBase     time.Duration
 	ThrottleCap      time.Duration
 	ClientPrefs      json.RawMessage
+	OutboxBytes      int
+	MaxClients       int
+	InputRate        int
+	InputBurst       int
+	ResizeDebounce   time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -115,12 +132,14 @@ const defaultMaxHalfOpenPerIP = 8
 const defaultPongTimeout = 10 * time.Second
 
 // New 装配服务端并钉死两个 goroutine 的启动点：
-//   - sess.ReadLoop：自装配起持续 drain master（D-12），attach 前输出直接丢弃，
-//     防 64KiB PTY 内核缓冲填满导致子进程写阻塞；attach 路径内不得再新建读循环。
-//   - lifecycle：sess.Wait → 带时限 drain → 1000 关闭当前客户端 → exitf（D-10 触发源）。
+//   - sess.ReadLoop：自装配起持续 drain master（D-12），无客户端期间输出经 hub
+//     空扇出自然丢弃，防 64KiB PTY 内核缓冲填满导致子进程写阻塞；attach 路径内
+//     不得再新建读循环。
+//   - lifecycle：sess.Wait → 带时限 drain → 广播 1000 关闭全部客户端 → exitf
+//     （D-10 唯一终结路径的多客户端形态）。
 //
-// 装配契约：opts.Writable 决定 Welcome mode 与 INPUT 门（D-13/D-14/D-15）；
-// opts.HelloTimeout 零值时取 defaultHelloTimeout。
+// 装配契约：opts.Writable 是 per-client Welcome mode 与 INPUT 门的全局派生来源
+//（D-13/D-14/D-15）；opts.HelloTimeout 零值时取 defaultHelloTimeout。
 func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.HelloTimeout <= 0 {
 		opts.HelloTimeout = defaultHelloTimeout
@@ -131,6 +150,21 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.PongTimeout <= 0 {
 		opts.PongTimeout = defaultPongTimeout
 	}
+	if opts.OutboxBytes <= 0 {
+		opts.OutboxBytes = defaultOutboxBytes
+	}
+	if opts.MaxClients <= 0 {
+		opts.MaxClients = defaultMaxClients
+	}
+	if opts.InputRate <= 0 {
+		opts.InputRate = defaultInputRate
+	}
+	if opts.InputBurst <= 0 {
+		opts.InputBurst = defaultInputBurst
+	}
+	if opts.ResizeDebounce <= 0 {
+		opts.ResizeDebounce = defaultResizeDebounce
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
@@ -139,7 +173,12 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		maxHalfOpenPerIP: opts.MaxHalfOpenPerIP,
 		pingInterval:     opts.PingInterval,
 		pongTimeout:      opts.PongTimeout,
-		frame:            make([]byte, 1+32*1024),
+		registry:         registry{set: make(map[*client]struct{})},
+		outboxBytes:      opts.OutboxBytes,
+		maxClients:       opts.MaxClients,
+		inputRate:        opts.InputRate,
+		inputBurst:       opts.InputBurst,
+		resizeDebounce:   opts.ResizeDebounce,
 		halfOpen:         halfOpenCounter{n: make(map[string]int)},
 		credentials:      opts.Credentials,
 		tlsOn:            opts.TLS,
@@ -163,7 +202,6 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		s.tickets = newTicketStore(opts.TicketTTL)
 		s.throttle = newThrottleStore(opts.ThrottleBase, opts.ThrottleCap)
 	}
-	s.frame[0] = proto.Output
 	go sess.ReadLoop(s.onChunk)
 	go s.lifecycle()
 	return s
@@ -297,11 +335,11 @@ func headerHasToken(h http.Header, name, token string) bool {
 //	   /api/attach 一致且 HTTP 层可测（AcceptOptions.OriginPatterns 为库内
 //	   二次校验，纵深防御，SEC-04）；
 //	① D-03 子协议预检 400（最廉价无状态，扫描器/旧客户端最早被拦）；
-//	② D-04 per-IP 半开上限 429（默认 8）——必须在 409 之前：409 在前则 429 在
-//	   单客户端模型下结构性不可达（planner 裁决的 D-04 可触达性形态，RESEARCH 的
-//	   TestHalfOpenPerIP429 映射亦无法构造）；被 409 拒的连接 acquire→release
-//	   恰好一次，不残留计数；
-//	③ D-09 409 单客户端原子门（Phase 5 才改）。
+//	② D-04 per-IP 半开上限 429（默认 8）——必须在容量闸之前：容量闸在前则 429
+//	   结构性不可达（planner 裁决的 D-04 可触达性形态沿用；被拒连接 acquire→release
+//	   恰好一次，不残留计数）；
+//	③ max-clients 503 闸由 05-07 落地（原 D-09 409 单客户端原子门已随多客户端
+//	   注册表拆除——P5-5：503 闸沿用本区顺序与 release 恰好一次纪律）。
 func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// ⓪ D-13：Origin 白名单检查（Accept 前拒绝，HTTP 层可测）——通用文案不回显
 	// Origin 值（无反射面）；无 Origin 头放行（非浏览器客户端零摩擦）。
@@ -317,7 +355,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// ② D-04：per-IP 半开上限。不变量：acquire 成功 → release 恰好一次，发生在
 	// Hello 完成或任一拒绝/失败路径（先到为准，Pitfall 4）——局部 sync.Once +
 	// defer 兜底覆盖一切 return 路径（含违规落读循环后的 reader 终结与正常会话终结），
-	// 显式提前调用处理 409/Accept/assert 失败与握手成功升档点。
+	// 显式提前调用处理 Accept/assert 失败与握手成功升档点。
 	ip := clientIP(r)
 	if !s.halfOpen.acquire(ip, s.maxHalfOpenPerIP) {
 		http.Error(w, "too many pending connections", http.StatusTooManyRequests)
@@ -326,12 +364,6 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { s.halfOpen.release(ip) }) }
 	defer release()
-	// ③ D-09：第二连接在 Accept 之前以 HTTP 409 拒绝。
-	if !s.attached.CompareAndSwap(false, true) {
-		release() // 被 409 拒的连接已持有半开名额，先释放不残留计数
-		http.Error(w, "another client is already attached", http.StatusConflict)
-		return
-	}
 	// logEvent 对端取值（D-12②）：Attach 入口保存 RemoteAddr。反代部署下聚合为
 	// 代理 IP 是已知限制（Pitfall 6）；X-Forwarded-For 信任属 Phase 7 SEC-07，本 phase 不解析。
 	remote := r.RemoteAddr
@@ -344,28 +376,25 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		OriginPatterns: s.originList,
 	})
 	if err != nil {
-		release()               // Accept 失败即未 attach，半开名额随拒绝释放
-		s.attached.Store(false) // 释放门位允许后续客户端
-		return                  // Accept 失败已自动写 HTTP 错误响应
+		release() // Accept 失败即未 attach，半开名额随拒绝释放
+		return    // Accept 失败已自动写 HTTP 错误响应
 	}
 	defer c.CloseNow()
 	// D-03 双闸之二：Accept 后 assert 兜底（理论不可达——预检已拦正常路径；
-	// logEvent 埋点在此建立，02-05 复核清单以此为准）。防御性退化：释放门位直返，
-	// 不消耗单次生命周期。
+	// logEvent 埋点在此建立，02-05 复核清单以此为准）。防御性退化：直接 return，
+	// 不进注册表。
 	if c.Subprotocol() != proto.Subprotocol {
 		logEvent(remote, websocket.StatusPolicyViolation, "subprotocol_required")
 		_ = c.Close(websocket.StatusPolicyViolation, "subprotocol_required")
 		release()
-		s.attached.Store(false)
 		return
 	}
 	// ctx 由 context.Background() 派生——禁止 r.Context()（hijack 后行为意外，官方
 	// README 明示）；读路径永不带 deadline（Pitfall 2：deadline ctx 到期经库内
 	// AfterFunc 关整条连接且无关闭帧，conn.go:188-199——长 idle 终端会话会被误杀）。
-	// WithCancel 唯一用途：Attach 返回时 defer cancel 终结 pinger goroutine——
-	// pinger 随本 handler 生命周期同生灭，进既有 wsDisconnected/terminate 单一
-	// 收口，零新 exitf 分支（CONTEXT L92 硬约束）。cancel 只在读循环终结后触发，
-	// 不打断在途读写。
+	// WithCancel 用途：终结该客户端的 pinger goroutine——升档后 cancel 归 client
+	// 持有，detach/kick 路径触发（clients.go），Attach 返回时 defer cancel 幂等
+	// 兜底（含未升档的违规路径）。cancel 只在读循环终结后触发，不打断在途读写。
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// D-11 预认证窗口第一档：4KiB 读上限（Hello JSON ~100B，余量两个数量级）；
@@ -387,14 +416,15 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 
 	// 握手状态机（RESEARCH Pattern 2）：首帧必须 Hello。违规路径只关 conn
 	// （攻击面不发 Error 帧，D-06 零反馈）并落入数据面读循环——下一拍 c.Read
-	// 错误经既有 wsDisconnected→terminate 单一路径收口（CONTEXT L92 硬约束：
-	// 禁止新增 exitf 分支；与 Phase 1 unknown-frame 关闭路径同形）。
+	// 错误直接 return 收口（未升档无客户端注册；多客户端推论：单次语义终结，
+	// 违规终结不再触发 exitf，与 unknown-frame 关闭路径同形）。
+	var cl *client // 升档后非 nil——读循环终结时 detach 的判定依据
 	_, data, err := c.Read(ctx)
 	if err != nil {
 		// 预认证 4KiB 档超限（D-11）：库已自动 1009，补 stderr 事件（D-12②）。
 		s.logIfMessageTooBig(remote, err)
-		// 对端断开与 hello_timeout 关闭后的 reader 终结：走既有 D-11 收口。
-		s.wsDisconnected()
+		// 对端断开与 hello_timeout 关闭后的 reader 终结：无客户端注册，直接
+		// return（多客户端推论：不进 exitf）。
 		return
 	}
 	if len(data) == 0 {
@@ -426,29 +456,44 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 	} else {
 		// 升档序列（顺序敏感，PATTERNS 注意 5/6）：停 5s 计时器 → Hello 携首尺寸
-		// Resize（消除 80x24 首帧窗口）→ per-IP release（Hello 完成即不计半开，
-		// D-04：NAT 场景正常浏览器不受限）→ Welcome 下发 mode（D-14——认证模式取
+		// Resize（消除 80x24 首帧窗口；多客户端仲裁与 ro 忽略闸 05-04 落地，本 plan
+		// 为 last-wins 延续）→ per-IP release（Hello 完成即不计半开，
+		// D-04：NAT 场景正常浏览器不受限）→ 构造 client（mode 写入——认证模式取
 		// checkTicket 核销返回的 ticket 绑定值（D-11），无认证模式为其返回的
-		// s.writable 派生值）并携 prefs（P4 D-13，空则不出键——旧前端零漂移）→ 16KiB 稳态档
+		// s.writable 派生值）→ Welcome 帧（携 prefs，P4 D-13，空则不出键——旧前端
+		// 零漂移）经 outbox 首条入队 → 注册表登记 → 16KiB 稳态档
 		// （SetReadLimit 经库 atomic store 下一条消息起生效，read.go:97-105）→
-		// pinger 保活（D-16）→ conn 上线。conn 刻意在握手完成后才上线：此前 OUTPUT 一律 drain——
-		// Welcome 恒为 S→C 首帧（dialHello 首帧断言无时序竞态），且未认证客户端
-		// 在预认证窗口内收不到任何 PTY 输出。
+		// writer + pinger 启动。注册刻意在握手完成后才发生：此前 OUTPUT 一律经
+		// hub 空扇出丢弃——Welcome 恒为 S→C 首帧（writer 全程唯一写端，FIFO 保证
+		// 首帧无时序竞态，P2 D-02 时序纪律），且未认证客户端在预认证窗口内收不到
+		// 任何 PTY 输出。
 		close(helloDone)
 		s.sess.Resize(h.Cols, h.Rows)
 		release()
-		// Welcome 写失败不补救——连接已死，读循环下一拍收口。
-		// Welcome 携 prefs（P4 D-13，s.clientPrefs 空则 JSON 不出 prefs 键）。
-		_ = c.Write(ctx, websocket.MessageBinary, proto.WelcomeFrame(mode, s.clientPrefs))
+		cl = &client{
+			conn:   c,
+			remote: remote,
+			mode:   mode,
+			outbox: newOutbox(s.outboxBytes),
+			done:   make(chan struct{}),
+			cancel: cancel,
+		}
+		// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
+		// trySend 恒成功——Welcome ≪ cap）。握手期 Error 帧（version_mismatch/
+		// auth_failed）发生在注册前，维持直写不变。
+		cl.outbox.trySend(proto.WelcomeFrame(mode, s.clientPrefs))
+		s.hubMu.Lock()
+		s.registry.registerLocked(cl)
+		s.hubMu.Unlock()
 		c.SetReadLimit(proto.ReadLimitPostAuth)
-		// CORE-06 保活：pinger 挂升档序列尾段（PATTERNS 注意 5），与既有单 reader
-		// 循环并发装配——库硬性要求 Ping 必须与 Reader 并发（conn.go:218-220），
-		// 不得为 ping 再开 reader；pong 由读循环 handleControl 自动处理
-		// （read.go:317-337）；ping 与 onChunk 的 OUTPUT 写并发安全、无帧交错
-		// （库 writeFrameMu 串行化所有帧，write.go:288-293）。
+		// writer 是该连接全程唯一 WS 写端（clients.go）；pinger 保活（D-16）挂
+		// 升档序列尾段（PATTERNS 注意 5），与既有单 reader 循环并发装配——库硬性
+		// 要求 Ping 必须与 Reader 并发（conn.go:218-220），不得为 ping 再开
+		// reader；pong 由读循环 handleControl 自动处理（read.go:317-337）；ping
+		// 与 writer 的数据写并发安全、无帧交错（库 writeFrameMu 串行化所有帧，
+		// write.go:288-293）。
+		go s.writer(cl)
 		go s.pinger(ctx, c, remote, s.pingInterval)
-		s.conn.Store(c)
-		defer s.conn.Store(nil)
 	}
 
 	// C→S：单 reader 循环（c.Read 不可并发，Pitfall 7）。
@@ -458,9 +503,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			// 稳态 16KiB 档超限（D-09 修订两层硬顶）：库已自动 1009，补 stderr
 			// 事件（D-12②）。
 			s.logIfMessageTooBig(remote, err)
-			// 对端关闭（errors.As 可取出 CloseError）与网络断开同等处理：
-			// 单次语义，任何 reader 终结都走 D-11 路径。
-			s.wsDisconnected()
+			// 对端关闭（errors.As 可取出 CloseError）与网络断开同等处理：reader
+			// 终结 → detach（注册表移除 + writer/pinger 终结），不进 exitf、不发
+			// 任何信号（CONTEXT domain 必然推论：P1 D-11 单次语义终结）。
+			if cl != nil {
+				s.detach(cl)
+			}
 			return
 		}
 		if len(data) == 0 {
@@ -468,13 +516,18 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		}
 		switch data[0] {
 		case proto.Input:
-			if !s.writable {
-				continue // D-13：ro 安全边界在服务端——静默丢弃（不打日志防按键洪水）
+			// per-client mode 门（P2 D-13/D-14 的多客户端映射：per-client 判定
+			// 替代全局 s.writable——本 plan 无降级路径故语义等价，owner 降级在
+			// 05-03 落地）：ro 静默丢（不打日志防按键洪水）。cl == nil 为握手违规
+			// 落入路径（连接已在关闭握手）——同样静默丢，绝不对未注册连接写 PTY。
+			if cl == nil || cl.mode == proto.ModeRO {
+				continue
 			}
-			s.sess.Master.Write(data[1:])
+			s.sess.Master.Write(data[1:]) // 直写本 plan 保持（CR-01 输入队列在 05-05）
 		case proto.Resize:
 			// JSON 解码失败静默丢弃（不关连接）；成功时已钳制 [1,1000]（D-16）。
-			// D-13：ro 同放行——RESIZE 只改视图尺寸不改 shell 输入。
+			// 多客户端仲裁与 ro 忽略闸在 05-04 落地，本 plan 为 last-wins 延续
+			//（D-13 单客户端语境的 ro 放行语义）。
 			if cols, rows, ok := proto.DecodeResize(data[1:]); ok {
 				s.sess.Resize(cols, rows)
 			}
@@ -514,19 +567,8 @@ func (s *Server) checkTicket(ip, ticket string) (string, bool) {
 	return m, true
 }
 
-// onChunk 是 S→C 数据泵（ReadLoop 回调，独占 WS 写端）：
-// 未 attach 期间直接丢弃（D-12 drain 语义）；已 attach 组 OUTPUT 帧写 WS。
-// 仅由 ReadLoop 单 goroutine 调用，故复用 s.frame 无竞争。
-func (s *Server) onChunk(chunk []byte) {
-	c := s.conn.Load()
-	if c == nil {
-		return // D-12：attach 前输出丢弃，防 PTY 内核缓冲写阻塞
-	}
-	n := copy(s.frame[1:], chunk)
-	if err := c.Write(context.Background(), websocket.MessageBinary, s.frame[:1+n]); err != nil {
-		return // 写失败（连接已死）：终结由 reader 路径收口（D-11），本块丢弃
-	}
-}
+// onChunk（S→C fan-out hub）已迁至 clients.go——每 chunk 组一次共享帧，逐客户端
+// outbox 非阻塞 trySend；未 attach 期间注册表为空，输出自然丢弃（D-12 drain 语义不变）。
 
 // pinger 是 CORE-06 保活 goroutine（D-16，RESEARCH Pattern 3 照抄语义）：
 // 按 interval 周期发 WS ping——反代空闲超时（nginx 60s / Cloudflare 100s /
@@ -544,8 +586,9 @@ func (s *Server) onChunk(chunk []byte) {
 //     ping 与 onChunk 的 OUTPUT 写无帧交错；pong 由读循环 handleControl
 //     自动处理（read.go:317-337）。
 //
-// 终结挂点：Attach 返回时 defer cancel 触发 ctx.Done（或在途 Ping 的 pctx 随
-// ctx 取消）——随既有 wsDisconnected/terminate 单一路径同生灭，零新 exitf 分支。
+// 终结挂点：detach/kick 触发 client.cancel（clients.go；Attach 返回时 defer
+// cancel 幂等兜底），ctx.Done（或在途 Ping 的 pctx 随 ctx 取消）使本 goroutine
+// 随该客户端生命周期同生灭——零新 exitf 分支（CONTEXT L92 硬约束）。
 // ctx 已取消时的在途 Ping 错误是正常终结而非 pong 超时，直接返回不打事件。
 func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, interval time.Duration) {
 	if interval <= 0 {
@@ -574,7 +617,7 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, i
 			}
 			// pong 超时（pongTimeout 内未收到应答）：stderr 单行事件（D-12② 三要素；
 			// code 记 1006 = 客户端将观测到的本地合成码，CloseNow 无关闭帧）+ CloseNow。
-			// 断开后的 reader 终结走既有 wsDisconnected→terminate 收口。
+			// 断开后的 reader 终结经 detach 收口（注册表移除，不进 exitf）。
 			logEvent(remote, websocket.StatusAbnormalClosure, "pong_timeout")
 			c.CloseNow()
 			return
@@ -587,7 +630,8 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote string, i
 // malformed_hello/version_mismatch/subprotocol_required（assert 兜底）/
 // pong_timeout（02-04 保活）/message_too_big（02-05 超限，经 logIfMessageTooBig
 // 挂预认证首读与稳态读循环两处）/auth_failed（03-03 ticket 核销失败）/
-// throttled（03-03 HTTP 层 429 节流闸，basicAuth）。Phase 8 升级 slog 结构化日志
+// throttled（03-03 HTTP 层 429 节流闸，basicAuth）/slow_consumer（05-01 背压
+// 1013 踢出，clients.go kickSlowConsumerLocked）。Phase 8 升级 slog 结构化日志
 // （OPS-08），本期为过渡形态。remote 由调用方传 Attach 入口保存的 r.RemoteAddr——
 // 反代部署下同键聚合为代理 IP 是已知限制（Pitfall 6），X-Forwarded-For 属
 // Phase 7 SEC-07，本 phase 不解析。
@@ -614,8 +658,9 @@ func (s *Server) logIfMessageTooBig(remote string, err error) {
 	}
 }
 
-// lifecycle 是 D-10 路径触发源：子进程退出 → 带时限 drain（Pitfall 4）→
-// 当前已 attach 客户端收 1000 正常关闭帧 → exitf（退出码 = 子进程退出码）。
+// lifecycle 是 D-10 唯一终结路径触发源（多客户端形态）：子进程退出 → 带时限
+// drain（Pitfall 4）→ 广播 1000 关闭全部已注册客户端 → exitf（退出码 = 子进程
+// 退出码，退出码传递语义不变）。
 func (s *Server) lifecycle() {
 	err := s.sess.Wait()
 	code := 0
@@ -623,35 +668,34 @@ func (s *Server) lifecycle() {
 	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	}
-	// 置位必须先于关 conn：随后的 1000 关闭帧必然终结 Attach 读循环（c.Read 返回
-	// CloseError），wsDisconnected 凭此标志识别该路径并放弃 exitf 竞争（D-10 优先）。
-	s.childExited.Store(true)
 	s.sess.Drain(200 * time.Millisecond)
-	if c := s.conn.Load(); c != nil {
-		c.Close(websocket.StatusNormalClosure, "") // D-10：1000
+	// 广播 1000：hubMu 下取注册表快照后并行 Close 全部客户端（Close 自带 5s+5s
+	// 上界——close.go:87-89，并行等待自然有界）。广播期间新 attach 或断开的路径
+	// 均经 detach/reader 收口，不影响本快照的关闭语义；被关闭客户端的读循环随
+	// CloseError 终结走 detach——detach 不进 exitf，终结由本路径独占（D-10）。
+	s.hubMu.Lock()
+	clients := make([]*client, 0, len(s.registry.set))
+	for c := range s.registry.set {
+		clients = append(clients, c)
 	}
-	s.terminate(false, code) // 子进程已退出，无需 SIGHUP
+	s.hubMu.Unlock()
+	var wg sync.WaitGroup
+	for _, c := range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = c.conn.Close(websocket.StatusNormalClosure, "")
+		}()
+	}
+	wg.Wait()
+	s.terminate(code)
 }
 
-// wsDisconnected 是 D-11 路径：WS 断开（reader 返回错误）→ SIGHUP 子进程进程组 → exitf(0)。
-// 若 childExited 已置位，说明读循环终结是 D-10 服务端 1000 关闭帧的必然结果，
-// 而非客户端断开——直接返回，exitf 由 lifecycle 以子进程退出码收口。
-func (s *Server) wsDisconnected() {
-	if s.childExited.Load() {
-		return
-	}
-	s.terminate(true, 0)
-}
-
-// terminate 以 sync.Once 收口两条终结路径，exitf 只触发一次。
-// sighup 为真时先 SIGHUP 子进程进程组：负 pid = 进程组；setsid 使子进程为组长，
-// pgid = 子进程 pid（D-11）。Start 成功后 Cmd.Process 必非 nil。
-func (s *Server) terminate(sighup bool, code int) {
+// terminate 以 sync.Once 收口终结路径，exitf 只触发一次（唯一调用方 =
+// lifecycle——P1 D-11 单次语义终结后，wsDisconnected/SIGHUP 路径已消亡，
+// CONTEXT domain 必然推论）。
+func (s *Server) terminate(code int) {
 	s.termOnce.Do(func() {
-		sess := s.sess
-		if sighup {
-			syscall.Kill(-sess.Cmd.Process.Pid, syscall.SIGHUP)
-		}
 		s.exitf(code)
 	})
 }
