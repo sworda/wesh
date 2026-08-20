@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-08-20T09:37:01.591Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-08-20T12:36:36.888Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 33
-  completed_plans: 26
+  completed_plans: 27
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [████████░░] 79%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ Progress: [████████░░] 79%
 | Phase 04 P06 | 5h 57m | 2 tasks | 2 files |
 | Phase 05 P01 | 1h 0m | 2 tasks tasks | 9 files files |
 | Phase 05 P02 | 1h 17m | 3 tasks | 7 files |
+| Phase 05 P03 | 53min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -143,6 +144,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-02]: kick 路径 cancel 推迟到异步 Close 落定后（Close 先赢 casClosing）——05-01 同步 cancel 使 defer CloseNow 先硬关 TCP，1013 关闭帧对 stall 端永不可达（实测只见 EOF）
 - [Phase ?]: [Phase 05-02]: 信用路径触发帧暂存 creditPending + afterDrain 清位前重投——trySend 失败即置位会丢当前帧，违反 plan 自身『禁止丢帧保连接』prohibition（字节精确断言实测抓到缺 1 帧）
 - [Phase ?]: [Phase 05-02]: 背压测试参数推导——OutboxBytes 64KiB（cap ≥ 2×maxChunk 下限，plan 示例 8KiB 使整帧 trySend 恒败）；洪水 38.9/30.9MB（> loopback 实测吸收 wmem 4MiB+rmem 6MiB）；测试客户端 SetReadLimit 4MiB（合并段超 Go 库默认 32KiB 触发 1009）
+- [Phase ?]: [Phase 05-03]: client.mode 改 atomic.Value 承载——promoteNextLocked 升格写（hubMu 内）与 INPUT 门每击键无锁读并发（-race 实测命中）；atomic 是热路径无锁读的唯一合理形态
+- [Phase ?]: [Phase 05-03]: TestSuccessionKickRace 触发形态由 1013 踢出改 pong_timeout 收口——owner 被 1013 踢出在 R-08 分工表下结构性不可达（唯一可写端满即信用门）；四断言同款锁定
+- [Phase ?]: [Phase 05-03]: TestDetach/TestWelcomePrefs 跨 wave 适配补全（owner 默认策略使双 rw 前提失效——显式 WritePolicy=all / 双档注同一 blob）
 
 ### Pending Todos
 
@@ -161,6 +165,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T09:37:01.572Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-08-20T12:36:12.545Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None
