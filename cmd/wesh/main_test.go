@@ -334,12 +334,17 @@ func TestNoCommandError(t *testing.T) {
 }
 
 // TestStartupMatrix（D-03/D-05，RESEARCH Pattern 7 八行矩阵 + 05-03 D-05 组合
-// 校验两行）：直调 validateStartup 纯函数全覆盖。wantErr 行断言与 RESEARCH 逐字
+// 校验两行 + 05-07 D-08 数值校验两行）：直调 validateStartup 纯函数全覆盖。
+// wantErr 行断言与 RESEARCH 逐字
 // 一致的拒绝文案；wantWarnSub 行断言警告非空且含对应逃生门 flag 名（D-03/D-05
 // 显式确认语义）；全部行断言 warn/err 不含凭据值——SEC-01 日志红线延伸到启动面
 // （启动输出任何形态不得泄露凭据）。05-03 新增：write-policy × writable 组合校验
 // （配置矛盾 fail-fast——显式设置 write-policy 却未开 --writable 总闸即拒，与 bind
 // 安全形态无关；默认 owner 未显式设置 + 无 --writable 是纯 ro 会话正常形态放行）。
+// 05-07 新增：--max-clients ≤0 拒绝（D-08 数值校验——容量必须为正，0/负值会使
+// ③位 503 闸恒触发全员被拒；纯配置有效性与 bind 无关，loopback 行也不豁免）。
+// 既有行基线同步：validateStartup 新增 ≤0 拒绝后，既有行 config 零值 maxClients=0
+// 会被误拒——全部既有行注入 maxClients: 32 基值（wantErr/wantWarn 断言语义不变）。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
@@ -354,24 +359,28 @@ func TestStartupMatrix(t *testing.T) {
 		wantWarnSub string // 非空 = 放行但 stderr 醒目警告须含此子串（逃生门 flag 名）
 	}{
 		// loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05 现状保持）。
-		{"loopback no creds plaintext", config{bind: "127.0.0.1"}, "", "", ""},
-		{"loopback creds plaintext", config{bind: "127.0.0.1", credentials: creds}, "", "", ""},
-		{"loopback creds TLS", config{bind: "localhost", credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
+		{"loopback no creds plaintext", config{bind: "127.0.0.1", maxClients: 32}, "", "", ""},
+		{"loopback creds plaintext", config{bind: "127.0.0.1", maxClients: 32, credentials: creds}, "", "", ""},
+		{"loopback creds TLS", config{bind: "localhost", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
 		// WR-01：IPv6 loopback（::1）与 IPv4 loopback 同等待遇——无凭据明文放行免警告。
-		{"loopback ipv6 no creds plaintext", config{bind: "::1"}, "", "", ""},
+		{"loopback ipv6 no creds plaintext", config{bind: "::1", maxClients: 32}, "", "", ""},
 		// 非 loopback + 无凭据：拒绝（D-03 逐字文案），TLS 不救无凭据。
-		{"non-loopback no creds refused", config{bind: "0.0.0.0"}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", "", ""},
-		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", noAuth: true}, "", "", "--no-auth"},
+		{"non-loopback no creds refused", config{bind: "0.0.0.0", maxClients: 32}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", "", ""},
+		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", maxClients: 32, noAuth: true}, "", "", "--no-auth"},
 		// 非 loopback + 凭据 + 明文：拒绝（D-05 逐字文案）；逃生门放行 + 醒目警告。
-		{"non-loopback creds plaintext refused", config{bind: "0.0.0.0", credentials: creds}, "refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key", "", ""},
-		{"non-loopback creds plaintext insecure-http escape", config{bind: "0.0.0.0", credentials: creds, insecureHTTP: true}, "", "", "--insecure-http"},
+		{"non-loopback creds plaintext refused", config{bind: "0.0.0.0", maxClients: 32, credentials: creds}, "refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key", "", ""},
+		{"non-loopback creds plaintext insecure-http escape", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, insecureHTTP: true}, "", "", "--insecure-http"},
 		// 非 loopback + 凭据 + TLS：最强形态免警告。
-		{"non-loopback creds TLS", config{bind: "0.0.0.0", credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
+		{"non-loopback creds TLS", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
 		// 05-03 D-05 组合校验：显式 write-policy 无 --writable → 拒绝（配置矛盾
 		// fail-fast，文案须含双 flag 名；loopback 安全形态也不豁免——纯配置矛盾
 		// 与 bind 无关）；默认 owner 未显式设置 + 无 --writable → 纯 ro 会话放行。
-		{"explicit write-policy without writable refused", config{bind: "127.0.0.1", writePolicy: "all", writePolicySet: true}, "--write-policy", "--writable", ""},
-		{"default owner without writable allowed", config{bind: "127.0.0.1", writePolicy: "owner"}, "", "", ""},
+		{"explicit write-policy without writable refused", config{bind: "127.0.0.1", maxClients: 32, writePolicy: "all", writePolicySet: true}, "--write-policy", "--writable", ""},
+		{"default owner without writable allowed", config{bind: "127.0.0.1", maxClients: 32, writePolicy: "owner"}, "", "", ""},
+		// 05-07 D-08 数值校验：--max-clients ≤0 → 拒绝（容量必须为正；bind
+		// 127.0.0.1 隔离其他校验维度——纯配置有效性 loopback 也不豁免）。
+		{"max-clients zero refused", config{bind: "127.0.0.1", maxClients: 0}, "--max-clients", "", ""},
+		{"max-clients negative refused", config{bind: "127.0.0.1", maxClients: -1}, "--max-clients", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -105,8 +105,9 @@ type Server struct {
 	// 多客户端参数（New 装配期固化、运行期只读；零值兜底见 New，默认常量声明
 	// 在 clients.go 并挂 Phase 9 标定注释）：outboxBytes/resizeDebounce/
 	// inputRate/inputBurst 已消费（outbox 字节容量 / resize.go 仲裁器防抖
-	// reset / Attach 升档 limiter 构造，05-04/05-05）；maxClients 仅立字段，
-	// 消费点在 05-07（503 闸）。
+	// reset / Attach 升档 limiter 构造，05-04/05-05）；maxClients 消费点已落地
+	//（05-07：Attach 守卫区③位 503 闸 + /api/attach 503 早闸，判定源
+	// registry.n）。
 	outboxBytes    int
 	maxClients     int
 	inputRate      int
@@ -140,7 +141,8 @@ type Server struct {
 // 测试可覆写字段（HelloTimeout 先例形态——零值各取默认常量，常量声明与 Phase 9
 // 负载标定回填注释见 clients.go）；ResizeDebounce/InputRate/InputBurst 消费点
 // 已落地（05-04 resize.go 仲裁器防抖 / 05-05 Attach 升档 limiter 构造 +
-// INPUT 门 AllowN），MaxClients 消费点在 05-07。
+// INPUT 门 AllowN），MaxClients 消费点已落地（05-07 ③位 503 闸 + /api/attach
+// 早闸）。
 // 05-03 新增：WritePolicy 为生产直传字段（main --write-policy flag 原样透传，
 // D-05；零值兜底 WritePolicyOwner——安全默认；取值常量见 clients.go）。
 // 05-06 新增：ShareTokenRO/ShareTokenRW 为生产直传字段（main 经
@@ -377,7 +379,7 @@ func (s *Server) shareAttach(w http.ResponseWriter, r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	s.issueTicketJSON(w, mode)
+	s.issueTicketJSON(w, r, mode) // OQ2 早闸在签发点内（满员 → 503 而非 ticket）
 	return true
 }
 
@@ -386,7 +388,20 @@ func (s *Server) shareAttach(w http.ResponseWriter, r *http.Request) bool {
 // 两签发通道共用（tickets.go mode 注释兑现）：Basic 通道 = 全局 --writable 派生
 // mode（attachHandler）；分享 token 通道 = token 绑定 mode（shareAttach）。
 // 红线（SEC-01）：ticket 值禁止作为任何日志参数。
-func (s *Server) issueTicketJSON(w http.ResponseWriter, mode string) {
+//
+// OQ2 容量早闸（05-07，用户 2026-08-19 裁决）：签发 ticket 前 atomic load 满员
+// 即 503——本函数是 Basic 链与 token 分支的唯一共享签发点，一处检查两通道同查；
+// 前端 fetch 阶段即可给 Server is full 专版文案（05-08 UI-SPEC C-2）。一处检查
+// 两处用：WS 侧③位 503 兜底竞态窗口（早闸后 ticket 已签但握手时满员 → WS 侧
+// 503，语义无害）。logEvent 与③位同 reason 串 max_clients（P3 纪律：HTTP 层
+// 401/429 经 basicAuth/throttle 内 logEvent 落事件，503 早闸同款保持可观测
+// 一致性；双点位同串——同一容量事件的两个观测面）。
+func (s *Server) issueTicketJSON(w http.ResponseWriter, r *http.Request, mode string) {
+	if s.registry.n.Load() >= int64(s.maxClients) {
+		logEvent(r.RemoteAddr, websocket.StatusCode(http.StatusServiceUnavailable), "max_clients")
+		http.Error(w, "server is full", http.StatusServiceUnavailable)
+		return
+	}
 	ticket := s.tickets.issue(mode, time.Now())
 	body, _ := json.Marshal(struct {
 		Ticket string `json:"ticket"`
@@ -413,7 +428,7 @@ func (s *Server) attachHandler(w http.ResponseWriter, r *http.Request) {
 	if s.writable {
 		mode = proto.ModeRW
 	}
-	s.issueTicketJSON(w, mode)
+	s.issueTicketJSON(w, r, mode)
 }
 
 // halfOpenCounter 是 per-IP 半开（Hello 未完成）连接计数器（D-04）。
@@ -485,8 +500,11 @@ func headerHasToken(h http.Header, name, token string) bool {
 //	② D-04 per-IP 半开上限 429（默认 8）——必须在容量闸之前：容量闸在前则 429
 //	   结构性不可达（planner 裁决的 D-04 可触达性形态沿用；被拒连接 acquire→release
 //	   恰好一次，不残留计数）；
-//	③ max-clients 503 闸由 05-07 落地（原 D-09 409 单客户端原子门已随多客户端
-//	   注册表拆除——P5-5：503 闸沿用本区顺序与 release 恰好一次纪律）。
+//	③ RES-03 max-clients 容量闸 503（05-07，D-08 公开契约，默认 32）——原 D-09
+//	   409 单客户端原子门已随多客户端注册表拆除，本位重建为容量闸。必须在
+//	   ② halfOpen acquire 之后：满员时攻击者不得占半开名额（P5-5）；计数口径
+//	   R-06（注册成功后计数，clients.go registry.n atomic load 免锁判定）；
+//	   拒绝路径 release() 恰好一次（02-03 sync.Once + defer 兜底先例）。
 func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// ⓪ D-13：Origin 白名单检查（Accept 前拒绝，HTTP 层可测）——通用文案不回显
 	// Origin 值（无反射面）；无 Origin 头放行（非浏览器客户端零摩擦）。
@@ -514,6 +532,21 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// logEvent 对端取值（D-12②）：Attach 入口保存 RemoteAddr。反代部署下聚合为
 	// 代理 IP 是已知限制（Pitfall 6）；X-Forwarded-For 信任属 Phase 7 SEC-07，本 phase 不解析。
 	remote := r.RemoteAddr
+	// ③ RES-03 max-clients 容量闸（05-07，D-08）：满员在 Accept 前以 HTTP 503
+	// 拒绝（守卫区既有形态延伸，零 WS 资源分配）。计数口径 R-06：注册成功后计数
+	//（registry.n atomic load——本闸在 hubMu 外，不得取锁），半开连接不计入
+	//（与 ② halfOpen 正交两闸）；并发握手竞态最坏瞬时超编 ≤ per-IP 半开帽 8
+	//（容量策略非安全边界，RESEARCH A5 裁断接受，注释明示）。拒绝路径 release()
+	// 恰好一次（P5-5：被 503 拒的连接已持有半开名额，先释放不残留计数——
+	// sync.Once 幂等 + defer 兜底，02-03 先例）。logEvent code 复用 HTTP 状态码
+	// 值（R-10/P3 HTTP 层事件裁决——logEvent 签名 code 为 websocket.StatusCode，
+	// 强转同 auth.go 401/429 先例）。
+	if s.registry.n.Load() >= int64(s.maxClients) {
+		release()
+		logEvent(remote, websocket.StatusCode(http.StatusServiceUnavailable), "max_clients")
+		http.Error(w, "server is full", http.StatusServiceUnavailable)
+		return
+	}
 	// AcceptOptions：Subprotocols 一行开启协商回显（D-03）；压缩默认禁用（终端高熵
 	// 数据无收益，D-17）；OriginPatterns 为 D-12 白名单的库内二次校验（⓪ 已前置
 	// 同语义检查，纵深防御）——nil 时保持库默认同源校验（同 Host 放行、跨源拒绝，

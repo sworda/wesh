@@ -31,8 +31,10 @@ const (
 	// defaultOutboxBytes 每客户端 outbox 字节容量默认值（512KiB：16×32KiB 读块，
 	// 100KB/s 慢链路 ~5s 抖动容忍）。Phase 9 负载测试标定回填（P2 D-10 纪律）。
 	defaultOutboxBytes = 512 * 1024
-	// defaultMaxClients 最大并发客户端数默认值（32）。Phase 9 负载测试标定回填
-	//（P2 D-10 纪律）。本 plan 仅立字段与常量，消费点（守卫区③位 503 闸）05-07 落地。
+	// defaultMaxClients 最大并发客户端数默认值（32：ARCHITECTURE §6『10–100 连接
+	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小）。Phase 9 负载测试
+	// 标定回填（P2 D-10 纪律）。消费点已落地（05-07：守卫区③位 503 闸 +
+	// /api/attach 503 早闸，判定源 = registry.n）。
 	defaultMaxClients = 32
 	// defaultInputRate 每客户端输入限速速率默认值（32KiB/s：人类击键 ~10B/s，
 	// 持续 32KiB/s 远超合法、远低于洪水）。Phase 9 负载测试标定回填（P2 D-10
@@ -236,6 +238,20 @@ type registry struct {
 	// 纯 ro 会话恒 nil。nil = 无 owner（下一个 rw attach 按矩阵成为新 owner）。
 	// hubMu 保护（注册表同锁，R-07）。
 	owner *client
+	// n 已注册客户端计数（RES-03，05-07——守卫区③位 503 闸与 /api/attach 早闸的
+	// 判定源）：atomic 承载——③位闸在 hubMu 外 atomic load（守卫区 Accept 前不得
+	// 取 hubMu），故须 atomic 而非 hubMu 保护（与 kicks/gateTransitions 的 hubMu
+	// 内 plain int 成场景化选型）。计数口径 R-06：registerLocked 成功后 +1、
+	// removeLocked -1——半开连接不计入（与 halfOpenCounter 正交两闸：SEC-08 半开
+	// 面 vs RES-03 稳态容量面）；并发握手竞态最坏瞬时超编 ≤ per-IP 半开帽 8
+	//（容量策略非安全边界，可接受——RESEARCH A5 裁断，Phase 9 负载标定复核）。
+	// 对称不变量（review #7）：运行期全部移除路径——reader-error detach /
+	// kickOrCreditLocked 1013 踢出 / pinger CloseNow 后 reader 错误 detach——均
+	// 收口于 removeLocked 单点，加减排它性对称，漂移结构上不可能；lifecycle 广播
+	// 后进程即退出（计数无后续读者）、panic 按 Go 语义进程崩溃（无恢复面）——
+	// 两路径无漂移窗口。TestClientCountInvariant 白盒逐步锁定 n == len(set)。
+	n atomic.Int64
+
 	kicks int // 1013 踢出计数（Phase 8 OPS-07 观测性挂点，review #10；hubMu 保护，单锁纪律 R-07 下无需 atomic）
 	// gateTransitions 信用门开闭周期计数（kickOrCreditLocked 置位 creditBlocked 与
 	// afterDrain 清位两点递增）：Phase 8 OPS-07 门开闭周期计数挂点（review #10）；
@@ -243,17 +259,24 @@ type registry struct {
 	gateTransitions int
 }
 
-// registerLocked 登记新客户端：分配 attachSeq、入 set 与 FIFO order。
+// registerLocked 登记新客户端：分配 attachSeq、入 set 与 FIFO order，计数 +1
+//（R-06 口径：注册成功才计数——半开连接不计入，与 halfOpenCounter 正交）。
 func (r *registry) registerLocked(c *client) {
 	r.seq++
 	c.attachSeq = r.seq
+	if r.set == nil {
+		r.set = make(map[*client]struct{}) // 零值可用（TestClientCountInvariant 直构造，无需 Server/pty 装配）
+	}
 	r.set[c] = struct{}{}
 	r.order = append(r.order, c)
+	r.n.Add(1) // 对称记账：唯一加计数点（review #7）
 }
 
 // removeLocked 移除客户端：同时清理 map 项与 slice 项（Pitfall 4 双容器防单调
-// 增长）。返回是否移除成功——非成员幂等 false（kick 与 detach 互斥恰好一次的
-// 判定依据：先完成移除的一方负责 close(done)/cancel）。
+// 增长），计数 -1（对称记账：唯一减计数点——运行期全部移除路径收口于此，
+// review #7）。返回是否移除成功——非成员幂等 false 且计数不变（减计数不得越过
+// 实际移除，Pitfall 4 防线；kick 与 detach 互斥恰好一次的判定依据：先完成移除
+// 的一方负责 close(done)/cancel）。
 func (r *registry) removeLocked(c *client) bool {
 	if _, ok := r.set[c]; !ok {
 		return false
@@ -265,6 +288,7 @@ func (r *registry) removeLocked(c *client) bool {
 			break
 		}
 	}
+	r.n.Add(-1)
 	return true
 }
 

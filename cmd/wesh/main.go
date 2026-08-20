@@ -34,6 +34,8 @@ type config struct {
 	// Phase 5 写权限体系（D-05，one-way 公开契约，P2 D-15 同纪律）：
 	writePolicy    string // --write-policy=owner|all（默认 owner；仅在 --writable 总闸开启时有意义）
 	writePolicySet bool   // --write-policy 是否被显式设置（parseArgs 经 fs.Visit 填充，validateStartup 组合校验消费）
+	// Phase 5 容量策略（D-08，one-way 公开契约，P2 D-15 同纪律）：
+	maxClients int // --max-clients（默认 32；容量策略是部署关切开 flag，与 P2 D-10 攻击面上限常量不同类）
 	// Phase 3 认证与传输安全（one-way 公开契约，P2 D-15 同纪律）：
 	credentials  []server.Credential // D-01：--credential 逐组收集 / WESH_CREDENTIAL env 兜底
 	tlsCert      string              // D-04：--tls-cert，与 tlsKey 成对才启用 TLS
@@ -53,13 +55,14 @@ type clientOption struct {
 	value json.RawMessage
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 14 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 15 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
 // Phase 4：--client-option（P4 D-15 可重复，白名单 + JSON parse 期校验）、
 // --osc52（P4 D-12 OSC52 剪贴板写开关，默认关）；
-// Phase 5：--write-policy（D-05，owner|all 默认 owner，parse 期枚举校验）。
+// Phase 5：--write-policy（D-05，owner|all 默认 owner，parse 期枚举校验）、
+// --max-clients（D-08，默认 32，≤0 经 validateStartup 拒绝）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -75,6 +78,12 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// validateStartup）。parse 期枚举校验在 Parse 返回处（值非敏感，直接 return
 	// error 即可——client-option 的记录式上报仅用于值含敏感内容的场景）。
 	fs.StringVar(&cfg.writePolicy, "write-policy", server.WritePolicyOwner, "write policy when --writable is on: owner|all (default owner)")
+	// D-08：最大并发客户端数（one-way 公开契约——容量策略是部署关切开 flag，
+	// 与 P2 D-10 攻击面上限常量不同类）。默认 32（ARCHITECTURE §6『10–100 连接
+	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小），Phase 9 负载
+	// 标定回填。满员行为：/ws Accept 前 HTTP 503（守卫区③位）+ /api/attach
+	// 503 早闸（OQ2）；≤0 经 validateStartup 拒绝（exit 2 配置校验矩阵形态）。
+	fs.IntVar(&cfg.maxClients, "max-clients", 32, "maximum simultaneous attached clients (default 32)")
 	// D-01：可重复凭据 flag，fs.Func 回调内 parse 期校验（畸形值即时报错——
 	// systemd 配置错误零窗口暴露）。Pitfall 8：help 必须提示 ps 可见性。
 	fs.Func("credential", "basic auth credential user:pass (repeatable; value visible to local users via ps, prefer WESH_CREDENTIAL env in production)", func(s string) error {
@@ -274,6 +283,13 @@ func validateStartup(cfg config) (warn string, err error) {
 	if cfg.writePolicySet && !cfg.writable {
 		return "", errors.New("--write-policy is set but --writable is not; write policy only applies when client input is enabled")
 	}
+	// D-08 数值校验（配置错误 fail-fast，P3 校验矩阵纪律）：--max-clients ≤0
+	// 无意义（容量必须为正——0/负值会使③位 503 闸恒触发，全员被拒）。纯配置
+	// 有效性与 bind 安全形态无关，故在 loopback 早退之前判定（write-policy
+	// 组合校验同款落点）。
+	if cfg.maxClients <= 0 {
+		return "", errors.New("--max-clients must be positive")
+	}
 	if isLoopbackBind(cfg.bind) {
 		return "", nil // loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05）
 	}
@@ -351,7 +367,7 @@ func run(args []string) int {
 	// 启动打印，server 只存 SHA-256 预哈希（Options 注释）。
 	shareRO := server.GenerateShareToken()
 	shareRW := server.GenerateShareToken()
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, ShareTokenRO: shareRO, ShareTokenRW: shareRW})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ShareTokenRO: shareRO, ShareTokenRW: shareRW})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
 	scheme := "http"
