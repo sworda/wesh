@@ -4,7 +4,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -178,8 +177,11 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 }
 
 // writer 是每客户端专属 WS 写端 goroutine（pinger 装配先例，server.go 既有
-// per-conn goroutine 模式）：阻塞消费 notEmpty 信号，drain 批量合并单帧写出
-//（ARCHITECTURE §2.5 写合并；bytes.Join 逐帧拷进新缓冲，共享帧本体只读零改动）。
+// per-conn goroutine 模式）：阻塞消费 notEmpty 信号，drain 整队后按同类型连续段
+// 合并写出（ARCHITECTURE §2.5 写合并——合并成单帧 = 类型字节一次 + 载荷顺序拼接，
+// 减少帧数与小包）。1 WS 消息 = 1 帧的线上纪律不变（前端 buf[0] 分派零改动，
+// must_have「扇出对前端透明」），合并后 OUTPUT 字节流与逐帧接收完全相同（有序
+// delta 流语义不变）。
 // 写允许阻塞——阻塞即"该客户端慢"，由 outbox 满 → 1013 踢出收口；写失败静默
 // return（连接已死，终结由该客户端 reader 路径收口——D-11 纪律的多客户端映射）。
 func (s *Server) writer(c *client) {
@@ -193,8 +195,22 @@ func (s *Server) writer(c *client) {
 		if len(batch) == 0 {
 			continue
 		}
-		if err := c.conn.Write(context.Background(), websocket.MessageBinary, bytes.Join(batch, nil)); err != nil {
-			return
+		for i := 0; i < len(batch); {
+			j := i + 1
+			for j < len(batch) && len(batch[j]) > 0 && batch[j][0] == batch[i][0] {
+				j++
+			}
+			msg := batch[i] // 单帧零拷贝直写（共享帧只读纪律不受影响）
+			if j > i+1 {
+				msg = append([]byte(nil), batch[i]...) // 拷贝防共享帧原地 append（P5-1）
+				for k := i + 1; k < j; k++ {
+					msg = append(msg, batch[k][1:]...)
+				}
+			}
+			if err := c.conn.Write(context.Background(), websocket.MessageBinary, msg); err != nil {
+				return
+			}
+			i = j
 		}
 	}
 }

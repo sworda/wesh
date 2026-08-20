@@ -97,7 +97,8 @@ func dialHelloTicketWantAuthFailed(t *testing.T, ctx context.Context, wsURL, tic
 // TestAttachFlow（03-03 tracer）：认证主链路端到端——401 无凭据 → sleep 过窗 →
 // 401 错凭据（与无凭据同文，无枚举 oracle）→ sleep 过窗 → 200 正确凭据取 ticket
 // （Cache-Control: no-store）→ Hello 核销 → Welcome{mode:"rw"}（D-11 ticket 绑定
-// = 全局 writable）→ 正常关闭 → waitExit(0)。单一 happy path 证明
+// = 全局 writable）→ 正常关闭 → 静默反证不触发 exitf（多客户端推论形态）。
+// 单一 happy path 证明
 // Basic → ticket → Hello → Welcome 全链路可达（ROADMAP 准则 1 行为落地）。
 //
 // ThrottleBase 必须注入 ms 级覆写：本编排含 ≥2 次连续失败请求，生产默认 base=1s
@@ -180,9 +181,9 @@ func TestAttachFlow(t *testing.T) {
 		t.Fatalf("welcome mode = %q, want %q（ticket 绑定 = writable 装配）", mode, proto.ModeRW)
 	}
 
-	// 正常关闭 → D-11 收口。
+	// 正常关闭 → 多客户端推论：detach 不触发 exitf（静默反证）。
 	c.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0)
+	assertNoExit(t, exitCh)
 }
 
 // TestTicketInvalid（SEC-02/D-10）：Hello 携从未签发的 ticket（22 字符合法形态
@@ -206,8 +207,8 @@ func TestTicketInvalid(t *testing.T) {
 	// 单次失败无 pacing 需求（每测试独立实例）。
 	dialHelloTicketWantAuthFailed(t, ctx, wsURL, "AAAAAAAAAAAAAAAAAAAAAA")
 
-	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestNoAuthMode（D-02）：无凭据装配 → /api/attach 返回 404（前端探测信号：
@@ -232,9 +233,9 @@ func TestNoAuthMode(t *testing.T) {
 		t.Fatalf("welcome mode = %q, want %q（零值 Options = 默认只读）", mode, proto.ModeRO)
 	}
 
-	// 正常关闭 → D-11 收口。
+	// 正常关闭 → 多客户端推论：detach 不触发 exitf（静默反证）。
 	c.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0)
+	assertNoExit(t, exitCh)
 }
 
 // ====== Task 2：端点守卫链 / ticket 过期 / 日志红线 ======
@@ -377,8 +378,8 @@ func TestTicketExpiry(t *testing.T) {
 	defer cancel()
 	dialHelloTicketWantAuthFailed(t, ctx, wsURL, issued.Ticket)
 
-	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestLogRedaction（SEC-01 红线，RESEARCH Pattern 8 定稿）：os.Pipe 捕获 stderr
@@ -397,7 +398,9 @@ func TestLogRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCredential: %v", err)
 	}
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+	// handler 追踪变体：restore() 写 os.Stderr 前需与 handler 内 logEvent 的读
+	// 建立同步边（waitExit 消亡后的替代形态，见 startTrackedServerWith 注释）。
+	exitCh, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
 		Writable:    true,
 		Credentials: []server.Credential{cred},
 	})
@@ -443,6 +446,10 @@ func TestLogRedaction(t *testing.T) {
 	dialHelloTicketWantAuthFailed(t, ctx, wsURL, "AAAAAAAAAAAAAAAAAAAAAA")
 	cancel()
 
+	// 同步边：全部 HTTP/WS handler 返回——throttled/auth_failed 的 logEvent 在
+	// 各自 handler 内先于返回执行，WaitGroup happens-before 使 restore() 的
+	// os.Stderr 写与这些读同步。
+	waitHandlers()
 	out := restore()
 
 	// 四类禁出串（SEC-01 红线；authorization 大小写不敏感）。
@@ -467,8 +474,8 @@ func TestLogRedaction(t *testing.T) {
 		t.Errorf("stderr missing throttled event line — 捕获失效或事件缺失:\n%s", out)
 	}
 
-	// (c) 后服务端关 conn 落入读循环，reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// (c) 后服务端关 conn 落入读循环，reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // ====== Task 3：429 闸 / D-08 共享计数器 / 双端点 Origin ======
@@ -596,8 +603,8 @@ func TestThrottleHelloSharedCounter(t *testing.T) {
 	defer cancel()
 	dialHelloTicketWantAuthFailed(t, ctx, wsURL, issued.Ticket)
 
-	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestOriginEndpoints（SEC-04，D-12/D-13 双端点执行）：--origin 等效装配

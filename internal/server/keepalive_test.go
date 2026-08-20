@@ -58,13 +58,14 @@ func TestPingKeepalive(t *testing.T) {
 	}
 
 	c.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0) // D-11：客户端断开收口
+	assertNoExit(t, exitCh) // 多客户端推论：客户端断开不触发 exitf
 }
 
 // TestPongTimeout（CORE-06/D-16）：PingInterval=100ms + PongTimeout=300ms 注入下，
 // 客户端握手后停止一切 Read——库只在读路径回 pong（read.go:317-323），不 Read 即
 // 不应答——服务端 pinger 在 interval+timeout 内必然 pong 超时：stderr 单行事件 +
-// CloseNow 主动断开，不泄漏半死连接；reader 终结走 D-11 既有收口（exitf(0)）。
+// CloseNow 主动断开，不泄漏半死连接；reader 终结走 detach 收口（多客户端推论：
+// 不触发 exitf）。
 func TestPongTimeout(t *testing.T) {
 	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true, PingInterval: 100 * time.Millisecond, PongTimeout: 300 * time.Millisecond})
 
@@ -91,9 +92,9 @@ func TestPongTimeout(t *testing.T) {
 		t.Fatalf("read hit 2s guard — server did not CloseNow within interval+timeout: %v", rerr)
 	}
 
-	// 服务端 reader 随 CloseNow 终结走 D-11 收口（SIGHUP cat + exitf(0)）——
-	// 单一终结路径不破坏，零新 exitf 分支。
-	waitExit(t, exitCh, 0)
+	// 服务端 reader 随 CloseNow 终结走 detach 收口（多客户端推论：不触发 exitf，
+	// 服务端存活——子进程继续运行，唯一终结路径是子进程退出 D-10）。
+	assertNoExit(t, exitCh)
 }
 
 // TestPingDisabled（CORE-06/D-16）：PingInterval=0 不启动 ticker——客户端不回 pong
@@ -131,5 +132,5 @@ func TestPingDisabled(t *testing.T) {
 	}
 
 	c.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0) // D-11：客户端断开收口
+	assertNoExit(t, exitCh) // 多客户端推论：客户端断开不触发 exitf
 }

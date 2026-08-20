@@ -86,9 +86,9 @@ func TestHalfOpenPerIP429(t *testing.T) {
 		t.Fatalf("echo payload = %q, want %q", got, payload)
 	}
 
-	// 清理：正常关闭 → D-11 收口。
+	// 清理：正常关闭 → 多客户端推论：detach 不触发 exitf（静默反证）。
 	c1.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0)
+	assertNoExit(t, exitCh)
 }
 
 // TestSubprotocolRequired（SEC-08/D-03）：子协议双闸之 HTTP 预检——无子协议与错子协议
@@ -130,9 +130,9 @@ func TestSubprotocolRequired(t *testing.T) {
 	}
 
 	// 收口：(a)(b) 未建连不触发终结；(c) 直接 Close——服务端预认证首读随关闭帧
-	// 终结，走既有 D-11 路径 exitf(0)（半开名额经 defer release 兜底释放）。
+	// 终结，多客户端推论下不触发 exitf（半开名额经 defer release 兜底释放）。
 	c.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0)
+	assertNoExit(t, exitCh)
 }
 
 // TestHelloTimeout（SEC-08/D-04）：5s 未认证超时的测试注入形态（HelloTimeout=200ms）——
@@ -167,8 +167,8 @@ func TestHelloTimeout(t *testing.T) {
 		t.Fatalf("close reason = %q, want %q", ce.Reason, "hello_timeout")
 	}
 
-	// 服务端 reader 随 hello_timeout 关闭终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端 reader 随 hello_timeout 关闭终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestPrematureFrame（D-04/D-06）：抢跑帧——Hello 前直接发 INPUT 帧，服务端 1002 直关；
@@ -210,8 +210,8 @@ func TestPrematureFrame(t *testing.T) {
 		t.Fatalf("close code = %d, want %d (1002)", ce.Code, websocket.StatusProtocolError)
 	}
 
-	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestVersionMismatch（D-06/D-07）：Hello.version 不符的正常客户端路径——先收 'E'
@@ -271,8 +271,8 @@ func TestVersionMismatch(t *testing.T) {
 		t.Fatalf("close reason = %q, want %q (same machine string as error code, D-07)", ce.Reason, proto.ErrVersionMismatch)
 	}
 
-	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestReadOnlyDropsInput（CORE-04/D-13，Pitfall 7 服务端边界回归）：ro 模式下裸 WS
@@ -340,7 +340,8 @@ func TestReadOnlyDropsInput(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("read goroutine did not terminate after close handshake")
 	}
-	waitExit(t, exitCh, 0)
+	// 多客户端推论：客户端断开不触发 exitf（静默反证）。
+	assertNoExit(t, exitCh)
 }
 
 // TestReadOnlyAllowsResize（CORE-04/D-13）：ro 下 RESIZE 放行尺寸跟随——Hello 携
