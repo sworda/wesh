@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-08-20T12:36:36.888Z"
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-08-20T13:29:45.262Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 33
-  completed_plans: 27
+  completed_plans: 28
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 4 of 9
+Plan: 5 of 9
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [████████░░] 82%
+Progress: [█████████░] 85%
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ Progress: [████████░░] 82%
 | Phase 05 P01 | 1h 0m | 2 tasks tasks | 9 files files |
 | Phase 05 P02 | 1h 17m | 3 tasks | 7 files |
 | Phase 05 P03 | 53min | 3 tasks | 8 files |
+| Phase 05 P04 | 41min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -147,6 +148,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-03]: client.mode 改 atomic.Value 承载——promoteNextLocked 升格写（hubMu 内）与 INPUT 门每击键无锁读并发（-race 实测命中）；atomic 是热路径无锁读的唯一合理形态
 - [Phase ?]: [Phase 05-03]: TestSuccessionKickRace 触发形态由 1013 踢出改 pong_timeout 收口——owner 被 1013 踢出在 R-08 分工表下结构性不可达（唯一可写端满即信用门）；四断言同款锁定
 - [Phase ?]: [Phase 05-03]: TestDetach/TestWelcomePrefs 跨 wave 适配补全（owner 默认策略使双 rw 前提失效——显式 WritePolicy=all / 双档注同一 blob）
+- [Phase ?]: [Phase 05-04]: client.dims = Hello 首尺寸登记后运行期不更新——参与集成员最新尺寸由 arbiter.sizes 承载，本字段只服务递补升格新 owner 参与集切换（D-09 尺寸接管源）；旁观者运行期 RESIZE 按 D-09 直接忽略不入账，缩窗后递补的瞬态偏差由 05-08 升格 fit() 纠正通道收口
+- [Phase ?]: [Phase 05-04]: kick 路径补 removeMember+recalcNow（plan 仅列 detach 挂点）——all 模式被踢 rw 端滞留 sizes 则陈旧尺寸永久拖累 min-rect（幽灵成员），成员移除与注册表移除必须同点恰好一次
+- [Phase ?]: [Phase 05-04]: 仲裁两测试分文件（resize_test.go 白盒 / resize_arb_test.go 黑盒）——Go 单文件单 package 约束使 plan『两测试同文件』字面不可达；VALIDATION 05-01-04 命名与运行命令逐字保持
 
 ### Pending Todos
 
@@ -165,6 +169,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T12:36:12.545Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-08-20T13:29:45.242Z
+Stopped at: Completed 05-04-PLAN.md
 Resume file: None
