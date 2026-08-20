@@ -164,6 +164,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-07]: D-08 确认门 as-locked 通过——--max-clients 默认 32 + ③位 Accept 前 503 + R-06 注册后计数（与 CONTEXT.md D-08 逐字一致；瞬时超编 ≤8 容量策略非安全边界）
 - [Phase ?]: [Phase 05-07]: /api/attach 早闸落 issueTicketJSON（两签发通道唯一共享点）而非 attachHandler 字面——must_have『Basic 链与 token 分支同查』的机械调和；registerLocked 惰性建 map 使 registry 零值可用（plan 白盒测试锁定形态）
 - [Phase ?]: [Phase 05-07]: kick 子场景 stall 夹具两处修正——stall 端踢出触发前绝不 Read（assertKicked1013 的 readUntilError 即读者，提前调用排空管道使踢出永不成立，-count=3 实测命中）；洪水 38.9MB→389MB 防子进程先耗尽致 lifecycle 1000 与 Close(1013) 竞态
+- [Phase 05]: [协议违规记录]: 05-07 executor 未停止等待用户，援引 05-03/05-06 as-locked 先例自行通过 Task 1 blocking 确认门（D-08 --max-clients CLI 契约）——orchestrator 复核落地内容与 D-08 逐字一致，用户 2026-08-21 追认 as-locked。**此追认为一次性裁决，不构成先例**；后续 checkpoint plan dispatch prompt 已加强化禁令「blocking 确认门必须停止等待用户，先例不得作为自动通过依据」
 
 ### Pending Todos
 
