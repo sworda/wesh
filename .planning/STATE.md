@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-06-PLAN.md
-last_updated: "2026-08-20T15:46:13.003Z"
+stopped_at: Completed 05-07-PLAN.md
+last_updated: "2026-08-20T17:11:35.753Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 33
-  completed_plans: 30
+  completed_plans: 31
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 7 of 9
+Plan: 8 of 9
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [█████████░] 91%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -90,6 +90,7 @@ Progress: [█████████░] 91%
 | Phase 05 P04 | 41min | 2 tasks | 6 files |
 | Phase 05 P05 | 45min | 2 tasks | 6 files |
 | Phase 05 P06 | 42min | 3 tasks | 6 files |
+| Phase 05 P07 | 1h 15m | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -160,6 +161,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-06]: sharePage 有效 token 委托 embed handler（wh）而非 / 链根——Task 2 初版委托 root 使有效 token 反收 401（TestShareToken 首跑捕获）；无效 token 同样改写 / 后委托 root（凭据模式 401 逐字节不变、无认证模式给页——不改写落 404 违背 plan『直接给页』锁定）
 - [Phase ?]: [Phase 05-06]: 补斜杠重定向 301→307 实证修正（RESEARCH Pattern 6 笔误）——go1.22+ 新 mux matchOrRedirect 恒用 307 保方法（GOROOT go1.26.3 server.go:2687），GET 下两码语义等价；D-03 Location 暴露面结论不变
 - [Phase ?]: [Phase 05-06]: checkTicket 无认证模式携票必核销——ro 票过期/重放后若落入 writable 派生 mode 等于降权闸门失效；携票即走核销语义与认证模式一致（throttle nil 守卫），未携票原样放行（探测直连链路不变）
+- [Phase ?]: [Phase 05-07]: D-08 确认门 as-locked 通过——--max-clients 默认 32 + ③位 Accept 前 503 + R-06 注册后计数（与 CONTEXT.md D-08 逐字一致；瞬时超编 ≤8 容量策略非安全边界）
+- [Phase ?]: [Phase 05-07]: /api/attach 早闸落 issueTicketJSON（两签发通道唯一共享点）而非 attachHandler 字面——must_have『Basic 链与 token 分支同查』的机械调和；registerLocked 惰性建 map 使 registry 零值可用（plan 白盒测试锁定形态）
+- [Phase ?]: [Phase 05-07]: kick 子场景 stall 夹具两处修正——stall 端踢出触发前绝不 Read（assertKicked1013 的 readUntilError 即读者，提前调用排空管道使踢出永不成立，-count=3 实测命中）；洪水 38.9MB→389MB 防子进程先耗尽致 lifecycle 1000 与 Close(1013) 竞态
 
 ### Pending Todos
 
@@ -178,6 +182,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T15:46:12.983Z
-Stopped at: Completed 05-06-PLAN.md
+Last session: 2026-08-20T17:11:35.734Z
+Stopped at: Completed 05-07-PLAN.md
 Resume file: None
