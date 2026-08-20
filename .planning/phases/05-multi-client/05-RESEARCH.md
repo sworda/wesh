@@ -618,22 +618,25 @@ func arbitrate(members []dims) dims { // members = 参与集最新上报尺寸�
 | A4 | 无认证模式下分享链接仍应产生 ro/rw mode 绑定（/api/attach 接受 token body；Open Question 1） | Open Questions | 中：产品语义选择，CONTEXT 未覆盖该交叉面——若用户选"无认证不打印链接"，则 /s/ 路由在凭据模式才注册 |
 | A5 | 并发握手竞态下 max-clients 瞬时超编可接受（R-06） | 裁断 R-06 | 低：容量策略非安全边界；超编幅度 ≤ per-IP 半开帽 8 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **无认证模式（--no-auth/loopback 裸跑）下分享链接的形态**
    - What we know: D-02 token 每轮启动无条件生成；MULTI-05 打印链接未限定凭据模式；D-01 以"与凭据共存"框架行文，未覆盖无认证交叉面；现状无认证模式 /api/attach 显式 404（前端探测信号，server.go:201-203）。
    - What's unclear: 无认证模式下 /api/attach 是否接受 token body 以兑现 ro/rw mode 绑定（ro 链接在无密码演示场景正是卖点）；若接受，前端探测逻辑变为"URL 携 /s/ token 时必走 fetch"。
    - Recommendation: 采纳"token 通道与认证模式正交"（无认证也打印链接、/s/ 门禁语义在无认证模式天然形同虚设但 mode 绑定有效）；/api/attach 在无认证模式仅当 body 携 token 时才非 404。请用户确认（影响 D-01 的适用范围解释）。
+   - **Resolution（用户 2026-08-19 裁决）**：采纳 Recommendation——token 通道与认证模式正交；逐字记录于 05-UI-SPEC.md 锁定项对照表「Open Question 1」行（→ §Share Link Entry Contract）；服务端 /s/ 路由与 token 签发由 05-06 truths 兑现，前端携 token fetch 分派由 05-08 落地。
 
 2. **/api/attach 是否加 503 容量早闸（UX 层）**
    - What we know: D-08 只锁定 /ws Accept 前 503；前端 fetch 阶段拿到 503 可给"Server is full"专版面，比 WS onerror 的通用"Unable to connect"更可操作。
    - What's unclear: 双层 503 的竞态（ticket 已签发但 WS 满员）语义无害但 UX 略绕。
    - Recommendation: 加（同一 atomic 计数读取，一处检查两处用）；若不加，前端改写通用文案覆盖容量场景即可。低风险，planner 可自决。
+   - **Resolution（用户 2026-08-19 裁决）**：加——/api/attach 503 容量早闸；逐字记录于 05-UI-SPEC.md 锁定项对照表「Open Question 2」行（→ §Copywriting Contract C-2 "Server is full" 专版）；服务端早闸由 05-07 truths（attachHandler 双点位 503）兑现，前端 C-2 专版由 05-08 落地。
 
 3. **信用门内"滴漏型"可写端的长时振荡**
    - What we know: Pattern 3 设计下滴漏读者每次 drain 开门、下一 chunk 可能再闭门，全体客户端随之抖动；无独立超时机制。
    - What's unclear: 多久算"该踢的滴漏"——需要真实负载数据。
    - Recommendation: 本 phase 接受（pinger 保底全死连接）；Phase 9 负载标定时评估加 dwell 计时器（连续信用阻塞 >30s 也踢）。
+   - **Resolution**：本 phase 接受振荡——05-02 威胁登记 T-05-01c 已引用本条处置落地；Phase 9 负载标定时评估 dwell 计时器（连续信用阻塞 >30s 也踢）。
 
 ## Environment Availability
 
