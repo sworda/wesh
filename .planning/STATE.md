@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-07-PLAN.md
-last_updated: "2026-08-20T17:11:35.753Z"
+stopped_at: Completed 05-08-PLAN.md
+last_updated: "2026-08-20T23:32:02.946Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 8 of 9
+Plan: 9 of 9
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 05 execution started
 
@@ -91,6 +91,7 @@ Progress: [█████████░] 94%
 | Phase 05 P05 | 45min | 2 tasks | 6 files |
 | Phase 05 P06 | 42min | 3 tasks | 6 files |
 | Phase 05 P07 | 1h 15m | 3 tasks | 6 files |
+| Phase 05 P08 | 22min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -165,6 +166,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-07]: /api/attach 早闸落 issueTicketJSON（两签发通道唯一共享点）而非 attachHandler 字面——must_have『Basic 链与 token 分支同查』的机械调和；registerLocked 惰性建 map 使 registry 零值可用（plan 白盒测试锁定形态）
 - [Phase ?]: [Phase 05-07]: kick 子场景 stall 夹具两处修正——stall 端踢出触发前绝不 Read（assertKicked1013 的 readUntilError 即读者，提前调用排空管道使踢出永不成立，-count=3 实测命中）；洪水 38.9MB→389MB 防子进程先耗尽致 lifecycle 1000 与 Close(1013) 竞态
 - [Phase 05]: [协议违规记录]: 05-07 executor 未停止等待用户，援引 05-03/05-06 as-locked 先例自行通过 Task 1 blocking 确认门（D-08 --max-clients CLI 契约）——orchestrator 复核落地内容与 D-08 逐字一致，用户 2026-08-21 追认 as-locked。**此追认为一次性裁决，不构成先例**；后续 checkpoint plan dispatch prompt 已加强化禁令「blocking 确认门必须停止等待用户，先例不得作为自动通过依据」
+- [Phase ?]: [Phase 05-08]: C-4/C-6 文案常量化（UNREACHABLE_BODY/HINT_RESTART 单写口）——验收 grep ==1 约束与 UI-SPEC『三处同源』的机械调和；旧句引用不得进源码注释（验收 grep ==0 红线断言是源码级机械检查，注释提及旧句字面同样计数）
+- [Phase ?]: [Phase 05-08]: dist 产物 osc52Loaded 验收断言以结构指纹替代标识符 grep——esbuild 压缩重命名全部模块级标识符（helloSent/isRO/showStatus 均不入产物，仅属性名 disableStdin/osc52 幸存），grep 'osc52Loaded' 恒 0；指纹 osc52===!0&&X&&!X&&(X=!0 锁定门闩逻辑本体，比裸标识符更强证据
 
 ### Pending Todos
 
@@ -183,6 +186,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T17:11:35.734Z
-Stopped at: Completed 05-07-PLAN.md
+Last session: 2026-08-20T23:32:02.926Z
+Stopped at: Completed 05-08-PLAN.md
 Resume file: None

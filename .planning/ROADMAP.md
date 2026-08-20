@@ -175,7 +175,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 一个客户端停止读取 TCP 流时其他客户端无卡顿：慢客户端 outbox 写满被 1013 踢出，重连后从最新输出看起；PTY 读循环永不因任何客户端阻塞
   3. 异尺寸两客户端按最小公共矩形 `min(cols)×min(rows)` 渲染，2→1 时恢复 last-wins；启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
 
-**Plans**: 7/9 plans executed
+**Plans**: 8/9 plans executed
 **Wave 1**
 
 - [x] 05-01-PLAN.md — tracer：多客户端 fan-out 主干（clients.go 注册表/hub/outbox/writer + 409 门拆除 + 生命周期改造断开不退出/子进程退出广播 1000）+ e2e 单次语义迁移 + TestMultiClientFanout/TestDetach/TestExitBroadcast（MULTI-01）
@@ -206,7 +206,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 05-08-PLAN.md — 前端：/s/ token 进入 + 响应分派矩阵 + 1013/503/无效链接三专版 + 文案清扫 R1-R3 + 升格 rw 分支 + ro 不发 RESIZE + OSC52 门闩 + dist 重建（MULTI-02/03/04/05）
+- [x] 05-08-PLAN.md — 前端：/s/ token 进入 + 响应分派矩阵 + 1013/503/无效链接三专版 + 文案清扫 R1-R3 + 升格 rw 分支 + ro 不发 RESIZE + OSC52 门闩 + dist 重建（MULTI-02/03/04/05）
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
@@ -282,7 +282,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
-| 5. 多客户端共享 | 7/9 | In Progress|  |
+| 5. 多客户端共享 | 8/9 | In Progress|  |
 | 6. 会话生命周期与重连 | TBD | Not started | - |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |
