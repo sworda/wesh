@@ -60,6 +60,12 @@ type client struct {
 	// 此位恒 false——ro 满即踢永不持信用（R-08 分工表）。kickOrCreditLocked 置位、
 	// afterDrain 清位，两点各递增 registry.gateTransitions。
 	creditBlocked bool
+	// creditPending 计入信用时被拒的触发帧（hubMu 保护）：trySend 失败 ≠ 丢帧
+	//（must_haves prohibitions——丢帧保连接 = 有序流画面静默损坏）——该帧暂存于此，
+	// afterDrain 半水位恢复时先于清位/Broadcast 重投，门重开后的一切新帧经 onChunk
+	// 门判定排在其后（有序性成立）。共享只读堆帧引用（P5-1 纪律不变——非 ReadLoop
+	// chunk）。nil = 无待重投帧；kick/detach 随客户端消亡自然作废。
+	creditPending []byte
 }
 
 // outbox 是每客户端字节有界输出队列（RESEARCH Pattern 2 逐字形态）：存 hub 组好的
@@ -178,7 +184,7 @@ func (s *Server) onChunk(chunk []byte) {
 	copy(frame[1:], chunk)
 	for c := range s.registry.set {
 		if !c.outbox.trySend(frame) {
-			s.kickOrCreditLocked(c)
+			s.kickOrCreditLocked(c, frame)
 		}
 	}
 }
@@ -209,12 +215,17 @@ func (s *Server) allWritableBlockedLocked() bool {
 //   - c 为 rw 且全体可写端均满 → 不踢，置 c.creditBlocked = true（保护 owner
 //     演示者，离群慢端才踢；onChunk 下轮门判定闭合 → 持块停读 PTY）。
 //
+// 触发帧不丢（must_haves prohibitions 硬约束——丢帧保连接 = 有序流画面静默损坏，
+// RESEARCH Anti-Pattern 2）：信用路径把被拒的当前帧暂存 c.creditPending，
+// afterDrain 半水位恢复时重投（TestGlobalCredit 门转换字节精确断言实测发现：
+// 不暂存则恢复端流缺一段——review #1 行为证据锁住的正是此窗口）。
+//
 // 迟滞带论证（review #2）：门关闭阈值 = outbox 写满（100% 字节上界才置
 // creditBlocked）、恢复阈值 = drain 至 <50%——2:1 迟滞带内建于分工表，非
 //『50% 单点抖动』；残余振荡（滴漏读者每次 drain 开门、下一 chunk 可能再闭门）
 // 经 RESEARCH Open Question 3 裁决接受（各端持续前进；dwell 计时器 Phase 9
 // 负载标定时评估）。调用方必须已持 hubMu。
-func (s *Server) kickOrCreditLocked(c *client) {
+func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 	if c.mode == proto.ModeRO {
 		s.kickSlowConsumerLocked(c)
 		return
@@ -226,38 +237,63 @@ func (s *Server) kickOrCreditLocked(c *client) {
 			return
 		}
 	}
-	// 全体可写端均满 → 不踢，计入信用（保护 owner 演示者；幂等置位防重复计数）。
+	// 全体可写端均满 → 不踢，计入信用（保护 owner 演示者；幂等置位防重复计数、
+	// 防触发帧被二次暂存覆写）。
 	if !c.creditBlocked {
 		c.creditBlocked = true
+		c.creditPending = frame // 触发帧暂存，afterDrain 重投（触发帧不丢）
 		s.registry.gateTransitions++ // Phase 8 OPS-07 门开闭周期计数挂点（review #10）
 	}
 }
 
 // afterDrain 在一次成功批量写出后做信用门恢复判定（R-01 半水位迟滞）：outbox 当前
 // 字节 < cap/2（半水位，defaultOutboxBytes 的 50% = 256KiB）且 c.creditBlocked →
-// 清位 + hubCond.Broadcast 开门。锁序 R-07：drain 完才取 hubMu（本函数），绝不
-// 反序同持；hubMu > outboxMu 的同序同持与 onChunk→trySend 同款。
+// 重投触发帧 + 清位 + hubCond.Broadcast 开门。锁序 R-07：drain 完才取 hubMu
+//（本函数），绝不反序同持；hubMu > outboxMu 的同序同持与 onChunk→trySend 同款。
+//
+// 重投有序性：暂存帧在清位/Broadcast 之前入队——门仍闭合（flag 未清），onChunk
+// 无法夹入新帧；清位开门后新帧经门判定排在暂存帧之后，客户端字节流严格有序。
+// 重投必成的数学保证：cur < cap/2 ⇒ 余量 ≥ cap/2+1 ≥ 32KiB+1（最大帧 = 32KiB 读块
+// + 类型字节）——要求 outbox cap ≥ 64KiB（默认 512KiB，测试覆写下限同此；cap
+// 小于单帧的场景下 trySend 本就恒败，属配置错误不在此兜底）；防御性失败分支保位
+// 保帧，下次 drain 再试。
 func (s *Server) afterDrain(c *client) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
 	c.outbox.mu.Lock()
 	cur := c.outbox.bytes
 	c.outbox.mu.Unlock()
-	if cur < c.outbox.cap/2 && c.creditBlocked {
-		c.creditBlocked = false
-		s.registry.gateTransitions++ // Phase 8 OPS-07 门开闭周期计数挂点（review #10）
-		s.hubCond.Broadcast()
+	if !c.creditBlocked || cur >= c.outbox.cap/2 {
+		return
 	}
+	if c.creditPending != nil {
+		if !c.outbox.trySend(c.creditPending) {
+			return // 防御（数学上不可达，见上）：保位保帧，下次 drain 再试
+		}
+		c.creditPending = nil
+	}
+	c.creditBlocked = false
+	s.registry.gateTransitions++ // Phase 8 OPS-07 门开闭周期计数挂点（review #10）
+	s.hubCond.Broadcast()
 }
 
 // kickSlowConsumerLocked 踢出 outbox 写满的客户端（R-10 命名族）：注册表同步移除
-// + close(done)/cancel（均非阻塞）+ logEvent + 异步 Close。调用方必须已持 hubMu。
+// + close(done)（非阻塞）+ logEvent + 异步 Close。调用方必须已持 hubMu。
 // 踢出/信用的分工判定在 kickOrCreditLocked（R-08），本函数只执行踢出。
 //
 // Close 永不内联（P5-2）：Close 对 stall 客户端最长阻塞 ~10s（close.go:87-89，
 // 5s 写超时 + 5s 等对端关闭帧），内联会把行头阻塞还魂；Close 幂等且完成后解除
 // 全部 goroutine 阻塞（close.go:92-96），被踢客户端卡死的 writer/reader 随其收口。
 // 踢出即唯一处置——绝不丢帧保连接（must_haves prohibitions）。
+//
+// 1013 关闭帧可达性不变量（05-02 Task 3 实测锁定）：cancel 必须推迟到异步 Close
+// 落定之后——Attach 读循环随 cancel 终结 → defer CloseNow 立刻硬关 TCP；而
+// Close/CloseNow 竞态由先到的 casClosing 取胜（close.go:101/134），CloseNow 先胜
+// 则 1013 关闭帧永不上 wire（stall 客户端只见 EOF，TestSlowConsumerKick 实测
+// 命中）。cancel 置于异步 goroutine 内 Close 之后：Close 先赢 casClosing → 客户端
+// 消化管道后收到 1013 关闭帧 → 握手落定 → cancel 收口 pinger/reader，Attach
+// defer 的 CloseNow 退化为 wait-only no-op（幂等自界）。对永不读取的真死连接，
+// writeClose 5s 超时照常收口（close.go:168-183），时序不变量不受影响。
 //
 // 移除后 hubCond.Broadcast（P5-7 统一挂点）：踢出改变可写端信用集构成，等待中的
 // 信用门必须重估（死锁免除链路——detach/kick/attach/子进程退出四处统一 Broadcast）。
@@ -266,12 +302,12 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 		return // 已被 detach 移除（防御幂等；hubMu 下正常不会发生）
 	}
 	close(c.done)
-	c.cancel()
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
 	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer")
 	s.hubCond.Broadcast() // P5-7 统一挂点：kick 后门重估
 	go func() {
 		_ = c.conn.Close(websocket.StatusTryAgainLater, "slow_consumer")
+		c.cancel() // Close 落定后终结 pinger/reader ctx（1013 帧可达性不变量，见上）
 	}()
 }
 

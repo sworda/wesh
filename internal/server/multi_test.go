@@ -6,8 +6,11 @@ package server_test
 // 先例：startTestServerWith/dialHello/waitExit/assertNoExit 同包直接复用）。
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -152,4 +155,66 @@ func TestExitBroadcast(t *testing.T) {
 	}
 	// 广播后 exitf 以子进程退出码收口（D-10 退出码传递语义不变）。
 	waitExit(t, exitCh, 3)
+}
+
+// TestSigwinchOnAttach（D-11 送达证据）：新客户端 attach 完成时服务端向 PTY 前台
+// 进程组显式发一次 SIGWINCH——helper 收到信号后落盘标记文件（GOT_WINCH）。
+// 两端同尺寸 80x24：排除内核 TIOCSWINSZ 异尺寸发信号的干扰（P5-3 本机实证 Linux
+// 同尺寸不发信号）——标记出现即显式 SignalForegroundGroup 送达的证据，而非
+// resize 副作用。同步纪律：helper 先从 stdin 读一字节再装处理器报 READY，c1 发
+// INPUT 驱动并回读 READY 确认处理器就位，c2 attach 触发第二次信号——消除
+//「attach 信号先于处理器安装被默认忽略」的竞态。
+// 本测试在 CI macos runner 同样执行（.github/workflows/ci.yml 双平台矩阵既定）——
+// darwin 同尺寸行为假设 A1 的验证通道（review MEDIUM 项处置：以 CI 双平台运行
+// 实证替代本机平台断言；即便 darwin 同尺寸发信号，显式 SIGWINCH 也只是冗余无害）。
+func TestSigwinchOnAttach(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "got_winch")
+	_, wsURL := startTestServer(t, helperArgv(t, "wesh-helper-winch", marker))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c1, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c1.CloseNow()
+	// 驱动 helper 装处理器：INPUT 携 '\n'（PTY 规范模式行缓冲）；回读 READY 确认
+	// 就位（Pitfall 2：Read 永不带 deadline ctx——goroutine + select time.After）。
+	if err := c1.Write(ctx, websocket.MessageBinary, []byte{proto.Input, 'x', '\n'}); err != nil {
+		t.Fatalf("write INPUT to arm helper: %v", err)
+	}
+	ready := make(chan struct{}, 1)
+	go func() {
+		var acc []byte
+		for {
+			_, data, err := c1.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if len(data) > 0 && data[0] == proto.Output {
+				acc = append(acc, data[1:]...)
+				if bytes.Contains(acc, []byte("READY")) {
+					ready <- struct{}{}
+					return
+				}
+			}
+		}
+	}()
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("helper READY not observed within 5s — winch helper not armed")
+	}
+
+	// 处理器就位后 attach c2（同尺寸 80x24）：其 attach 完成的显式 SIGWINCH 必然
+	// 送达前台进程组 → helper 落盘标记。轮询 5s 断言标记文件出现。
+	c2, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c2.CloseNow()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			return // GOT_WINCH 落盘——D-11 送达证据齐全
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("GOT_WINCH marker not created within 5s of second attach — SignalForegroundGroup not delivered")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

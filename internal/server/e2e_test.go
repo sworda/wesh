@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -333,10 +336,13 @@ func helperArgv(t *testing.T, marker string, extra ...string) []string {
 // argv 守卫变体见 helperArgv 注释）。正常 `go test` 运行时 os.Args 无 wesh-helper-
 // 标记，直接 return（空过恒绿）；被 spawn 时按 `--` 后标记分派到对应分支。
 func TestHelperProcess(t *testing.T) {
-	marker := ""
+	marker, markerArg := "", ""
 	for i, a := range os.Args {
 		if a == "--" && i+1 < len(os.Args) {
 			marker = os.Args[i+1]
+			if i+2 < len(os.Args) {
+				markerArg = os.Args[i+2]
+			}
 			break
 		}
 	}
@@ -358,6 +364,34 @@ func TestHelperProcess(t *testing.T) {
 			}
 		}
 		os.Exit(42)
+	case "wesh-helper-winch":
+		// D-11 SIGWINCH 送达证据（TestSigwinchOnAttach 的演员）：同步纪律——先从
+		// stdin 读一字节（测试经 INPUT 帧发送，规范模式行缓冲须携 '\n'）再装
+		// SIGWINCH 处理器并报 READY：attach 完成时服务端的显式 SIGWINCH 若先于
+		// 处理器安装会被默认忽略（丢失即测试红），READY 回读确认后再由第二
+		// 客户端 attach 触发第二次信号，消除安装竞态。收到信号落盘标记文件
+		//（markerArg 为路径）——落盘标记是信号送达证据的既定纪律：stdout 标记在
+		// WS 断开后不可观测（Phase 01-03 决策）。
+		if markerArg == "" {
+			os.Exit(3)
+		}
+		b := make([]byte, 1)
+		for {
+			if _, err := os.Stdin.Read(b); err != nil {
+				os.Exit(3)
+			}
+			if b[0] == '\n' {
+				break
+			}
+		}
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGWINCH)
+		fmt.Println("READY")
+		<-sigCh
+		if err := os.WriteFile(markerArg, []byte("GOT_WINCH\n"), 0o644); err != nil {
+			os.Exit(3)
+		}
+		os.Exit(0)
 	}
 }
 
