@@ -5,6 +5,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,11 @@ import (
 type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
+
+	// shares 为分享 token 两条目 store（05-06 MULTI-05，D-01 独立第三认证通道）：
+	// New 装配期固化、运行期只读；nil = 通道关闭（ShareTokenRO/RW 任一空串，
+	// 本 phase main 恒生成——nil 仅测试可构造）。结构与校验形态见 sharetoken.go。
+	shares *shareTokens
 
 	// New 装配期固化、运行期只读，故七个 plain 字段无需 atomic：
 	// writable 为 checkTicket/attachHandler 派生 per-client ticket mode 的全局
@@ -137,6 +143,9 @@ type Server struct {
 // INPUT 门 AllowN），MaxClients 消费点在 05-07。
 // 05-03 新增：WritePolicy 为生产直传字段（main --write-policy flag 原样透传，
 // D-05；零值兜底 WritePolicyOwner——安全默认；取值常量见 clients.go）。
+// 05-06 新增：ShareTokenRO/ShareTokenRW 为生产直传字段（main 经
+// GenerateShareToken 启动生成两明文原样透传，server 只存 SHA-256 预哈希——
+// D-01 第三认证通道；任一空串 = 通道关闭，本 phase main 恒生成）。
 type Options struct {
 	Writable         bool
 	WritePolicy      string
@@ -157,6 +166,8 @@ type Options struct {
 	InputRate        int
 	InputBurst       int
 	ResizeDebounce   time.Duration
+	ShareTokenRO     string
+	ShareTokenRW     string
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -248,8 +259,16 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	}
 	// 认证模式（len(Credentials)>0）才构造 ticket/throttle 两 store；无认证模式
 	// 两 store 为 nil——checkTicket 核销分支整体跳过（既有行为零漂移）。
-	if len(opts.Credentials) > 0 {
+	// 05-06 分享通道（D-01/D-02）：share token 存在时 ticket store 必须构造——
+	// token → /api/attach → 一次性 ticket 链路在无认证模式同样兑现（OQ1 正交：
+	// mode 绑定在无密码演示场景有效）；throttle 仍仅凭据模式构造（无凭据无
+	// Basic/401 面——checkTicket 对 nil throttle 有守卫；token 通道 128bit 空间
+	// 使无节流枚举无意义，T-05-05）。
+	s.shares = newShareTokens(opts.ShareTokenRO, opts.ShareTokenRW)
+	if len(opts.Credentials) > 0 || s.shares != nil {
 		s.tickets = newTicketStore(opts.TicketTTL)
+	}
+	if len(opts.Credentials) > 0 {
 		s.throttle = newThrottleStore(opts.ThrottleBase, opts.ThrottleCap)
 	}
 	// 信用门 cond 挂 hubMu（R-07：信用门状态与注册表同锁；构造必须在 goroutine
@@ -264,12 +283,17 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	return s
 }
 
-// Handler 挂三条路由：/ 走 go:embed 静态伺服，/ws 走 Attach，POST /api/attach
-// 走 ticket 签发。认证模式（D-02 整站 Basic）：/ 与 /api/attach 挂 basicAuth
-// （/ws 不挂——ticket 即其认证）；/api/attach 守卫链 = 非 POST 405（方法模式 +
-// 显式同文 fallback，见下）→ Origin 403 → 节流 429 → Basic 401 → 签发 200。
+// Handler 挂四条路由：/ 走 go:embed 静态伺服，/ws 走 Attach，POST /api/attach
+// 走 ticket 签发，GET /s/{token}/ 走分享链接页面门禁（05-06，sharetoken.go）。
+// 认证模式（D-02 整站 Basic）：/ 与 /api/attach 挂 basicAuth（/ws 不挂——
+// ticket 即其认证）；/api/attach 守卫链 = 非 POST 405（方法模式 + 显式同文
+// fallback，见下）→ Origin 403 → 节流 429 → Basic 401 → 签发 200；分享 token
+// 分支在守卫链之前 peek（D-01 第三通道——命中按 token 绑定 mode 直接签发，
+// 绕过 Basic/throttle，capability 语义 R-03；未携/错 token 委托原链零改动）。
 // 无认证模式 /api/attach 显式注册 404（前端探测信号：跳过 fetch 直连 WS；
-// 显式注册避免依赖静态 handler 对 POST 的偶发行为，RESEARCH Pattern 1 决策）。
+// 显式注册避免依赖静态 handler 对 POST 的偶发行为，RESEARCH Pattern 1 决策）——
+// 05-06 起仅当 body 携有效 token 时非 404（OQ1 正交：ro/rw mode 绑定在无密码
+// 演示场景兑现）。/s/ 两路由凭据与无认证模式均注册（同 OQ1）。
 // 最外层 securityHeaders 包裹全部路由（含 /ws，D-06）。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -281,8 +305,23 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	if len(s.credentials) > 0 {
-		mux.Handle("/", basicAuth(wh, s.credentials, s.throttle))
-		mux.Handle("POST /api/attach", originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle), s.origins))
+		root := basicAuth(wh, s.credentials, s.throttle)
+		mux.Handle("/", root)
+		s.registerShareRoutes(mux, root)
+		// 分享 token 分支包装（05-06 D-01）：先做 token peek——命中按绑定 mode
+		// 签发（有效 token 优先于 throttle 直接放行，capability 语义：避免 NAT
+		// 出口 IP 误伤持票旁观者，R-03）；未携/错 token 委托原链（401 同文同码
+		// 无 oracle，失败经 recordFail 计入 D-08 统一 per-IP 计数器）。token
+		// 分支先于 Origin 中间件是刻意排序：/ws Attach 守卫区 ⓪ 位的 Origin 检查
+		// 对 ticket 核销后的 WS 握手依然生效（纵深不变），跨站表单无从获知
+		// 128bit token，本面无 CSRF 增量。
+		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle), s.origins)
+		mux.Handle("POST /api/attach", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if s.shareAttach(w, r) {
+				return
+			}
+			attachChain.ServeHTTP(w, r)
+		}))
 		// 非 POST /api/attach → 405 + Allow: POST。方法模式的内建 405 回退仅在
 		// 没有任何其它模式匹配时触发（GOROOT server.go:2699-2710 的 n==nil 分支）——
 		// 会被 "/" 子树匹配吞掉，故显式注册同文 fallback 补齐守卫链第一闸；
@@ -293,7 +332,14 @@ func (s *Server) Handler() http.Handler {
 		})
 	} else {
 		mux.Handle("/", wh)
+		s.registerShareRoutes(mux, wh)
 		mux.HandleFunc("POST /api/attach", func(w http.ResponseWriter, r *http.Request) {
+			// OQ1 正交（用户 2026-08-19 裁决）：body 携有效 token → 按绑定 mode
+			// 签发 ticket（ro/rw mode 绑定在无密码演示场景兑现）；否则维持 404
+			// （前端探测信号不变）。
+			if s.shareAttach(w, r) {
+				return
+			}
 			http.NotFound(w, r) // 无认证模式探测信号（404 → 前端跳过 fetch 直连）
 		})
 	}
@@ -301,10 +347,61 @@ func (s *Server) Handler() http.Handler {
 	return securityHeaders(mux, s.tlsOn)
 }
 
+// shareAttach 是 POST /api/attach 的分享 token peek 分支（05-06 D-01 第三认证
+// 通道）：body JSON{"token":...}（MaxBytesReader 4KiB 防御放大）解析且 lookup
+// 命中 → 按 token 绑定 mode 签发一次性 ticket 并返回 true（/api/attach 不收
+// mode 参数——mode 由 token 绑定，P3 D-11 可选 mode 参数预期细化作废）。
+// 未携/错 token → 恢复 body 供委托链重读后返回 false（调用方走原链：凭据模式
+// Origin→Basic 401 同文同码无 oracle；无认证模式 404 探测信号不变）。
+// 解析失败一律按未携 token 处理——不回显 body 内容（T-05-06：错误响应面零泄露）。
+// 红线（D-03/SEC-01）：token 值永不入 logEvent/错误响应。
+func (s *Server) shareAttach(w http.ResponseWriter, r *http.Request) bool {
+	if s.shares == nil {
+		return false // 通道关闭：零读取零行为变化（本 phase main 恒生成，防御兜底）
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
+	_ = r.Body.Close()
+	// 恢复 body 供委托链重读（attachHandler 自携 1KiB MaxBytesReader 重包装——
+	// 超限请求仍 413 同文）；err != nil（body >4KiB）按未携 token 处理。
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Token == "" {
+		return false // 解析失败 = 未携 token（未知字段忽略纪律同 Hello）
+	}
+	mode, ok := s.shares.lookup(req.Token)
+	if !ok {
+		return false
+	}
+	s.issueTicketJSON(w, mode)
+	return true
+}
+
+// issueTicketJSON 签发绑定 mode 的一次性 ticket 并以 {"ticket":...} JSON 响应
+// （Cache-Control: no-store——ticket 不可落缓存，RESEARCH Pattern 6 表）。
+// 两签发通道共用（tickets.go mode 注释兑现）：Basic 通道 = 全局 --writable 派生
+// mode（attachHandler）；分享 token 通道 = token 绑定 mode（shareAttach）。
+// 红线（SEC-01）：ticket 值禁止作为任何日志参数。
+func (s *Server) issueTicketJSON(w http.ResponseWriter, mode string) {
+	ticket := s.tickets.issue(mode, time.Now())
+	body, _ := json.Marshal(struct {
+		Ticket string `json:"ticket"`
+	}{Ticket: ticket}) // 固定 schema，json.Marshal 不会失败
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
 // attachHandler 是 POST /api/attach 的 ticket 签发端点（SEC-02）：Basic 认证
 // 通过后签发一次性 ticket（60s TTL、单次使用、绑定全局 --writable 模式，D-11）。
-// D-11 请求体为空——MaxBytesReader 1KiB 上限纯防御，超限 413；响应
-// Cache-Control: no-store（ticket 不可落缓存，RESEARCH Pattern 6 表）。
+// 分享 token 通道的 body peek 在本函数之前的 shareAttach 完成（05-06——命中即
+// 按 token 绑定 mode 直接签发，不进本函数）；走到此处 body 一律按 D-11 空体
+// 预期丢弃——MaxBytesReader 1KiB 上限纯防御，超限 413。
 // 红线（SEC-01）：ticket 值禁止作为任何日志参数。
 func (s *Server) attachHandler(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
@@ -316,14 +413,7 @@ func (s *Server) attachHandler(w http.ResponseWriter, r *http.Request) {
 	if s.writable {
 		mode = proto.ModeRW
 	}
-	ticket := s.tickets.issue(mode, time.Now())
-	body, _ := json.Marshal(struct {
-		Ticket string `json:"ticket"`
-	}{Ticket: ticket}) // 固定 schema，json.Marshal 不会失败
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	s.issueTicketJSON(w, mode)
 }
 
 // halfOpenCounter 是 per-IP 半开（Hello 未完成）连接计数器（D-04）。
@@ -667,6 +757,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 //     统一计数器（与 /api/attach 凭据失败同一 per-IP store）后拒绝；
 //  3. 核销成功 → 返回 ticket 绑定的 mode（D-11）。
 //
+// 05-06 分享通道适配（OQ1 正交）：无认证模式但 token 通道开启时（s.tickets 非
+// nil 而 s.throttle 为 nil）——Hello 未携 ticket 原样放行（s.writable 派生
+// mode，前端探测直连链路不变）；Hello 携 ticket 则必须核销成功才放行（token
+// 签发的 ro ticket 若过期/重放后落入 writable 派生 mode 等于降权闸门失效——
+// 携票即走核销语义与认证模式一致，throttle 面不存在故守卫跳过）。
+//
 // 红线（SEC-01）：ticket 值禁止作为任何日志参数——本方法与调用方均不打印。
 func (s *Server) checkTicket(ip, ticket string) (string, bool) {
 	mode := proto.ModeRO
@@ -674,15 +770,20 @@ func (s *Server) checkTicket(ip, ticket string) (string, bool) {
 		mode = proto.ModeRW
 	}
 	if s.tickets == nil {
-		return mode, true // 无认证模式：核销分支整体跳过
+		return mode, true // 无认证模式且无分享通道：核销分支整体跳过
+	}
+	if ticket == "" && len(s.credentials) == 0 {
+		return mode, true // 无认证模式未携 ticket：原样放行（OQ1，直连链路不变）
 	}
 	now := time.Now()
-	if !s.throttle.allow(ip, now) {
+	if s.throttle != nil && !s.throttle.allow(ip, now) {
 		return "", false // 节流命中：不 recordFail（不延长窗口），ticket 不核销
 	}
 	m, ok := s.tickets.redeem(ticket, now)
 	if !ok {
-		s.throttle.recordFail(ip, now) // D-08 统一计数器
+		if s.throttle != nil {
+			s.throttle.recordFail(ip, now) // D-08 统一计数器
+		}
 		return "", false
 	}
 	return m, true

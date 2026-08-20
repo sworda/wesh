@@ -303,7 +303,12 @@ func run(args []string) int {
 		return 1
 	}
 	prefsRO, prefsRW := aggregateClientPrefs(cfg.clientOptions, cfg.osc52)
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW})
+	// MULTI-05 分享链接（05-06，D-01/D-02）：启动时生成 ro/rw 两明文 token——
+	// 每轮启动重新随机（重启即废全部旧链接，吊销语义 = 重启）；main 持明文供
+	// 启动打印，server 只存 SHA-256 预哈希（Options 注释）。
+	shareRO := server.GenerateShareToken()
+	shareRW := server.GenerateShareToken()
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, ShareTokenRO: shareRO, ShareTokenRW: shareRW})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
 	scheme := "http"

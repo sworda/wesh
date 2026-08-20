@@ -13,7 +13,10 @@ const defaultTicketTTL = 60 * time.Second
 
 // ticketEntry 单条 ticket 登记项。
 type ticketEntry struct {
-	mode string    // proto.ModeRO/ModeRW，签发时 = 全局 --writable 模式（D-11；Phase 5 ro/rw 分签发的占位字段）
+	// proto.ModeRO/ModeRW，签发时绑定（05-06 注释兑现——两签发通道，结构零改动）：
+	// Basic 通道 = 全局 --writable 派生模式（D-11，server.go attachHandler）；
+	// 分享 token 通道 = token 绑定 mode（D-01，server.go shareAttach）。
+	mode string
 	exp  time.Time // 过期时刻；过期按不存在处理（D-10 同口径）
 }
 
