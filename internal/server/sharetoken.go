@@ -74,23 +74,30 @@ func (st *shareTokens) lookup(token string) (string, bool) {
 }
 
 // sharePage 是 GET /s/{token}/ 的页面门禁 handler（D-01/D-03，R-05 零新响应形态）：
-// 有效 token → r.URL.Path 改写为 "/" 后委托既有 embed handler（gzip 旁路与 Vary
-// 头语义保留；dist 单文件全内联无相对资源问题——RESEARCH Pattern 6 本 session
-// 核实）；无效/缺席 token → 原样委托 / 处理链 root（凭据模式 basicAuth → 401
-// challenge 且 recordFail 自动计入 D-08 统一 per-IP 计数器，R-03 零新代码；
-// 无认证模式直接给页——全站本无门，D-01「无/错 token 时 P3 Basic 矩阵不变」的
-// 字面落地）。不加 Cache-Control 新头。
-func (s *Server) sharePage(root http.Handler) http.HandlerFunc {
+// 有效 token → r.URL.Path 改写为 "/" 后委托既有 embed handler page（gzip 旁路与
+// Vary 头语义保留；dist 单文件全内联无相对资源问题——RESEARCH Pattern 6 核实）
+// ——token 即凭证，绕过 basicAuth 是该通道的存在意义（D-01 第三认证通道）；
+// 无效/缺席 token → 同样改写 "/" 后委托 / 处理链 root：凭据模式 basicAuth 在
+// 文件伺服前拦截 → 401 challenge 且 recordFail 自动计入 D-08 统一 per-IP 计数器
+// （R-03 零新代码，与不改写路径的响应逐字节一致）；无认证模式 root 即 wh →
+// index.html 200 给页——「无认证直接给页」的兑现依赖改写：持原始 /s/... 路径
+// 委托会落 FileServerFS 404 而非给页（全站本无门，D-01「无/错 token 时 P3
+// Basic 矩阵不变」字面落地；OQ1：门禁语义在无认证模式天然形同虚设、mode 绑定
+// 经 /api/attach 兑现）。不加 Cache-Control 新头。
+func (s *Server) sharePage(page, root http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/"
 		if _, ok := s.shares.lookup(r.PathValue("token")); ok { // GOROOT request.go:1469
-			r.URL.Path = "/"
+			page.ServeHTTP(w, r) // 有效 token：embed 页（token 即凭证，绕过 Basic）
+			return
 		}
-		root.ServeHTTP(w, r)
+		root.ServeHTTP(w, r) // 无效/缺席：委托 / 链（401 challenge 或直接给页）
 	}
 }
 
 // registerShareRoutes 装配分享链接两条路由（凭据与无认证模式均注册——OQ1 token
-// 通道与认证模式正交；root 为 / 已注册的处理链，sharePage 委托目标）：
+// 通道与认证模式正交；page 为 embed handler（有效 token 委托目标），root 为 /
+// 已注册的处理链（无效 token 委托目标））：
 //   - GET /s/{token}/ 页面门禁（r.PathValue("token") 取值）；
 //   - path-only 405 fallback（Allow: GET）——方法模式内建 405 仅在没有任何其它
 //     模式匹配时触发，会被 "/" 子树吞掉（P3 /api/attach 同款纪律，GOROOT
@@ -99,12 +106,15 @@ func (s *Server) sharePage(root http.Handler) http.HandlerFunc {
 // GOROOT 1.22+ 通配语义三坑登记（RESEARCH Pattern 6，go1.26.3 源码核实）：
 //  1. 尾斜杠 = 匿名多段通配——/s/abc/任意/深度 也命中本模式（token 段取值不受
 //     影响，PathValue 恒取首段 abc）；
-//  2. /s/abc（无尾斜杠）由 mux 内建 301 补斜杠——token 出现在 Location 头属
-//     D-03 已接受的暴露面；
+//  2. /s/abc（无尾斜杠）由 mux 内建重定向补斜杠——go1.22+ 新 mux 的
+//     matchOrRedirect 恒用 307（GOROOT server.go:2687 RedirectHandler
+//     StatusTemporaryRedirect；RESEARCH『301』系笔误，本机 go1.26.3 实证 307，
+//     GET 下两码语义等价——方法保持）；token 出现在 Location 头属 D-03 已接受
+//     的暴露面；
 //  3. 单段通配天然限长（22 字符 base64url），路径解析零自写代码
 //     （Don't Hand-Roll 表：正则/手拆路径禁止）。
-func (s *Server) registerShareRoutes(mux *http.ServeMux, root http.Handler) {
-	mux.Handle("GET /s/{token}/", s.sharePage(root))
+func (s *Server) registerShareRoutes(mux *http.ServeMux, page, root http.Handler) {
+	mux.Handle("GET /s/{token}/", s.sharePage(page, root))
 	mux.HandleFunc("/s/{token}/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)

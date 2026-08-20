@@ -307,7 +307,7 @@ func (s *Server) Handler() http.Handler {
 	if len(s.credentials) > 0 {
 		root := basicAuth(wh, s.credentials, s.throttle)
 		mux.Handle("/", root)
-		s.registerShareRoutes(mux, root)
+		s.registerShareRoutes(mux, wh, root)
 		// 分享 token 分支包装（05-06 D-01）：先做 token peek——命中按绑定 mode
 		// 签发（有效 token 优先于 throttle 直接放行，capability 语义：避免 NAT
 		// 出口 IP 误伤持票旁观者，R-03）；未携/错 token 委托原链（401 同文同码
@@ -332,7 +332,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	} else {
 		mux.Handle("/", wh)
-		s.registerShareRoutes(mux, wh)
+		s.registerShareRoutes(mux, wh, wh) // 无认证模式 page/root 同为 wh——给页无门
 		mux.HandleFunc("POST /api/attach", func(w http.ResponseWriter, r *http.Request) {
 			// OQ1 正交（用户 2026-08-19 裁决）：body 携有效 token → 按绑定 mode
 			// 签发 ticket（ro/rw mode 绑定在无密码演示场景兑现）；否则维持 404
