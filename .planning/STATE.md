@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 5
-current_phase_name: 多客户端共享
-status: "Phase 04 shipped — PR #5"
-stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-08-20T05:42:06.921Z"
+current_phase: 05
+current_phase_name: multi-client
+status: executing
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-08-20T08:10:15.152Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 33
-  completed_plans: 24
+  completed_plans: 25
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-19)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 05 — 多客户端共享
+**Current focus:** Phase 05 — multi-client
 
 ## Current Position
 
-Phase: 5 — 多客户端共享
-Plan: Not started
-Status: Phase 04 shipped — PR #5
-Last activity: 2026-08-20 — Phase 05 planning complete
+Phase: 05 (multi-client) — EXECUTING
+Plan: 2 of 9
+Status: Ready to execute
+Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [██████████] 100%
+Progress: [████████░░] 76%
 
 ## Performance Metrics
 
@@ -84,6 +84,7 @@ Progress: [██████████] 100%
 | Phase 04 P04 | 6min | 2 tasks | 1 files |
 | Phase 04 P05 | 14min | 3 tasks | 4 files |
 | Phase 04 P06 | 5h 57m | 2 tasks | 2 files |
+| Phase 05 P01 | 1h 0m | 2 tasks tasks | 9 files files |
 
 ## Accumulated Context
 
@@ -135,6 +136,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 04-04]: UAT 新 phase 脚本起步式——逐字复用 phase03.mjs 骨架件 + 单次语义独立 spawn + detail 红线延伸（prefs/theme 值内容永不进测试输出） — plan startWesh([]) 字面为简写，无命令 wesh exit 2 到不了 Welcome；S 场景命令尾照 phase03 既定形态补 '-- bash --norc --noprofile'，断言面零影响
 - [Phase ?]: [Phase 04-05]: queryKeys 以 export 标记防 noUnusedLocals 在 Task 2 接线前误报；query xterm spread 经 as Partial<ITerminalOptions> 收窄（Record<string,unknown> 直接展开 tsc 必红）；OSC52 provider 以 IClipboardProvider 注解对齐 d.ts（_sel 上下文推断为 ClipboardSelectionType，避开 const enum isolatedModules 导入复杂性）
 - [Phase ?]: [Phase 04-06]: README 协议节正文 inline Welcome JSON 与表格行同步补 prefs 可选键（同节形状一致性）；裸 clone 归档前置 rm -rf 防残留污染证据
+- [Phase ?]: [Phase 05-01]: writer 合并形态取 ARCHITECTURE §2.5『合并成单帧』本意——同类型连续段合并（类型字节一次+载荷拼接），1 WS 消息=1 帧不变、前端零改动；plan 字面 bytes.Join 会把内嵌类型字节写进终端流（TestReadLimitBoundary 实测溢出）
+- [Phase ?]: [Phase 05-01]: 五默认常量声明落 clients.go，server.go New 零值兜底逐字段引用——同时满足验收 grep ==5 与 HelloTimeout 先例形态
+- [Phase ?]: [Phase 05-01]: stderr 捕获类测试改用 startTrackedServerWith——waitExit 消亡后 restore() 与 logEvent 读 os.Stderr 无同步边（-race 实测），WaitGroup happens-before 替代
 
 ### Pending Todos
 
@@ -153,6 +157,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T00:47:09.753Z
-Stopped at: Phase 5 UI-SPEC approved
-Resume file: .planning/phases/05-multi-client/05-UI-SPEC.md
+Last session: 2026-08-20T08:10:15.131Z
+Stopped at: Completed 05-01-PLAN.md
+Resume file: None
