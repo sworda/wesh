@@ -8,6 +8,7 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -19,6 +20,59 @@ import (
 	"github.com/sworda/wesh/internal/proto"
 	"github.com/sworda/wesh/internal/server"
 )
+
+// sendInput 发送 INPUT 帧（payload 原样拼在类型字节后）。
+func sendInput(t *testing.T, ctx context.Context, c *websocket.Conn, payload []byte) {
+	t.Helper()
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+		t.Fatalf("write INPUT: %v", err)
+	}
+}
+
+// accumPayload 累积读 OUTPUT 帧直到收齐 want 载荷并逐字节比对（TestEchoPTY 累积
+// 模式的包级复用形态）；途中收到任何非 OUTPUT 帧即 fatal——升格 Welcome 推送在
+// 此形态下天然构成「窗口内无第二帧 Welcome」断言（单 owner 证据）。
+func accumPayload(t *testing.T, ctx context.Context, c *websocket.Conn, want []byte) {
+	t.Helper()
+	got := make([]byte, 0, len(want))
+	for len(got) < len(want) {
+		_, data, err := c.Read(ctx)
+		if err != nil {
+			t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
+		}
+		if len(data) == 0 || data[0] != proto.Output {
+			t.Fatalf("unexpected frame: %v", data)
+		}
+		got = append(got, data[1:]...)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("echo payload = %q, want %q", got, want)
+	}
+}
+
+// readUntilWelcome 在 goroutine 中持续读 conn 直到出现 Welcome 帧，返回其解码
+// 载荷（Pitfall 2 竞速形态——客户端 Read 永不带 deadline ctx，调用方以 select
+// time.After 收口）。读终结（连接关闭）时关闭 channel——接收方得 nil 载荷。
+func readUntilWelcome(c *websocket.Conn) <-chan map[string]any {
+	ch := make(chan map[string]any, 1)
+	go func() {
+		defer close(ch)
+		for {
+			_, data, err := c.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if len(data) > 0 && data[0] == proto.Welcome {
+				var wm map[string]any
+				if err := json.Unmarshal(data[1:], &wm); err == nil {
+					ch <- wm
+					return
+				}
+			}
+		}
+	}()
+	return ch
+}
 
 // TestMultiClientFanout（VALIDATION 05-01-01，MULTI-01 主干断言）：双客户端 attach
 // 同一服务端各自收到 Welcome，且实时收到同一 OUTPUT 字节流——两端累积 payload
@@ -229,4 +283,268 @@ func TestSigwinchOnAttach(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// ====== plan 05-03 增量：MULTI-02 写权限体系测试组（VALIDATION 05-01-02/05-01-07）======
+
+// TestOwnerPolicy（VALIDATION 05-01-02，owner 模式升降级矩阵行）：--writable +
+// write-policy=owner → 首个 rw attach（A）成为 owner（Welcome mode=rw）；后续 rw
+// attach（B）D-07 降级 ro 进递补队列（Welcome mode=ro）；B 的 INPUT 被服务端真
+// 边界丢弃、A 的 INPUT 生效；D-13 prefs 双档：A 的 Welcome prefs 含 osc52 键、
+// B 的不含（prefs JSON 键存在性断言，不解析值——T-05-07 旁观者剪贴板防线）。
+// 无认证模式即可覆盖矩阵核心行（ticket mode 由全局 writable 派生；认证模式 token
+// 绑定通道由 05-06 sharetoken_test.go 与既有 dialHelloTicket 覆盖）。
+func TestOwnerPolicy(t *testing.T) {
+	// prefs 双档注入模拟 main aggregateClientPrefs 在全局 --osc52 开启下的产出
+	//（ro 档永不含 osc52 键 / rw 档按全局下发——D-13 + P5-6）。
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:      true,
+		WritePolicy:   server.WritePolicyOwner,
+		ClientPrefsRO: json.RawMessage(`{"fontSize":14}`),
+		ClientPrefsRW: json.RawMessage(`{"fontSize":14,"osc52":true}`),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// A：首个 rw attach → 立 owner（D-06）：Welcome mode=rw + rw 档 prefs。
+	cA, wmA := dialHelloPayload(t, ctx, wsURL, 80, 24)
+	if wmA["mode"] != proto.ModeRW {
+		t.Fatalf("A welcome mode = %v, want %q (首个 rw attach 立 owner)", wmA["mode"], proto.ModeRW)
+	}
+	prefsA, ok := wmA["prefs"].(map[string]any)
+	if !ok {
+		t.Fatalf("A welcome prefs = %v, want JSON object（rw 档注入）", wmA["prefs"])
+	}
+	if _, present := prefsA["osc52"]; !present {
+		t.Errorf("A(rw owner) prefs = %v, want osc52 key present（rw 档按全局 --osc52 下发）", prefsA)
+	}
+	// B：后续 rw attach → D-07 降级 ro 进递补队列：Welcome mode=ro + ro 档 prefs
+	//（osc52 键强制缺席——即使全局 --osc52 开启）。
+	cB, wmB := dialHelloPayload(t, ctx, wsURL, 132, 43)
+	if wmB["mode"] != proto.ModeRO {
+		t.Fatalf("B welcome mode = %v, want %q (D-07 降级)", wmB["mode"], proto.ModeRO)
+	}
+	prefsB, ok := wmB["prefs"].(map[string]any)
+	if !ok {
+		t.Fatalf("B welcome prefs = %v, want JSON object（ro 档注入）", wmB["prefs"])
+	}
+	if _, present := prefsB["osc52"]; present {
+		t.Errorf("B(ro 降级) prefs = %v, must not contain osc52 key（D-13：旁观者强制不下发）", prefsB)
+	}
+
+	// B（ro 降级端）INPUT 被服务端真边界丢弃（per-client mode 门）：先发 B 的
+	// 标记串并 pacing 300ms（保证服务端读循环已处理该帧——若泄漏，cat 回显必先于
+	// A 的回显出现在扇出流），再发 A 的标记串；A 端输出视角断言。
+	sendInput(t, ctx, cB, []byte("b-must-be-dropped"))
+	time.Sleep(300 * time.Millisecond)
+	sendInput(t, ctx, cA, []byte("a-owner-writes"))
+	want := []byte("a-owner-writes")
+	got := make([]byte, 0, len(want))
+	for len(got) < len(want) {
+		_, data, err := cA.Read(ctx)
+		if err != nil {
+			t.Fatalf("A read OUTPUT: %v (got %q so far)", err, got)
+		}
+		if len(data) == 0 || data[0] != proto.Output {
+			t.Fatalf("A unexpected frame: %v", data)
+		}
+		got = append(got, data[1:]...)
+		if bytes.Contains(got, []byte("b-must-be-dropped")) {
+			t.Fatalf("ro 降级端 INPUT 泄漏进 master：A 扇出流含 B 标记串 %q（per-client mode 门失效）", got)
+		}
+	}
+	if string(got) != string(want) {
+		t.Fatalf("A echo payload = %q, want %q（owner INPUT 生效）", got, want)
+	}
+
+	cA.Close(websocket.StatusNormalClosure, "")
+	cB.Close(websocket.StatusNormalClosure, "")
+	assertNoExit(t, exitCh)
+}
+
+// TestAllPolicy（VALIDATION 05-01-02，all 模式矩阵行）：--writable +
+// write-policy=all → A/B 均 Welcome mode=rw（全员可写，协作排障形态）；两端
+// INPUT 均生效（cat 回显双端扇出收齐）；无递补概念——A 断开后 B 保持 rw，
+// 无升格帧（B 端读到的下一帧是 OUTPUT 而非 Welcome）。
+func TestAllPolicy(t *testing.T) {
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		WritePolicy: server.WritePolicyAll,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
+	cB, modeB := dialHello(t, ctx, wsURL, 132, 43)
+	if modeA != proto.ModeRW || modeB != proto.ModeRW {
+		t.Fatalf("welcome modes = %q / %q, want both %q（all 模式全员可写）", modeA, modeB, proto.ModeRW)
+	}
+
+	// 两端 INPUT 均生效：各自标记串经 cat 回显扇出，双端各自收齐。
+	sendInput(t, ctx, cA, []byte("a-all-writes"))
+	accumPayload(t, ctx, cA, []byte("a-all-writes"))
+	accumPayload(t, ctx, cB, []byte("a-all-writes"))
+	sendInput(t, ctx, cB, []byte("b-all-writes"))
+	accumPayload(t, ctx, cA, []byte("b-all-writes"))
+	accumPayload(t, ctx, cB, []byte("b-all-writes"))
+
+	// 无递补概念：A 断开后 B 保持 rw 且无升格帧——B 发 INPUT 驱动输出，其读到
+	// 的下一帧须为 OUTPUT 回显（accumPayload 对任何非 OUTPUT 帧 fatal，升格
+	// Welcome 在此天然被断言缺席）。
+	cA.CloseNow()
+	sendInput(t, ctx, cB, []byte("b-still-rw"))
+	accumPayload(t, ctx, cB, []byte("b-still-rw"))
+
+	cB.Close(websocket.StatusNormalClosure, "")
+	assertNoExit(t, exitCh)
+}
+
+// TestSuccession（VALIDATION 05-01-02，owner FIFO 递补升格）：owner 模式
+// A(owner rw)/B(降级 ro) → A CloseNow → B 在轮询窗口内收到第二帧 Welcome
+// mode=rw（R-09 升格推送复用 'W' 帧）且 prefs 含 osc52 键（P5-6：升格必携
+// rw 档——升格即获 osc52，D-13 的另一半）→ B 的 INPUT 此后生效。
+// C 场景：owner 断开且无可递补者（注册表空）→ 后续新 rw attach 直接成为 owner。
+func TestSuccession(t *testing.T) {
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:      true,
+		WritePolicy:   server.WritePolicyOwner,
+		ClientPrefsRO: json.RawMessage(`{"fontSize":14}`),
+		ClientPrefsRW: json.RawMessage(`{"fontSize":14,"osc52":true}`),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
+	if modeA != proto.ModeRW {
+		t.Fatalf("A welcome mode = %q, want %q", modeA, proto.ModeRW)
+	}
+	cB, modeB := dialHello(t, ctx, wsURL, 80, 24)
+	if modeB != proto.ModeRO {
+		t.Fatalf("B welcome mode = %q, want %q（D-07 降级进递补队列）", modeB, proto.ModeRO)
+	}
+
+	// owner 断开 → B 在 5s 轮询窗口内收升格 Welcome mode=rw 且携 rw 档 prefs
+	//（osc52 键存在性断言）。cat 无输出，B 端首帧即升格帧。
+	cA.CloseNow()
+	select {
+	case wm := <-readUntilWelcome(cB):
+		if wm == nil {
+			t.Fatal("B read terminated before promotion Welcome（升格推送丢失）")
+		}
+		if wm["mode"] != proto.ModeRW {
+			t.Fatalf("promotion Welcome mode = %v, want %q（R-09 升格推送）", wm["mode"], proto.ModeRW)
+		}
+		prefs, ok := wm["prefs"].(map[string]any)
+		if !ok {
+			t.Fatalf("promotion Welcome prefs = %v, want JSON object（P5-6 升格携 rw 档）", wm["prefs"])
+		}
+		if _, present := prefs["osc52"]; !present {
+			t.Errorf("promotion Welcome prefs = %v, want osc52 key present（升格即获 osc52，D-13 另一半）", prefs)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("B 未在 5s 内收到升格 Welcome——owner 断开后 FIFO 递补失败")
+	}
+	// 升格后 B 的 INPUT 生效（per-client mode 已翻转 rw）。
+	sendInput(t, ctx, cB, []byte("b-promoted-writes"))
+	accumPayload(t, ctx, cB, []byte("b-promoted-writes"))
+
+	// C 场景：B（现任 owner，无可递补者——A 已走）断开 → 注册表空、owner=nil
+	// → 新 rw attach 按矩阵直接成为 owner（Welcome mode=rw）。
+	cB.CloseNow()
+	cC, modeC := dialHello(t, ctx, wsURL, 80, 24)
+	if modeC != proto.ModeRW {
+		t.Fatalf("C welcome mode = %q, want %q（无可递补者时新 rw attach 立为 owner）", modeC, proto.ModeRW)
+	}
+
+	cC.Close(websocket.StatusNormalClosure, "")
+	assertNoExit(t, exitCh)
+}
+
+// TestSuccessionKickRace（VALIDATION 05-01-07，review #3 时序闭合竞态锁定）：
+// stall owner 被服务端移除后的晋升/重连时序闭合——晋升恒在 hubMu 内同步完成，
+// 必然先于旧 owner 任何重连的 registerLocked；重连旧 owner 归队 FIFO 尾；
+// 全程单 owner；再递补链完整。
+//
+// 触发形态（SUMMARY Deviation 登记）：plan 字面「owner stall 被 1013 踢出」在
+// R-08 分工表下结构性不可达——owner 模式 owner 恒为唯一可写端，其 outbox 写满
+// 走信用门（creditBlocked 闭门）而非踢出（『剔除 c 后仍存在未 blocked 的可写端』
+// 对唯一可写端恒假）。服务端主动移除 stall owner 的唯一可达路径是 pinger
+// pong_timeout 收口（stall = 不 Read = 不答 pong）→ detach → promoteNextLocked
+// 第一调用点——与 kick 路径第二调用点共享同一 hubMu 时序闭合论证（两路径均在
+// removeLocked 后同一 hubMu 持有内同步晋升），四断言同款锁定；kick 路径调用点
+// 保留为防御性挂点（未来策略形态变化的防线）。
+func TestSuccessionKickRace(t *testing.T) {
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		WritePolicy: server.WritePolicyOwner,
+		// 短 ping/pong 参数加速 stall owner 的 pong_timeout 收口（生产 5s/10s
+		// 在测试窗口内不可行；2s PongTimeout 同时保证正常读取的 cB/cA2 不被误伤——
+		// 测试内读间隔均为毫秒级，远小于 pong 窗口）。
+		PingInterval: 100 * time.Millisecond,
+		PongTimeout:  2 * time.Second,
+	})
+	_ = exitCh // 本测试不断言子进程退出
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
+	if modeA != proto.ModeRW {
+		t.Fatalf("A welcome mode = %q, want %q", modeA, proto.ModeRW)
+	}
+	cB, modeB := dialHello(t, ctx, wsURL, 80, 24)
+	if modeB != proto.ModeRO {
+		t.Fatalf("B welcome mode = %q, want %q（D-07 降级）", modeB, proto.ModeRO)
+	}
+	defer cB.CloseNow()
+
+	// cA 自此不再 Read（stall owner）：不答 pong → ~2.1s 内 pinger pong_timeout
+	// CloseNow → 服务端 reader 终结 → detach → promoteNextLocked 同步晋升 cB。
+	// 断言一（晋升）：cB 在 5s 轮询窗口内收升格 Welcome mode=rw。
+	select {
+	case wm := <-readUntilWelcome(cB):
+		if wm == nil {
+			t.Fatal("B read terminated before promotion Welcome（stall owner 移除后升格推送丢失）")
+		}
+		if wm["mode"] != proto.ModeRW {
+			t.Fatalf("promotion Welcome mode = %v, want %q", wm["mode"], proto.ModeRW)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("B 未在 5s 内收到升格 Welcome——stall owner 移除后晋升丢失")
+	}
+	// cB 保持 rw：INPUT 生效（cat 回显）。
+	sendInput(t, ctx, cB, []byte("b-promoted-after-stall"))
+	accumPayload(t, ctx, cB, []byte("b-promoted-after-stall"))
+
+	// 断言二（重连归队）：旧 owner 立即重连——晋升已在 hubMu 内先于任何
+	// registerLocked 完成（时序闭合），cA2 按矩阵降级 ro 归队 FIFO 尾。
+	cA.CloseNow()
+	cA2, modeA2 := dialHello(t, ctx, wsURL, 80, 24)
+	if modeA2 != proto.ModeRO {
+		t.Fatalf("re-connected old owner welcome mode = %q, want %q（新 owner 在位，归队 FIFO 尾）", modeA2, proto.ModeRO)
+	}
+	defer cA2.CloseNow()
+
+	// 断言三（全程单 owner）：cA2 在窗口内不再收第二帧 Welcome——cB 发 INPUT
+	// 驱动扇出，cA2 收齐回显期间任何升格 Welcome 都会使 accumPayload fatal；
+	// 同时证明归队 ro 端正常收 fan-out 流。
+	sendInput(t, ctx, cB, []byte("b-still-owner"))
+	accumPayload(t, ctx, cA2, []byte("b-still-owner"))
+
+	// 断言四（再递补）：cB CloseNow → cA2（rwEligible 归队者）收升格 Welcome
+	// mode=rw——归队重排后递补链完整。
+	cB.CloseNow()
+	select {
+	case wm := <-readUntilWelcome(cA2):
+		if wm == nil {
+			t.Fatal("A2 read terminated before re-succession Welcome（递补链断裂）")
+		}
+		if wm["mode"] != proto.ModeRW {
+			t.Fatalf("re-succession Welcome mode = %v, want %q", wm["mode"], proto.ModeRW)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("A2 未在 5s 内收到升格 Welcome——归队重排后递补链断裂")
+	}
+	// 升格后 cA2 INPUT 生效。
+	sendInput(t, ctx, cA2, []byte("a2-promoted"))
+	accumPayload(t, ctx, cA2, []byte("a2-promoted"))
 }

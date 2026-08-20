@@ -13,6 +13,7 @@ package server
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -60,10 +61,16 @@ const (
 type client struct {
 	conn   *websocket.Conn
 	remote string // logEvent 三要素之对端（Attach 入口保存的 RemoteAddr）
-	mode   string // proto.ModeRO/ModeRW——INPUT/RESIZE 门 per-client 判定（P2 D-13/D-14 的多客户端映射）
+	// mode 生效模式（proto.ModeRO/ModeRW 字符串，atomic.Value 承载）：升档时由
+	// 判定矩阵写入初始值，运行期唯一写者是 promoteNextLocked 的 ro→rw 升格翻转
+	//（hubMu 内）。Attach 读循环的 INPUT 门每击键无锁 Load（热路径不得取 hubMu），
+	// 与 hubMu 内的晋升写并发（05-03 -race 实测命中）；hubMu 侧读取（信用门/
+	// 分工表）同经 Load 统一形态。
+	mode atomic.Value
 	// rwEligible 递补候选资格（D-06「以 rw 身份」）：rw ticket × owner 模式 → true
 	//（含 owner 本人——语义为「持 rw 身份的资格」，owner 断线后该客户端若仍在队
 	// 即可被递补）；ro ticket 与 all 模式恒 false（ro 永不递补；all 无递补概念）。
+	// 升档时写入后运行期只读（promoteNextLocked 保留其值），plain 字段。
 	rwEligible bool
 
 	attachSeq int64 // attach FIFO 序号（registerLocked 分配；05-03 owner 递补取序）
@@ -248,7 +255,7 @@ func (s *Server) onChunk(chunk []byte) {
 func (s *Server) allWritableBlockedLocked() bool {
 	writable := 0
 	for c := range s.registry.set {
-		if c.mode != proto.ModeRW {
+		if c.mode.Load() != proto.ModeRW {
 			continue
 		}
 		writable++
@@ -277,13 +284,13 @@ func (s *Server) allWritableBlockedLocked() bool {
 // 经 RESEARCH Open Question 3 裁决接受（各端持续前进；dwell 计时器 Phase 9
 // 负载标定时评估）。调用方必须已持 hubMu。
 func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
-	if c.mode == proto.ModeRO {
+	if c.mode.Load() == proto.ModeRO {
 		s.kickSlowConsumerLocked(c)
 		return
 	}
 	// rw：剔除 c 后仍存在未 blocked 的可写端 → c 是离群慢端，立即踢出。
 	for oc := range s.registry.set {
-		if oc != c && oc.mode == proto.ModeRW && !oc.creditBlocked {
+		if oc != c && oc.mode.Load() == proto.ModeRW && !oc.creditBlocked {
 			s.kickSlowConsumerLocked(c)
 			return
 		}
@@ -409,8 +416,8 @@ func (s *Server) promoteNextLocked() {
 			continue
 		}
 		s.registry.owner = cand
-		cand.mode = proto.ModeRW
-		s.hubCond.Broadcast() // P5-7 升格挂点：新 rw 端进信用集
+		cand.mode.Store(proto.ModeRW) // ro→rw 升格翻转（atomic 承载：INPUT 门无锁读者）
+		s.hubCond.Broadcast()         // P5-7 升格挂点：新 rw 端进信用集
 		return
 	}
 }

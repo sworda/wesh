@@ -503,12 +503,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		cl = &client{
 			conn:       c,
 			remote:     remote,
-			mode:       effMode,
 			rwEligible: rwEligible,
 			outbox:     newOutbox(s.outboxBytes),
 			done:       make(chan struct{}),
 			cancel:     cancel,
 		}
+		cl.mode.Store(effMode) // 生效模式初始值（atomic 承载：INPUT 门无锁读者，见 clients.go）
 		// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
 		// trySend 恒成功——Welcome ≪ cap），按生效 mode 选 prefs 档（ro 档永不
 		// 含 osc52，D-13/P5-6）。握手期 Error 帧（version_mismatch/auth_failed）
@@ -564,10 +564,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		switch data[0] {
 		case proto.Input:
 			// per-client mode 门（P2 D-13/D-14 的多客户端映射：per-client 判定
-			// 替代全局 s.writable——本 plan 无降级路径故语义等价，owner 降级在
-			// 05-03 落地）：ro 静默丢（不打日志防按键洪水）。cl == nil 为握手违规
-			// 落入路径（连接已在关闭握手）——同样静默丢，绝不对未注册连接写 PTY。
-			if cl == nil || cl.mode == proto.ModeRO {
+			// 替代全局 s.writable——05-03 起 owner 降级/递补升格翻转 per-client
+			// mode，mode 经 atomic.Value 承载：本门每击键无锁 Load，与 hubMu 内
+			// promoteNextLocked 的升格写并发安全）：ro 静默丢（不打日志防按键
+			// 洪水）。cl == nil 为握手违规落入路径（连接已在关闭握手）——同样
+			// 静默丢，绝不对未注册连接写 PTY。
+			if cl == nil || cl.mode.Load() == proto.ModeRO {
 				continue
 			}
 			s.sess.Master.Write(data[1:]) // 直写本 plan 保持（CR-01 输入队列在 05-05）
