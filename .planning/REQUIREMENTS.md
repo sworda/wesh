@@ -52,7 +52,7 @@
 ### 资源控制（RES）
 
 - [x] **RES-01**: WS 消息三层上限：单帧长度、分片数量、累积字节数
-- [ ] **RES-02**: 每客户端输入速率限制
+- [x] **RES-02**: 每客户端输入速率限制
 - [ ] **RES-03**: 最大并发客户端数限制，满员拒绝新连接
 - [x] **RES-04**: PTY 输出背压：客户端消费不及时时暂停读 PTY 或断开慢客户端
 
@@ -140,7 +140,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEC-07 | Phase 7 | Pending |
 | SEC-08 | Phase 2 | Complete |
 | RES-01 | Phase 2 | Complete |
-| RES-02 | Phase 5 | Pending |
+| RES-02 | Phase 5 | Complete |
 | RES-03 | Phase 5 | Pending |
 | RES-04 | Phase 5 | Complete |
 | OPS-01 | Phase 7 | Pending |

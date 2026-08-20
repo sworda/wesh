@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-04-PLAN.md
-last_updated: "2026-08-20T13:29:45.262Z"
+stopped_at: Completed 05-05-PLAN.md
+last_updated: "2026-08-20T14:30:41.997Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 33
-  completed_plans: 28
+  completed_plans: 29
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 5 of 9
+Plan: 6 of 9
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -88,6 +88,7 @@ Progress: [█████████░] 85%
 | Phase 05 P02 | 1h 17m | 3 tasks | 7 files |
 | Phase 05 P03 | 53min | 3 tasks | 8 files |
 | Phase 05 P04 | 41min | 2 tasks | 6 files |
+| Phase 05 P05 | 45min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-04]: client.dims = Hello 首尺寸登记后运行期不更新——参与集成员最新尺寸由 arbiter.sizes 承载，本字段只服务递补升格新 owner 参与集切换（D-09 尺寸接管源）；旁观者运行期 RESIZE 按 D-09 直接忽略不入账，缩窗后递补的瞬态偏差由 05-08 升格 fit() 纠正通道收口
 - [Phase ?]: [Phase 05-04]: kick 路径补 removeMember+recalcNow（plan 仅列 detach 挂点）——all 模式被踢 rw 端滞留 sizes 则陈旧尺寸永久拖累 min-rect（幽灵成员），成员移除与注册表移除必须同点恰好一次
 - [Phase ?]: [Phase 05-04]: 仲裁两测试分文件（resize_test.go 白盒 / resize_arb_test.go 黑盒）——Go 单文件单 package 约束使 plan『两测试同文件』字面不可达；VALIDATION 05-01-04 命名与运行命令逐字保持
+- [Phase ?]: [Phase 05-05]: droppedInputs 计数递增收进 inputQ.tryEnqueue 内部（自含记账，outbox bytes 同款）；inputDrops 为 Server 字段 atomic.Int64（INPUT 门热路径无锁递增）——两计数器均挂 Phase 8 OPS-07 注释（review #10），与 registry.kicks/gateTransitions 的 hubMu 内 plain int 形成场景化选型
+- [Phase ?]: [Phase 05-05]: input-writer 终结双通道——lifecycle 内 Drain→Close 先关 master fd（在途 Write 经 runtime poller 解除阻塞返回错误即 return），close(inputDone) 解除 select 等待；队列残余随会话消亡
+- [Phase ?]: [Phase 05-05]: TestInputRateLimit 回显计数模型——/bin/cat 默认 canonical+ECHO 使每送达帧产双份 'x'（1022/帧），ONLCR 不影响 'x' 计数；帧长 512B ≤ burst（AllowN 对 n>burst 恒 false）且 ≪ MAX_CANON 4096；对照子测取显式 1MiB/1MiB 覆写消去零裕度边界
+- [Phase ?]: [Phase 05-05]: 依赖引入顺序纪律——先落码（import 存在）再 go get + go mod tidy，否则 tidy 回收无引用依赖（本 plan 实测命中）
 
 ### Pending Todos
 
@@ -169,6 +174,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T13:29:45.242Z
-Stopped at: Completed 05-04-PLAN.md
+Last session: 2026-08-20T14:30:41.977Z
+Stopped at: Completed 05-05-PLAN.md
 Resume file: None
