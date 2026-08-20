@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 // ReadLoop 以 32KiB 缓冲循环读 master：n>0 回调 onChunk，任何 read 错误（含 io.EOF
@@ -37,6 +38,26 @@ func (s *Session) Resize(cols, rows int) error {
 		return os.ErrClosed
 	}
 	return pty.Setsize(s.Master, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+}
+
+// SignalForegroundGroup 向 PTY 前台进程组显式发一次 SIGWINCH（D-11 新客强制重绘）：
+// TIOCGPGRP 取前台 pgid → kill(-pgid, SIGWINCH)（负 pid = 进程组）。必须显式发且
+// 与仲裁 resize 是否发生无关——Linux 同尺寸 TIOCSWINSZ 不发 SIGWINCH（P5-3 本机
+// 实证），新客 attach 若无显式信号，vim/htop 等全屏程序不重绘即黑屏。TIOCGPGRP
+// 失败/无前台进程组/会话已 closed 时静默降级（D-11 授权）；重复 SIGWINCH 无害
+//（终端应用必须容忍伪信号）。fdMu 持锁范围与 Resize 同款（spawn.go:22：Read/Write
+// 经 os.File 内部 fdmu 自同步、绝不可入此锁）。
+func (s *Session) SignalForegroundGroup() {
+	s.fdMu.Lock()
+	defer s.fdMu.Unlock()
+	if s.closed {
+		return
+	}
+	pgid, err := unix.IoctlGetInt(int(s.Master.Fd()), unix.TIOCGPGRP)
+	if err != nil || pgid <= 0 {
+		return // 静默降级（D-11 授权）
+	}
+	_ = unix.Kill(-pgid, unix.SIGWINCH) // 负 pid = 进程组；失败静默
 }
 
 // Close 关闭 master（有效指针判空，非零值推断——Pitfall 1"只关成功打开且登记在册的 fd"）。

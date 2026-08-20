@@ -504,6 +504,11 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// write.go:288-293）。
 		go s.writer(cl)
 		go s.pinger(ctx, c, remote, s.pingInterval)
+		// D-11：attach 完成向 PTY 前台进程组显式发一次 SIGWINCH 强制全屏程序重绘
+		//（TIOCGPGRP → kill(-pgid)）——与仲裁 resize 是否发生无关（P5-3 本机实证：
+		// Linux 同尺寸 TIOCSWINSZ 不发信号）；新客秒见画面，行内 shell 下次输出
+		// 自然追上。TIOCGPGRP 失败/无前台进程组静默降级（pty/io.go）。
+		s.sess.SignalForegroundGroup()
 	}
 
 	// C→S：单 reader 循环（c.Read 不可并发，Pitfall 7）。
