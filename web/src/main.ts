@@ -173,6 +173,10 @@ let ws: WebSocket | null = null;
 let retriedAuth = false; // auth_failed 静默重试仅一次的门闩（D-10；无限重试会把 60s TTL 正常过期放大成重试风暴）
 // ro 判定模块级化——标题写口/04-03 粘贴门/04-05 osc52 门三处共用（RESEARCH §Pattern 6 核实注）
 let isRO = false;
+// OSC52 一次性门闩（05 D-13 §OSC52 Boundary）：prefs.osc52===true 才加载 ClipboardAddon
+// 且全程仅加载一次——升格 Welcome 重放 prefs 时防二次注册 OSC52 handler；
+// ro 端永远收不到 osc52:true（服务端双档 blob 结构性不含该键）→ 永不加载，无需 ro 特判
+let osc52Loaded = false;
 // 最近一次远程标题的 sanitize 后形态——[ro] 前缀组合与 auth_failed 重试重前缀防御的单一事实源
 let remoteTitle = 'wesh';
 // FE-06 三开关量（04-05 经 query/prefs 翻转接线，本 plan 先取默认值）：
@@ -236,6 +240,10 @@ function sendResize(cols: number, rows: number): void {
   // Hello 完成前禁发任何数据帧：term.onResize 常驻接线在首次 fit.fit() 几乎必然触发
   // sendResize——不门住则 RESIZE 抢跑首帧，服务端握手段以 1002 frame_before_hello 直关
   if (!helloSent) return;
+  // D-09 第一闸：ro 客户端不发 RESIZE。Hello 携首尺寸不受影响——helloSent 门先于
+  // isRO 生效（isRO 仅在 WELCOME 到达后才可能为 true，彼时 Hello 已发出）；
+  // 服务端忽略 ro RESIZE 为兜底第二闸（05-04 已落）
+  if (isRO) return;
   if (ws === null || ws.readyState !== WebSocket.OPEN) return;
   if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0) return;
   ws.send(concat(new Uint8Array([RESIZE]), enc.encode(JSON.stringify({ cols, rows }))));
@@ -245,7 +253,7 @@ term.onResize(({ cols, rows }) => {
   sendResize(cols, rows);
   // FE-06 resize 浮层：welcomeDone && resizeOverlayOn 双门——onopen 初次 fit 不触发
   //（welcomeDone 门：浮层是会话辅助不是启动尺寸指示器）；ro 模式同样显示
-  //（ro 下 RESIZE 帧本就放行，P2 协议基线）
+  //（多客户端下 ro 不发 RESIZE——D-09，浮层为纯本地 UX 辅助，05-UI-SPEC R4）
   if (!welcomeDone || !resizeOverlayOn) return;
   const overlay = document.getElementById('resize-overlay')!;
   overlay.textContent = `${cols}x${rows}`; // 服务端钳制 1000×1000 → 最长 9 字符无溢出（UI-SPEC §Resize Overlay Spec）
@@ -437,10 +445,29 @@ async function connect(): Promise<void> {
             // 经单一写口补 [ro] 前缀——remoteTitle 不含前缀，auth_failed 重试再收
             // WELCOME 不产生 '[ro] [ro] …' 双重前缀（D-02 前缀恒最前的回归意图）
             setTitle();
+            // ro 模式一次性 console 反馈（review #4 缓解链：输入不发送 + 裁剪风险 +
+            // 恢复指引三要素——旁观者与降级递补者同一条，前端不加区分既有纪律）。
+            // console 非可视组件不违 D-07（[ro] 标题前缀 + disableStdin 仍是仅有的模式
+            // 指示）；ro Welcome 每 attach 仅一次天然无重复；串内零 token 零动态内容
+            //（T-03-24 红线延伸）
+            console.info('wesh: read-only mode — input is not sent; if your window is smaller than the session size, output may appear clipped (reattach to recover)');
+          } else if (w.mode === 'rw') {
+            // 升格 rw 分支（05 §RO Mode & Promotion Contract 五步之 1-3——第 4 步 prefs
+            // 应用段与第 5 步 beforeunload 条件重注册由下方既有流程照常执行承载）。
+            // 握手 Welcome（attach 即 rw）走同一分支无害：isRO 本就 false，重复赋 false
+            // 与重复 fit 均幂等；降级路径不存在不实现（owner 只在位到断线，D-06）
+            isRO = false;
+            term.options.disableStdin = false;
+            setTitle(); // 单一写口去 [ro] 前缀（remoteTitle 不含前缀，04 契约既定）
+            // 触发既有 onResize→sendResize 链路（isRO 门已开），自动上报当前尺寸纠正
+            // 排队期间可能过期的值（owner 尺寸接管的前端半侧，05 R-09）
+            fit.fit();
           }
           // FE-07 prefs 应用段（UI-SPEC §Prefs Contract 步骤 2-4 逐字顺序：
           // xterm 键 → fit.fit() → behavior 键 → osc52 条件加载）；
-          // prefs 缺省（非对象）则整段跳过——nil 兼容（omitempty 缺席即无下发）
+          // prefs 缺省（非对象）则整段跳过——nil 兼容（omitempty 缺席即无下发）；
+          // 升格 Welcome 携 rw 档 prefs 重放本段：queryKeys 跳过机制幂等可重入，
+          // xterm 键/behavior 键/theme 重放同值无害，osc52 由 osc52Loaded 门闩防二次加载
           const prefs = w.prefs && typeof w.prefs === 'object' ? (w.prefs as Record<string, unknown>) : null;
           if (prefs !== null) {
             // 整段独立 try：服务端只验白名单键+合法 JSON 不验值域，本段任何异常只丢 prefs
@@ -501,8 +528,10 @@ async function connect(): Promise<void> {
               // 同等安全）；writeText 同链路——页面失焦时 clipboard.writeText 以 NotAllowedError
               // 拒绝，不 catch 会被核心微任务硬抛成页面级未捕获异常，catch 告警后 resolve
               // （与选中复制失败静默同纪律）；provider 是构造第二参（§Pattern 4③；核心无内建
-              // OSC52 handler——不加载则惰性无害）。签名以 addon-clipboard d.ts IClipboardProvider 为准
-              if (prefs.osc52 === true && clipboardOK) {
+              // OSC52 handler——不加载则惰性无害）。签名以 addon-clipboard d.ts IClipboardProvider 为准；
+              // osc52Loaded 一次性门闩：升格 Welcome 重放 prefs 防二次注册 OSC52 handler
+              if (prefs.osc52 === true && clipboardOK && !osc52Loaded) {
+                osc52Loaded = true;
                 const writeOnly: IClipboardProvider = {
                   readText: (): Promise<string> => Promise.resolve(''),
                   writeText: (_sel, text): Promise<void> =>
@@ -516,7 +545,9 @@ async function connect(): Promise<void> {
           }
           // FE-06：WELCOME 处理完成——会话建立门置位（浮层驱动自此响应 resize）；
           // 条件注册 beforeunload（默认开 ro 同启，D-18；上方 prefs/behavior 段已在
-          // 本注册点之前完成开关翻转——从本 plan 起即为开关驱动形态）
+          // 本注册点之前完成开关翻转——从本 plan 起即为开关驱动形态）；
+          // 升格 Welcome 重放到此同参重复注册——DOM 规范对同类型同 listener 的
+          // addEventListener 去重，幂等无泄漏（05 RESEARCH Pattern 9 核实）
           welcomeDone = true;
           if (confirmBeforeUnloadOn) {
             window.addEventListener('beforeunload', onBeforeUnload);
