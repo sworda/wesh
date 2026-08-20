@@ -10,9 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -687,5 +690,284 @@ func TestInputRateLimit(t *testing.T) {
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	})
+}
+
+// ====== plan 05-07 增量：RES-03 max-clients 容量闸测试（VALIDATION 05-02-02）======
+
+// TestMaxClients503（VALIDATION 05-02-02，RES-03 + T-05-04/T-05-04b 缓解锁定）三面
+// 行为断言：
+//  1. WS 满员 503 + halfOpen 无泄漏 + detach 槽位释放：MaxClients=2 装配，A/B 两
+//     dialHello 成功（计数=2）后第三人 WS 握手在 Accept 前收 HTTP 503（Dial 返回
+//     的 *http.Response 状态码断言，handshake_test.go HTTP 层拒绝形态）；③位拒绝
+//     后 halfOpen 不泄漏——MaxHalfOpenPerIP=1 装配下第四人仍达③位收 503 而非被
+//     ②位 429 截（release() 恰好一次的行为化证据：泄漏一个名额即触 429）；stderr
+//     事件含 max_clients reason + code=503（R-10 命名族，captureStderr +
+//     startTrackedServerWith 同步边先例）。A CloseNow → detach -1 → 第三人
+//     attach 成功（计数对称断言的行为化——Pitfall 4 防线：计数只增不减 = 运行时
+//     间增长静默降低可用容量直至全员 503）。
+//  2. /api/attach 早闸（OQ2）：凭据模式 MaxClients=1 占满后 POST（Basic 正确）
+//     → 503；token 通道实例同款（body 携 rw token → 503）——Basic 链与 token
+//     分支两签发路径同查（issueTicketJSON 唯一共享签发点）。
+//  3. kick 路径槽位释放（review #7 第二移除路径）：stall 端被 1013 踢出
+//     （removeLocked -1）→ 第三人 attach 成功。
+func TestMaxClients503(t *testing.T) {
+	t.Run("WS 满员 503 与 halfOpen 无泄漏与槽位释放", func(t *testing.T) {
+		restore := captureStderr(t)
+		defer restore() // 失败路径兜底恢复 os.Stderr（幂等）
+
+		// handler 追踪变体：restore() 前需与 handler 内 logEvent 建立同步边
+		//（startTrackedServerWith 注释，05-01 先例）。MaxHalfOpenPerIP=1 使
+		// halfOpen 泄漏可观测（见下）。容量计数与 mode 无关（③位只看 registry.n），
+		// owner 默认策略即可——B 降级 ro 同样占注册名额。
+		exitCh, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
+			Writable:         true,
+			MaxClients:       2,
+			MaxHalfOpenPerIP: 1,
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cA, _ := dialHello(t, ctx, wsURL, 80, 24)
+		cB, _ := dialHello(t, ctx, wsURL, 80, 24)
+
+		// 满员拒绝：第三人 WS 握手 → Accept 前 HTTP 503（零 WS 资源分配）。
+		dialWant503 := func(what string) {
+			t.Helper()
+			_, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+			if err == nil {
+				t.Fatalf("%s dial unexpectedly succeeded — max-clients ③位 503 闸缺失", what)
+			}
+			if resp == nil {
+				t.Fatalf("%s dial failed without HTTP response: %v", what, err)
+			}
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("%s dial status = %d, want %d (503 Accept 前拒绝)", what, resp.StatusCode, http.StatusServiceUnavailable)
+			}
+		}
+		dialWant503("第三人")
+		// halfOpen 无泄漏：③位拒绝路径 release() 恰好一次——第四人仍达③位收
+		// 503；若第三人残留半开计数（MaxHalfOpenPerIP=1），本次必被 ②位 429 截。
+		dialWant503("第四人（③位拒绝后 halfOpen 名额已释放）")
+
+		// 槽位释放（detach 路径）：A CloseNow → detach -1 → 第三人 attach 成功。
+		// detach 经服务端 reader 终结异步完成，轮询重试消除到达序竞态（每次 503
+		// 重试自身也走 acquire→release，不污染半开计数）。
+		cA.CloseNow()
+		var cE *websocket.Conn
+		deadline := time.Now().Add(5 * time.Second)
+		for cE == nil {
+			c, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+			if err == nil {
+				cE = c
+				break
+			}
+			if resp != nil && resp.StatusCode == http.StatusServiceUnavailable {
+				if time.Now().After(deadline) {
+					t.Fatal("A CloseNow 后 5s 内仍满员——detach 槽位释放失败（计数只增不减，Pitfall 4）")
+				}
+				time.Sleep(20 * time.Millisecond)
+				continue // A 的 detach 尚未落账——重试
+			}
+			t.Fatalf("槽位释放后轮询 dial 非 503 失败: err=%v resp=%v", err, resp)
+		}
+		// 完成 Hello 握手断言 Welcome（attach 成功全链，计数=2 的第三人）。
+		hello, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
+		if err != nil {
+			t.Fatalf("marshal Hello: %v", err)
+		}
+		if err := cE.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, hello...)); err != nil {
+			t.Fatalf("cE write Hello: %v", err)
+		}
+		_, data, err := cE.Read(ctx)
+		if err != nil {
+			t.Fatalf("cE read Welcome: %v", err)
+		}
+		if len(data) == 0 || data[0] != proto.Welcome {
+			t.Fatalf("cE first frame = %v, want Welcome ('W')——槽位释放后 attach 未成功", data)
+		}
+
+		cB.Close(websocket.StatusNormalClosure, "")
+		cE.Close(websocket.StatusNormalClosure, "")
+		// 同步边：等全部 Attach handler 返回——③位 logEvent 在 handler 内先于
+		// 返回执行，WaitGroup happens-before 使 restore() 的 os.Stderr 写与该读
+		// 同步（05-01 startTrackedServerWith 先例）。
+		waitHandlers()
+		// 容量闸不改生命周期：断开不触发 exitf（多客户端推论）。
+		assertNoExit(t, exitCh)
+
+		// R-10 命名族：stderr 事件含 max_clients reason + code=503（HTTP 层事件
+		// code 复用 HTTP 状态码值）。次数不断言——轮询重试次数不确定（每次 503
+		// 均落事件），存在性即锁定事件落点。
+		out := restore()
+		if !strings.Contains(out, "max_clients") || !strings.Contains(out, "code=503") {
+			t.Fatalf("stderr 缺 max_clients/code=503 事件（R-10 命名族）：out=%q", out)
+		}
+	})
+
+	t.Run("api attach 早闸双通道", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		// —— Basic 通道（凭据模式，MaxClients=1）——
+		cred, err := server.ParseCredential("cap-op:cap-pass")
+		if err != nil {
+			t.Fatalf("ParseCredential: %v", err)
+		}
+		_, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+			Writable:     true,
+			MaxClients:   1,
+			Credentials:  []server.Credential{cred},
+			ThrottleBase: 50 * time.Millisecond,
+		})
+		url := attachURL(wsURL)
+		// 占满唯一槽位：Basic → ticket → WS attach（计数=1）。
+		resp := postAttach(t, url, "cap-op", "cap-pass", nil)
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			t.Fatalf("占槽签发 status = %d, want %d (200)", resp.StatusCode, http.StatusOK)
+		}
+		var issued struct {
+			Ticket string `json:"ticket"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+			_ = resp.Body.Close()
+			t.Fatalf("decode ticket response: %v", err)
+		}
+		_ = resp.Body.Close()
+		if issued.Ticket == "" {
+			t.Fatal("ticket empty in 200 response")
+		}
+		c1, _ := dialHelloTicket(t, ctx, wsURL, issued.Ticket, 80, 24)
+		defer c1.CloseNow()
+
+		// 满员早闸：Basic 正确 → 503（签发 ticket 前 atomic load 满员，OQ2——
+		// 前端 fetch 阶段即可给 Server is full 专版文案）。
+		resp = postAttach(t, url, "cap-op", "cap-pass", nil)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("满员 Basic attach status = %d, want %d (503 早闸)", resp.StatusCode, http.StatusServiceUnavailable)
+		}
+
+		// —— token 通道（无认证 + shares，OQ1 正交，MaxClients=1）——
+		// 红线纪律（D-03）：token 值只存局部变量作断言材料，断言只含状态码。
+		roTok := server.GenerateShareToken()
+		rwTok := server.GenerateShareToken()
+		_, wsURL2 := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+			Writable:     true,
+			MaxClients:   1,
+			ShareTokenRO: roTok,
+			ShareTokenRW: rwTok,
+		})
+		url2 := attachURL(wsURL2)
+		tokenBody := func(tok string) []byte {
+			b, err := json.Marshal(struct {
+				Token string `json:"token"`
+			}{Token: tok})
+			if err != nil {
+				t.Fatalf("marshal token body: %v", err)
+			}
+			return b
+		}
+		// 占满唯一槽位：rw token → ticket → WS attach（计数=1）。
+		resp2, err := http.Post(url2, "application/json", bytes.NewReader(tokenBody(rwTok)))
+		if err != nil {
+			t.Fatalf("token 签发 POST: %v", err)
+		}
+		if resp2.StatusCode != http.StatusOK {
+			_ = resp2.Body.Close()
+			t.Fatalf("token 通道占槽签发 status = %d, want %d (200)", resp2.StatusCode, http.StatusOK)
+		}
+		var issued2 struct {
+			Ticket string `json:"ticket"`
+		}
+		if err := json.NewDecoder(resp2.Body).Decode(&issued2); err != nil {
+			_ = resp2.Body.Close()
+			t.Fatalf("decode token ticket response: %v", err)
+		}
+		_ = resp2.Body.Close()
+		if issued2.Ticket == "" {
+			t.Fatal("ticket empty in token 200 response")
+		}
+		c2, _ := dialHelloTicket(t, ctx, wsURL2, issued2.Ticket, 80, 24)
+		defer c2.CloseNow()
+
+		// 满员早闸：body 携 rw token → 503（token 分支与 Basic 链同查——
+		// issueTicketJSON 唯一共享签发点，一处检查两通道）。
+		resp3, err := http.Post(url2, "application/json", bytes.NewReader(tokenBody(rwTok)))
+		if err != nil {
+			t.Fatalf("满员 token POST: %v", err)
+		}
+		_ = resp3.Body.Close()
+		if resp3.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("满员 token attach status = %d, want %d (503 早闸)", resp3.StatusCode, http.StatusServiceUnavailable)
+		}
+	})
+
+	t.Run("kick 路径槽位释放", func(t *testing.T) {
+		// MaxClients=2：A 正常读取 + B stall（OutboxBytes 覆写小值 + seq 输出
+		// 洪水——slowclient_test.go 夹具形态）→ B 被 1013 踢出（removeLocked -1，
+		// 第二移除路径）→ 第三人 attach 成功（踢出路径计数对称的行为化，
+		// review #7）。显式 WritePolicy=all——双 rw 语义前提（owner 默认策略下
+		// B 降级 ro：stall ro 端同样满即踢，但 A 为唯一可写端的语义组合与本
+		// 子场景锁定的 R-08 离群慢端踢出路径不同，保持与 TestSlowConsumerKick
+		// 同款前提）。
+		// 洪水量论证（-count=3 实测驱动的修正）：seq 1 50000000 ≈ 389MB——踢出
+		// 触发点在 B 的 loopback 吸收极限（~10MiB + 64KiB outbox），洪水须以
+		// 数量级余量压过该点：若洪水先于踢出耗尽（38.9MB 形态实测命中），子进程
+		// 退出 → lifecycle 广播 1000 与异步 Close(1013) 竞态（casClosing 先到
+		// 先赢），stall B 可能观测到 1000 而非 1013。
+		_, wsURL := startTestServerWith(t, []string{"seq", "1", "50000000"}, server.Options{
+			Writable:    true,
+			WritePolicy: server.WritePolicyAll,
+			MaxClients:  2,
+			OutboxBytes: 64 * 1024,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cA, _ := dialHello(t, ctx, wsURL, 80, 24)
+		cB, _ := dialHello(t, ctx, wsURL, 80, 24)
+		defer cA.CloseNow()
+		// writer 同类型连续段合并使单条 WS 消息可达 outbox 容量量级——超过 Go
+		// 客户端库默认 32KiB 读上限会触发 1009 自动关闭（slowclient_test.go 实测
+		// 注释），测试客户端显式放宽。
+		cA.SetReadLimit(4 * 1024 * 1024)
+		cB.SetReadLimit(4 * 1024 * 1024)
+
+		// A 持续读取保未 blocked（只计数不缓存——R-08 分工表：剔除 B 后仍存在
+		// 未 blocked 的可写端 A → B 离群慢端立即踢；Pitfall 2：Read 永不带
+		// deadline ctx）。
+		var aBytes atomic.Int64
+		go func() {
+			for {
+				_, data, err := cA.Read(context.Background())
+				if err != nil {
+					return
+				}
+				if len(data) > 0 && data[0] == proto.Output {
+					aBytes.Add(int64(len(data) - 1))
+				}
+			}
+		}()
+
+		// stall 纪律（TestSlowConsumerKick 逐字形态，初版违例实测命中）：B 在
+		// 踢出触发前绝不 Read——等 A 累积超 12MiB，此时 B 管道（最坏 ~10MiB）
+		// 必然已满、outbox 已写满、1013 踢出已触发；提前读 B 会排空管道使踢出
+		// 永不成立（assertKicked1013 的 readUntilError 即读者，调用时点纪律）。
+		deadline := time.Now().Add(15 * time.Second)
+		for aBytes.Load() < 12*1024*1024 {
+			if time.Now().After(deadline) {
+				t.Fatalf("A received %d bytes in 15s, want >= 12MiB（洪水未推进，stall 夹具失效）", aBytes.Load())
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		// B 此刻首次 Read：消耗管道积存 OUTPUT 后必见 CloseError 1013
+		// slow_consumer。先取踢出证据再继续——关闭帧写出带 5s 超时
+		//（close.go:168-183），须在其窗口内开始消化管道。
+		assertKicked1013(t, cB, 10*time.Second, "stall B")
+		// removeLocked 先于 1013 关闭帧发出（kickSlowConsumerLocked 同步段内）——
+		// 观察到踢出时计数已减（2→1），第三人 attach 成功，无需轮询。
+		cC, _ := dialHello(t, ctx, wsURL, 80, 24)
+		cC.CloseNow()
 	})
 }
