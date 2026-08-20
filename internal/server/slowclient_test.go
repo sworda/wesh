@@ -227,13 +227,33 @@ func TestGlobalCredit(t *testing.T) {
 			if len(fields) == 0 {
 				t.Fatal("c2 received no OUTPUT payload after resume")
 			}
-			prev := 0
-			for i, f := range fields {
-				n, err := strconv.Atoi(f)
-				if err != nil {
-					t.Fatalf("field %d = %q not a seq number: %v", i, f, err)
+			// 连续性断言起点。c2 在洪水中段接合（1s 领先窗后 attach，前沿 ~50 万行），
+			// 其首个 OUTPUT 载荷是 ReadLoop 的 32KiB 读块：seq 行写原子使 PTY 主缓冲
+			// 只含整行，非积压时读块恒行对齐；但 CPU 竞争（全量并行门禁）致 ReadLoop
+			// goroutine 调度延迟、积压 ≥32KiB 时读块在行中切断（8 路并发实测 3/24
+			// 命中，门禁 ~1/11）——此时 fields[0] 恰为前一行（fields[1]-1）的行尾严格
+			// 后缀，字节流本身连续无损，属接合点切面而非门转换损坏（产品无行语义，
+			// 接合对齐非产品保证）。严格后缀判别成立则从 fields[1] 起续链；判别不成立
+			// （真丢帧洞：完整行 K 跳到非 +1 的 M；拼接损坏：Atoi 失败）维持原 fatal，
+			// 断言强度零损失。
+			start := 0
+			if len(fields) >= 2 {
+				if first, err1 := strconv.Atoi(fields[0]); err1 == nil {
+					if second, err2 := strconv.Atoi(fields[1]); err2 == nil && second != first+1 {
+						if tail := strconv.Itoa(second - 1); len(fields[0]) < len(tail) && strings.HasSuffix(tail, fields[0]) {
+							start = 1 // 行中切面接合产物：从第二字段起断言
+							t.Logf("join-point mid-line cut tolerated: %q is line-tail of %s, continuity asserted from %d", fields[0], tail, second)
+						}
+					}
 				}
-				if i > 0 && n != prev+1 {
+			}
+			prev := 0
+			for i := start; i < len(fields); i++ {
+				n, err := strconv.Atoi(fields[i])
+				if err != nil {
+					t.Fatalf("field %d = %q not a seq number: %v", i, fields[i], err)
+				}
+				if i > start && n != prev+1 {
 					t.Fatalf("seq discontinuity at field %d: %d -> %d (gate transition corrupted stream)", i, prev, n)
 				}
 				prev = n
