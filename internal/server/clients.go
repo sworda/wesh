@@ -2,7 +2,8 @@
 // 主干，CONTEXT domain 必然推论——P1 D-11 单次语义终结；RESEARCH Pattern 1/2/5
 // 定稿形态，P5-1 chunk 别名与 P5-2 踢出不内联两条红线纪律）+ 全局信用门
 //（RES-04，RESEARCH Pattern 3：全体可写端 outbox 均满 → hub 持块停读 PTY，
-// 任一可写端 drain 至半水位恢复）。
+// 任一可写端 drain 至半水位恢复）+ 写权限体系（MULTI-02，05-03：模式判定矩阵 +
+// owner FIFO 递补升格，RESEARCH Pattern 5 逐字落地）。
 //
 // 锁序纪律（R-07）：hubMu > outboxMu——writer 持 outboxMu drain 期间绝不取 hubMu；
 // drain 完释放后才取 hubMu 做 afterDrain 恢复判定，绝不反序同持。信用门 cond
@@ -44,12 +45,26 @@ const (
 	defaultResizeDebounce = 50 * time.Millisecond
 )
 
+// WritePolicy 取值（D-05 公开 CLI 契约——--write-policy=owner|all，全名无短选项
+// P2 D-15；main.go parse 期枚举校验用同一对常量，防双写漂移）：
+// owner = 首个以 rw 身份 attach 的客户端为 owner、后续 rw 降级 ro 进 FIFO 递补
+// 队列（D-06/D-07，安全默认哲学：旁观是被动场景、协作主动开启）；
+// all = 全员可写（服务协作排障形态，无递补概念）。
+const (
+	WritePolicyOwner = "owner" // 默认（D-05 安全默认）
+	WritePolicyAll   = "all"
+)
+
 // client 是一个已注册 WS 客户端的全部服务端状态。writer goroutine 是该连接全程
 // 唯一 WS 写端（pinger 的控制帧经库 writeFrameMu 与数据写串行化，既有 02-04 纪律）。
 type client struct {
 	conn   *websocket.Conn
 	remote string // logEvent 三要素之对端（Attach 入口保存的 RemoteAddr）
 	mode   string // proto.ModeRO/ModeRW——INPUT/RESIZE 门 per-client 判定（P2 D-13/D-14 的多客户端映射）
+	// rwEligible 递补候选资格（D-06「以 rw 身份」）：rw ticket × owner 模式 → true
+	//（含 owner 本人——语义为「持 rw 身份的资格」，owner 断线后该客户端若仍在队
+	// 即可被递补）；ro ticket 与 all 模式恒 false（ro 永不递补；all 无递补概念）。
+	rwEligible bool
 
 	attachSeq int64 // attach FIFO 序号（registerLocked 分配；05-03 owner 递补取序）
 	outbox    *outbox
@@ -122,6 +137,11 @@ type registry struct {
 	set   map[*client]struct{}
 	order []*client
 	seq   int64
+	// owner 当前写权限持有者（D-06：首个以 rw 身份完成 attach 的客户端）；
+	// 仅 owner 模式使用——all 模式恒 nil（全员可写无递补概念），无 --writable
+	// 纯 ro 会话恒 nil。nil = 无 owner（下一个 rw attach 按矩阵成为新 owner）。
+	// hubMu 保护（注册表同锁，R-07）。
+	owner *client
 	kicks int // 1013 踢出计数（Phase 8 OPS-07 观测性挂点，review #10；hubMu 保护，单锁纪律 R-07 下无需 atomic）
 	// gateTransitions 信用门开闭周期计数（kickOrCreditLocked 置位 creditBlocked 与
 	// afterDrain 清位两点递增）：Phase 8 OPS-07 门开闭周期计数挂点（review #10）；
@@ -152,6 +172,37 @@ func (r *registry) removeLocked(c *client) bool {
 		}
 	}
 	return true
+}
+
+// decideModeLocked 模式判定矩阵（MULTI-02，RESEARCH Pattern 5 表逐字落地）：
+// 输入 = ticket 绑定 mode（认证模式为 ticket 绑定值 D-11，无认证模式为 s.writable
+// 派生值）× --writable × write-policy × owner 是否在位；输出 = 生效 mode +
+// rwEligible + 是否成为 owner。调用方必须已持 hubMu（读 s.registry.owner）。
+//
+//	rw ticket × owner 模式 × owner 不在位 → ModeRW + 立 owner（D-06）
+//	rw ticket × owner 模式 × owner 在位   → ModeRO + rwEligible=true（D-07 降级
+//	                                        进递补队列——registry.order 切片天然 FIFO 尾）
+//	rw ticket × all                       → ModeRW（全员可写，无递补概念）
+//	ro ticket × 任意                      → ModeRO（rwEligible=false——ro ticket
+//	                                        永不递补，D-06「以 rw 身份」）
+//	无 --writable × 任意                  → ModeRO（D-05 总闸，现状语义零漂移）
+//
+// 权限不得由客户端请求获得（must_haves prohibitions——T-05-08 越权面）：ro→rw
+// 唯一通道是服务端 FIFO 递补后的 Welcome 推送（promoteNextLocked），任何
+//「客户端发帧申请写权限」的机制都是越权面，本矩阵不提供也不接受此类输入。
+// writePolicy 取值在 main.go parse 期已枚举校验（owner|all）；非 "all" 一律按
+// owner 语义收口（安全默认方向兜底）。
+func (s *Server) decideModeLocked(ticketMode string) (mode string, rwEligible bool, becomeOwner bool) {
+	if !s.writable || ticketMode != proto.ModeRW {
+		return proto.ModeRO, false, false // D-05 总闸 / ro ticket 永不递补
+	}
+	if s.writePolicy == WritePolicyAll {
+		return proto.ModeRW, false, false // all：全员可写，无递补概念
+	}
+	if s.registry.owner == nil {
+		return proto.ModeRW, true, true // D-06：首个 rw attach 成为 owner
+	}
+	return proto.ModeRO, true, false // D-07：降级 ro + 进递补队列（order FIFO 尾）
 }
 
 // onChunk 是 S→C fan-out hub（ReadLoop 唯一读者经 sess.ReadLoop 回调，D-12 drain
@@ -304,11 +355,64 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	close(c.done)
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
 	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer")
+	// review #3 时序闭合（第二调用点）：被踢的若是 owner，晋升在异步 go Close
+	// 之前、同一 hubMu 持有内同步完成——见 promoteNextLocked 注释。
+	if s.registry.owner == c {
+		s.promoteNextLocked()
+	}
 	s.hubCond.Broadcast() // P5-7 统一挂点：kick 后门重估
 	go func() {
 		_ = c.conn.Close(websocket.StatusTryAgainLater, "slow_consumer")
 		c.cancel() // Close 落定后终结 pinger/reader ctx（1013 帧可达性不变量，见上）
 	}()
+}
+
+// promoteNextLocked 在 owner 被移除后做 FIFO 递补升格（MULTI-02，D-06）：遍历
+// registry.order（attach FIFO 序）取首个 rwEligible 且仍在线者（order 成员即
+// 在线）→ 置 owner + c.mode = ModeRW + c.rwEligible 保留（语义：rw 身份资格不随
+// 升格消失，其后再断开递补链按同一规则继续）→ 其 outbox 入队
+// Welcome{mode:"rw", prefs: rw 档}（R-09 升格推送复用 'W' 帧——P2 D-01/D-02：
+// 既有帧类型运行期再推送不算动协议，零新类型字节；P5-6：升格必携 rw 档
+// prefs——升格即获 osc52，D-13 的另一半）→ hubCond.Broadcast()（P5-7 升格挂点：
+// 新 rw 端进信用集，等待中的信用门必须重估）。无可递补者 → owner=nil（下一个
+// rw attach 按矩阵成为新 owner）。
+//
+// 升格 Welcome 入队失败（该端 outbox 连 ~100B 余量都没有 = 事实上 stalled）按
+// R-08 分工表同义踢出（ro 满即踢）并继续扫描下一位——绝不立一个无法送达升格
+// 通知的 owner（T-05-08 权限真空防线；该端下一轮 onChunk 本就必被踢，此处只是
+// 提前一拍收口）。
+//
+// 仲裁参与集切换挂点（05-04 resize.go 落地）：owner 模式下仅 owner 尺寸参与仲裁
+//（D-09）——升格后新 owner 尺寸接管，挂点登记于此。
+//
+// 调用时序闭合（review #3）：本函数在 detach 与 kickSlowConsumerLocked 两路径的
+// removeLocked 之后同步调用（同一 hubMu 持有内、异步 go Close 之前）——晋升恒在
+// hubMu 内完成；被移除 owner 的重连必须经 HTTP→ticket→WS→Hello→registerLocked
+// 取同一 hubMu，故晋升必然先于任何重连登记；重连的旧 owner 按矩阵作为新 client
+// 追加 order 尾（rwEligible=true、mode=ro 归队重排），绝不出现双 owner 或晋升
+// 丢失。调用方必须已持 hubMu，且注册表须已完成移除（owner 指针仍指向被移除者）。
+func (s *Server) promoteNextLocked() {
+	for {
+		var cand *client
+		for _, c := range s.registry.order {
+			if c.rwEligible {
+				cand = c
+				break
+			}
+		}
+		if cand == nil {
+			s.registry.owner = nil // 无可递补者：下一个 rw attach 按矩阵成为新 owner
+			return
+		}
+		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW)) {
+			s.kickSlowConsumerLocked(cand) // 升格通知不可达 = stalled，同义踢出后重扫
+			continue
+		}
+		s.registry.owner = cand
+		cand.mode = proto.ModeRW
+		s.hubCond.Broadcast() // P5-7 升格挂点：新 rw 端进信用集
+		return
+	}
 }
 
 // writer 是每客户端专属 WS 写端 goroutine（pinger 装配先例，server.go 既有
@@ -370,5 +474,10 @@ func (s *Server) detach(c *client) {
 	}
 	close(c.done)
 	c.cancel()
+	// review #3 时序闭合（第一调用点）：断开的若是 owner，FIFO 递补晋升在同一
+	// hubMu 持有内同步完成——晋升必然先于该 owner 任何重连的 registerLocked。
+	if s.registry.owner == c {
+		s.promoteNextLocked()
+	}
 	s.hubCond.Broadcast() // P5-7 统一挂点：detach 后门重估
 }

@@ -22,8 +22,10 @@ const (
 	Output = '0' // 0x30, S→C, master 读块直发
 
 	Hello   = 'H' // 0x48, C→S, JSON {"version":V,"cols":C,"rows":R}
-	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw","prefs"?}——P4 起可携可选 prefs（D-13 一次性下发）
-	Error   = 'E' // 0x45, S→C, JSON {"code":C,"message":M}
+	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw","prefs"?}——P4 起可携可选 prefs（D-13 一次性下发）；
+	// 05-03 起运行期再推送用于 owner 递补升格通知（R-09——P2 D-01/D-02 纪律：
+	// 既有帧类型的运行期再推送不算动协议，零新类型字节）
+	Error = 'E' // 0x45, S→C, JSON {"code":C,"message":M}
 	// 'X' EXIT / 'T' TITLE / 'P' PREFS —— 类型字节本 phase 占住，语义分属 Phase 6/4（D-01）；
 	// 'P' 帧运行期推送仍 v2 再议——P4 prefs 仅经 Welcome 内嵌一次性下发（D-13）。
 )
@@ -43,7 +45,8 @@ const (
 // 攻击面路径 unknown_frame/抢跑帧/超限/hello_timeout 只发关闭码不发 Error 帧——
 // 不给攻击者反馈面）。code 为 snake_case 机器串，主动关闭的 close reason 带同名
 // 机器串（RFC6455 ≤123 字节，D-07）。auth_failed 已于 Phase 3 兑现；
-// permission_denied 属 Phase 5（deferred）。
+// permission_denied 保持占位不硬用（05-03 CONTEXT 裁断：owner 模式降级走
+// Welcome{mode:"ro"} 而非 Error 帧，无真实使用场景——P3 deferred 入表挂账纪律）。
 const (
 	ErrVersionMismatch = "version_mismatch" // 正常客户端可见，发 Error 帧 + 1008
 	ErrServerError     = "server_error"     // 发 Error 帧 + 1011

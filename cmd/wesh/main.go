@@ -31,6 +31,9 @@ type config struct {
 	showVersion  bool
 	writable     bool
 	pingInterval time.Duration
+	// Phase 5 写权限体系（D-05，one-way 公开契约，P2 D-15 同纪律）：
+	writePolicy    string // --write-policy=owner|all（默认 owner；仅在 --writable 总闸开启时有意义）
+	writePolicySet bool   // --write-policy 是否被显式设置（parseArgs 经 fs.Visit 填充，validateStartup 组合校验消费）
 	// Phase 3 认证与传输安全（one-way 公开契约，P2 D-15 同纪律）：
 	credentials  []server.Credential // D-01：--credential 逐组收集 / WESH_CREDENTIAL env 兜底
 	tlsCert      string              // D-04：--tls-cert，与 tlsKey 成对才启用 TLS
@@ -50,12 +53,13 @@ type clientOption struct {
 	value json.RawMessage
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 13 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 14 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
 // Phase 4：--client-option（P4 D-15 可重复，白名单 + JSON parse 期校验）、
-// --osc52（P4 D-12 OSC52 剪贴板写开关，默认关）。
+// --osc52（P4 D-12 OSC52 剪贴板写开关，默认关）；
+// Phase 5：--write-policy（D-05，owner|all 默认 owner，parse 期枚举校验）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -66,6 +70,11 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
 	fs.BoolVar(&cfg.writable, "writable", false, "allow client input (default read-only)")
 	fs.DurationVar(&cfg.pingInterval, "ping-interval", 5*time.Second, "WS ping interval (0 = disable)")
+	// D-05：写权限策略（one-way 公开契约）。--writable 保持总闸（不给 = 全员只读，
+	// 现状语义零漂移）；write-policy 仅在总闸开启时有意义（组合校验见
+	// validateStartup）。parse 期枚举校验在 Parse 返回处（值非敏感，直接 return
+	// error 即可——client-option 的记录式上报仅用于值含敏感内容的场景）。
+	fs.StringVar(&cfg.writePolicy, "write-policy", server.WritePolicyOwner, "write policy when --writable is on: owner|all (default owner)")
 	// D-01：可重复凭据 flag，fs.Func 回调内 parse 期校验（畸形值即时报错——
 	// systemd 配置错误零窗口暴露）。Pitfall 8：help 必须提示 ps 可见性。
 	fs.Func("credential", "basic auth credential user:pass (repeatable; value visible to local users via ps, prefer WESH_CREDENTIAL env in production)", func(s string) error {
@@ -126,6 +135,15 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	if err := fs.Parse(args); err != nil {
 		return cfg, nil, err
 	}
+	// D-05：fs.Visit 判定 --write-policy 是否被显式设置（Visit 只遍历已设置
+	// flag）——validateStartup 组合校验消费：显式设置却未开 --writable 总闸
+	// 属配置矛盾 fail-fast；默认 owner 未显式设置 + 无 --writable 是纯 ro
+	// 会话正常形态不拒。
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "write-policy" {
+			cfg.writePolicySet = true
+		}
+	})
 	if cfg.showVersion {
 		return cfg, nil, nil
 	}
@@ -133,6 +151,12 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 早退之后（纯信息路径不被配置校验阻断，03-04 先例）；记录式原因见 flag 定义注释。
 	if clientOptErr != nil {
 		return cfg, nil, clientOptErr
+	}
+	// D-05：--write-policy parse 期枚举校验（插入点同 03-04 先例——showVersion
+	// 早退之后）。枚举值非敏感，直接 return error（不经 clientOptErr 记录式——
+	// 该形态仅用于值含敏感内容的 --client-option）。
+	if cfg.writePolicy != server.WritePolicyOwner && cfg.writePolicy != server.WritePolicyAll {
+		return cfg, nil, fmt.Errorf("invalid --write-policy %q: must be owner or all", cfg.writePolicy)
 	}
 	// D-04：cert/key 必须成对——只给其一 parse 期报错（分层纪律：此处报配置
 	// 形态错误，validateStartup 不重复此项）。
@@ -157,25 +181,27 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	return cfg, argv, nil
 }
 
-// aggregateClientPrefs 把 --client-option 收集项与 --osc52 合成单个 prefs blob
-// （P4 D-13 Welcome 内嵌一次性下发；服务端对 blob 不透明透传不解析——白名单/JSON
-// 校验已在 parse 期完成）。零配置（无 client-option 且 osc52=false）返回 nil——
-// Welcome JSON 不出 prefs 键（旧前端零漂移，P2 D-02）。同 key 重复给出时
-// last-wins（后者覆盖前者）；osc52=true 时并入 "osc52":true（D-12：osc52 不在
-// --client-option 白名单内，只能经服务端 flag 开启）。
-func aggregateClientPrefs(opts []clientOption, osc52 bool) json.RawMessage {
+// aggregateClientPrefs 把 --client-option 收集项与 --osc52 合成 prefs 双档 blob
+//（05-03 D-13 + P5-6）：ro 档（旁观者 + 降级递补者）= 聚合结果剔除 osc52 键——
+// 即使全局 --osc52 开启也永不下发（osc52 是服务端专有键，聚合期已知，结构性排除
+// 出 --client-option 白名单）；rw 档 = 聚合结果原样（按全局 --osc52 并入）。
+// 产双 blob 保持服务端不透明透传纪律——不做运行期 JSON 手术（P5-6）。
+// 零配置（无 client-option 且 osc52=false）两档均返回 nil——Welcome JSON 不出
+// prefs 键（旧前端零漂移，P2 D-02）。同 key 重复给出时 last-wins（后者覆盖前者）。
+func aggregateClientPrefs(opts []clientOption, osc52 bool) (ro, rw json.RawMessage) {
 	if len(opts) == 0 && !osc52 {
-		return nil
+		return nil, nil
 	}
 	m := make(map[string]json.RawMessage, len(opts)+1)
 	for _, o := range opts {
 		m[o.key] = o.value // last-wins：同 key 后者覆盖前者
 	}
+	roBlob, _ := json.Marshal(m) // ro 档：永不含 osc52 键（D-13）；固定值类型 marshal 不会失败
 	if osc52 {
-		m["osc52"] = json.RawMessage("true")
+		m["osc52"] = json.RawMessage("true") // D-12：osc52 只能经服务端 flag 开启
 	}
-	b, _ := json.Marshal(m) // 固定值类型（json.RawMessage），marshal 不会失败
-	return b
+	rwBlob, _ := json.Marshal(m) // rw 档：按全局 --osc52 下发
+	return roBlob, rwBlob
 }
 
 // isLoopbackBind 判定 bind 地址是否仅本机可达（RESEARCH Pattern 7 裁决）：
@@ -197,6 +223,14 @@ func isLoopbackBind(bind string) bool {
 // cert/key 成对校验在 parseArgs 已落 parse 期（D-04 分层，此处不重复）。
 // 红线：warn/err 文案不得含凭据值（SEC-01 日志红线延伸到启动面）。
 func validateStartup(cfg config) (warn string, err error) {
+	// D-05 组合校验（配置矛盾 fail-fast，P3 校验矩阵纪律）：显式设置
+	// --write-policy 却未开 --writable 总闸 → 拒绝（写策略只在可写会话有意义，
+	// 显式要求写策略却没开写总闸是用户配置错误，exit 2 零窗口暴露）。
+	// 默认 owner 未显式设置 + 无 --writable 是纯 ro 会话正常形态不拒。
+	// 与 bind 安全形态无关（纯配置矛盾），故在 loopback 早退之前判定。
+	if cfg.writePolicySet && !cfg.writable {
+		return "", errors.New("--write-policy is set but --writable is not; write policy only applies when client input is enabled")
+	}
 	if isLoopbackBind(cfg.bind) {
 		return "", nil // loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05）
 	}
@@ -268,7 +302,8 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefs: aggregateClientPrefs(cfg.clientOptions, cfg.osc52)})
+	prefsRO, prefsRW := aggregateClientPrefs(cfg.clientOptions, cfg.osc52)
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
 	scheme := "http"

@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/sworda/wesh/internal/proto"
+	"github.com/sworda/wesh/internal/server"
 )
 
 // TestMultiClientFanout（VALIDATION 05-01-01，MULTI-01 主干断言）：双客户端 attach
@@ -24,8 +25,13 @@ import (
 // 逐字节一致（hub 每 chunk 组一次共享只读帧的行为证据，P5-1）。
 // 异尺寸参数化（80x24 与 132x43——dialHello 签名参数化的既定用法，e2e_test.go
 // 注释：禁止硬编码 80x24）。
+// 05-03 适配：显式 WritePolicy=all——fan-out 语义隔离（owner 默认策略下第二客户
+// 端会降级 ro，双 rw 断言前提不再成立；owner 降级行为由 TestOwnerPolicy 专测）。
 func TestMultiClientFanout(t *testing.T) {
-	exitCh, wsURL := startTestServer(t, []string{"/bin/cat"})
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		WritePolicy: "all",
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -76,8 +82,14 @@ func TestMultiClientFanout(t *testing.T) {
 // TestDetach（VALIDATION 05-W0-01，多客户端生命周期推论）：任一客户端断开不再触发
 // exitf——exitCh 200ms 静默 + 其他客户端继续 echo 正常 + 断开者立即重新 attach
 // 成功（注册表移除断言的行为化；P1 D-11 单次语义终结，服务端生命周期只随子进程）。
+// 05-03 适配：显式 WritePolicy=all——本测试锁定的是断开生命周期语义而非权限语义；
+// owner 默认策略下 B 会被降级 ro（INPUT 静默丢）且 A 再 attach 归队 ro，两处断言
+// 前提不再成立（owner 降级/递补/归队行为由 TestOwnerPolicy/TestSuccession 专测）。
 func TestDetach(t *testing.T) {
-	exitCh, wsURL := startTestServer(t, []string{"/bin/cat"})
+	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		WritePolicy: "all",
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

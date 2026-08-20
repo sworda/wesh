@@ -96,8 +96,12 @@ func TestSlowConsumerKick(t *testing.T) {
 	// 必然传导到 outbox 写满；洪水量同时保证踢出断言后采样窗口内输出仍在推进）；
 	// OutboxBytes 覆写小值加速触发（HelloTimeout 测试覆写先例）；Writable 使两端
 	// 均 rw（ro/rw 分工由 TestGlobalCredit 覆盖）。
+	// 05-03 适配：显式 WritePolicy=all——stall 端被 1013 踢出 + 旁观端正常收流的
+	// 双 rw 语义前提（owner 默认策略下第二客户端降级 ro：全体可写端仅 stall 者
+	// 一端，按分工表置 creditBlocked 门闭合而非被踢，踢出与收流两断言皆不成立）。
 	exitCh, wsURL := startTestServerWith(t, []string{"seq", "1", "5000000"}, server.Options{
 		Writable:    true,
+		WritePolicy: "all",
 		OutboxBytes: 64 * 1024,
 	})
 	_ = exitCh // 本测试不断言子进程退出（洪水是否耗尽与踢出断言无关）
@@ -182,8 +186,12 @@ func TestGlobalCredit(t *testing.T) {
 	// outbox + 64KiB PTY 内核缓冲——门闭合时子进程必然仍有未竟输出（写阻塞）。
 	setup := func(t *testing.T) (exitCh chan int, c1, c2 *websocket.Conn) {
 		t.Helper()
+		// 05-03 适配：显式 WritePolicy=all——两 rw 全部 stall 的语义前提（05-02
+		// Task 3 已登记本适配点；owner 默认策略下第二客户端降级 ro，满即被踢，
+		// 信用门永不闭合）。
 		e, wsURL := startTestServerWith(t, []string{"seq", "1", "4000000"}, server.Options{
 			Writable:    true,
+			WritePolicy: "all",
 			OutboxBytes: 64 * 1024,
 		})
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

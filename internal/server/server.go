@@ -31,20 +31,27 @@ type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
 
-	// New 装配期固化、运行期只读，故六个 plain 字段无需 atomic：
-	// writable 为 checkTicket/attachHandler 派生 per-client mode 的全局来源
-	//（D-13/D-14；INPUT/RESIZE 门已多客户端化为 per-client c.mode 判定）；
+	// New 装配期固化、运行期只读，故七个 plain 字段无需 atomic：
+	// writable 为 checkTicket/attachHandler 派生 per-client ticket mode 的全局
+	// 来源（D-13/D-14；生效 mode 由 clients.go 判定矩阵落地，INPUT/RESIZE 门
+	// 已多客户端化为 per-client c.mode 判定）；
+	// writePolicy 为 D-05 写权限策略（owner|all，矩阵输入之一，值域常量
+	// WritePolicyOwner/WritePolicyAll 见 clients.go）；
 	// helloTimeout 为 D-04 未认证超时时长；
 	// maxHalfOpenPerIP 为 D-04 per-IP 半开上限；pingInterval/pongTimeout 为
 	// D-16 保活参数（均 Options 注入）；
-	// clientPrefs 为 P4 D-13 客户端偏好 blob（Welcome 内嵌一次性下发，空 = 不出
-	// prefs 键）——服务端不透明透传不解析（白名单/JSON 校验已在 parse 期完成）。
+	// clientPrefsRO/clientPrefsRW 为客户端偏好双档 blob（P4 D-13 Welcome 内嵌
+	// 一次性下发，空 = 不出 prefs 键；05-03 D-13 双档分化：ro 档永不含 osc52
+	// 键——即使全局 --osc52 开启，rw 档按全局 --osc52 下发——聚合期由 main
+	// 产双 blob，服务端不透明透传不解析、不做运行期 JSON 手术，P5-6 纪律）。
 	writable         bool
+	writePolicy      string
 	helloTimeout     time.Duration
 	maxHalfOpenPerIP int
 	pingInterval     time.Duration
 	pongTimeout      time.Duration
-	clientPrefs      json.RawMessage
+	clientPrefsRO    json.RawMessage
+	clientPrefsRW    json.RawMessage
 
 	// 认证与传输安全装配（Phase 3，均 New 装配期固化、运行期只读）：
 	// credentials 为 D-02 整站 Basic 凭据集（空 = 无认证模式）；
@@ -96,15 +103,21 @@ type Server struct {
 // 正交——--origin 无凭据也生效；TLS 仅驱动 HSTS 分支，D-06）；
 // TicketTTL/ThrottleBase/ThrottleCap 为测试可覆写字段（零值各取
 // defaultTicketTTL/defaultThrottleBase/defaultThrottleCap）。
-// Phase 4 新增：ClientPrefs 为生产直传字段（main 经 aggregateClientPrefs 聚合
-// --client-option + --osc52，P4 D-13 Welcome 内嵌一次性下发；空 = 不下发——
-// 服务端对 prefs 不透明透传不解析，白名单/JSON 校验已在 --client-option parse 期完成）。
+// Phase 4 新增：ClientPrefsRO/ClientPrefsRW 为生产直传字段（main 经
+// aggregateClientPrefs 聚合 --client-option + --osc52 产双档 blob，P4 D-13
+// Welcome 内嵌一次性下发；空 = 不下发——服务端对 prefs 不透明透传不解析，
+// 白名单/JSON 校验已在 --client-option parse 期完成。05-03 D-13 双档：attach
+// Welcome 按生效 mode 选档（ro → ClientPrefsRO，rw → ClientPrefsRW），递补升格
+// Welcome 必携 ClientPrefsRW——ro 档永不含 osc52 键，即使全局 --osc52 开启）。
 // Phase 5 新增：OutboxBytes/MaxClients/InputRate/InputBurst/ResizeDebounce 为
 // 测试可覆写字段（HelloTimeout 先例形态——零值各取默认常量，常量声明与 Phase 9
 // 负载标定回填注释见 clients.go）；MaxClients/InputRate/InputBurst/ResizeDebounce
 // 本 plan 仅立字段，消费点分别在 05-07/05-05/05-04。
+// 05-03 新增：WritePolicy 为生产直传字段（main --write-policy flag 原样透传，
+// D-05；零值兜底 WritePolicyOwner——安全默认；取值常量见 clients.go）。
 type Options struct {
 	Writable         bool
+	WritePolicy      string
 	PingInterval     time.Duration
 	HelloTimeout     time.Duration
 	MaxHalfOpenPerIP int
@@ -115,7 +128,8 @@ type Options struct {
 	TicketTTL        time.Duration
 	ThrottleBase     time.Duration
 	ThrottleCap      time.Duration
-	ClientPrefs      json.RawMessage
+	ClientPrefsRO    json.RawMessage
+	ClientPrefsRW    json.RawMessage
 	OutboxBytes      int
 	MaxClients       int
 	InputRate        int
@@ -169,10 +183,14 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.ResizeDebounce <= 0 {
 		opts.ResizeDebounce = defaultResizeDebounce
 	}
+	if opts.WritePolicy == "" {
+		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
 		writable:         opts.Writable,
+		writePolicy:      opts.WritePolicy,
 		helloTimeout:     opts.HelloTimeout,
 		maxHalfOpenPerIP: opts.MaxHalfOpenPerIP,
 		pingInterval:     opts.PingInterval,
@@ -186,7 +204,8 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		halfOpen:         halfOpenCounter{n: make(map[string]int)},
 		credentials:      opts.Credentials,
 		tlsOn:            opts.TLS,
-		clientPrefs:      opts.ClientPrefs,
+		clientPrefsRO:    opts.ClientPrefsRO,
+		clientPrefsRW:    opts.ClientPrefsRW,
 	}
 	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
 	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
@@ -465,32 +484,45 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// 升档序列（顺序敏感，PATTERNS 注意 5/6）：停 5s 计时器 → Hello 携首尺寸
 		// Resize（消除 80x24 首帧窗口；多客户端仲裁与 ro 忽略闸 05-04 落地，本 plan
 		// 为 last-wins 延续）→ per-IP release（Hello 完成即不计半开，
-		// D-04：NAT 场景正常浏览器不受限）→ 构造 client（mode 写入——认证模式取
-		// checkTicket 核销返回的 ticket 绑定值（D-11），无认证模式为其返回的
-		// s.writable 派生值）→ Welcome 帧（携 prefs，P4 D-13，空则不出键——旧前端
-		// 零漂移）经 outbox 首条入队 → 注册表登记 → 16KiB 稳态档
-		// （SetReadLimit 经库 atomic store 下一条消息起生效，read.go:97-105）→
-		// writer + pinger 启动。注册刻意在握手完成后才发生：此前 OUTPUT 一律经
-		// hub 空扇出丢弃——Welcome 恒为 S→C 首帧（writer 全程唯一写端，FIFO 保证
-		// 首帧无时序竞态，P2 D-02 时序纪律），且未认证客户端在预认证窗口内收不到
-		// 任何 PTY 输出。
+		// D-04：NAT 场景正常浏览器不受限）→ hubMu 内：模式判定矩阵（ticket 绑定
+		// mode × --writable × write-policy × owner 在位 → 生效 mode + rwEligible
+		// + 是否立 owner，clients.go decideModeLocked；ticket 绑定值 = 认证模式
+		// checkTicket 核销返回（D-11），无认证模式为其 s.writable 派生值）→
+		// 构造 client → Welcome 帧按生效 mode 与 prefs 双档选档（P4 D-13 空则不
+		// 出键——旧前端零漂移；05-03 D-13：ro 档永不含 osc52）经 outbox 首条入队
+		// → 注册表登记（+ owner 指针登记）→ 16KiB 稳态档（SetReadLimit 经库
+		// atomic store 下一条消息起生效，read.go:97-105）→ writer + pinger 启动。
+		// 注册刻意在握手完成后才发生：此前 OUTPUT 一律经 hub 空扇出丢弃——
+		// Welcome 恒为 S→C 首帧（writer 全程唯一写端，FIFO 保证首帧无时序竞态，
+		// P2 D-02 时序纪律），且未认证客户端在预认证窗口内收不到任何 PTY 输出。
 		close(helloDone)
 		s.sess.Resize(h.Cols, h.Rows)
 		release()
+		s.hubMu.Lock()
+		effMode, rwEligible, becomeOwner := s.decideModeLocked(mode)
 		cl = &client{
-			conn:   c,
-			remote: remote,
-			mode:   mode,
-			outbox: newOutbox(s.outboxBytes),
-			done:   make(chan struct{}),
-			cancel: cancel,
+			conn:       c,
+			remote:     remote,
+			mode:       effMode,
+			rwEligible: rwEligible,
+			outbox:     newOutbox(s.outboxBytes),
+			done:       make(chan struct{}),
+			cancel:     cancel,
 		}
 		// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
-		// trySend 恒成功——Welcome ≪ cap）。握手期 Error 帧（version_mismatch/
-		// auth_failed）发生在注册前，维持直写不变。
-		cl.outbox.trySend(proto.WelcomeFrame(mode, s.clientPrefs))
-		s.hubMu.Lock()
+		// trySend 恒成功——Welcome ≪ cap），按生效 mode 选 prefs 档（ro 档永不
+		// 含 osc52，D-13/P5-6）。握手期 Error 帧（version_mismatch/auth_failed）
+		// 发生在注册前，维持直写不变。入队先于登记且全程持 hubMu——hub 扇出
+		// 遍历注册表，若先登记 onChunk 可在 Welcome 前夹入 OUTPUT（首帧时序竞态）。
+		prefs := s.clientPrefsRO
+		if effMode == proto.ModeRW {
+			prefs = s.clientPrefsRW
+		}
+		cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs))
 		s.registry.registerLocked(cl)
+		if becomeOwner {
+			s.registry.owner = cl // D-06：首个 rw attach 立 owner
+		}
 		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
 		s.hubCond.Broadcast()

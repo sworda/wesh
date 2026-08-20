@@ -589,18 +589,23 @@ func TestHelloWelcome(t *testing.T) {
 
 // ====== plan 04-01 增量：Welcome prefs 端到端 ======
 
-// TestWelcomePrefs（P4 D-13 端到端两半侧）：Options.ClientPrefs 注入时握手收到的
-// Welcome JSON 含 prefs 键且逐键值相等；未注入（零值默认装配）时无 prefs 键——
-// omitempty 缺席回归，旧前端零漂移（P2 D-02 加字段纪律）。两半侧各自独立装配，
-// 均以客户端正常关闭 + exitCh 静默反证 + 再 attach 成功收口（多客户端推论形态）。
+// TestWelcomePrefs（P4 D-13 端到端两半侧）：Options.ClientPrefsRO/ClientPrefsRW
+// 注入时握手收到的 Welcome JSON 含 prefs 键且逐键值相等；未注入（零值默认装配）
+// 时无 prefs 键——omitempty 缺席回归，旧前端零漂移（P2 D-02 加字段纪律）。
+// 两半侧各自独立装配，均以客户端正常关闭 + exitCh 静默反证 + 再 attach 成功收口
+//（多客户端推论形态）。
+// 05-03 适配：ClientPrefs 单字段分裂为 ro/rw 双档（D-13）——本测试锁定的语义是
+//「注入 blob → Welcome 逐键透传」而非双档分化，故两档注同一 blob（单客户端 rw
+// 半侧实际选 rw 档）；ro/rw 选档与 osc52 强制缺席行为由 TestOwnerPolicy 专测。
 func TestWelcomePrefs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 注入半侧：ClientPrefs 非空 → Welcome 携 prefs 键，逐键值相等
+	// 注入半侧：ClientPrefsRO/RW 非空 → Welcome 携 prefs 键，逐键值相等
 	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
-		Writable:    true,
-		ClientPrefs: json.RawMessage(`{"fontSize":18,"osc52":true}`),
+		Writable:      true,
+		ClientPrefsRO: json.RawMessage(`{"fontSize":18,"osc52":true}`),
+		ClientPrefsRW: json.RawMessage(`{"fontSize":18,"osc52":true}`),
 	})
 	c, wm := dialHelloPayload(t, ctx, wsURL, 80, 24)
 	if wm["mode"] != proto.ModeRW {
@@ -608,7 +613,7 @@ func TestWelcomePrefs(t *testing.T) {
 	}
 	prefs, ok := wm["prefs"].(map[string]any)
 	if !ok {
-		t.Fatalf("Welcome prefs = %v, want JSON object (ClientPrefs injected)", wm["prefs"])
+		t.Fatalf("Welcome prefs = %v, want JSON object (ClientPrefsRO/RW injected)", wm["prefs"])
 	}
 	if got := prefs["fontSize"]; got != float64(18) {
 		t.Errorf("prefs.fontSize = %v, want 18", got)
@@ -630,11 +635,11 @@ func TestWelcomePrefs(t *testing.T) {
 	}
 	c2.Close(websocket.StatusNormalClosure, "")
 
-	// 未注入半侧：ClientPrefs 零值 → Welcome JSON 无 "prefs" 键（omitempty 缺席）
+	// 未注入半侧：ClientPrefsRO/RW 零值 → Welcome JSON 无 "prefs" 键（omitempty 缺席）
 	exitChNil, wsURLNil := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
 	cNil, wmNil := dialHelloPayload(t, ctx, wsURLNil, 80, 24)
 	if _, present := wmNil["prefs"]; present {
-		t.Errorf("Welcome JSON = %v, must not contain %q key (omitempty, zero ClientPrefs)", wmNil, "prefs")
+		t.Errorf("Welcome JSON = %v, must not contain %q key (omitempty, zero ClientPrefsRO/RW)", wmNil, "prefs")
 	}
 	cNil.Close(websocket.StatusNormalClosure, "")
 	assertNoExit(t, exitChNil)
