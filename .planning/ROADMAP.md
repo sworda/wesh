@@ -186,7 +186,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 05-03-PLAN.md — 写权限体系：--write-policy=owner|all + owner FIFO 递补 + 降级/升格 Welcome + prefs 双档 osc52（含 D-05 one-way 确认门）+ 权限测试组（MULTI-02）
+- [ ] 05-03-PLAN.md — 写权限体系：--write-policy=owner|all + owner FIFO 递补 + 降级/升格 Welcome + prefs 双档 osc52（含 D-05 one-way 确认门）+ 权限测试组 + TestSuccessionKickRace 继承竞态时序闭合（MULTI-02）
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -202,7 +202,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 05-07-PLAN.md — --max-clients（默认 32）+ ③位 503 闸 + /api/attach 早闸（含 D-08 one-way 确认门）+ TestMaxClients503（RES-03）
+- [ ] 05-07-PLAN.md — --max-clients（默认 32）+ ③位 503 闸 + /api/attach 早闸（含 D-08 one-way 确认门）+ TestMaxClients503 + TestClientCountInvariant 计数对称不变量（RES-03）
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
@@ -210,7 +210,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
-- [ ] 05-09-PLAN.md — 收口：phase05.mjs 协议 UAT（链接全链/双客户端一致/满员 503）+ phase02/03.mjs 生命周期适配 + README 多客户端节（含反代脱敏建议）+ 全量六段式（MULTI-01/03/05/RES-03）
+- [ ] 05-09-PLAN.md — 收口：phase05.mjs 协议 UAT（链接全链/双客户端一致/满员 503/S6 1013 踢出活跃场景）+ 05-UAT.md 人工清单 + phase02/03.mjs 生命周期适配 + README 多客户端节（含反代脱敏示例/暴露面清单/标定方法论）+ 全量六段式（MULTI-01/03/05/RES-03）
 
 **UI hint**: yes
 **Research flag**: outbox 容量/水位/strikes 默认参数需负载测试标定（可在执行中以测试任务消化，Phase 9 回填）。**resize 仲裁分歧已闭合**：以需求 MULTI-04 为准——所有模式下 ≥2 客户端一律最小公共矩形；ARCHITECTURE.md §2.9 "owner 模式跟随 owner 尺寸"表述作废。

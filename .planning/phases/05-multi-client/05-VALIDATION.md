@@ -49,6 +49,8 @@ created: 2026-08-20
 | 05-01-05 | 05-05 | 5 | RES-02 | 输入洪水 DoS | INPUT 洪水超限被丢弃且连接存活、未超限部分送达 | integration | `go test -race -run TestInputRateLimit ./internal/server/` | ❌ W0 | ⬜ pending |
 | 05-02-02 | 05-07 | 7 | RES-03 | 连接数耗尽 | max-clients 满员 → /ws Accept 前 HTTP 503；halfOpen 计数不泄漏 | integration | `go test -race -run TestMaxClients503 ./internal/server/` | ❌ W0 | ⬜ pending |
 | 05-01-06 | 05-02 | 2 | RES-04 | 全局背压 DoS | 全体可写端 stall → 信用门闭合（子进程输出暂停可观测）；一端恢复/死亡 → 门开 | integration | `go test -race -run TestGlobalCredit ./internal/server/` | ❌ W0 | ⬜ pending |
+| 05-01-07 | 05-03 | 3 | MULTI-02 | owner 权限抢夺 | owner 被 1013 踢出 → 晋升先于其重连登记（同一 hubMu 时序闭合）；重连旧 owner 归队 FIFO 尾；全程单 owner（review #3） | integration | `go test -race -run TestSuccessionKickRace ./internal/server/` | ❌ W0 | ⬜ pending |
+| 05-01-08 | 05-07 | 7 | RES-03 | 计数器泄漏 | 客户端计数对称不变量：register/remove 交错序列逐步 n == len(set) + 非成员移除幂等（review #7） | unit（同包白盒） | `go test -race -run TestClientCountInvariant ./internal/server/` | ❌ W0（clients_test.go） | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -63,7 +65,8 @@ created: 2026-08-20
 - [ ] `internal/server/slowclient_test.go` — stall 客户端夹具（建连后不 Read）+ 输出洪水子进程夹具
 - [ ] `internal/server/resize_arb_test.go` — arbitrate 纯函数表测 + Getsize 集成断言
 - [ ] `internal/server/sharetoken_test.go` — token store subtle 比较 + /s/ 路由门禁 + /api/attach token 分支
-- [ ] `web/uat/phase05.mjs` — phase04.mjs 骨架复用（startWesh/spawnExpectExit/dialHello/check 形态）
+- [ ] `internal/server/clients_test.go` — 同包白盒 registry 计数不变量（review #7，tickets_test.go 先例）
+- [ ] `web/uat/phase05.mjs` — phase04.mjs 骨架复用（startWesh/spawnExpectExit/dialHello/check 形态）+ raw-socket stall 夹具（S6，review #8）
 - [ ] `server.Options` 测试覆写字段扩展（OutboxBytes/MaxClients/InputRate/InputBurst/ResizeDebounce — HelloTimeout 先例）
 - [ ] 前端 dist 重建（`time pnpm -C web build`，构建后验证产物时间戳）
 
