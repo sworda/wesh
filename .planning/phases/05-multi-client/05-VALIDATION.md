@@ -40,19 +40,19 @@ created: 2026-08-20
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 05-W0-01 | TBD | 0 | 生命周期改造（多客户端必然推论） | — | 客户端断开不再触发 exitf/SIGHUP；子进程退出唯一终结路径 | integration | `go test -race -run 'TestDetach\|TestExitBroadcast' ./internal/server/` | ❌ W0（e2e_test.go 改造） | ⬜ pending |
-| 05-01-01 | TBD | 1 | MULTI-01 | 慢客户端 DoS | 双客户端 attach 收到同一 OUTPUT 流 | integration | `go test -race -run TestMultiClientFanout ./internal/server/` | ❌ W0（multi_test.go） | ⬜ pending |
-| 05-01-02 | TBD | 1 | MULTI-02 | owner 权限抢夺 | owner/all 矩阵：Welcome mode、per-client INPUT 门、递补升格 | integration | `go test -race -run 'TestOwnerPolicy\|TestAllPolicy\|TestSuccession' ./internal/server/` | ❌ W0 | ⬜ pending |
-| 05-01-03 | TBD | 1 | MULTI-03 | 慢客户端 DoS | stall 客户端 1013 被踢 reason=slow_consumer；其他客户端无卡顿；ReadLoop 不阻塞 | integration | `go test -race -run TestSlowConsumerKick ./internal/server/` | ❌ W0（slowclient_test.go） | ⬜ pending |
-| 05-01-04 | TBD | 1 | MULTI-04 | — | 异尺寸双客户端 min-rect；2→1 恢复 last-wins；50ms 防抖合并 | unit + integration | `go test -race -run 'TestArbitrate\|TestResizeArbitration' ./internal/server/` | ❌ W0（resize_arb_test.go） | ⬜ pending |
-| 05-02-01 | TBD | 2 | MULTI-05 | token 爆破/泄露 | 启动打印两条 /s/{token}/ 链接；token GET 200（无 Basic）；错 token → Basic 矩阵；token→/api/attach→ticket→attach 全链 mode 正确 | UAT + unit | `node web/uat/phase05.mjs` + `go test -race -run TestShareToken ./internal/server/` | ❌ W0（phase05.mjs + sharetoken_test.go） | ⬜ pending |
-| 05-01-05 | TBD | 1 | RES-02 | 输入洪水 DoS | INPUT 洪水超限被丢弃且连接存活、未超限部分送达 | integration | `go test -race -run TestInputRateLimit ./internal/server/` | ❌ W0 | ⬜ pending |
-| 05-02-02 | TBD | 2 | RES-03 | 连接数耗尽 | max-clients 满员 → /ws Accept 前 HTTP 503；halfOpen 计数不泄漏 | integration | `go test -race -run TestMaxClients503 ./internal/server/` | ❌ W0 | ⬜ pending |
-| 05-01-06 | TBD | 1 | RES-04 | 全局背压 DoS | 全体可写端 stall → 信用门闭合（子进程输出暂停可观测）；一端恢复/死亡 → 门开 | integration | `go test -race -run TestGlobalCredit ./internal/server/` | ❌ W0 | ⬜ pending |
+| 05-W0-01 | 05-01 | 1 | 生命周期改造（多客户端必然推论） | — | 客户端断开不再触发 exitf/SIGHUP；子进程退出唯一终结路径 | integration | `go test -race -run 'TestDetach\|TestExitBroadcast' ./internal/server/` | ❌ W0（e2e_test.go 改造） | ⬜ pending |
+| 05-01-01 | 05-01 | 1 | MULTI-01 | 慢客户端 DoS | 双客户端 attach 收到同一 OUTPUT 流 | integration | `go test -race -run TestMultiClientFanout ./internal/server/` | ❌ W0（multi_test.go） | ⬜ pending |
+| 05-01-02 | 05-03 | 3 | MULTI-02 | owner 权限抢夺 | owner/all 矩阵：Welcome mode、per-client INPUT 门、递补升格 | integration | `go test -race -run 'TestOwnerPolicy\|TestAllPolicy\|TestSuccession' ./internal/server/` | ❌ W0 | ⬜ pending |
+| 05-01-03 | 05-02 | 2 | MULTI-03 | 慢客户端 DoS | stall 客户端 1013 被踢 reason=slow_consumer；其他客户端无卡顿；ReadLoop 不阻塞 | integration | `go test -race -run TestSlowConsumerKick ./internal/server/` | ❌ W0（slowclient_test.go） | ⬜ pending |
+| 05-01-04 | 05-04 | 4 | MULTI-04 | — | 异尺寸双客户端 min-rect；2→1 恢复 last-wins；50ms 防抖合并 | unit + integration | `go test -race -run 'TestArbitrate\|TestResizeArbitration' ./internal/server/` | ❌ W0（resize_arb_test.go） | ⬜ pending |
+| 05-02-01 | 05-06 | 6 | MULTI-05 | token 爆破/泄露 | 启动打印两条 /s/{token}/ 链接；token GET 200（无 Basic）；错 token → Basic 矩阵；token→/api/attach→ticket→attach 全链 mode 正确 | UAT + unit | `node web/uat/phase05.mjs` + `go test -race -run TestShareToken ./internal/server/` | ❌ W0（phase05.mjs + sharetoken_test.go） | ⬜ pending |
+| 05-01-05 | 05-05 | 5 | RES-02 | 输入洪水 DoS | INPUT 洪水超限被丢弃且连接存活、未超限部分送达 | integration | `go test -race -run TestInputRateLimit ./internal/server/` | ❌ W0 | ⬜ pending |
+| 05-02-02 | 05-07 | 7 | RES-03 | 连接数耗尽 | max-clients 满员 → /ws Accept 前 HTTP 503；halfOpen 计数不泄漏 | integration | `go test -race -run TestMaxClients503 ./internal/server/` | ❌ W0 | ⬜ pending |
+| 05-01-06 | 05-02 | 2 | RES-04 | 全局背压 DoS | 全体可写端 stall → 信用门闭合（子进程输出暂停可观测）；一端恢复/死亡 → 门开 | integration | `go test -race -run TestGlobalCredit ./internal/server/` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
-*注：Plan ID / Wave 由 planner 产出后回填；本表行数与 Phase Requirements → Test Map 一一对应。*
+*Plan/Wave 列已按 9-wave 结构回填（plan-phase §13 收口时，2026-08-20）：01=tracer+生命周期，02=信用门+SIGWINCH，03=权限体系，04=resize 仲裁，05=限速+CR-01 背压，06=分享链接，07=max-clients，08=前端，09=UAT 收口。*
 
 ---
 

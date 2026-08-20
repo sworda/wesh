@@ -319,7 +319,7 @@ func (s *Session) SignalForegroundGroup() {
 	_ = unix.Kill(-pgid, unix.SIGWINCH) // 负 pid = 进程组；失败静默
 }
 ```
-→ 纪律：fdMu 持锁范围与 Resize 同款（io.go:22-26 注释：Read 绝不可入此锁）；`golang.org/x/sys` indirect→direct（go.mod 已有 v0.47.0 在 go.sum）；调用点 = 注册表 attach 完成后（无条件执行，与仲裁 resize 是否发生无关——P5-3 同尺寸不发信号实证）。
+→ 纪律：fdMu 持锁范围与 Resize 同款（spawn.go:22 注释：Master.Read/Write 经 os.File 内部 fdmu 与 Close 自同步，绝不可入此锁）；`golang.org/x/sys` indirect→direct（go.mod 已有 v0.47.0 在 go.sum）；调用点 = 注册表 attach 完成后（无条件执行，与仲裁 resize 是否发生无关——P5-3 同尺寸不发信号实证）。
 
 ---
 
