@@ -303,6 +303,15 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// 05-UI-SPEC §Copywriting 同源文案常量（R1/R3 修订落点）：
+// C-4 Unable to connect 正文三处同源（fetch catch / onerror !opened / onclose !opened）——
+// 多客户端化使旧版"另一客户端已连接（单客户端）"表述事实错误（R1）；title 与 hintPrefix 不变
+const UNREACHABLE_BODY =
+  'The wesh server is unreachable. It may have exited, or it is refusing new connections (for example, because it is full).';
+// C-6 共用提示行前缀（1008/1009/1011 三条单写口防漂移，R3）——服务端不再随断开退出，
+// "先重启服务端"不再是首要建议；Session ended (1000) 的提示行语义仍精确为真，不在此列
+const HINT_RESTART = 'If the problem persists, restart wesh from your shell, then';
+
 // #status 三态面板（UI-SPEC §Copywriting 逐字文案）：title/body + 提示行
 // （提示行尾部为 accent 色 <a href="">Reload this page</a> 原地刷新链接）。
 // 幂等：textContent 赋值先清空子节点再重建，onerror/onclose 双触发不重复渲染。
@@ -327,23 +336,53 @@ function showStatus(title: string, body: string, hintPrefix: string): void {
 // 认证感知连接流程（D-02 前端半侧）：fetch POST /api/attach 取一次性 ticket →
 // 建 WS → Hello{version,cols,rows,ticket?}。ticket 只存本函数闭包变量与 Hello 载荷——
 // 禁止写入 URL query/localStorage/console（T-03-24 泄漏面红线）。
+// 分享链接进入（05 D-01/D-03）：token 红线为 ticket 同款延伸——只存本函数闭包变量
+// 与 POST body，禁 console/localStorage/sessionStorage/任何日志调用；禁经 URL 重写
+// API 剥离 URL token（D-03 路径段是分享/书签契约，1013 后手动刷新必须凭原 URL
+// 重新 attach——剥离会使 D-10 手动刷新入口失效；验收断言以源码零调用形态锁定）。
 async function connect(): Promise<void> {
   // 每次尝试重置 per-connection 状态——auth_failed 重试不携带上次连接残留
   opened = false;
   helloSent = false;
   lastError = null;
 
+  // ^/s/{token}/$ 提取（无尾斜杠由服务端 301 补斜杠，前端无需兼容——05 R-05）；
+  // 前端不解析不分支 token 种类——ro/rw 判定唯一来源是 Welcome.mode（05 D-01）
+  const shareMatch = location.pathname.match(/^\/s\/([^/]+)\/$/);
+  const shareToken = shareMatch ? shareMatch[1] : undefined;
+
   let ticket: string | undefined;
   try {
     // credentials 默认 'same-origin'：浏览器 HTTP auth 缓存条目随同源 fetch 自动附带
-    // （D-02 成立前提——先导航 GET / 弹原生 Basic 框缓存凭据；A2 假设，UAT 必验）
-    const resp = await fetch('/api/attach', { method: 'POST' });
+    // （D-02 成立前提——先导航 GET / 弹原生 Basic 框缓存凭据；A2 假设，UAT 必验）；
+    // 携 token 时 POST body 上送（OQ1：token 通道与认证模式正交——无认证模式同样走
+    // 本分支，服务端 /api/attach 仅当 body 携 token 时非 404）；无 token 保持空 body 现状
+    const resp = await fetch(
+      '/api/attach',
+      shareToken === undefined
+        ? { method: 'POST' }
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: shareToken }),
+          },
+    );
     if (resp.ok) {
       ticket = (await resp.json()).ticket;
     } else if (resp.status === 404) {
       // 无认证模式（--no-auth/loopback 裸跑）探测信号：跳过 ticket 直连 WS
-      // （RESEARCH Pattern 1 决策；服务端无凭据时 /api/attach 显式注册 404）
+      // （RESEARCH Pattern 1 决策；服务端无凭据时 /api/attach 显式注册 404）；
+      // 仅未携 token 时可到此分支（OQ1：携 token 时无认证模式同样非 404 签发）
       ticket = undefined;
+    } else if (resp.status === 401 && shareToken !== undefined) {
+      // C-3 专版（R-05）：携 token 的 401 = 分享链接无效/过期——前端自知本次请求
+      // 携 token，不向攻击者泄露任何其本不知道的信息（无 oracle 纪律不约束前端文案）
+      showStatus(
+        'Invalid share link',
+        'This share link is invalid or has expired. Share links are regenerated each time wesh restarts.',
+        'Ask the operator for a new link, then',
+      );
+      return;
     } else if (resp.status === 429) {
       showStatus(
         'Too many attempts',
@@ -351,8 +390,16 @@ async function connect(): Promise<void> {
         'Wait a moment, then',
       );
       return;
+    } else if (resp.status === 503) {
+      // C-2 专版（OQ2）：/api/attach 容量早闸——任意请求满员同此分支
+      showStatus(
+        'Server is full',
+        'The server has reached its maximum number of attached clients.',
+        'Wait for a slot to free up, then',
+      );
+      return;
     } else {
-      // 401 及其余非 ok 状态同口径：通用认证失败，不细分（无 oracle 纪律延伸到前端文案）。
+      // 401 未携 token 及其余非 ok 状态同口径：通用认证失败，不细分（无 oracle 纪律延伸到前端文案）。
       // fetch 的 401 不弹浏览器原生登录框（Pitfall 6 平台行为）——引导重新加载页面，
       // 重新导航触发浏览器原生 Basic 弹窗（不自建登录表单，D-02 零新 UI 纪律）。
       showStatus(
@@ -363,11 +410,7 @@ async function connect(): Promise<void> {
       return;
     }
   } catch {
-    showStatus(
-      'Unable to connect',
-      'The wesh server is unreachable. It may have exited, or another client is already attached (wesh currently allows a single client).',
-      'Check the shell where wesh is running, then',
-    );
+    showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
     return;
   }
 
@@ -515,13 +558,10 @@ async function connect(): Promise<void> {
   };
 
   sock.onerror = () => {
-    // 握手失败（含第二客户端 409）；onclose 会随后再触发一次，showStatus 幂等
+    // 握手失败（含 WS 握手阶段满员 503——早闸后竞态窗口浏览器不暴露握手状态码，
+    // 落本通用文案，OQ2 裁决注记）；onclose 会随后再触发一次，showStatus 幂等
     if (!opened) {
-      showStatus(
-        'Unable to connect',
-        'The wesh server is unreachable. It may have exited, or another client is already attached (wesh currently allows a single client).',
-        'Check the shell where wesh is running, then',
-      );
+      showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
     }
   };
 
@@ -534,7 +574,8 @@ async function connect(): Promise<void> {
     window.removeEventListener('beforeunload', onBeforeUnload);
     // auth_failed 守卫（D-10）：ticket 60s 过期是正常场景（页面放置超 TTL）——
     // 静默重取 ticket 重试一次；重试再失败时 retriedAuth 已置位，落下方 switch 的
-    // 1008 分支展示 lastError.message（非无限循环，T-03-25 缓解）
+    // 1008 分支展示 lastError.message（非无限循环，T-03-25 缓解）；
+    // 携 token 流程同样适用——重试经 connect() 同一入口重新 POST 携 token
     if (lastError?.code === 'auth_failed' && !retriedAuth) {
       retriedAuth = true;
       lastError = null;
@@ -542,11 +583,7 @@ async function connect(): Promise<void> {
       return;
     }
     if (!opened) {
-      showStatus(
-        'Unable to connect',
-        'The wesh server is unreachable. It may have exited, or another client is already attached (wesh currently allows a single client).',
-        'Check the shell where wesh is running, then',
-      );
+      showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
       return;
     }
     switch (ev.code) {
@@ -561,35 +598,39 @@ async function connect(): Promise<void> {
         showStatus(
           'Connection refused',
           lastError?.message ?? 'The server refused this connection.',
-          'Start wesh again from your shell, then',
+          HINT_RESTART,
         );
         break;
       case 1009: // 超限（D-12① 不提 flag——本 phase 无可调 flag）
         showStatus(
           'Message too large',
           'Input exceeded the server message size limit and the connection was closed.',
-          'Start wesh again from your shell, then',
+          HINT_RESTART,
         );
         break;
       case 1011:
         showStatus(
           'Server error',
           lastError?.message ?? 'The server hit an internal error.',
-          'Start wesh again from your shell, then',
+          HINT_RESTART,
         );
         break;
-      case 1013: // Phase 5 背压踢出占位路径——文案先行不占协议
+      case 1013: // C-1 专版（05 D-10/R-10）：慢消费者背压踢出。只认 ev.code 不渲染
+        // reason 内容（slow_consumer 是机器串，渲染远端内容是伪造钓鱼面）；不做任何
+        // 自动重连——后台标签页重连→再被踢循环比手动刷新更差（Phase 6 CORE-05 边界）；
+        // beforeunload 移除联动见本函数入口；URL token 保留使手动刷新可重新 attach
         showStatus(
           'Disconnected',
-          'The server asked this client to retry later.',
-          'Start wesh again from your shell, then',
+          'This client was disconnected because it could not keep up with the session output. The session itself is unaffected.',
+          'To reattach from the latest output,',
         );
         break;
-      default: // 含 1002 协议错误与无码异常断开
+      default: // C-5（R2 改写；含 1002 协议错误与无码异常断开）——客户端断开不再
+        // 触发服务端退出，旧提示行"In this phase the server exits…"语义已死
         showStatus(
           'Connection lost',
-          'The connection closed unexpectedly. In this phase the server exits when the connection drops.',
-          'Start wesh again from your shell, then',
+          'The connection closed unexpectedly.',
+          'The session may still be running. To reattach,',
         );
         break;
     }
