@@ -23,7 +23,9 @@
 | `internal/server/slowclient_test.go` 【新】 | test | integration（真 stall 夹具） | `e2e_test.go` + TestDrainBeforeAttach 输出洪水夹具 | exact |
 | `internal/server/resize_arb_test.go` 【新】 | test | unit（纯函数表测） | `tickets_test.go` 同包白盒 t.Run 形态 | exact |
 | `internal/server/sharetoken_test.go` 【新】 | test | unit + handler 集成 | `tickets_test.go`（白盒 store 测） | exact |
+| `internal/server/clients_test.go` 【新】（review #7 登记） | test | unit（同包白盒 registry 计数不变量） | `tickets_test.go` 同包白盒 t.Run 形态 | exact |
 | `web/uat/phase05.mjs` 【新】 | test | protocol integration | `web/uat/phase04.mjs` 全骨架 | exact |
+| `web/uat/phase05.mjs` S6 raw-socket stall 夹具 【新——文件内嵌，review #8 登记】 | test（UAT 协议层夹具） | net.Socket 手工 WS 握手 + socket.pause() 内核级 stall → stderr code=1013/reason=slow_consumer 断言 | `slowclient_test.go` stall 夹具（Go 侧语义同款——undici 持续 drain 无法制造内核 stall，故用 raw socket） | partial（raw-socket 夹具形态本仓首例） |
 
 ## Pattern Assignments
 
