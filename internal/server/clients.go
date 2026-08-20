@@ -3,7 +3,9 @@
 // 定稿形态，P5-1 chunk 别名与 P5-2 踢出不内联两条红线纪律）+ 全局信用门
 //（RES-04，RESEARCH Pattern 3：全体可写端 outbox 均满 → hub 持块停读 PTY，
 // 任一可写端 drain 至半水位恢复）+ 写权限体系（MULTI-02，05-03：模式判定矩阵 +
-// owner FIFO 递补升格，RESEARCH Pattern 5 逐字落地）。
+// owner FIFO 递补升格，RESEARCH Pattern 5 逐字落地）+ 每客户端输入限速与会话级
+// 输入队列/input-writer（RES-02 + CR-01 完整背压修复，05-05，RESEARCH Pattern 8：
+// Attach 读循环零同步 Master.Write，单 goroutine 独占写 master）。
 //
 // 锁序纪律（R-07）：hubMu > outboxMu——writer 持 outboxMu drain 期间绝不取 hubMu；
 // drain 完释放后才取 hubMu 做 afterDrain 恢复判定，绝不反序同持。信用门 cond
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/time/rate" // 钉版 v0.15.0 防版本漂移：rate API 自 2015 年签名稳定（rate.go:100-117），升级经 go.sum 审计链显式进行（review MEDIUM 处置）
 
 	"github.com/sworda/wesh/internal/proto"
 )
@@ -33,12 +36,17 @@ const (
 	defaultMaxClients = 32
 	// defaultInputRate 每客户端输入限速速率默认值（32KiB/s：人类击键 ~10B/s，
 	// 持续 32KiB/s 远超合法、远低于洪水）。Phase 9 负载测试标定回填（P2 D-10
-	// 纪律）。本 plan 仅立字段与常量，消费点（INPUT 门 AllowN）05-05 落地。
+	// 纪律）。消费点 = Attach 升档 limiter 构造 + INPUT 门 AllowN（05-05 已落地）。
 	defaultInputRate = 32 * 1024
 	// defaultInputBurst 每客户端输入限速突发默认值（64KiB：容纳一次快粘）。
-	// Phase 9 负载测试标定回填（P2 D-10 纪律）。本 plan 仅立字段与常量，
-	// 消费点 05-05 落地。
+	// Phase 9 负载测试标定回填（P2 D-10 纪律）。消费点同 defaultInputRate
+	//（05-05 已落地）。
 	defaultInputBurst = 64 * 1024
+	// defaultInputQueueBytes 会话级输入队列字节容量默认值（256KiB：≥16 个
+	// 16KiB 满帧 ReadLimitPostAuth；限速器在前，队列满本应罕见）。Phase 9
+	// 负载测试标定回填（P2 D-10 纪律）。消费点 = server.go New 装配 inputQ
+	//（05-05 已落地）。
+	defaultInputQueueBytes = 256 * 1024
 	// defaultResizeDebounce resize 仲裁防抖默认值（50ms，CONTEXT 已锁定；
 	// PITFALLS Pitfall 10 SIGWINCH 风暴防线）。Phase 9 负载测试标定回填
 	//（P2 D-10 纪律）。消费点 = resize.go 仲裁器单 time.Timer reset（05-04 已落地）。
@@ -66,6 +74,18 @@ type client struct {
 	// 与 hubMu 内的晋升写并发（05-03 -race 实测命中）；hubMu 侧读取（信用门/
 	// 分工表）同经 Load 统一形态。
 	mode atomic.Value
+	// limiter 每客户端输入限速令牌桶（RES-02，x/time/rate）：Attach 升档时构造
+	// rate.NewLimiter(rate.Limit(s.inputRate), s.inputBurst)（默认 32KiB/s + burst
+	// 64KiB，R-01 参数表——人类击键 ~10B/s、快粘 ~50KB 瞬时由 burst 容纳、持续
+	// 32KiB/s 远超合法远低于洪水；Options.InputRate/InputBurst 测试可覆写）。
+	// 超限唯一动作 = 丢弃该帧（R-02——Allow godoc 官方 drop 语义逐字："Use this
+	// method if you intend to drop / skip events that exceed the rate limit."
+	// rate.go:113-115；all 模式下激进粘贴的合法用户被踢是 UX 灾难，INPUT 丢帧
+	// 用户可感知可恢复——键不回显自然放慢——不同于 OUTPUT 丢帧的静默损坏）；
+	// 禁止以限速为由 Close/踢出/降权任何客户端（must_haves prohibitions）。
+	// 升档构造后运行期只读；包内并发安全（rate.go:56-57 "Limiter is safe for
+	// simultaneous use by multiple goroutines"）。
+	limiter *rate.Limiter
 	// rwEligible 递补候选资格（D-06「以 rw 身份」）：rw ticket × owner 模式 → true
 	//（含 owner 本人——语义为「持 rw 身份的资格」，owner 断线后该客户端若仍在队
 	// 即可被递补）；ro ticket 与 all 模式恒 false（ro 永不递补；all 无递补概念）。
@@ -140,6 +160,68 @@ func (o *outbox) drain() (batch [][]byte, bytes int) {
 	o.q = nil
 	o.bytes = 0
 	return batch, bytes
+}
+
+// inputQ 是会话级字节有界输入队列（CR-01 完整背压修复，RESEARCH Pattern 8）：
+// 存 INPUT payload（data[1:]，各客户端读循环逐帧入队），单 input-writer
+// goroutine 顺序出队独占 sess.Master.Write——Attach 读循环内的同步 Master.Write
+// 彻底消失（CR-01：慢子进程 stdin 反堵读循环的已知缺陷终结；Phase 2 的
+// O_NONBLOCK 最小缓解从未落地且不再需要，RESEARCH State of the Art 核实——
+// master fd 保持默认阻塞模式，阻塞被关进专属 goroutine，本队列有界 + 丢弃即
+// 背压）。多写者输入交错不做排序承诺（ARCHITECTURE §2.9 screen 同款语义，
+// all 模式 README 明示由 05-09 落地）。
+//
+// 别名安全（与 OUTPUT 方向 chunk 别名红线 P5-1 对照区分）：coder/websocket
+// Read 每次返回新分配 payload（消息缓冲跨帧不复用），tryEnqueue 持引用无别名
+// 风险——入队无需拷贝点。
+//
+// notEmpty 为 cap 1 信号量（outbox 同款形态）：tryEnqueue 非阻塞投递，
+// inputWriter 阻塞消费。
+type inputQ struct {
+	mu       sync.Mutex
+	q        [][]byte // INPUT payload（各 Read 新分配，持引用无别名风险，见上）
+	bytes    int
+	cap      int
+	notEmpty chan struct{}
+	// droppedInputs 队列满丢弃计数（atomic——读循环热路径递增，Phase 8 metrics
+	// 读取端免锁；Phase 8 OPS-07 进 metrics，review #10 挂点）。与 server 的
+	// inputDrops（限速丢弃）成对；限速器在前，队列满本应罕见。
+	droppedInputs atomic.Int64
+}
+
+// newInputQ 构造字节容量为 cap 的 inputQ（cap 由 defaultInputQueueBytes 供给，
+// Phase 9 标定回填）。
+func newInputQ(cap int) *inputQ {
+	return &inputQ{cap: cap, notEmpty: make(chan struct{}, 1)}
+}
+
+// tryEnqueue 非阻塞入队：满 → 丢 + droppedInputs 计数递增并返回 false（调用方
+// continue——满则丢绝不阻塞读循环，T-05-03b 防线）；成功则 append + 记账 +
+// 非阻塞信号（已有信号在飞则 writer 必会 drain 到本条，select default 不阻塞）。
+func (q *inputQ) tryEnqueue(p []byte) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.bytes+len(p) > q.cap {
+		q.droppedInputs.Add(1) // Phase 8 OPS-07 metrics 挂点（review #10）
+		return false
+	}
+	q.q = append(q.q, p)
+	q.bytes += len(p)
+	select {
+	case q.notEmpty <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// dequeue swap 出整队并重置字节计数（outbox drain 同款形态）。
+func (q *inputQ) dequeue() [][]byte {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	batch := q.q
+	q.q = nil
+	q.bytes = 0
+	return batch
 }
 
 // registry 客户端注册表（R-07）：set 供 hub 扇出遍历，order 保 attach FIFO 序
@@ -478,6 +560,32 @@ func (s *Server) writer(c *client) {
 		// 整批写出成功 → 信用门恢复判定（R-01 半水位；R-07 锁序：drain/写出完才取
 		// hubMu，绝不反序同持）。写失败路径已 return，不触达本行。
 		s.afterDrain(c)
+	}
+}
+
+// inputWriter 是会话级单 input-writer goroutine（CR-01 完整背压修复核心，
+// RESEARCH Pattern 8）：独占 sess.Master.Write——阻塞等队列信号 → 顺序出队 →
+// 逐 payload 写 master。Attach 读循环内的同步 Master.Write 彻底消失（读循环
+// 零同步写，must_haves；禁止为输入方向恢复任何形式的读循环内同步 Master.Write
+// 或给读路径加 deadline——prohibitions，Pitfall 2/CR-01 老路禁止回潮）。
+//
+// 生命周期挂服务端：New 内启动（与 ReadLoop/lifecycle 同批装配）；终结 =
+// lifecycle 子进程退出路径 close(inputDone)——sess.Drain→Close 先关闭 master
+// fd，经 runtime poller 解除本 goroutine 的在途写阻塞（与 Read 同机制，既有
+// D-12 语义），写失败即 return（子进程退出路径由 lifecycle 收口）；select 收
+// inputDone 亦 return。队列残余随会话消亡（子进程已退出，输入无意义）。
+func (s *Server) inputWriter() {
+	for {
+		select {
+		case <-s.inputDone:
+			return
+		case <-s.inputQ.notEmpty:
+		}
+		for _, p := range s.inputQ.dequeue() {
+			if _, err := s.sess.Master.Write(p); err != nil {
+				return // 子进程退出/master 已关——终结由 lifecycle 收口（D-12 同款）
+			}
+		}
 	}
 }
 

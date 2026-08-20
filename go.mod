@@ -7,3 +7,5 @@ require (
 	github.com/creack/pty v1.1.24
 	golang.org/x/sys v0.47.0
 )
+
+require golang.org/x/time v0.15.0

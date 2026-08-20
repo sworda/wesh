@@ -16,9 +16,11 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/time/rate"
 
 	"github.com/sworda/wesh/internal/proto"
 	"github.com/sworda/wesh/internal/pty"
@@ -82,10 +84,23 @@ type Server struct {
 	// 全部字段 hubMu 保护（注册表同锁 R-07）；timer 回调自有 goroutine 取 hubMu。
 	arbiter arbiter
 
+	// inputQ 会话级字节有界输入队列（CR-01 完整背压修复，05-05，RESEARCH
+	// Pattern 8）：各客户端读循环 INPUT 帧经 mode 门 → limiter.AllowN →
+	// tryEnqueue 入队，单 input-writer goroutine 独占 sess.Master.Write——
+	// 读循环零同步写。结构见 clients.go。inputDone 为 input-writer 终结信号
+	//（lifecycle 子进程退出路径 close，Drain→Close 解除在途写阻塞——D-12
+	// 同款 runtime poller 机制）。inputDrops 为限速丢弃计数（atomic——INPUT
+	// 门每击键热路径无锁递增；Phase 8 OPS-07 进 metrics，review #10 挂点；
+	// 与 inputQ.droppedInputs 队列满丢弃计数成对）。
+	inputQ     *inputQ
+	inputDone  chan struct{}
+	inputDrops atomic.Int64
+
 	// 多客户端参数（New 装配期固化、运行期只读；零值兜底见 New，默认常量声明
-	// 在 clients.go 并挂 Phase 9 标定注释）：outboxBytes/resizeDebounce 已消费
-	//（outbox 字节容量 / resize.go 仲裁器防抖 reset，05-04）；maxClients/
-	// inputRate/inputBurst 仅立字段，消费点分别在 05-07（503 闸）/05-05（INPUT 限速）。
+	// 在 clients.go 并挂 Phase 9 标定注释）：outboxBytes/resizeDebounce/
+	// inputRate/inputBurst 已消费（outbox 字节容量 / resize.go 仲裁器防抖
+	// reset / Attach 升档 limiter 构造，05-04/05-05）；maxClients 仅立字段，
+	// 消费点在 05-07（503 闸）。
 	outboxBytes    int
 	maxClients     int
 	inputRate      int
@@ -117,8 +132,9 @@ type Server struct {
 // Welcome 必携 ClientPrefsRW——ro 档永不含 osc52 键，即使全局 --osc52 开启）。
 // Phase 5 新增：OutboxBytes/MaxClients/InputRate/InputBurst/ResizeDebounce 为
 // 测试可覆写字段（HelloTimeout 先例形态——零值各取默认常量，常量声明与 Phase 9
-// 负载标定回填注释见 clients.go）；ResizeDebounce 消费点 = resize.go 仲裁器
-// 防抖（05-04 已落地），MaxClients/InputRate/InputBurst 消费点在 05-07/05-05。
+// 负载标定回填注释见 clients.go）；ResizeDebounce/InputRate/InputBurst 消费点
+// 已落地（05-04 resize.go 仲裁器防抖 / 05-05 Attach 升档 limiter 构造 +
+// INPUT 门 AllowN），MaxClients 消费点在 05-07。
 // 05-03 新增：WritePolicy 为生产直传字段（main --write-policy flag 原样透传，
 // D-05；零值兜底 WritePolicyOwner——安全默认；取值常量见 clients.go）。
 type Options struct {
@@ -155,10 +171,13 @@ const defaultMaxHalfOpenPerIP = 8
 // （Pitfall 2），健康的长空闲会话永不因保活被误杀。
 const defaultPongTimeout = 10 * time.Second
 
-// New 装配服务端并钉死两个 goroutine 的启动点：
+// New 装配服务端并钉死三个 goroutine 的启动点：
 //   - sess.ReadLoop：自装配起持续 drain master（D-12），无客户端期间输出经 hub
 //     空扇出自然丢弃，防 64KiB PTY 内核缓冲填满导致子进程写阻塞；attach 路径内
 //     不得再新建读循环。
+//   - inputWriter：会话级单 input-writer（05-05，CR-01 完整修复）——独占
+//     sess.Master.Write，消费 inputQ；lifecycle 子进程退出路径 close(inputDone)
+//     收口（clients.go）。
 //   - lifecycle：sess.Wait → 带时限 drain → 广播 1000 关闭全部客户端 → exitf
 //     （D-10 唯一终结路径的多客户端形态）。
 //
@@ -207,6 +226,8 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		inputRate:        opts.InputRate,
 		inputBurst:       opts.InputBurst,
 		resizeDebounce:   opts.ResizeDebounce,
+		inputQ:           newInputQ(defaultInputQueueBytes),
+		inputDone:        make(chan struct{}),
 		halfOpen:         halfOpenCounter{n: make(map[string]int)},
 		credentials:      opts.Credentials,
 		tlsOn:            opts.TLS,
@@ -238,6 +259,7 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// reportResize 的 Reset 才武装；必须在 ReadLoop/lifecycle 启动前完成。
 	s.initArbiter()
 	go sess.ReadLoop(s.onChunk)
+	go s.inputWriter() // CR-01：input-writer 唯一装配点——master 写路径独占在专属 goroutine
 	go s.lifecycle()
 	return s
 }
@@ -518,6 +540,11 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			outbox:     newOutbox(s.outboxBytes),
 			done:       make(chan struct{}),
 			cancel:     cancel,
+			// 每客户端输入限速令牌桶（RES-02，05-05）：rate 32KiB/s + burst 64KiB
+			// 默认（R-01 参数表——击键 ~10B/s、快粘 ~50KB 瞬时由 burst 容纳）；
+			// 超限唯一动作 = 丢弃该帧（R-02，不断开不打逐次日志）。ro 客户端同样
+			// 构造（无害——INPUT 先过 mode 门）；字段注释见 clients.go。
+			limiter: rate.NewLimiter(rate.Limit(s.inputRate), s.inputBurst),
 		}
 		cl.mode.Store(effMode) // 生效模式初始值（atomic 承载：INPUT 门无锁读者，见 clients.go）
 		// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
@@ -592,7 +619,25 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			if cl == nil || cl.mode.Load() == proto.ModeRO {
 				continue
 			}
-			s.sess.Master.Write(data[1:]) // 直写本 plan 保持（CR-01 输入队列在 05-05）
+			// 限速门（RES-02，05-05，R-02 丢弃语义）：超限唯一动作 = 丢弃该帧 +
+			// inputDrops 计数——不断开、不打逐次日志、不踢出不降权（Allow godoc
+			// 官方 drop 语义 rate.go:113-115；all 模式激进粘贴的合法用户被踢是
+			// UX 灾难，INPUT 丢帧用户可感知可恢复——键不回显自然放慢——不同于
+			// OUTPUT 丢帧的静默损坏）。计数器 Phase 8 OPS-07 进 metrics（review
+			// #10）；用户侧可见性通道 = README 明示（05-09）+ Phase 8 metrics，
+			// 无协议反馈帧（P2 D-01 类型空间纪律，review #5 延期处置）。
+			if !cl.limiter.AllowN(time.Now(), len(data)-1) {
+				s.inputDrops.Add(1)
+				continue
+			}
+			// CR-01 完整背压修复（05-05，RESEARCH Pattern 8）：payload 入会话级
+			// inputQ，单 input-writer goroutine 独占 Master.Write——读循环零同步
+			// 写（本 case 的 s.sess.Master.Write 直写已删除；Phase 2 的 O_NONBLOCK
+			// 最小缓解从未落地且不再需要，master fd 保持默认阻塞模式——阻塞被关进
+			// 专属 goroutine，队列有界 + 丢弃即背压）。
+			if !s.inputQ.tryEnqueue(data[1:]) {
+				continue // 满则丢（droppedInputs 计数已在 tryEnqueue 内递增）；限速器在前，队列满本应罕见
+			}
 		case proto.Resize:
 			// D-09 第二闸：ro 端 RESIZE 服务端直接忽略（『P2 D-13 ro 放行 RESIZE 为单
 			// 客户端语境，已被 D-09 修订』逐字登记；第一闸 = 前端 ro 不发，05-08 落地）。
@@ -745,6 +790,10 @@ func (s *Server) lifecycle() {
 		code = ee.ExitCode()
 	}
 	s.sess.Drain(200 * time.Millisecond)
+	// input-writer 收口（05-05，CR-01 修复的生命周期半侧）：Drain→Close 已关闭
+	// master fd，在途 Master.Write 经 runtime poller 解除阻塞返回错误（与 Read
+	// 同机制，D-12 语义）；close(inputDone) 使 select 等待中的 inputWriter 退出。
+	close(s.inputDone)
 	// 广播 1000：hubMu 下取注册表快照后并行 Close 全部客户端（Close 自带 5s+5s
 	// 上界——close.go:87-89，并行等待自然有界）。广播期间新 attach 或断开的路径
 	// 均经 detach/reader 收口，不影响本快照的关闭语义；被关闭客户端的读循环随
