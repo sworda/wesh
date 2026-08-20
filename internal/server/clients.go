@@ -1,6 +1,12 @@
 // clients.go：多客户端注册表 + fan-out hub + 每客户端 outbox/writer（MULTI-01/03
 // 主干，CONTEXT domain 必然推论——P1 D-11 单次语义终结；RESEARCH Pattern 1/2/5
-// 定稿形态，P5-1 chunk 别名与 P5-2 踢出不内联两条红线纪律）。
+// 定稿形态，P5-1 chunk 别名与 P5-2 踢出不内联两条红线纪律）+ 全局信用门
+//（RES-04，RESEARCH Pattern 3：全体可写端 outbox 均满 → hub 持块停读 PTY，
+// 任一可写端 drain 至半水位恢复）。
+//
+// 锁序纪律（R-07）：hubMu > outboxMu——writer 持 outboxMu drain 期间绝不取 hubMu；
+// drain 完释放后才取 hubMu 做 afterDrain 恢复判定，绝不反序同持。信用门 cond
+// 挂 hubMu（信用门状态与注册表同锁），outbox 自有 mu。
 package server
 
 import (
@@ -49,6 +55,11 @@ type client struct {
 	outbox    *outbox
 	done      chan struct{}      // writer 终结信号——kick/detach 关闭，恰好一次由 hubMu 内注册表成员判定保证
 	cancel    context.CancelFunc // pinger 所在 ctx 的 cancel（Attach 派生，随客户端生命周期）
+
+	// creditBlocked 信用门阻塞位（hubMu 保护）：仅可写端参与信用集，ro 客户端
+	// 此位恒 false——ro 满即踢永不持信用（R-08 分工表）。kickOrCreditLocked 置位、
+	// afterDrain 清位，两点各递增 registry.gateTransitions。
+	creditBlocked bool
 }
 
 // outbox 是每客户端字节有界输出队列（RESEARCH Pattern 2 逐字形态）：存 hub 组好的
@@ -86,8 +97,9 @@ func (o *outbox) trySend(frame []byte) bool {
 	return true
 }
 
-// drain swap 出整队并重置字节计数（返回的 bytes 供 05-02 信用门半水位恢复判定，
-// 本 plan 调用方不使用）。
+// drain swap 出整队并重置字节计数。信用门半水位恢复判定（afterDrain）在写出成功
+// 后重新读当前字节——drain 返回的预重置计数不参与门判定（写出期间新入队的部分
+// 才是迟滞带语义的承载）。
 func (o *outbox) drain() (batch [][]byte, bytes int) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -105,6 +117,10 @@ type registry struct {
 	order []*client
 	seq   int64
 	kicks int // 1013 踢出计数（Phase 8 OPS-07 观测性挂点，review #10；hubMu 保护，单锁纪律 R-07 下无需 atomic）
+	// gateTransitions 信用门开闭周期计数（kickOrCreditLocked 置位 creditBlocked 与
+	// afterDrain 清位两点递增）：Phase 8 OPS-07 门开闭周期计数挂点（review #10）；
+	// hubMu 保护，零 atomic 不违 R-07 单锁纪律。
+	gateTransitions int
 }
 
 // registerLocked 登记新客户端：分配 attachSeq、入 set 与 FIFO order。
@@ -137,32 +153,114 @@ func (r *registry) removeLocked(c *client) bool {
 //
 // 别名红线（P5-1，pty/io.go:13-14 注释明示"onChunk 复用底层缓冲——回调方如需跨帧
 // 持有须自行拷贝"）：每 chunk 组帧一次（make+copy 是唯一拷贝点），全部客户端
-// outbox 共享该只读帧引用，逐客户端零拷贝；outbox 绝不直接存 chunk。05-02 信用门
-// 不变量（review #1）：门的 Wait 循环必须插入在下方组帧语句之前——门持块期间
-// chunk 停留于 ReadLoop 缓冲（阻塞即无下次读，无别名窗口），帧拷贝在门开之后发生。
+// outbox 共享该只读帧引用，逐客户端零拷贝；outbox 绝不直接存 chunk。
 //
-// 临界区只含非阻塞 trySend 遍历：无锁等待、cond 等待或逐客户端帧拷贝（单客户端
-// 内存与延迟形态与 Phase 4 等价）。
+// 代码顺序不变量（review #1，frame 别名安全双锁定之一）：门 Wait 循环必须位于
+// 组帧语句（make + copy 组共享帧）之前——门持块期间 chunk 停留于 ReadLoop 缓冲
+//（阻塞即无下次读，无别名窗口）；帧拷贝只发生在门开之后、trySend 之前，outbox
+// 绝无持有跨门 chunk 的窗口。
+//
+// 全局信用门（RES-04，RESEARCH Pattern 3）：全体可写端 creditBlocked → hub 在
+// hubCond 上 Wait——Wait 原子释放 hubMu；持块即停读 PTY，反压经 64KiB 内核缓冲
+// 传导至子进程 write（RES-04 唯一合法反压路径，ARCHITECTURE §2.6）。任一可写端
+// writer drain 至半水位 → afterDrain 清位 + Broadcast 恢复。
+//
+// 门之外的临界区只含非阻塞 trySend 遍历：无锁等待、cond 等待或逐客户端帧拷贝
+//（单客户端内存与延迟形态与 Phase 4 等价）。
 func (s *Server) onChunk(chunk []byte) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
+	for s.allWritableBlockedLocked() {
+		s.hubCond.Wait() // Wait 原子释放 hubMu；持块即停读 PTY（RES-04）；chunk 停留 ReadLoop 缓冲，无别名窗口（review #1）
+	}
 	frame := make([]byte, 1+len(chunk))
 	frame[0] = proto.Output
 	copy(frame[1:], chunk)
 	for c := range s.registry.set {
 		if !c.outbox.trySend(frame) {
-			s.kickSlowConsumerLocked(c)
+			s.kickOrCreditLocked(c)
 		}
+	}
+}
+
+// allWritableBlockedLocked 判定信用门是否应闭合（RESEARCH Pattern 3）：遍历注册表
+// 统计生效 mode==rw 的客户端；≥1 个且全部 creditBlocked → true；无可写端
+//（纯 ro 会话/无客户端）→ false（信用集为空 → 门永不闭合 → ro 满即踢，R-08
+// 分工表前提）。调用方必须已持 hubMu。O(n) 遍历每 chunk 一次，规模 ≤ max-clients
+// 32，可接受（review LOW 项登记）。
+func (s *Server) allWritableBlockedLocked() bool {
+	writable := 0
+	for c := range s.registry.set {
+		if c.mode != proto.ModeRW {
+			continue
+		}
+		writable++
+		if !c.creditBlocked {
+			return false
+		}
+	}
+	return writable > 0
+}
+
+// kickOrCreditLocked 是 trySend 写满后的踢出/信用分工判定（R-08 逐字）：
+//   - c.mode == ro → 立即 1013 踢出（旁观者可弃，永不持信用）；
+//   - c 为 rw 且剔除 c 后仍存在未 blocked 的可写端 → 立即 1013 踢出（慢的是
+//     离群者，MULTI-03 本义）；
+//   - c 为 rw 且全体可写端均满 → 不踢，置 c.creditBlocked = true（保护 owner
+//     演示者，离群慢端才踢；onChunk 下轮门判定闭合 → 持块停读 PTY）。
+//
+// 迟滞带论证（review #2）：门关闭阈值 = outbox 写满（100% 字节上界才置
+// creditBlocked）、恢复阈值 = drain 至 <50%——2:1 迟滞带内建于分工表，非
+//『50% 单点抖动』；残余振荡（滴漏读者每次 drain 开门、下一 chunk 可能再闭门）
+// 经 RESEARCH Open Question 3 裁决接受（各端持续前进；dwell 计时器 Phase 9
+// 负载标定时评估）。调用方必须已持 hubMu。
+func (s *Server) kickOrCreditLocked(c *client) {
+	if c.mode == proto.ModeRO {
+		s.kickSlowConsumerLocked(c)
+		return
+	}
+	// rw：剔除 c 后仍存在未 blocked 的可写端 → c 是离群慢端，立即踢出。
+	for oc := range s.registry.set {
+		if oc != c && oc.mode == proto.ModeRW && !oc.creditBlocked {
+			s.kickSlowConsumerLocked(c)
+			return
+		}
+	}
+	// 全体可写端均满 → 不踢，计入信用（保护 owner 演示者；幂等置位防重复计数）。
+	if !c.creditBlocked {
+		c.creditBlocked = true
+		s.registry.gateTransitions++ // Phase 8 OPS-07 门开闭周期计数挂点（review #10）
+	}
+}
+
+// afterDrain 在一次成功批量写出后做信用门恢复判定（R-01 半水位迟滞）：outbox 当前
+// 字节 < cap/2（半水位，defaultOutboxBytes 的 50% = 256KiB）且 c.creditBlocked →
+// 清位 + hubCond.Broadcast 开门。锁序 R-07：drain 完才取 hubMu（本函数），绝不
+// 反序同持；hubMu > outboxMu 的同序同持与 onChunk→trySend 同款。
+func (s *Server) afterDrain(c *client) {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	c.outbox.mu.Lock()
+	cur := c.outbox.bytes
+	c.outbox.mu.Unlock()
+	if cur < c.outbox.cap/2 && c.creditBlocked {
+		c.creditBlocked = false
+		s.registry.gateTransitions++ // Phase 8 OPS-07 门开闭周期计数挂点（review #10）
+		s.hubCond.Broadcast()
 	}
 }
 
 // kickSlowConsumerLocked 踢出 outbox 写满的客户端（R-10 命名族）：注册表同步移除
 // + close(done)/cancel（均非阻塞）+ logEvent + 异步 Close。调用方必须已持 hubMu。
+// 踢出/信用的分工判定在 kickOrCreditLocked（R-08），本函数只执行踢出。
 //
 // Close 永不内联（P5-2）：Close 对 stall 客户端最长阻塞 ~10s（close.go:87-89，
 // 5s 写超时 + 5s 等对端关闭帧），内联会把行头阻塞还魂；Close 幂等且完成后解除
 // 全部 goroutine 阻塞（close.go:92-96），被踢客户端卡死的 writer/reader 随其收口。
 // 踢出即唯一处置——绝不丢帧保连接（must_haves prohibitions）。
+//
+// 移除后 hubCond.Broadcast（P5-7 统一挂点）：踢出改变可写端信用集构成，等待中的
+// 信用门必须重估（死锁免除链路——detach/kick/attach/子进程退出四处统一 Broadcast）。
 func (s *Server) kickSlowConsumerLocked(c *client) {
 	if !s.registry.removeLocked(c) {
 		return // 已被 detach 移除（防御幂等；hubMu 下正常不会发生）
@@ -171,6 +269,7 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	c.cancel()
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
 	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer")
+	s.hubCond.Broadcast() // P5-7 统一挂点：kick 后门重估
 	go func() {
 		_ = c.conn.Close(websocket.StatusTryAgainLater, "slow_consumer")
 	}()
@@ -212,6 +311,9 @@ func (s *Server) writer(c *client) {
 			}
 			i = j
 		}
+		// 整批写出成功 → 信用门恢复判定（R-01 半水位；R-07 锁序：drain/写出完才取
+		// hubMu，绝不反序同持）。写失败路径已 return，不触达本行。
+		s.afterDrain(c)
 	}
 }
 
@@ -219,6 +321,11 @@ func (s *Server) writer(c *client) {
 // cancel pinger ctx。不进 exitf、不发任何信号——多客户端必然推论（CONTEXT
 // domain：P1 D-11 单次语义终结；服务端生命周期只随子进程，无客户端时子进程
 // 继续运行且新客户端仍可 attach）。
+//
+// 移除后 hubCond.Broadcast（P5-7 统一挂点）：信用门闭合期间的可写端死亡是本路径
+// 收口——注册表移除使门重估（全体可写端消失或被移出 → 门开），是死锁免除链路
+// 的必经环节（review #2 dead-owner 场景：门闭合期间一端 CloseNow → 本路径 →
+// 门有界重开）。
 func (s *Server) detach(c *client) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
@@ -227,4 +334,5 @@ func (s *Server) detach(c *client) {
 	}
 	close(c.done)
 	c.cancel()
+	s.hubCond.Broadcast() // P5-7 统一挂点：detach 后门重估
 }

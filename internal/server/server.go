@@ -62,7 +62,11 @@ type Server struct {
 
 	// hubMu 护注册表与 hub 临界区（R-07 单锁纪律；锁序 hubMu > outbox.mu——
 	// writer drain 不持 hubMu，绝不反序同持）。registry 结构见 clients.go。
+	// hubCond 为全局信用门 cond（RES-04）：挂 hubMu——信用门状态与注册表同锁
+	//（R-07），New 内以 &s.hubMu 构造；Wait 原子释放 hubMu，故门闭合期间
+	// detach/kick/attach/lifecycle 均可获锁做门重估（P5-7 死锁免除链路）。
 	hubMu    sync.Mutex
+	hubCond  *sync.Cond
 	registry registry
 
 	// 多客户端参数（New 装配期固化、运行期只读；零值兜底见 New，默认常量声明
@@ -202,6 +206,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		s.tickets = newTicketStore(opts.TicketTTL)
 		s.throttle = newThrottleStore(opts.ThrottleBase, opts.ThrottleCap)
 	}
+	// 信用门 cond 挂 hubMu（R-07：信用门状态与注册表同锁；构造必须在 goroutine
+	// 启动前——onChunk 的 Wait 与 detach/kick 的 Broadcast 均以它为挂点）。
+	s.hubCond = sync.NewCond(&s.hubMu)
 	go sess.ReadLoop(s.onChunk)
 	go s.lifecycle()
 	return s
@@ -484,6 +491,9 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		cl.outbox.trySend(proto.WelcomeFrame(mode, s.clientPrefs))
 		s.hubMu.Lock()
 		s.registry.registerLocked(cl)
+		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
+		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
+		s.hubCond.Broadcast()
 		s.hubMu.Unlock()
 		c.SetReadLimit(proto.ReadLimitPostAuth)
 		// writer 是该连接全程唯一 WS 写端（clients.go）；pinger 保活（D-16）挂
@@ -688,6 +698,11 @@ func (s *Server) lifecycle() {
 		}()
 	}
 	wg.Wait()
+	// P5-7 统一挂点：lifecycle 广播关闭后补 Broadcast——被关闭客户端的 detach 已
+	// 各自重估门，此处兜底（注册表空 → 门开 → ReadLoop 续 drain，D-12 语义不变）。
+	s.hubMu.Lock()
+	s.hubCond.Broadcast()
+	s.hubMu.Unlock()
 	s.terminate(code)
 }
 
