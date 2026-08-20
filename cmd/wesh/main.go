@@ -216,6 +216,49 @@ func isLoopbackBind(bind string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// outboundIPv4 取本机出站 IPv4（05-06 分享链接 host 回填，D-04/R-04，RESEARCH
+// Pattern 7 形态）：UDP-dial 路由感知优先——net.Dial("udp", "192.0.2.1:80")
+// （RFC 5737 TEST-NET-1 文档地址；UDP dial 无握手零流量，仅让内核按路由表选出
+// 站接口的本地地址——结构性避开 docker0/bridge：朴素接口扫描在多 docker 桥接口
+// 机器上必中 docker0，2026-08-19 本机实证）；失败 fallback net.Interfaces()
+// 索引序首个 up && !loopback 接口的首个 IPv4；全失败返回 ""（调用方兜底打印
+// bind 原样，不阻断启动——失败退化为次优展示地址而非功能故障，operator 可从
+// listening on 行获得真实地址）。
+func outboundIPv4() string {
+	if conn, err := net.Dial("udp", "192.0.2.1:80"); err == nil { // RFC 5737，永不真实路由
+		defer conn.Close()
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			if ip4 := addr.IP.To4(); ip4 != nil {
+				return ip4.String()
+			}
+		}
+	}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, ifa := range ifaces {
+			if ifa.Flags&net.FlagUp == 0 || ifa.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := ifa.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				var ip net.IP
+				switch v := a.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip4 := ip.To4(); ip4 != nil {
+					return ip4.String()
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // validateStartup 是 D-03/D-05 启动校验矩阵（RESEARCH Pattern 7 八行）的纯函数
 // 落地——无任何副作用（禁止 listen/spawn/写文件），必须先于 pty.Start/net.Listen
 // 执行：拒绝路径零资源占用，测试不挂死（main_test.go captureFd 纪律）。
@@ -316,6 +359,28 @@ func run(args []string) int {
 		scheme = "https"
 	}
 	fmt.Printf("listening on %s://%s\n", scheme, ln.Addr())
+	// MULTI-05 分享链接两行（05-06，D-03/D-04/D-05）：启动打印是产品行为
+	// （MULTI-05 明确授权），token 永不入 logEvent/stderr 事件流（D-03 红线——
+	// 这两处 stdout Printf 与 URL 路径本身是 token 的全部合法输出面）。
+	// host 回填（D-04/R-04）：bind 为全网卡形态（0.0.0.0/::/空串）→ outboundIPv4
+	// 路由感知回填（空则兜底 bind 原样，不阻断启动）；具体 bind 原样使用
+	// （loopback bind 打印 loopback——链接本机自用）；端口取 ln.Addr() 实际值
+	// （--port 0 随机端口形态，D-06）；scheme 随 TLS 分岔（上方既有分支）。
+	// rw 行仅 --writable 时打印（D-05 总闸——不给 --writable 只打印 ro 行）。
+	shareHost := cfg.bind
+	if cfg.bind == "" || cfg.bind == "0.0.0.0" || cfg.bind == "::" {
+		if ip := outboundIPv4(); ip != "" {
+			shareHost = ip
+		}
+	}
+	sharePort := cfg.port
+	if ta, ok := ln.Addr().(*net.TCPAddr); ok {
+		sharePort = ta.Port
+	}
+	fmt.Printf("share read-only:  %s://%s/s/%s/\n", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), shareRO)
+	if cfg.writable {
+		fmt.Printf("share read-write: %s://%s/s/%s/\n", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), shareRW)
+	}
 	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与
 	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
 	// WS 长连接语义（升级后的连接读写在握手后长期空闲/突发均属正常）。
