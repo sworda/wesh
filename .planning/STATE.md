@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-08-20T08:10:15.152Z"
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-08-20T09:37:01.591Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 33
-  completed_plans: 25
+  completed_plans: 26
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 2 of 9
+Plan: 3 of 9
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [████████░░] 76%
+Progress: [████████░░] 79%
 
 ## Performance Metrics
 
@@ -85,6 +85,7 @@ Progress: [████████░░] 76%
 | Phase 04 P05 | 14min | 3 tasks | 4 files |
 | Phase 04 P06 | 5h 57m | 2 tasks | 2 files |
 | Phase 05 P01 | 1h 0m | 2 tasks tasks | 9 files files |
+| Phase 05 P02 | 1h 17m | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -139,6 +140,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-01]: writer 合并形态取 ARCHITECTURE §2.5『合并成单帧』本意——同类型连续段合并（类型字节一次+载荷拼接），1 WS 消息=1 帧不变、前端零改动；plan 字面 bytes.Join 会把内嵌类型字节写进终端流（TestReadLimitBoundary 实测溢出）
 - [Phase ?]: [Phase 05-01]: 五默认常量声明落 clients.go，server.go New 零值兜底逐字段引用——同时满足验收 grep ==5 与 HelloTimeout 先例形态
 - [Phase ?]: [Phase 05-01]: stderr 捕获类测试改用 startTrackedServerWith——waitExit 消亡后 restore() 与 logEvent 读 os.Stderr 无同步边（-race 实测），WaitGroup happens-before 替代
+- [Phase ?]: [Phase 05-02]: kick 路径 cancel 推迟到异步 Close 落定后（Close 先赢 casClosing）——05-01 同步 cancel 使 defer CloseNow 先硬关 TCP，1013 关闭帧对 stall 端永不可达（实测只见 EOF）
+- [Phase ?]: [Phase 05-02]: 信用路径触发帧暂存 creditPending + afterDrain 清位前重投——trySend 失败即置位会丢当前帧，违反 plan 自身『禁止丢帧保连接』prohibition（字节精确断言实测抓到缺 1 帧）
+- [Phase ?]: [Phase 05-02]: 背压测试参数推导——OutboxBytes 64KiB（cap ≥ 2×maxChunk 下限，plan 示例 8KiB 使整帧 trySend 恒败）；洪水 38.9/30.9MB（> loopback 实测吸收 wmem 4MiB+rmem 6MiB）；测试客户端 SetReadLimit 4MiB（合并段超 Go 库默认 32KiB 触发 1009）
 
 ### Pending Todos
 
@@ -157,6 +161,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T08:10:15.131Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-08-20T09:37:01.572Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None

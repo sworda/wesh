@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 5
+open_count: 6
 waived_count: 0
 fixed_count: 1
-total_count: 6
-last_updated: 2026-08-18T16:20:13.593Z
+total_count: 7
+last_updated: 2026-08-20T09:37:49.973Z
 ---
 
 # Broken Windows Ledger
@@ -21,6 +21,7 @@ last_updated: 2026-08-18T16:20:13.593Z
 | 4 | 02 | deviation | internal/server/limits_test.go |  | TestReadLimitBoundary 载荷 zeros→'A'（PTY ECHOCTL 实测 2× 回显失真） | open |  | 2026-08-15T09:18:23.988Z |  |
 | 5 | 03 | deviation | internal/server/server.go |  | 03-03: ServeMux 405 被 / 子树吞掉，补显式同文 fallback（已修复并验证） | open |  | 2026-08-17T08:48:16.807Z |  |
 | 6 | 04 | deviation | web/pnpm-workspace.yaml |  | pnpm.overrides 机制迁移：package.json pnpm 字段 → pnpm-workspace.yaml（pnpm 11 不读前者） | fixed |  | 2026-08-18T16:18:48.026Z | 2026-08-18T16:20:13.593Z |
+| 7 | 05 | stub | internal/server/clients.go |  | registry.gateTransitions 门开闭周期计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T09:37:49.973Z |  |
 
 ````json
 [
@@ -95,6 +96,18 @@ last_updated: 2026-08-18T16:20:13.593Z
     "reason": "",
     "recorded_at": "2026-08-18T16:18:48.026Z",
     "resolved_at": "2026-08-18T16:20:13.593Z"
+  },
+  {
+    "id": 7,
+    "kind": "stub",
+    "phase": "05",
+    "file": "internal/server/clients.go",
+    "line": null,
+    "description": "registry.gateTransitions 门开闭周期计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-20T09:37:49.973Z",
+    "resolved_at": null
   }
 ]
 ````
