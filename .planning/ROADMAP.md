@@ -175,7 +175,43 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 一个客户端停止读取 TCP 流时其他客户端无卡顿：慢客户端 outbox 写满被 1013 踢出，重连后从最新输出看起；PTY 读循环永不因任何客户端阻塞
   3. 异尺寸两客户端按最小公共矩形 `min(cols)×min(rows)` 渲染，2→1 时恢复 last-wins；启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
 
-**Plans**: TBD
+**Plans**: 9 plans
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — tracer：多客户端 fan-out 主干（clients.go 注册表/hub/outbox/writer + 409 门拆除 + 生命周期改造断开不退出/子进程退出广播 1000）+ e2e 单次语义迁移 + TestMultiClientFanout/TestDetach/TestExitBroadcast（MULTI-01）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 05-02-PLAN.md — 全局信用门（全体可写端满停读 PTY/半水位恢复/统一 Broadcast）+ D-11 SIGWINCH 新客重绘 + TestSlowConsumerKick/TestGlobalCredit（MULTI-03/RES-04）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 05-03-PLAN.md — 写权限体系：--write-policy=owner|all + owner FIFO 递补 + 降级/升格 Welcome + prefs 双档 osc52（含 D-05 one-way 确认门）+ 权限测试组（MULTI-02）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 05-04-PLAN.md — resize 仲裁器：arbitrate 纯函数 + D-09 参与集分层 + 50ms 防抖 + ro 忽略闸 + TestArbitrate/TestResizeArbitration（MULTI-04）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 05-05-PLAN.md — RES-02 输入限速（x/time/rate 超限丢弃）+ CR-01 完整背压（256KiB 输入队列 + input-writer 独占 Master.Write）+ TestInputRateLimit（RES-02）
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 05-06-PLAN.md — 分享链接：shareTokens 两条目 store + /s/{token}/ 门禁 + attach token 分支 + 启动打印两行 + outboundIPv4（含 D-01/D-03 one-way 确认门）+ TestShareToken（MULTI-05）
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 05-07-PLAN.md — --max-clients（默认 32）+ ③位 503 闸 + /api/attach 早闸（含 D-08 one-way 确认门）+ TestMaxClients503（RES-03）
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 05-08-PLAN.md — 前端：/s/ token 进入 + 响应分派矩阵 + 1013/503/无效链接三专版 + 文案清扫 R1-R3 + 升格 rw 分支 + ro 不发 RESIZE + OSC52 门闩 + dist 重建（MULTI-02/03/04/05）
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [ ] 05-09-PLAN.md — 收口：phase05.mjs 协议 UAT（链接全链/双客户端一致/满员 503）+ phase02/03.mjs 生命周期适配 + README 多客户端节（含反代脱敏建议）+ 全量六段式（MULTI-01/03/05/RES-03）
+
 **UI hint**: yes
 **Research flag**: outbox 容量/水位/strikes 默认参数需负载测试标定（可在执行中以测试任务消化，Phase 9 回填）。**resize 仲裁分歧已闭合**：以需求 MULTI-04 为准——所有模式下 ≥2 客户端一律最小公共矩形；ARCHITECTURE.md §2.9 "owner 模式跟随 owner 尺寸"表述作废。
 
@@ -246,7 +282,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
-| 5. 多客户端共享 | TBD | Not started | - |
+| 5. 多客户端共享 | 0/9 | Planned | - |
 | 6. 会话生命周期与重连 | TBD | Not started | - |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |
