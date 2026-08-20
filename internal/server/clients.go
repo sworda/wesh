@@ -41,8 +41,7 @@ const (
 	defaultInputBurst = 64 * 1024
 	// defaultResizeDebounce resize 仲裁防抖默认值（50ms，CONTEXT 已锁定；
 	// PITFALLS Pitfall 10 SIGWINCH 风暴防线）。Phase 9 负载测试标定回填
-	//（P2 D-10 纪律）。本 plan 仅立字段与常量，消费点（仲裁器单 time.Timer
-	// reset）05-04 落地。
+	//（P2 D-10 纪律）。消费点 = resize.go 仲裁器单 time.Timer reset（05-04 已落地）。
 	defaultResizeDebounce = 50 * time.Millisecond
 )
 
@@ -72,6 +71,12 @@ type client struct {
 	// 即可被递补）；ro ticket 与 all 模式恒 false（ro 永不递补；all 无递补概念）。
 	// 升档时写入后运行期只读（promoteNextLocked 保留其值），plain 字段。
 	rwEligible bool
+
+	// dims 客户端最近登记尺寸（Hello 首尺寸登记，升档时写入后运行期不再更新——
+	// 参与集成员的最新尺寸由 arbiter.sizes 承载，本字段只服务递补升格时新 owner
+	// 的参与集切换：D-09「递补后新 owner 尺寸接管」）。plain 字段，读取恒在
+	// hubMu 内（promoteNextLocked 调用点）。
+	dims dims
 
 	attachSeq int64 // attach FIFO 序号（registerLocked 分配；05-03 owner 递补取序）
 	outbox    *outbox
@@ -362,6 +367,11 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	close(c.done)
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
 	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer")
+	// arbiter 参与集移除 + 即时重算（05-04，D-09）：all 模式被踢的 rw 端是参与集
+	// 成员——滞留 sizes 则其陈旧尺寸永久拖累 min-rect（幽灵成员把 PTY 压在离群者
+	// 小窗口）；owner 模式被踢者为 ro 旁观者（非成员，removeMember 幂等 no-op）。
+	s.removeMember(c)
+	s.recalcNow()
 	// review #3 时序闭合（第二调用点）：被踢的若是 owner，晋升在异步 go Close
 	// 之前、同一 hubMu 持有内同步完成——见 promoteNextLocked 注释。
 	if s.registry.owner == c {
@@ -389,8 +399,9 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 // 通知的 owner（T-05-08 权限真空防线；该端下一轮 onChunk 本就必被踢，此处只是
 // 提前一拍收口）。
 //
-// 仲裁参与集切换挂点（05-04 resize.go 落地）：owner 模式下仅 owner 尺寸参与仲裁
-//（D-09）——升格后新 owner 尺寸接管，挂点登记于此。
+// 仲裁参与集切换（05-04 resize.go 已落地）：owner 模式下仅 owner 尺寸参与仲裁
+//（D-09）——升格后 addMember(新 owner, Hello 登记尺寸) + recalcNow 即时重算，
+// 新 owner 尺寸接管。
 //
 // 调用时序闭合（review #3）：本函数在 detach 与 kickSlowConsumerLocked 两路径的
 // removeLocked 之后同步调用（同一 hubMu 持有内、异步 go Close 之前）——晋升恒在
@@ -417,7 +428,13 @@ func (s *Server) promoteNextLocked() {
 		}
 		s.registry.owner = cand
 		cand.mode.Store(proto.ModeRW) // ro→rw 升格翻转（atomic 承载：INPUT 门无锁读者）
-		s.hubCond.Broadcast()         // P5-7 升格挂点：新 rw 端进信用集
+		// arbiter 参与集切换（05-04，D-09：owner 模式仅 owner 尺寸参与——sizes
+		// 只保留新 owner；旧 owner 已在 detach/kick 的 removeMember 完成移除，
+		// 递补链上被同义踢出的候选亦非成员，此处 addMember 后 sizes 恒为
+		// {新 owner} 单员）+ 即时重算不防抖——递补后新 owner 尺寸接管。
+		s.addMember(cand, cand.dims)
+		s.recalcNow()
+		s.hubCond.Broadcast() // P5-7 升格挂点：新 rw 端进信用集
 		return
 	}
 }
@@ -481,6 +498,11 @@ func (s *Server) detach(c *client) {
 	}
 	close(c.done)
 	c.cancel()
+	// arbiter 参与集移除 + 即时重算（05-04，D-09，不防抖——参与集收缩立即反映，
+	// all 模式 2→1 恢复剩余者 last-wins；非成员幂等 no-op，0 人时 arbitrate
+	// 零值哨兵不动 PTY 保持现状）。
+	s.removeMember(c)
+	s.recalcNow()
 	// review #3 时序闭合（第一调用点）：断开的若是 owner，FIFO 递补晋升在同一
 	// hubMu 持有内同步完成——晋升必然先于该 owner 任何重连的 registerLocked。
 	if s.registry.owner == c {

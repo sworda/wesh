@@ -76,10 +76,16 @@ type Server struct {
 	hubCond  *sync.Cond
 	registry registry
 
+	// arbiter 为 MULTI-04 resize 仲裁器（05-04，D-09 参与集分层 + 50ms 防抖 +
+	// 即时重算双通道）：sizes 仅参与集成员（owner 模式仅 owner / all 模式全部
+	// rw 端 / 纯 ro 会话全部 ro 端 Hello 首尺寸），结构与方法见 resize.go。
+	// 全部字段 hubMu 保护（注册表同锁 R-07）；timer 回调自有 goroutine 取 hubMu。
+	arbiter arbiter
+
 	// 多客户端参数（New 装配期固化、运行期只读；零值兜底见 New，默认常量声明
-	// 在 clients.go 并挂 Phase 9 标定注释）：outboxBytes 本 plan 消费（outbox
-	// 字节容量）；maxClients/inputRate/inputBurst/resizeDebounce 本 plan 仅立
-	// 字段，消费点分别在 05-07（503 闸）/05-05（INPUT 限速）/05-04（仲裁防抖）。
+	// 在 clients.go 并挂 Phase 9 标定注释）：outboxBytes/resizeDebounce 已消费
+	//（outbox 字节容量 / resize.go 仲裁器防抖 reset，05-04）；maxClients/
+	// inputRate/inputBurst 仅立字段，消费点分别在 05-07（503 闸）/05-05（INPUT 限速）。
 	outboxBytes    int
 	maxClients     int
 	inputRate      int
@@ -111,8 +117,8 @@ type Server struct {
 // Welcome 必携 ClientPrefsRW——ro 档永不含 osc52 键，即使全局 --osc52 开启）。
 // Phase 5 新增：OutboxBytes/MaxClients/InputRate/InputBurst/ResizeDebounce 为
 // 测试可覆写字段（HelloTimeout 先例形态——零值各取默认常量，常量声明与 Phase 9
-// 负载标定回填注释见 clients.go）；MaxClients/InputRate/InputBurst/ResizeDebounce
-// 本 plan 仅立字段，消费点分别在 05-07/05-05/05-04。
+// 负载标定回填注释见 clients.go）；ResizeDebounce 消费点 = resize.go 仲裁器
+// 防抖（05-04 已落地），MaxClients/InputRate/InputBurst 消费点在 05-07/05-05。
 // 05-03 新增：WritePolicy 为生产直传字段（main --write-policy flag 原样透传，
 // D-05；零值兜底 WritePolicyOwner——安全默认；取值常量见 clients.go）。
 type Options struct {
@@ -228,6 +234,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// 信用门 cond 挂 hubMu（R-07：信用门状态与注册表同锁；构造必须在 goroutine
 	// 启动前——onChunk 的 Wait 与 detach/kick 的 Broadcast 均以它为挂点）。
 	s.hubCond = sync.NewCond(&s.hubMu)
+	// MULTI-04 仲裁器装配（resize.go）：timer 初始化为 stopped 态——首次
+	// reportResize 的 Reset 才武装；必须在 ReadLoop/lifecycle 启动前完成。
+	s.initArbiter()
 	go sess.ReadLoop(s.onChunk)
 	go s.lifecycle()
 	return s
@@ -481,22 +490,23 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 	} else {
-		// 升档序列（顺序敏感，PATTERNS 注意 5/6）：停 5s 计时器 → Hello 携首尺寸
-		// Resize（消除 80x24 首帧窗口；多客户端仲裁与 ro 忽略闸 05-04 落地，本 plan
-		// 为 last-wins 延续）→ per-IP release（Hello 完成即不计半开，
-		// D-04：NAT 场景正常浏览器不受限）→ hubMu 内：模式判定矩阵（ticket 绑定
-		// mode × --writable × write-policy × owner 在位 → 生效 mode + rwEligible
-		// + 是否立 owner，clients.go decideModeLocked；ticket 绑定值 = 认证模式
-		// checkTicket 核销返回（D-11），无认证模式为其 s.writable 派生值）→
-		// 构造 client → Welcome 帧按生效 mode 与 prefs 双档选档（P4 D-13 空则不
-		// 出键——旧前端零漂移；05-03 D-13：ro 档永不含 osc52）经 outbox 首条入队
-		// → 注册表登记（+ owner 指针登记）→ 16KiB 稳态档（SetReadLimit 经库
-		// atomic store 下一条消息起生效，read.go:97-105）→ writer + pinger 启动。
+		// 升档序列（顺序敏感，PATTERNS 注意 5/6）：停 5s 计时器 → per-IP release
+		//（Hello 完成即不计半开，D-04：NAT 场景正常浏览器不受限）→ hubMu 内：
+		// 模式判定矩阵（ticket 绑定 mode × --writable × write-policy × owner 在位
+		// → 生效 mode + rwEligible + 是否立 owner，clients.go decideModeLocked；
+		// ticket 绑定值 = 认证模式 checkTicket 核销返回（D-11），无认证模式为其
+		// s.writable 派生值）→ 构造 client（Hello 首尺寸登记 dims 字段——递补升格
+		// 时新 owner 参与集切换的尺寸来源）→ Welcome 帧按生效 mode 与 prefs 双档
+		// 选档（P4 D-13 空则不出键——旧前端零漂移；05-03 D-13：ro 档永不含 osc52）
+		// 经 outbox 首条入队 → 注册表登记（+ owner 指针登记）→ Hello 首尺寸按
+		// D-09 参与集规则入 arbiter 并即时重算（05-04：消除 80x24 首帧窗口——
+		// 参与集 attach 即时重算不防抖，新 owner/新 rw 端立即参与仲裁；ro 旁观者
+		// 不参与、不重算）→ 16KiB 稳态档（SetReadLimit 经库 atomic store 下一条
+		// 消息起生效，read.go:97-105）→ writer + pinger 启动。
 		// 注册刻意在握手完成后才发生：此前 OUTPUT 一律经 hub 空扇出丢弃——
 		// Welcome 恒为 S→C 首帧（writer 全程唯一写端，FIFO 保证首帧无时序竞态，
 		// P2 D-02 时序纪律），且未认证客户端在预认证窗口内收不到任何 PTY 输出。
 		close(helloDone)
-		s.sess.Resize(h.Cols, h.Rows)
 		release()
 		s.hubMu.Lock()
 		effMode, rwEligible, becomeOwner := s.decideModeLocked(mode)
@@ -504,6 +514,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			conn:       c,
 			remote:     remote,
 			rwEligible: rwEligible,
+			dims:       dims{cols: h.Cols, rows: h.Rows}, // Hello 首尺寸（DecodeHello 已 ClampDim）
 			outbox:     newOutbox(s.outboxBytes),
 			done:       make(chan struct{}),
 			cancel:     cancel,
@@ -522,6 +533,15 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		s.registry.registerLocked(cl)
 		if becomeOwner {
 			s.registry.owner = cl // D-06：首个 rw attach 立 owner
+		}
+		// D-09 参与集登记（resize.go participates 矩阵逐字）：rw 端（owner 模式
+		// 仅 owner / all 模式全部 rw 端）与无 --writable 纯 ro 会话的全部 ro 端
+		// 以 Hello 首尺寸参与仲裁；含可写端会话的 ro 旁观者不参与（其 RESIZE 经
+		// D-09 第二闸忽略，尺寸永不影响可写端 PTY 尺寸）。attach 即时重算不防抖
+		//（RESEARCH Pattern 4：无风暴风险）；旁观者 attach 不改变参与集，不重算。
+		if s.participates(effMode) {
+			s.addMember(cl, cl.dims)
+			s.recalcNow()
 		}
 		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
@@ -574,11 +594,18 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			}
 			s.sess.Master.Write(data[1:]) // 直写本 plan 保持（CR-01 输入队列在 05-05）
 		case proto.Resize:
+			// D-09 第二闸：ro 端 RESIZE 服务端直接忽略（『P2 D-13 ro 放行 RESIZE 为单
+			// 客户端语境，已被 D-09 修订』逐字登记；第一闸 = 前端 ro 不发，05-08 落地）。
+			if cl == nil || cl.mode.Load() == proto.ModeRO {
+				continue // 旁观者永不影响可写端 PTY 尺寸；cl == nil 为握手违规落入路径，同形静默丢
+			}
 			// JSON 解码失败静默丢弃（不关连接）；成功时已钳制 [1,1000]（D-16）。
-			// 多客户端仲裁与 ro 忽略闸在 05-04 落地，本 plan 为 last-wins 延续
-			//（D-13 单客户端语境的 ro 放行语义）。
+			// rw 端上报入 arbiter（hubMu 内：sizes 更新 + 50ms 防抖 reset——
+			// 到期重算，目标尺寸变化才 sess.Resize，resize.go reportResize）。
 			if cols, rows, ok := proto.DecodeResize(data[1:]); ok {
-				s.sess.Resize(cols, rows)
+				s.hubMu.Lock()
+				s.reportResize(cl, cols, rows)
+				s.hubMu.Unlock()
 			}
 		default:
 			_ = c.Close(websocket.StatusProtocolError, "unknown frame type") // 1002，协议演化无歧义
