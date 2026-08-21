@@ -353,6 +353,10 @@ async function connect(): Promise<void> {
   opened = false;
   helloSent = false;
   lastError = null;
+  // isRO/welcomeDone 同属 per-connection（IN-01 防漂移登记，Phase 6 自动重连落地前提）；
+  // osc52Loaded/retriedAuth 为页面级门闩，刻意不重置
+  isRO = false;
+  welcomeDone = false;
 
   // ^/s/{token}/$ 提取（无尾斜杠由服务端 301 补斜杠，前端无需兼容——05 R-05）；
   // 前端不解析不分支 token 种类——ro/rw 判定唯一来源是 Welcome.mode（05 D-01）
