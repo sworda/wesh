@@ -101,11 +101,11 @@ ExecStart=/usr/local/bin/wesh --tls-cert /etc/wesh/cert.pem --tls-key /etc/wesh/
 - **辅助交互**：resize 期间右上角显示 `COLSxROWS` 浮层、离开页面前浏览器标准确认框拦截（均默认开；经 `--client-option resizeOverlay=false` / `confirmBeforeUnload=false` 或同名 URL query 关闭）。
 - **偏好下发与覆盖**：上表白名单键可经 `--client-option` 下发；URL query 同键覆盖（如 `?fontSize=16&cursorBlink=false`，字符串值需 JSON 引号并 URL 编码）；优先级 URL query > `--client-option` > 内置默认；`theme` 为完整 JSON 对象，未指定的色键保留内置调色板；非法 query 静默忽略（终端不受影响）。
 
-**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw","prefs":{...}?}`（`prefs` 为可选键）。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
+**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；分享 token 通道（含无认证模式）Hello 同样携 ticket——token 经 `/api/attach` 换一次性 ticket 后随 Hello 核销；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw","prefs":{...}?}`（`prefs` 为可选键）。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
 
 | 类型字节 | 含义 | 载荷 |
 |----------|------|------|
-| `'H'` | Hello（C→S，必须为首帧） | JSON `{"version":"wesh.v1","cols":N,"rows":N,"ticket":"..."?}`（ticket 可选，仅认证模式） |
+| `'H'` | Hello（C→S，必须为首帧） | JSON `{"version":"wesh.v1","cols":N,"rows":N,"ticket":"..."?}`（ticket 可选，认证模式或分享 token 通道携带） |
 | `'W'` | Welcome（S→C，握手成功） | JSON `{"mode":"ro"\|"rw","prefs":{...}?}`（`prefs` 可选——`--client-option`/`--osc52` 下发时携带，无配置时该键缺席） |
 | `'E'` | Error（S→C） | JSON `{"code":"...","message":"..."}` |
 | `'0'` | INPUT（C→S）/ OUTPUT（S→C） | 原始字节 |
@@ -192,7 +192,7 @@ location /s/ {
 
 ### 容量（--max-clients）
 
-`--max-clients` 默认 32；满员时新客户端在 `/api/attach` 与 WS 握手两处收到 503（前端显示 Server is full 面板），槽位随断开/踢出释放。计数口径为注册成功后计数——**并发握手瞬时超编 ≤8**（容量策略非安全边界，per-IP 半开帽为界）。
+`--max-clients` 默认 32；满员时新客户端在 `/api/attach` 与 WS 握手两处收到 503（前端显示 Server is full 面板），槽位随断开/踢出释放。计数口径为注册成功后计数——**单源 IP 瞬时超编 ≤ per-IP 半开帽（默认 8）**（容量策略非安全边界）。
 
 ### 默认参数与 Phase 9 标定
 
