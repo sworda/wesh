@@ -545,12 +545,45 @@ func (s *Server) promoteNextLocked() {
 	}
 }
 
+// mergeBatch 把 drain 出的整批帧折叠为待写消息序列（ARCHITECTURE §2.5 写合并）：
+// 同类型连续段合并成单条消息 = 类型字节一次 + 载荷顺序拼接，减少帧数与小包。
+//
+// 合并仅限 OUTPUT 数据帧（WR-02）：合并后 OUTPUT 字节流与逐帧接收完全相同
+//（有序 delta 流语义不变，前端 buf[0] 分派零改动，must_have「扇出对前端透明」）。
+// 控制帧（W/E）恒单发——其载荷是独立 JSON 文档，拼接产物（W{...}{...}）前端
+// JSON.parse 抛错整帧丢弃（main.ts "discard malformed WELCOME"）。可达时序：
+// attach Welcome 先入队（server.go 升档，hubMu 内），go writer 在 hubMu 释放后
+// 才启动；间隙内 owner reader 终结 → detach → promoteNextLocked 命中同端 →
+// 第二帧（升格 rw）Welcome 入队同一 outbox——静默 shell 无输出时批内即
+// [W1(ro), W2(rw)] 相邻，合并将使被升格端丢失该 Welcome 的全部应用（prefs
+// 不应用、welcomeDone 永不置位）。
+// 单帧零拷贝直写（共享帧只读纪律不受影响）；合并帧先拷贝再拼接（防共享帧原地
+// append，P5-1）。
+func mergeBatch(batch [][]byte) [][]byte {
+	var msgs [][]byte
+	for i := 0; i < len(batch); {
+		j := i + 1
+		for j < len(batch) && len(batch[j]) > 0 && batch[j][0] == batch[i][0] && batch[i][0] == proto.Output {
+			j++
+		}
+		msg := batch[i] // 单帧零拷贝直写（共享帧只读纪律不受影响）
+		if j > i+1 {
+			msg = append([]byte(nil), batch[i]...) // 拷贝防共享帧原地 append（P5-1）
+			for k := i + 1; k < j; k++ {
+				msg = append(msg, batch[k][1:]...)
+			}
+		}
+		msgs = append(msgs, msg)
+		i = j
+	}
+	return msgs
+}
+
 // writer 是每客户端专属 WS 写端 goroutine（pinger 装配先例，server.go 既有
-// per-conn goroutine 模式）：阻塞消费 notEmpty 信号，drain 整队后按同类型连续段
-// 合并写出（ARCHITECTURE §2.5 写合并——合并成单帧 = 类型字节一次 + 载荷顺序拼接，
-// 减少帧数与小包）。1 WS 消息 = 1 帧的线上纪律不变（前端 buf[0] 分派零改动，
-// must_have「扇出对前端透明」），合并后 OUTPUT 字节流与逐帧接收完全相同（有序
-// delta 流语义不变）。
+// per-conn goroutine 模式）：阻塞消费 notEmpty 信号，drain 整队后经 mergeBatch
+// 折叠写出（ARCHITECTURE §2.5 写合并——合并仅限 OUTPUT 数据帧，控制帧 W/E 恒
+// 单发，WR-02；合并语义与红线论证见 mergeBatch 注释）。1 WS 消息 = 1 帧的线上
+// 纪律对控制帧不变（前端 buf[0] 分派零改动，must_have「扇出对前端透明」）。
 // 写允许阻塞——阻塞即"该客户端慢"，由 outbox 满 → 1013 踢出收口；写失败静默
 // return（连接已死，终结由该客户端 reader 路径收口——D-11 纪律的多客户端映射）。
 func (s *Server) writer(c *client) {
@@ -564,22 +597,10 @@ func (s *Server) writer(c *client) {
 		if len(batch) == 0 {
 			continue
 		}
-		for i := 0; i < len(batch); {
-			j := i + 1
-			for j < len(batch) && len(batch[j]) > 0 && batch[j][0] == batch[i][0] {
-				j++
-			}
-			msg := batch[i] // 单帧零拷贝直写（共享帧只读纪律不受影响）
-			if j > i+1 {
-				msg = append([]byte(nil), batch[i]...) // 拷贝防共享帧原地 append（P5-1）
-				for k := i + 1; k < j; k++ {
-					msg = append(msg, batch[k][1:]...)
-				}
-			}
+		for _, msg := range mergeBatch(batch) {
 			if err := c.conn.Write(context.Background(), websocket.MessageBinary, msg); err != nil {
 				return
 			}
-			i = j
 		}
 		// 整批写出成功 → 信用门恢复判定（R-01 半水位；R-07 锁序：drain/写出完才取
 		// hubMu，绝不反序同持）。写失败路径已 return，不触达本行。

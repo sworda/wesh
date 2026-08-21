@@ -1,6 +1,12 @@
 package server
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"testing"
+
+	"github.com/sworda/wesh/internal/proto"
+)
 
 // clients_test.go —— TestClientCountInvariant（VALIDATION 05-01-08，RES-03 /
 // T-05-04b 计数器泄漏防线，review #7）：registry 内嵌计数器 n 与成员集 set 的
@@ -69,5 +75,54 @@ func TestClientCountInvariant(t *testing.T) {
 	}
 	if r.n.Load() != 0 {
 		t.Fatalf("全量移除后 n = %d, want 0（计数泄漏，T-05-04b）", r.n.Load())
+	}
+}
+
+// TestWriterMergeControlFramesOnly（WR-02 回归锁）：writer 批内合并仅限 OUTPUT
+// 数据帧——控制帧（W/E）载荷是独立 JSON 文档，同类型相邻合并的拼接产物
+//（W{...}{...}）前端 JSON.parse 抛错整帧丢弃（main.ts "discard malformed
+// WELCOME"）。attach Welcome 与升格 Welcome 相邻同批的可达时序（server.go 升档
+// 入队 → go writer 启动间隙 promoteNextLocked 再入队同一 outbox）见 05-REVIEW
+// WR-02；合并将使被升格端丢失该 Welcome 的全部应用（prefs 不应用、welcomeDone
+// 永不置位）。表测 mergeBatch（writer 合并段抽出形态，writer 对返回序列逐条
+// conn.Write——msgs 元素数即线上 WS 消息数）：
+//   - 两帧 Welcome 相邻 → 两条独立消息、逐字节原样（WR-02 核心回归）；
+//   - 两帧 Error 相邻 → 两条独立消息（同纪律）；
+//   - OUTPUT 连续段 → 合并单条（类型字节一次 + 载荷顺序拼接，§2.5 既有行为不变）；
+//   - 混合 [O,O,W,W,O] → [合并 O, W, W, 单 O]（控制帧既不被合也不被并入）；
+//   - Welcome–OUTPUT 相邻（类型不同）→ 各自单发；
+//   - 空批 → nil（writer len(batch)==0 分支前置，双保险）。
+func TestWriterMergeControlFramesOnly(t *testing.T) {
+	wRO := proto.WelcomeFrame(proto.ModeRO, json.RawMessage(`{"fontSize":14}`))
+	wRW := proto.WelcomeFrame(proto.ModeRW, json.RawMessage(`{"fontSize":14,"osc52":true}`))
+	e1 := proto.ErrorFrame(proto.ErrServerError, "boom-1")
+	e2 := proto.ErrorFrame(proto.ErrServerError, "boom-2")
+	out := func(payload string) []byte { return append([]byte{proto.Output}, payload...) }
+
+	tests := []struct {
+		name  string
+		batch [][]byte
+		want  [][]byte // 期望写出的消息序列（1 元素 = 1 WS 消息）
+	}{
+		{"two welcomes stay separate", [][]byte{wRO, wRW}, [][]byte{wRO, wRW}},
+		{"two errors stay separate", [][]byte{e1, e2}, [][]byte{e1, e2}},
+		{"output run merges", [][]byte{out("hello "), out("wor"), out("ld")}, [][]byte{out("hello world")}},
+		{"mixed control breaks merge", [][]byte{out("ab"), out("cd"), wRO, wRW, out("z")}, [][]byte{out("abcd"), wRO, wRW, out("z")}},
+		{"welcome then output", [][]byte{wRW, out("x")}, [][]byte{wRW, out("x")}},
+		{"single welcome passthrough", [][]byte{wRO}, [][]byte{wRO}},
+		{"empty batch", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msgs := mergeBatch(tt.batch)
+			if len(msgs) != len(tt.want) {
+				t.Fatalf("mergeBatch produced %d messages, want %d（控制帧被合并 = WR-02 回归）", len(msgs), len(tt.want))
+			}
+			for i := range tt.want {
+				if !bytes.Equal(msgs[i], tt.want[i]) {
+					t.Errorf("msg[%d] = %q, want %q（帧内容须逐字节原样）", i, msgs[i], tt.want[i])
+				}
+			}
+		})
 	}
 }
