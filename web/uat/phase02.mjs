@@ -35,10 +35,14 @@ function startWesh(args) {
     //（默认 0.0.0.0 无凭据自 Phase 3 起拒绝启动）；协议断言语义零改动。
     const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
+    let stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });
     child.stdout.on('data', (d) => {
-      const m = /listening on http:\/\/[^\s]+:(\d+)/.exec(d.toString());
+      // IN-04 累积缓冲后匹配（phase05.mjs 形态回填）：listening 行跨 chunk
+      // 分块时逐 chunk 直接正则永不命中，8s 超时假失败
+      stdoutBuf += d.toString();
+      const m = /listening on http:\/\/[^\s]+:(\d+)/.exec(stdoutBuf);
       if (m) {
         clearTimeout(to);
         resolve({ port: Number(m[1]), kill: () => child.kill('SIGKILL'), child });
@@ -59,11 +63,16 @@ function dialHello(port, { version = SUBPROTOCOL, sendHello = true } = {}) {
     ws.onmessage = (ev) => frames.push(new Uint8Array(ev.data));
     ws.onopen = () => { if (sendHello) ws.send(helloFrame(version)); };
     ws.onerror = () => reject(new Error('WS 连接失败'));
+    // IN-04 总超时 watchdog：被测二进制挂死（Welcome 永不到达）时 10s 拒绝而非永久悬挂
+    const watchdog = setTimeout(() => {
+      clearInterval(poll);
+      reject(new Error('握手总超时：10s 未收到 Welcome'));
+    }, 10000);
     // Welcome 到达即视为握手完成
     const poll = setInterval(() => {
-      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); resolve({ ws, frames }); }
+      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); clearTimeout(watchdog); resolve({ ws, frames }); }
     }, 10);
-    ws.onclose = (ev) => { clearInterval(poll); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
+    ws.onclose = (ev) => { clearInterval(poll); clearTimeout(watchdog); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
   });
 }
 

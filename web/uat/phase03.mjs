@@ -58,11 +58,15 @@ function startWesh(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
+    let stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });
     child.stdout.on('data', (d) => {
+      // IN-04 累积缓冲后匹配（phase05.mjs 形态回填）：listening 行跨 chunk
+      // 分块时逐 chunk 直接正则永不命中，8s 超时假失败
+      stdoutBuf += d.toString();
       // scheme 感知（03-04 启动行 TLS 场景打印 https://）——http-only 正则会 8s 超时
-      const m = /listening on (https?):\/\/[^\s]+:(\d+)/.exec(d.toString());
+      const m = /listening on (https?):\/\/[^\s]+:(\d+)/.exec(stdoutBuf);
       if (m) {
         clearTimeout(to);
         resolve({ port: Number(m[2]), scheme: m[1], kill: () => child.kill('SIGKILL'), child });
@@ -99,11 +103,16 @@ function dialHello(port, { ticket, scheme = 'ws' } = {}) {
     ws.onmessage = (ev) => frames.push(new Uint8Array(ev.data));
     ws.onopen = () => ws.send(helloFrame(ticket));
     ws.onerror = () => reject(new Error('WS 连接失败'));
+    // IN-04 总超时 watchdog：被测二进制挂死（Welcome 永不到达）时 10s 拒绝而非永久悬挂
+    const watchdog = setTimeout(() => {
+      clearInterval(poll);
+      reject(new Error('握手总超时：10s 未收到 Welcome'));
+    }, 10000);
     // Welcome 到达即视为握手完成
     const poll = setInterval(() => {
-      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); resolve({ ws, frames }); }
+      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); clearTimeout(watchdog); resolve({ ws, frames }); }
     }, 10);
-    ws.onclose = (ev) => { clearInterval(poll); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
+    ws.onclose = (ev) => { clearInterval(poll); clearTimeout(watchdog); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
   });
 }
 

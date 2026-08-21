@@ -98,11 +98,16 @@ function dialHello(port, { ticket, cols = 80, rows = 24 } = {}) {
     ws.onmessage = (ev) => frames.push(new Uint8Array(ev.data));
     ws.onopen = () => ws.send(helloFrame({ ticket, cols, rows }));
     ws.onerror = () => reject(new Error('WS 连接失败'));
+    // IN-04 总超时 watchdog：被测二进制挂死（Welcome 永不到达）时 10s 拒绝而非永久悬挂
+    const watchdog = setTimeout(() => {
+      clearInterval(poll);
+      reject(new Error('握手总超时：10s 未收到 Welcome'));
+    }, 10000);
     // Welcome 到达即视为握手完成
     const poll = setInterval(() => {
-      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); resolve({ ws, frames }); }
+      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); clearTimeout(watchdog); resolve({ ws, frames }); }
     }, 10);
-    ws.onclose = (ev) => { clearInterval(poll); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
+    ws.onclose = (ev) => { clearInterval(poll); clearTimeout(watchdog); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
   });
 }
 
