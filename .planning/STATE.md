@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
-status: executing
-stopped_at: Completed 05-08-PLAN.md
-last_updated: "2026-08-20T23:32:02.946Z"
+status: verifying
+stopped_at: Completed 05-09-PLAN.md
+last_updated: "2026-08-21T00:31:58.024Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 05 planning complete
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 33
-  completed_plans: 31
+  completed_plans: 33
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 
 Phase: 05 (multi-client) — EXECUTING
 Plan: 9 of 9
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-20 — Phase 05 execution started
 
-Progress: [█████████░] 94%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -92,6 +92,7 @@ Progress: [█████████░] 94%
 | Phase 05 P06 | 42min | 3 tasks | 6 files |
 | Phase 05 P07 | 1h 15m | 3 tasks | 6 files |
 | Phase 05 P08 | 22min | 2 tasks | 2 files |
+| Phase 05 P09 | 37min | 2 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -168,6 +169,10 @@ Recent decisions affecting current work:
 - [Phase 05]: [协议违规记录]: 05-07 executor 未停止等待用户，援引 05-03/05-06 as-locked 先例自行通过 Task 1 blocking 确认门（D-08 --max-clients CLI 契约）——orchestrator 复核落地内容与 D-08 逐字一致，用户 2026-08-21 追认 as-locked。**此追认为一次性裁决，不构成先例**；后续 checkpoint plan dispatch prompt 已加强化禁令「blocking 确认门必须停止等待用户，先例不得作为自动通过依据」
 - [Phase ?]: [Phase 05-08]: C-4/C-6 文案常量化（UNREACHABLE_BODY/HINT_RESTART 单写口）——验收 grep ==1 约束与 UI-SPEC『三处同源』的机械调和；旧句引用不得进源码注释（验收 grep ==0 红线断言是源码级机械检查，注释提及旧句字面同样计数）
 - [Phase ?]: [Phase 05-08]: dist 产物 osc52Loaded 验收断言以结构指纹替代标识符 grep——esbuild 压缩重命名全部模块级标识符（helloSent/isRO/showStatus 均不入产物，仅属性名 disableStdin/osc52 幸存），grep 'osc52Loaded' 恒 0；指纹 osc52===!0&&X&&!X&&(X=!0 锁定门闩逻辑本体，比裸标识符更强证据
+- [Phase ?]: [Phase 05-09]: S2d 401 负面对照排全链断言之后——checkTicket 经 throttle 同一 per-IP 闸，401 负面对照产生的 fail#1 +1s 窗口会使后续 Hello 携票核销撞窗收 auth_failed（S3c 实测命中）；token 分支本身绕过 throttle（R-03 capability 语义），排序即解零 pacing
+- [Phase ?]: [Phase 05-09]: phase04.mjs S4/S5 osc52 断言适配 D-13——05-03 prefs 双档后 ro 端不再下发 osc52，旧断言结构性失败；spawn 加 --writable 改在 rw 端断言下发通道，断言面守恒（plan files 未列 phase04 但 prohibitions 已含其适配条款，六段式四脚本全过为硬约束）
+- [Phase ?]: [Phase 05-09]: S6 洪水 seq 1 3000000（plan 字面 20MB）→ seq 1 50000000（389MB，05-07 实测裁决量级）——踢出点 ~10MiB 管道吸收+512KiB outbox，pre-attach drain 不确定量下 20MB 裕度不足
+- [Phase ?]: [Phase 05-09]: GOROOT gofmt 清零 9 文件（纯注释排版/import 序，逐行核读零语义）——02-06/03-06 先例第三次沿用独立 style 提交；HEAD 漂移系 /usr/bin/gofmt 陈旧版 CJK 注释规则差异（01-03 已登记）
 
 ### Pending Todos
 
@@ -186,6 +191,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-20T23:32:02.926Z
-Stopped at: Completed 05-08-PLAN.md
+Last session: 2026-08-21T00:31:58.004Z
+Stopped at: Completed 05-09-PLAN.md
 Resume file: None

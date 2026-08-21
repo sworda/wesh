@@ -175,7 +175,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 一个客户端停止读取 TCP 流时其他客户端无卡顿：慢客户端 outbox 写满被 1013 踢出，重连后从最新输出看起；PTY 读循环永不因任何客户端阻塞
   3. 异尺寸两客户端按最小公共矩形 `min(cols)×min(rows)` 渲染，2→1 时恢复 last-wins；启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
 
-**Plans**: 8/9 plans executed
+**Plans**: 9/9 plans executed
 **Wave 1**
 
 - [x] 05-01-PLAN.md — tracer：多客户端 fan-out 主干（clients.go 注册表/hub/outbox/writer + 409 门拆除 + 生命周期改造断开不退出/子进程退出广播 1000）+ e2e 单次语义迁移 + TestMultiClientFanout/TestDetach/TestExitBroadcast（MULTI-01）
@@ -210,7 +210,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
-- [ ] 05-09-PLAN.md — 收口：phase05.mjs 协议 UAT（链接全链/双客户端一致/满员 503/S6 1013 踢出活跃场景）+ 05-UAT.md 人工清单 + phase02/03.mjs 生命周期适配 + README 多客户端节（含反代脱敏示例/暴露面清单/标定方法论）+ 全量六段式（MULTI-01/03/05/RES-03）
+- [x] 05-09-PLAN.md — 收口：phase05.mjs 协议 UAT（链接全链/双客户端一致/满员 503/S6 1013 踢出活跃场景）+ 05-UAT.md 人工清单 + phase02/03.mjs 生命周期适配 + README 多客户端节（含反代脱敏示例/暴露面清单/标定方法论）+ 全量六段式（MULTI-01/03/05/RES-03）
 
 **UI hint**: yes
 **Research flag**: outbox 容量/水位/strikes 默认参数需负载测试标定（可在执行中以测试任务消化，Phase 9 回填）。**resize 仲裁分歧已闭合**：以需求 MULTI-04 为准——所有模式下 ≥2 客户端一律最小公共矩形；ARCHITECTURE.md §2.9 "owner 模式跟随 owner 尺寸"表述作废。
@@ -282,7 +282,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
-| 5. 多客户端共享 | 8/9 | In Progress|  |
+| 5. 多客户端共享 | 9/9 | In Progress|  |
 | 6. 会话生命周期与重连 | TBD | Not started | - |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |
