@@ -776,7 +776,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 				s.hubMu.Unlock()
 			}
 		default:
-			_ = c.Close(websocket.StatusProtocolError, "unknown frame type") // 1002，协议演化无歧义
+			_ = c.Close(websocket.StatusProtocolError, "unknown_frame") // 1002，协议演化无歧义
 		}
 	}
 }
