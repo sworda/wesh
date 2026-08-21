@@ -161,21 +161,26 @@ func TestCredentialFlagEnv(t *testing.T) {
 }
 
 // TestTLSKeyPairError（D-04 + parse 期校验纪律）：--tls-cert/--tls-key 单给报错
-// （文案含 both 双旗名）；--credential 畸形与 --origin 含 glob 字符在 fs.Func
-// 回调内 parse 期报错（配置错误零窗口暴露）；--write-policy 非枚举值在 Parse
+// （文案含 both 双旗名）；--credential 畸形（fs.Func 回调内 parse 期校验、
+// credErr 记录式于 Parse 返回处统一报错，WR-01）与 --origin 含 glob 字符
+// （回调内即时报错）均为配置错误零窗口暴露；--write-policy 非枚举值在 Parse
 // 返回处报错（D-05，值非敏感直接 return error 形态）。
+// WR-01 红线断言：malformed credential 行的 err 只含错误类别，不含 flag 值
+// 内容（记录式上报杜绝 flag 包 invalid value %q 包装回显——TestClientOptionError
+// forbiddenSub 同款先例；凭据值敏感度高于 prefs 值，同红线更须锁定）。
 func TestTLSKeyPairError(t *testing.T) {
 	t.Setenv("WESH_CREDENTIAL", "")
 	tests := []struct {
-		name    string
-		args    []string
-		wantSub string
+		name         string
+		args         []string
+		wantSub      string
+		forbiddenSub string // 值内容禁入错误串（SEC-01 启动面红线，WR-01；TestClientOptionError 先例）
 	}{
-		{"tls-cert without key", []string{"--tls-cert", "/tmp/c.pem", "--", "bash"}, "both --tls-cert and --tls-key"},
-		{"tls-key without cert", []string{"--tls-key", "/tmp/k.pem", "--", "bash"}, "both --tls-cert and --tls-key"},
-		{"malformed credential", []string{"--credential", "no-colon-here", "--", "bash"}, "credential must be user:pass"},
-		{"origin glob rejected", []string{"--origin", "https://*.example.com", "--", "bash"}, "glob"},
-		{"malformed write-policy", []string{"--write-policy", "sometimes", "--", "bash"}, "must be owner or all"},
+		{"tls-cert without key", []string{"--tls-cert", "/tmp/c.pem", "--", "bash"}, "both --tls-cert and --tls-key", ""},
+		{"tls-key without cert", []string{"--tls-key", "/tmp/k.pem", "--", "bash"}, "both --tls-cert and --tls-key", ""},
+		{"malformed credential", []string{"--credential", "no-colon-here", "--", "bash"}, "credential must be user:pass", "no-colon-here"},
+		{"origin glob rejected", []string{"--origin", "https://*.example.com", "--", "bash"}, "glob", ""},
+		{"malformed write-policy", []string{"--write-policy", "sometimes", "--", "bash"}, "must be owner or all", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,6 +190,9 @@ func TestTLSKeyPairError(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wantSub) {
 				t.Errorf("parseArgs(%v) error = %q, want containing %q", tt.args, err, tt.wantSub)
+			}
+			if tt.forbiddenSub != "" && strings.Contains(err.Error(), tt.forbiddenSub) {
+				t.Errorf("parseArgs(%v) error = %q, must not contain value content %q", tt.args, err, tt.forbiddenSub)
 			}
 		})
 	}

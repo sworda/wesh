@@ -86,10 +86,18 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	fs.IntVar(&cfg.maxClients, "max-clients", 32, "maximum simultaneous attached clients (default 32)")
 	// D-01：可重复凭据 flag，fs.Func 回调内 parse 期校验（畸形值即时报错——
 	// systemd 配置错误零窗口暴露）。Pitfall 8：help 必须提示 ps 可见性。
+	// 红线（SEC-01 启动面延伸，WR-01）：校验错误记入 credErr 而非直接
+	// return——flag 包会把回调返回的错误包装为 `invalid value %q for flag
+	// -credential: …` 并打印到 stderr，%q 处正是原始 flag 值全文（空 user
+	// 形态的手误会把密码分量完整写进 stderr，systemd 部署下落 journald
+	// 持久化）；记录后于 Parse 返回处统一上报，两通道（flag 自打印与返回
+	// 错误串）均不含值。client-option 同款记录式先例见下方 clientOptErr 注释。
+	var credErr error
 	fs.Func("credential", "basic auth credential user:pass (repeatable; value visible to local users via ps, prefer WESH_CREDENTIAL env in production)", func(s string) error {
 		c, err := server.ParseCredential(s)
 		if err != nil {
-			return err
+			credErr = errors.New("invalid --credential: credential must be user:pass") // 只含错误类别，禁含值（SEC-01）
+			return nil
 		}
 		cfg.credentials = append(cfg.credentials, c)
 		return nil
@@ -155,6 +163,11 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	})
 	if cfg.showVersion {
 		return cfg, nil, nil
+	}
+	// D-01：--credential 回调内校验错误统一上报点——插入点在 showVersion 早退
+	// 之后（纯信息路径不被配置校验阻断，03-04 先例）；记录式原因见 flag 定义注释。
+	if credErr != nil {
+		return cfg, nil, credErr
 	}
 	// P4 D-15：--client-option 回调内校验错误统一上报点——插入点在 showVersion
 	// 早退之后（纯信息路径不被配置校验阻断，03-04 先例）；记录式原因见 flag 定义注释。
