@@ -191,7 +191,7 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 }
 
 // aggregateClientPrefs 把 --client-option 收集项与 --osc52 合成 prefs 双档 blob
-//（05-03 D-13 + P5-6）：ro 档（旁观者 + 降级递补者）= 聚合结果剔除 osc52 键——
+// （05-03 D-13 + P5-6）：ro 档（旁观者 + 降级递补者）= 聚合结果剔除 osc52 键——
 // 即使全局 --osc52 开启也永不下发（osc52 是服务端专有键，聚合期已知，结构性排除
 // 出 --client-option 白名单）；rw 档 = 聚合结果原样（按全局 --osc52 并入）。
 // 产双 blob 保持服务端不透明透传纪律——不做运行期 JSON 手术（P5-6）。

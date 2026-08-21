@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	creackpty "github.com/creack/pty"
 	"github.com/coder/websocket"
+	creackpty "github.com/creack/pty"
 
 	"github.com/sworda/wesh/internal/proto"
 	"github.com/sworda/wesh/internal/pty"

@@ -54,7 +54,7 @@ func readUntilError(c *websocket.Conn) <-chan readResult {
 }
 
 // assertKicked1013 断言 conn 在 timeout 内以 CloseError 1013 slow_consumer 终结
-//（stall 端被踢的唯一合法归宿，R-10 命名族逐字）。
+// （stall 端被踢的唯一合法归宿，R-10 命名族逐字）。
 func assertKicked1013(t *testing.T, c *websocket.Conn, timeout time.Duration, who string) {
 	t.Helper()
 	select {

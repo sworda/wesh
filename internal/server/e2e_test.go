@@ -593,9 +593,9 @@ func TestHelloWelcome(t *testing.T) {
 // 注入时握手收到的 Welcome JSON 含 prefs 键且逐键值相等；未注入（零值默认装配）
 // 时无 prefs 键——omitempty 缺席回归，旧前端零漂移（P2 D-02 加字段纪律）。
 // 两半侧各自独立装配，均以客户端正常关闭 + exitCh 静默反证 + 再 attach 成功收口
-//（多客户端推论形态）。
+// （多客户端推论形态）。
 // 05-03 适配：ClientPrefs 单字段分裂为 ro/rw 双档（D-13）——本测试锁定的语义是
-//「注入 blob → Welcome 逐键透传」而非双档分化，故两档注同一 blob（单客户端 rw
+// 「注入 blob → Welcome 逐键透传」而非双档分化，故两档注同一 blob（单客户端 rw
 // 半侧实际选 rw 档）；ro/rw 选档与 osc52 强制缺席行为由 TestOwnerPolicy 专测。
 func TestWelcomePrefs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

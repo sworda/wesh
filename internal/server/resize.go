@@ -16,7 +16,7 @@ import (
 )
 
 // dims 终端尺寸（cols×rows）。入仲裁前已经 proto.ClampDim 钳制 [1,1000]
-//（DecodeHello/DecodeResize 既有钳制点，proto.go:165-182——纯函数不重复钳制），
+// （DecodeHello/DecodeResize 既有钳制点，proto.go:165-182——纯函数不重复钳制），
 // uint16 转换安全（sess.Resize 的 Winsize 转换既有纪律）。
 type dims struct {
 	cols, rows int
@@ -64,7 +64,7 @@ type arbiter struct {
 // initArbiter 装配仲裁器（New 在 hubCond 构造后、goroutine 启动前调用——timer
 // 回调与 ReadLoop 都可能在装配返回后立刻触达 arbiter 字段）。timer 以
 // AfterFunc 创建后立即 Stop 为 stopped 态：首次 reportResize 的 Reset 才武装
-//（单 time.Timer reset 防抖形态，server.go helloTimeout AfterFunc 先例；
+// （单 time.Timer reset 防抖形态，server.go helloTimeout AfterFunc 先例；
 // 回调到期取 hubMu 做 recalcNow——Go 1.23+ timer 语义下 Reset 与回调并发安全，
 // 重复触发只是幂等重算）。Don't Hand-Roll 纪律：除本装配点外无任何 goroutine
 // 计时循环。
@@ -80,9 +80,9 @@ func (s *Server) initArbiter() {
 
 // reportResize 是 RESIZE 上报入口（调用方 = server.go RESIZE case，已过 ro
 // 忽略闸，hubMu 内调用）：c 在参与集 → 更新其最新尺寸 → timer.Reset 防抖
-//（s.resizeDebounce，默认 50ms，Options.ResizeDebounce 测试可覆写——高频
+// （s.resizeDebounce，默认 50ms，Options.ResizeDebounce 测试可覆写——高频
 // 上报合并为窗口末一次重算，防 SIGWINCH 风暴）；c 不在参与集 → 直接忽略
-//（D-09 第二闸的兜底层——ro 旁观者与纯 ro 会话运行期 RESIZE 均落此分支；
+// （D-09 第二闸的兜底层——ro 旁观者与纯 ro 会话运行期 RESIZE 均落此分支；
 // 第一闸为 RESIZE case 的 mode 判定，第二闸此处成员判定，纵深防御）。
 func (s *Server) reportResize(c *client, cols, rows int) {
 	if _, ok := s.arbiter.sizes[c]; !ok {

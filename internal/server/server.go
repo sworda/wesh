@@ -195,7 +195,7 @@ const defaultPongTimeout = 10 * time.Second
 //     （D-10 唯一终结路径的多客户端形态）。
 //
 // 装配契约：opts.Writable 是 per-client Welcome mode 与 INPUT 门的全局派生来源
-//（D-13/D-14/D-15）；opts.HelloTimeout 零值时取 defaultHelloTimeout。
+// （D-13/D-14/D-15）；opts.HelloTimeout 零值时取 defaultHelloTimeout。
 func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.HelloTimeout <= 0 {
 		opts.HelloTimeout = defaultHelloTimeout

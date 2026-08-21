@@ -45,7 +45,7 @@ func (s *Session) Resize(cols, rows int) error {
 // 与仲裁 resize 是否发生无关——Linux 同尺寸 TIOCSWINSZ 不发 SIGWINCH（P5-3 本机
 // 实证），新客 attach 若无显式信号，vim/htop 等全屏程序不重绘即黑屏。TIOCGPGRP
 // 失败/无前台进程组/会话已 closed 时静默降级（D-11 授权）；重复 SIGWINCH 无害
-//（终端应用必须容忍伪信号）。fdMu 持锁范围与 Resize 同款（spawn.go:22：Read/Write
+// （终端应用必须容忍伪信号）。fdMu 持锁范围与 Resize 同款（spawn.go:22：Read/Write
 // 经 os.File 内部 fdmu 自同步、绝不可入此锁）。
 func (s *Session) SignalForegroundGroup() {
 	s.fdMu.Lock()

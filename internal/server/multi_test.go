@@ -233,7 +233,7 @@ func TestExitBroadcast(t *testing.T) {
 // 同尺寸不发信号）——标记出现即显式 SignalForegroundGroup 送达的证据，而非
 // resize 副作用。同步纪律：helper 先从 stdin 读一字节再装处理器报 READY，c1 发
 // INPUT 驱动并回读 READY 确认处理器就位，c2 attach 触发第二次信号——消除
-//「attach 信号先于处理器安装被默认忽略」的竞态。
+// 「attach 信号先于处理器安装被默认忽略」的竞态。
 // 本测试在 CI macos runner 同样执行（.github/workflows/ci.yml 双平台矩阵既定）——
 // darwin 同尺寸行为假设 A1 的验证通道（review MEDIUM 项处置：以 CI 双平台运行
 // 实证替代本机平台断言；即便 darwin 同尺寸发信号，显式 SIGWINCH 也只是冗余无害）。
@@ -566,6 +566,7 @@ func TestSuccessionKickRace(t *testing.T) {
 //     仅 1.5s（窗内至多 ~5 帧）——窗口滑动与调度迟滞的时序不确定性由宽界免疫）；
 //  3. 连接存活（洪水后 Ping 收 pong——未被踢未 1011；refill 1.2s 后发小量
 //     marker INPUT 有回显——输入路径未降权）。
+//
 // 对照子测：InputRate/InputBurst 调大（1MiB/1MiB）下同量 INPUT 全量送达（'x'
 // 计数精确 == 发送量——证明丢弃确由限速器而非队列/其他路径）。
 //

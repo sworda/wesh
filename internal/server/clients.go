@@ -1,7 +1,7 @@
 // clients.go：多客户端注册表 + fan-out hub + 每客户端 outbox/writer（MULTI-01/03
 // 主干，CONTEXT domain 必然推论——P1 D-11 单次语义终结；RESEARCH Pattern 1/2/5
 // 定稿形态，P5-1 chunk 别名与 P5-2 踢出不内联两条红线纪律）+ 全局信用门
-//（RES-04，RESEARCH Pattern 3：全体可写端 outbox 均满 → hub 持块停读 PTY，
+// （RES-04，RESEARCH Pattern 3：全体可写端 outbox 均满 → hub 持块停读 PTY，
 // 任一可写端 drain 至半水位恢复）+ 写权限体系（MULTI-02，05-03：模式判定矩阵 +
 // owner FIFO 递补升格，RESEARCH Pattern 5 逐字落地）+ 每客户端输入限速与会话级
 // 输入队列/input-writer（RES-02 + CR-01 完整背压修复，05-05，RESEARCH Pattern 8：
@@ -227,7 +227,7 @@ func (q *inputQ) dequeue() [][]byte {
 }
 
 // registry 客户端注册表（R-07）：set 供 hub 扇出遍历，order 保 attach FIFO 序
-//（05-03 owner 递补队列的遍历序），seq 为 attachSeq 分配器。全部方法名以 Locked
+// （05-03 owner 递补队列的遍历序），seq 为 attachSeq 分配器。全部方法名以 Locked
 // 结尾——调用方必须已持 hubMu（注册表与 hub 共用单锁，R-07 单锁纪律）。
 type registry struct {
 	set   map[*client]struct{}
@@ -260,7 +260,7 @@ type registry struct {
 }
 
 // registerLocked 登记新客户端：分配 attachSeq、入 set 与 FIFO order，计数 +1
-//（R-06 口径：注册成功才计数——半开连接不计入，与 halfOpenCounter 正交）。
+// （R-06 口径：注册成功才计数——半开连接不计入，与 halfOpenCounter 正交）。
 func (r *registry) registerLocked(c *client) {
 	r.seq++
 	c.attachSeq = r.seq
@@ -307,7 +307,7 @@ func (r *registry) removeLocked(c *client) bool {
 //
 // 权限不得由客户端请求获得（must_haves prohibitions——T-05-08 越权面）：ro→rw
 // 唯一通道是服务端 FIFO 递补后的 Welcome 推送（promoteNextLocked），任何
-//「客户端发帧申请写权限」的机制都是越权面，本矩阵不提供也不接受此类输入。
+// 「客户端发帧申请写权限」的机制都是越权面，本矩阵不提供也不接受此类输入。
 // writePolicy 取值在 main.go parse 期已枚举校验（owner|all）；非 "all" 一律按
 // owner 语义收口（安全默认方向兜底）。
 func (s *Server) decideModeLocked(ticketMode string) (mode string, rwEligible bool, becomeOwner bool) {
@@ -332,7 +332,7 @@ func (s *Server) decideModeLocked(ticketMode string) (mode string, rwEligible bo
 //
 // 代码顺序不变量（review #1，frame 别名安全双锁定之一）：门 Wait 循环必须位于
 // 组帧语句（make + copy 组共享帧）之前——门持块期间 chunk 停留于 ReadLoop 缓冲
-//（阻塞即无下次读，无别名窗口）；帧拷贝只发生在门开之后、trySend 之前，outbox
+// （阻塞即无下次读，无别名窗口）；帧拷贝只发生在门开之后、trySend 之前，outbox
 // 绝无持有跨门 chunk 的窗口。
 //
 // 全局信用门（RES-04，RESEARCH Pattern 3）：全体可写端 creditBlocked → hub 在
@@ -341,7 +341,7 @@ func (s *Server) decideModeLocked(ticketMode string) (mode string, rwEligible bo
 // writer drain 至半水位 → afterDrain 清位 + Broadcast 恢复。
 //
 // 门之外的临界区只含非阻塞 trySend 遍历：无锁等待、cond 等待或逐客户端帧拷贝
-//（单客户端内存与延迟形态与 Phase 4 等价）。
+// （单客户端内存与延迟形态与 Phase 4 等价）。
 func (s *Server) onChunk(chunk []byte) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
@@ -360,7 +360,7 @@ func (s *Server) onChunk(chunk []byte) {
 
 // allWritableBlockedLocked 判定信用门是否应闭合（RESEARCH Pattern 3）：遍历注册表
 // 统计生效 mode==rw 的客户端；≥1 个且全部 creditBlocked → true；无可写端
-//（纯 ro 会话/无客户端）→ false（信用集为空 → 门永不闭合 → ro 满即踢，R-08
+// （纯 ro 会话/无客户端）→ false（信用集为空 → 门永不闭合 → ro 满即踢，R-08
 // 分工表前提）。调用方必须已持 hubMu。O(n) 遍历每 chunk 一次，规模 ≤ max-clients
 // 32，可接受（review LOW 项登记）。
 func (s *Server) allWritableBlockedLocked() bool {
@@ -391,7 +391,7 @@ func (s *Server) allWritableBlockedLocked() bool {
 //
 // 迟滞带论证（review #2）：门关闭阈值 = outbox 写满（100% 字节上界才置
 // creditBlocked）、恢复阈值 = drain 至 <50%——2:1 迟滞带内建于分工表，非
-//『50% 单点抖动』；残余振荡（滴漏读者每次 drain 开门、下一 chunk 可能再闭门）
+// 『50% 单点抖动』；残余振荡（滴漏读者每次 drain 开门、下一 chunk 可能再闭门）
 // 经 RESEARCH Open Question 3 裁决接受（各端持续前进；dwell 计时器 Phase 9
 // 负载标定时评估）。调用方必须已持 hubMu。
 func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
@@ -410,7 +410,7 @@ func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 	// 防触发帧被二次暂存覆写）。
 	if !c.creditBlocked {
 		c.creditBlocked = true
-		c.creditPending = frame // 触发帧暂存，afterDrain 重投（触发帧不丢）
+		c.creditPending = frame      // 触发帧暂存，afterDrain 重投（触发帧不丢）
 		s.registry.gateTransitions++ // Phase 8 OPS-07 门开闭周期计数挂点（review #10）
 	}
 }
@@ -418,7 +418,7 @@ func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 // afterDrain 在一次成功批量写出后做信用门恢复判定（R-01 半水位迟滞）：outbox 当前
 // 字节 < cap/2（半水位，defaultOutboxBytes 的 50% = 256KiB）且 c.creditBlocked →
 // 重投触发帧 + 清位 + hubCond.Broadcast 开门。锁序 R-07：drain 完才取 hubMu
-//（本函数），绝不反序同持；hubMu > outboxMu 的同序同持与 onChunk→trySend 同款。
+// （本函数），绝不反序同持；hubMu > outboxMu 的同序同持与 onChunk→trySend 同款。
 //
 // 重投有序性：暂存帧在清位/Broadcast 之前入队——门仍闭合（flag 未清），onChunk
 // 无法夹入新帧；清位开门后新帧经门判定排在暂存帧之后，客户端字节流严格有序。
@@ -506,7 +506,7 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 // 提前一拍收口）。
 //
 // 仲裁参与集切换（05-04 resize.go 已落地）：owner 模式下仅 owner 尺寸参与仲裁
-//（D-09）——升格后 addMember(新 owner, Hello 登记尺寸) + recalcNow 即时重算，
+// （D-09）——升格后 addMember(新 owner, Hello 登记尺寸) + recalcNow 即时重算，
 // 新 owner 尺寸接管。
 //
 // 调用时序闭合（review #3）：本函数在 detach 与 kickSlowConsumerLocked 两路径的
