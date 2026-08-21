@@ -8,8 +8,8 @@
 // check detail 或任何控制台输出——detail 只打印状态码/布尔/键形状（theme 等用户
 // 配置虽非凭据，仍只打形状保持纪律一致；测试输出同样可能进 CI 日志）。
 //
-// 单次语义纪律（phase03.mjs S1f 先例）：同进程第二次 WS 建连不可行——
-// 每个需 WS 的场景独立 spawn 实例。
+// 场景隔离纪律（phase03.mjs S1f 先例沿用）：每个需 WS 的场景独立 spawn 实例——
+// 多客户端下同进程多 WS 建连已是 Phase 5 特性，独立 spawn 仅为场景间零状态干扰。
 //
 // 运行：node web/uat/phase04.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
 import { spawn } from 'node:child_process';
@@ -164,9 +164,11 @@ async function s3ThemeObject() {
 }
 
 // ---------- S4：--osc52 注入（D-12 服务端专有开关经 prefs 下发） ----------
+// Phase 5 适配（D-13 旁观端 osc52 强制关）：prefs 按 mode 分化双档——ro 端不再下发
+// osc52，下发通道断言改在 rw 端（--writable）进行；断言面零丢失（键存在性与值等式不变）。
 async function s4Osc52() {
-  console.log('S4: --osc52 → prefs.osc52 === true');
-  const inst = await startWesh(['--osc52', '--', 'bash', '--norc', '--noprofile']);
+  console.log('S4: --osc52 → prefs.osc52 === true（rw 端，D-13 后 osc52 不下发 ro 档）');
+  const inst = await startWesh(['--osc52', '--writable', '--', 'bash', '--norc', '--noprofile']);
   try {
     const { ws, frames } = await dialHello(inst.port);
     const welcome = welcomeOf(frames);
@@ -182,9 +184,10 @@ async function s4Osc52() {
 }
 
 // ---------- S5：--client-option 与 --osc52 组合（两键俱在） ----------
+// Phase 5 适配同 S4（D-13）：osc52 仅 rw 档下发，故 spawn 加 --writable。
 async function s5Combo() {
-  console.log('S5: --client-option + --osc52 组合');
-  const inst = await startWesh(['--client-option', 'fontSize=20', '--osc52', '--', 'bash', '--norc', '--noprofile']);
+  console.log('S5: --client-option + --osc52 组合（rw 端）');
+  const inst = await startWesh(['--client-option', 'fontSize=20', '--osc52', '--writable', '--', 'bash', '--norc', '--noprofile']);
   try {
     const { ws, frames } = await dialHello(inst.port);
     const welcome = welcomeOf(frames);

@@ -186,7 +186,9 @@ async function scenarioAuthFlow() {
   }
 
   // S1f: 非法 ticket → Error{auth_failed} + close 1008 reason=auth_failed（D-10 统一口径）。
-  // 独立 spawn 实例：单次语义下同进程第二次 WS 建连不可行；新实例节流状态全新无 pacing 需求。
+  // 独立 spawn 实例：隔离节流计数（非法 ticket 核销失败计入 D-08 统一 per-IP 计数器，
+  // 与场景 1 主链路的爬梯状态隔离）——多客户端下同进程多 WS 建连已是 Phase 5 特性，
+  // 此处独立 spawn 仅为节流隔离；新实例节流状态全新无 pacing 需求。
   const inst2 = await startWesh(['--credential', UAT_CREDENTIAL, '--writable', '--', 'bash', '--norc', '--noprofile']);
   try {
     const ws = new WebSocket(`ws://127.0.0.1:${inst2.port}/ws`, [SUBPROTOCOL]);
@@ -256,10 +258,12 @@ async function scenarioOrigin() {
     const evilStatus = await rawUpgrade(inst.port, { Origin: 'https://evil.example', 'Sec-WebSocket-Protocol': SUBPROTOCOL });
     check('S3c', '/ws 邪恶 Origin → 403', evilStatus === 403, `status=${evilStatus}`);
 
-    // S3d: /ws 无 Origin → 非 403（D-13 非浏览器放行证明；400 = 越过 Origin 闸撞上子协议预检）
+    // S3d: /ws 无 Origin → 非 403（D-13 非浏览器放行证明；400 = 越过 Origin 闸撞上
+    // ①位子协议预检——握手在 Accept 前被拒绝，不建 WS 连接不触发任何会话状态变更；
+    // 原断言集中的 409 单客户端门已于 Phase 5 拆除，容量上限断言由 phase05.mjs S5 承接）
     const noOriginStatus = await rawUpgrade(inst.port, {});
-    check('S3d', '/ws 无 Origin → 非 403 放行（400/101/409 任一）',
-      noOriginStatus !== 403 && [400, 101, 409].includes(noOriginStatus), `status=${noOriginStatus}`);
+    check('S3d', '/ws 无 Origin → 非 403 放行（①位子协议预检 400）',
+      noOriginStatus !== 403 && noOriginStatus === 400, `status=${noOriginStatus}`);
   } finally {
     inst.kill();
   }
