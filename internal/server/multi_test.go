@@ -88,7 +88,7 @@ func readUntilWelcome(c *websocket.Conn) <-chan map[string]any {
 func TestMultiClientFanout(t *testing.T) {
 	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
 		Writable:    true,
-		WritePolicy: "all",
+		WritePolicy: server.WritePolicyAll,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -146,7 +146,7 @@ func TestMultiClientFanout(t *testing.T) {
 func TestDetach(t *testing.T) {
 	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
 		Writable:    true,
-		WritePolicy: "all",
+		WritePolicy: server.WritePolicyAll,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
