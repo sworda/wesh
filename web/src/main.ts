@@ -243,9 +243,8 @@ let sessionDims: { cols: number; rows: number } | null = null;
 let lastReported: { cols: number; rows: number } | null = null;
 let prevFit: { cols: number; rows: number } | null = null;
 // roNotified —— ro console 一次性提示门闩（运行期尺寸推送打破「ro Welcome 每 attach 仅一次」
-// 天然无重复不变量后的等价物，05-11 Task 2 接线）；export 防 noUnusedLocals 在接线前误报
-//（queryKeys 先例）
-export let roNotified = false;
+// 天然无重复不变量后的等价物，WELCOME ro 分支接线）
+let roNotified = false;
 
 // FE-03 + CORE-02：resize 回路。window resize → 100ms debounce → refit() →
 // RESIZE 帧（JSON {"cols","rows"} 恒为窗口 fit 尺寸，服务端钳制 [1,1000]）+ 约束渲染。
@@ -397,6 +396,12 @@ async function connect(): Promise<void> {
   // osc52Loaded/retriedAuth 为页面级门闩，刻意不重置
   isRO = false;
   welcomeDone = false;
+  // G-05-1 resize 四状态同批清零（IN-01 延伸）——auth_failed 重试/未来 Phase 6 重连
+  // 不携带上连接的残留尺寸约束、去重基线、overlay 基线与 ro 提示门闩
+  sessionDims = null;
+  lastReported = null;
+  prevFit = null;
+  roNotified = false;
 
   // ^/s/{token}/$ 提取（无尾斜杠由服务端 301 补斜杠，前端无需兼容——05 R-05）；
   // 前端不解析不分支 token 种类——ro/rw 判定唯一来源是 Welcome.mode（05 D-01）
@@ -481,8 +486,29 @@ async function connect(): Promise<void> {
       case WELCOME: {
         // D-14：ro 时键盘层面即不产生 onData（UX 层，真边界在服务端丢 INPUT）
         // 畸形 JSON 负载丢弃该帧——事件处理器抛异常只丢本帧，但 WELCOME 丢失会让 ro 门失效
+        // Welcome 幂等矩阵（重复/推送 Welcome 全链零副作用，G-05-1 推送通道不放大）：
+        // 尺寸推送重放同值 → term.resize 变化守卫跳过 + sendResize lastReported 去重拦截 +
+        // overlay fitChanged 门拦截；升格 Welcome（rw）→ 尺寸键校验 → mode 分支 → 统一 refit 链；
+        // prefs 重放 → queryKeys 跳过 + osc52Loaded 门闩（既有）；welcomeDone/beforeunload
+        // 重复注册 → DOM 同类型同 listener addEventListener 去重（既有）
         try {
           const w = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+          // G-05-1 会话尺寸键处理（05-10 契约：attach/升格/运行期推送三通道同形恒携）：
+          // 成对校验——任一键出现即视为服务端新形态，两键均须 [1,1000] 正整数才接受；
+          // 任一键缺失/非法 → console.warn 并保持旧 sessionDims（D-16 容错纪律：非法输入
+          // 不得使终端不可用，与 invalid query pref 同款静默降级方向；T-05G-04 缓解——
+          // term.resize 永收合法正整数）。两键均缺席 = 旧服务端 → 不动 sessionDims
+          //（恒 null → 渲染=fit，行为与改造前逐字节一致）
+          if ('cols' in w || 'rows' in w) {
+            if (
+              typeof w.cols === 'number' && Number.isInteger(w.cols) && w.cols >= 1 && w.cols <= 1000 &&
+              typeof w.rows === 'number' && Number.isInteger(w.rows) && w.rows >= 1 && w.rows <= 1000
+            ) {
+              sessionDims = { cols: w.cols, rows: w.rows };
+            } else {
+              console.warn('ignoring invalid session dims in WELCOME frame');
+            }
+          }
           if (w.mode === 'ro') {
             isRO = true;
             term.options.disableStdin = true;
@@ -492,21 +518,34 @@ async function connect(): Promise<void> {
             // ro 模式一次性 console 反馈（review #4 缓解链：输入不发送 + 裁剪风险 +
             // 恢复指引三要素——旁观者与降级递补者同一条，前端不加区分既有纪律）。
             // console 非可视组件不违 D-07（[ro] 标题前缀 + disableStdin 仍是仅有的模式
-            // 指示）；ro Welcome 每 attach 仅一次天然无重复；串内零 token 零动态内容
-            //（T-03-24 红线延伸）
-            console.info('wesh: read-only mode — input is not sent; if your window is smaller than the session size, output may appear clipped (reattach to recover)');
+            // 指示）；运行期尺寸推送使 ro Welcome 每连接可多次到达——一次性语义改由
+            // roNotified 门闩承载（原「ro Welcome 每 attach 仅一次」天然无重复不变量的
+            // 等价物）；串内零 token 零动态内容（T-03-24 红线延伸）。文案语义复核：
+            // 约束形态下「窗口小于会话尺寸可能裁剪」依然为真（min 逐轴——小窗口轴
+            // 仍裁剪），文案零改动成立
+            if (!roNotified) {
+              roNotified = true;
+              console.info('wesh: read-only mode — input is not sent; if your window is smaller than the session size, output may appear clipped (reattach to recover)');
+            }
           } else if (w.mode === 'rw') {
             // 升格 rw 分支（05 §RO Mode & Promotion Contract 五步之 1-3——第 4 步 prefs
             // 应用段与第 5 步 beforeunload 条件重注册由下方既有流程照常执行承载）。
             // 握手 Welcome（attach 即 rw）走同一分支无害：isRO 本就 false，重复赋 false
-            // 与重复 fit 均幂等；降级路径不存在不实现（owner 只在位到断线，D-06）
+            // 与重复 refit 均幂等；降级路径不存在不实现（owner 只在位到断线，D-06）
             isRO = false;
             term.options.disableStdin = false;
             setTitle(); // 单一写口去 [ro] 前缀（remoteTitle 不含前缀，04 契约既定）
-            // 触发 refit→sendResize 链路（isRO 门已开），自动上报当前窗口 fit 尺寸纠正
-            // 排队期间可能过期的值（owner 尺寸接管的前端半侧，05 R-09）
-            refit();
           }
+          // 统一 refit（约束应用唯一入口，ro/rw 两分支统一覆盖——ro 端 attach 即按会话
+          // 尺寸约束渲染，正是 G-05-1 用户场景「宽端旁观」的修复动作；rw attach/升格同理）。
+          // 顺序硬约束：sessionDims 先赋值（上方尺寸键处理）→ isRO/disableStdin/setTitle
+          // 居中 → refit 最后——refit 时 sessionDims 已是新会话尺寸（升格情形 = 本端
+          // Hello 登记尺寸），min(fit, session) 自然解除约束回到窗口渲染（G-05-1 设计
+          // 约束 4「先解除约束再 fit」的落地形态）。升格时 refit 内 sendResize(当前 fit)
+          // 经 lastReported 去重判定——ro 期上报被 isRO 门拦截未记账，ro 期拖过窗口的端
+          // 此处真实上行纠正服务端 cand.dims 瞬态偏差（05-08 尺寸接管纠正链保持，R-09；
+          // 服务端 recalcNow 随后推送收口，05-10）
+          refit();
           // FE-07 prefs 应用段（UI-SPEC §Prefs Contract 步骤 2-4 逐字顺序：
           // xterm 键 → refit() → behavior 键 → osc52 条件加载）；
           // prefs 缺省（非对象）则整段跳过——nil 兼容（omitempty 缺席即无下发）；
