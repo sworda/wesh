@@ -392,10 +392,27 @@ func TestAllPolicy(t *testing.T) {
 	accumPayload(t, ctx, cA, []byte("b-all-writes"))
 	accumPayload(t, ctx, cB, []byte("b-all-writes"))
 
-	// 无递补概念：A 断开后 B 保持 rw 且无升格帧——B 发 INPUT 驱动输出，其读到
-	// 的下一帧须为 OUTPUT 回显（accumPayload 对任何非 OUTPUT 帧 fatal，升格
-	// Welcome 在此天然被断言缺席）。
+	// 无递补概念 + G-05-1 尺寸推送（05-10 适配）：A 断开后 B 保持 rw——all 模式
+	// 无升格通道，但 detach 使参与集 2→1 收缩（min-rect {80,24} → B 单员 {132,43}
+	// last-wins），recalcNow 的 last 变化分支（运行期尺寸下发唯一挂点）向 B 推送
+	// 携新会话尺寸的 Welcome。断言该帧 mode 恒为 rw（无 mode 翻转 = 无升格语义的
+	// 行为证据）且 cols/rows == 132/43（2→1 新会话尺寸），随后 B 的 INPUT 生效
+	//（accumPayload 对任何非 OUTPUT 帧 fatal——消费推送帧后回显路径断言形态不变）。
 	cA.CloseNow()
+	select {
+	case wm := <-readUntilWelcome(cB):
+		if wm == nil {
+			t.Fatal("B read terminated before dims-push Welcome（G-05-1 运行期推送丢失）")
+		}
+		if wm["mode"] != proto.ModeRW {
+			t.Fatalf("dims-push Welcome mode = %v, want %q（all 模式无升格——mode 不翻转）", wm["mode"], proto.ModeRW)
+		}
+		if wm["cols"] != float64(132) || wm["rows"] != float64(43) {
+			t.Fatalf("dims-push Welcome dims = %vx%v, want 132x43（2→1 last-wins 会话尺寸推送）", wm["cols"], wm["rows"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("B 未在 5s 内收到 dims-push Welcome——A detach 2→1 会话尺寸变化未推送（G-05-1）")
+	}
 	sendInput(t, ctx, cB, []byte("b-still-rw"))
 	accumPayload(t, ctx, cB, []byte("b-still-rw"))
 
@@ -970,5 +987,102 @@ func TestMaxClients503(t *testing.T) {
 		// 观察到踢出时计数已减（2→1），第三人 attach 成功，无需轮询。
 		cC, _ := dialHello(t, ctx, wsURL, 80, 24)
 		cC.CloseNow()
+	})
+}
+
+// ====== plan 05-10 增量：G-05-1 会话尺寸下发测试（Welcome 三通道 carriage 断言）======
+
+// TestWelcomeSessionDims（G-05-1 核心 carriage 断言组）：Welcome 帧恒携会话
+// cols/rows——attach Welcome（升档）携 attach 完成后生效的会话尺寸；旁观者 Welcome
+// 携会话尺寸而非自身窗口尺寸；递补升格 Welcome 携新 owner 尺寸（cand.dims）。
+// map[string]any JSON 解码数值为 float64（dialHelloPayload 返回完整 Welcome map，
+// e2e_test.go 既有 helper 零新造）。
+func TestWelcomeSessionDims(t *testing.T) {
+	// owner 模式（Writable: true 默认策略）：A(owner rw 40x10)/B(降级 ro 120x40)。
+	t.Run("owner模式attach与升格携会话尺寸", func(t *testing.T) {
+		exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+			Writable: true,
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		// A：首个 rw attach 立 owner——参与集单员 last-wins，会话尺寸 = A 自身
+		// Hello 尺寸（40x10），Welcome 携之（attach 升档序列已重排：addMember/
+		// recalcNow 先于 Welcome 组帧）。
+		cA, wmA := dialHelloPayload(t, ctx, wsURL, 40, 10)
+		if wmA["mode"] != proto.ModeRW {
+			t.Fatalf("A welcome mode = %v, want %q（首个 rw attach 立 owner）", wmA["mode"], proto.ModeRW)
+		}
+		if wmA["cols"] != float64(40) || wmA["rows"] != float64(10) {
+			t.Fatalf("A welcome dims = %vx%v, want 40x10（owner 单员 last-wins 会话尺寸）", wmA["cols"], wmA["rows"])
+		}
+		// B：D-07 降级 ro——旁观者 Welcome 携会话尺寸（40x10）而非自身窗口尺寸
+		//（120x40）：G-05-1 核心 carriage 断言——旁观者拿到的是 PTY 实际尺寸，
+		// 为 05-11 前端视口约束提供同源数据。
+		cB, wmB := dialHelloPayload(t, ctx, wsURL, 120, 40)
+		if wmB["mode"] != proto.ModeRO {
+			t.Fatalf("B welcome mode = %v, want %q（D-07 降级）", wmB["mode"], proto.ModeRO)
+		}
+		if wmB["cols"] != float64(40) || wmB["rows"] != float64(10) {
+			t.Fatalf("B(ro) welcome dims = %vx%v, want 40x10（旁观者 Welcome 携会话尺寸而非自身窗口尺寸）", wmB["cols"], wmB["rows"])
+		}
+
+		// A 断开 → B 递补升格：升格 Welcome 携新 owner 尺寸 = cand.dims（Hello
+		// 登记尺寸 120x40——owner 模式升格后参与集 = {B} 单员，arbitrate 单员
+		// = cand.dims，恒等于升格后 recalcNow 的 last）。
+		cA.CloseNow()
+		select {
+		case wm := <-readUntilWelcome(cB):
+			if wm == nil {
+				t.Fatal("B read terminated before promotion Welcome（升格推送丢失）")
+			}
+			if wm["mode"] != proto.ModeRW {
+				t.Fatalf("promotion Welcome mode = %v, want %q（R-09 升格推送）", wm["mode"], proto.ModeRW)
+			}
+			if wm["cols"] != float64(120) || wm["rows"] != float64(40) {
+				t.Fatalf("promotion Welcome dims = %vx%v, want 120x40（升格携新 owner Hello 登记尺寸 cand.dims）", wm["cols"], wm["rows"])
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("B 未在 5s 内收到升格 Welcome——owner 断开后 FIFO 递补失败")
+		}
+
+		cB.Close(websocket.StatusNormalClosure, "")
+		assertNoExit(t, exitCh)
+	})
+
+	// all 模式（WritePolicyAll）：A(132x43) 单员 last-wins；B(60x50) attach 后
+	// min-rect 即时重算 min(132,60)xmin(43,50) = 60x43 ≠ B 自身 60x50——rows 维
+	// 产生区分度：Welcome 携重算后会话尺寸（60x43）而非 B 自身窗口尺寸（60x50）。
+	//（plan 字面 B(60,20)→60/24 算术自相矛盾——min(43,20)=20 恰等于 B 自身尺寸
+	// 无区分度；按 plan 明示意图「rows 维产生区分度断言」取 B(60,50)，SUMMARY
+	// 登记 Rule 1 修正。）
+	t.Run("all模式attach携min-rect重算尺寸", func(t *testing.T) {
+		exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
+			Writable:    true,
+			WritePolicy: server.WritePolicyAll,
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cA, wmA := dialHelloPayload(t, ctx, wsURL, 132, 43)
+		if wmA["mode"] != proto.ModeRW {
+			t.Fatalf("A welcome mode = %v, want %q（all 模式全员可写）", wmA["mode"], proto.ModeRW)
+		}
+		if wmA["cols"] != float64(132) || wmA["rows"] != float64(43) {
+			t.Fatalf("A welcome dims = %vx%v, want 132x43（单员 last-wins）", wmA["cols"], wmA["rows"])
+		}
+		// B attach 触发 min-rect 即时重算（60x43），B 的 Welcome 携重算后会话尺寸
+		//（rows 维 43 ≠ B 自身 50——区分度断言）；重算推送落 A（未被读流，不影响）。
+		cB, wmB := dialHelloPayload(t, ctx, wsURL, 60, 50)
+		if wmB["mode"] != proto.ModeRW {
+			t.Fatalf("B welcome mode = %v, want %q（all 模式全员可写）", wmB["mode"], proto.ModeRW)
+		}
+		if wmB["cols"] != float64(60) || wmB["rows"] != float64(43) {
+			t.Fatalf("B welcome dims = %vx%v, want 60x43（min-rect 重算后会话尺寸，rows 维 ≠ B 自身 50 产生区分度）", wmB["cols"], wmB["rows"])
+		}
+
+		cA.Close(websocket.StatusNormalClosure, "")
+		cB.Close(websocket.StatusNormalClosure, "")
+		assertNoExit(t, exitCh)
 	})
 }

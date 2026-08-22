@@ -113,12 +113,19 @@ func (s *Server) removeMember(c *client) {
 
 // recalcNow 即时重算（hubMu 内调用，不防抖——attach/detach/递补升格调用点，
 // 无风暴风险）：收集参与集成员 → arbitrate → 结果非零（零值 = 0 人哨兵，
-// 不动 PTY 保持现状）且 ≠ last → sess.Resize 并更新 last。
+// 不动 PTY 保持现状）且 ≠ last → sess.Resize 并更新 last + 向全部在线客户端
+// 推送新会话尺寸（G-05-1，pushSessionDimsLocked）。
 //
 // 目标尺寸变化才调 sess.Resize（P5-3：Linux 同尺寸 TIOCSWINSZ 内核不发
-// SIGWINCH，且避免无谓 ioctl）。参数序 (cols, rows)——io_test.go:24-25
+// SIGWINCH，且避免无谓 ioctl）；推送挂点同此唯一变化检测点——目标尺寸不变
+//（含零值哨兵提前返回）零推送（无放大无循环），attach/detach/kick/升格/防抖
+// 五调用点自动全覆盖。参数序 (cols, rows)——io_test.go:24-25
 // 注释锁定，切勿按 (rows, cols) 序误传；会话 closed 时 Resize 返回
 // os.ErrClosed，忽略（Attach 读循环既有纪律同款）。
+//
+// attach 调用点的天然性质（05-10 Task 1 升档重排后）：recalcNow 执行时新客户端
+// 尚未 registerLocked，推送循环遍历注册表不触达 attach 者自身——其会话尺寸由
+// Welcome 承载（sessionDimsLocked 取值组帧），零重复帧。
 func (s *Server) recalcNow() {
 	members := make([]dims, 0, len(s.arbiter.sizes))
 	for _, d := range s.arbiter.sizes {
@@ -130,6 +137,34 @@ func (s *Server) recalcNow() {
 	}
 	s.arbiter.last = target
 	_ = s.sess.Resize(target.cols, target.rows)
+	s.pushSessionDimsLocked(target)
+}
+
+// pushSessionDimsLocked 向全部在线客户端推送新会话尺寸（G-05-1 运行期尺寸下发
+// 通道；hubMu 内调用，唯一挂点 = recalcNow 的 last 变化分支）：遍历注册表，每
+// 客户端按其当前生效 mode 组帧（c.mode.Load().(string)——atomic.Value 恒存
+// proto.ModeRO/ModeRW 字符串，allWritableBlockedLocked 同款读法先例）；prefs 按
+// mode 选档（rw → clientPrefsRW / ro → clientPrefsRO——D-13 双档纪律在推送通道
+// 不漂移：ro 端推送永不含 osc52）。trySend 失败走 kickOrCreditLocked（R-08 分工
+// 复用：连 ~100B 推送都容不下的端 = 事实 stalled；触发帧不丢——信用路径暂存
+// creditPending 既有形态）。
+//
+// range 内踢出安全性：removeLocked 的 map delete 在 range 期间为 Go spec 安全
+//（未到达的被删条目不再产出），onChunk → kickOrCreditLocked（clients.go:354-358）
+// 同形态先例。踢出若触发 promoteNextLocked → 嵌套 recalcNow → 嵌套推送：每次
+// 踢出永久移除一端保证有界终止（≤ max-clients）。
+func (s *Server) pushSessionDimsLocked(target dims) {
+	for c := range s.registry.set {
+		mode := c.mode.Load().(string)
+		prefs := s.clientPrefsRO
+		if mode == proto.ModeRW {
+			prefs = s.clientPrefsRW
+		}
+		frame := proto.WelcomeFrame(mode, prefs, target.cols, target.rows)
+		if !c.outbox.trySend(frame) {
+			s.kickOrCreditLocked(c, frame)
+		}
+	}
 }
 
 // sessionDimsLocked 返回当前会话尺寸（G-05-1，05-10；hubMu 内调用——读

@@ -220,9 +220,91 @@ func TestResizeArbitration(t *testing.T) {
 
 		// A 断开 → detach → FIFO 递补升格 B → 参与集切换（sizes 只留新 owner）
 		// → Getsize 切到 B 的 Hello 登记尺寸 80x24（递补后新 owner 尺寸接管）。
+		//（G-05-1 起升格 Welcome 与重算推送帧均落 cB 未被读流，Getsize 断言面不受影响。）
 		cA.CloseNow()
 		pollSize(t, sess, 80, 24)
 
+		cB.Close(websocket.StatusNormalClosure, "")
+		assertNoExit(t, exitCh)
+	})
+
+	// 运行期尺寸变化推送（G-05-1 运行期尺寸下发通道，05-10）：owner 模式
+	// A(owner rw 80x24)/B(降级 ro 60x20)；A 窗口 resize（RESIZE 上报）经 50ms
+	// 防抖重算后，recalcNow 的 last 变化分支向全部在线客户端推送携新会话尺寸的
+	// Welcome——两端（含 ro 旁观者与上报者自身）各在 5s 窗口收到第二帧 Welcome
+	// cols/rows==100/30；B 的推送帧 mode==ro（按各端当前生效 mode 组帧，D-13
+	// 双档纪律在推送通道不漂移）；pollSize 附带锁定 PTY 跟随（既有断言形态）。
+	//
+	// 回归自检（写进注释不断言）：S1 形态（owner 模式 A rw + B ro 降级，B 不参与）
+	// attach 无 resize——A attach 的 recalcNow 推送落在空注册表（升档重排后
+	// attach 者尚未 registerLocked），B attach 不参与不重算，last 不变零推送，
+	// accumPayload 的「窗口内无第二帧 Welcome」断言（multi_test.go）不受影响；
+	// TestResizeArbitration 既有三子测的 dialHello 尺寸组合（132x43/80x24 等）
+	// 触发的推送帧均落在未被读流的连接上，Getsize 断言面不受影响。
+	// 禁止负向静默窗口断言（「resize 前 B 无第二帧 Welcome」类——防抖/调度时序
+	// 引入 flaky 面，省）。
+	t.Run("运行期尺寸变化推送", func(t *testing.T) {
+		exitCh, wsURL, sess := startResizeServer(t, []string{"/bin/cat"}, server.Options{
+			Writable:    true,
+			WritePolicy: server.WritePolicyOwner,
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
+		if modeA != proto.ModeRW {
+			t.Fatalf("A welcome mode = %q, want %q（首个 rw attach 立 owner）", modeA, proto.ModeRW)
+		}
+		pollSize(t, sess, 80, 24) // owner 单成员 last-wins 基线
+
+		cB, modeB := dialHello(t, ctx, wsURL, 60, 20)
+		if modeB != proto.ModeRO {
+			t.Fatalf("B welcome mode = %q, want %q（D-07 降级 ro 旁观者）", modeB, proto.ModeRO)
+		}
+
+		// 双端 attach Welcome 均被 dialHello 消费；武装第二帧 Welcome 读取
+		//（Pitfall 2 竞速形态——客户端 Read 永不带 deadline ctx）。
+		chA := readUntilWelcome(cA)
+		chB := readUntilWelcome(cB)
+
+		// A（owner）上报新窗口尺寸 → 50ms 防抖 → recalcNow → last 变化 → 双端推送。
+		sendResize(t, ctx, cA, 100, 30)
+		// B（ro 旁观者）：推送按各端当前 mode 组帧——mode 恒 ro，cols/rows 为新
+		// 会话尺寸 100x30（旁观者约束渲染的数据通道，G-05-1 服务端半侧闭合）。
+		select {
+		case wm := <-chB:
+			if wm == nil {
+				t.Fatal("B read terminated before dims-push Welcome（ro 旁观者运行期推送丢失）")
+			}
+			if wm["mode"] != proto.ModeRO {
+				t.Fatalf("B dims-push Welcome mode = %v, want %q（推送按各端当前生效 mode 组帧）", wm["mode"], proto.ModeRO)
+			}
+			if wm["cols"] != float64(100) || wm["rows"] != float64(30) {
+				t.Fatalf("B dims-push Welcome dims = %vx%v, want 100x30", wm["cols"], wm["rows"])
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("B 未在 5s 内收到 dims-push Welcome——ro 旁观者运行期尺寸下发失败（G-05-1）")
+		}
+		// A（上报者自身）：同收 100x30（上报者的会话尺寸确认回执——前端无需
+		// 特判自身上报路径）。
+		select {
+		case wm := <-chA:
+			if wm == nil {
+				t.Fatal("A read terminated before dims-push Welcome（上报者自身推送丢失）")
+			}
+			if wm["mode"] != proto.ModeRW {
+				t.Fatalf("A dims-push Welcome mode = %v, want %q", wm["mode"], proto.ModeRW)
+			}
+			if wm["cols"] != float64(100) || wm["rows"] != float64(30) {
+				t.Fatalf("A dims-push Welcome dims = %vx%v, want 100x30", wm["cols"], wm["rows"])
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("A 未在 5s 内收到 dims-push Welcome——上报者自身运行期尺寸下发失败（G-05-1）")
+		}
+		// PTY 跟随断言（既有形态）：防抖重算后 PTY 实际尺寸 = 推送的会话尺寸。
+		pollSize(t, sess, 100, 30)
+
+		cA.Close(websocket.StatusNormalClosure, "")
 		cB.Close(websocket.StatusNormalClosure, "")
 		assertNoExit(t, exitCh)
 	})

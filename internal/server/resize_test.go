@@ -1,6 +1,10 @@
 package server
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sworda/wesh/internal/pty"
+)
 
 // TestArbitrate 锁定 MULTI-04 仲裁纯函数行为（VALIDATION 05-01-04，RESEARCH
 // Code Examples 逐字形态）：0 人 → 零值 dims 哨兵（不动 PTY 保持现状，调用方
@@ -61,4 +65,23 @@ func TestArbitrate(t *testing.T) {
 			t.Errorf("B 离开后 = %+v, want %+v（2→1 恢复 last-wins 剩余者尺寸）", got, a)
 		}
 	})
+}
+
+// TestSessionDimsLocked 锁定 G-05-1 会话尺寸取值（05-10，sessionDimsLocked 白盒，
+// arbitrate 表测同文件纪律）：arbiter.last 零值（从未有参与者——首个参与端 attach
+// 前 PTY 保持 spawn 尺寸，recalcNow 零值分支不动 PTY 的既有语义）→ 回落 spawn
+// 尺寸 dims{pty.SpawnCols, pty.SpawnRows}（与真实 PTY spawn 尺寸同源的单一事实源
+// 锁）；last 非零 → 原样返回（恒等锁——参与期会话尺寸 = 仲裁器 last = PTY 实际
+// 尺寸）。Server 零值直构造即可（sessionDimsLocked 只读 arbiter.last，无 sess/注册表
+// 依赖，TestClientCountInvariant 零值可用先例）。
+func TestSessionDimsLocked(t *testing.T) {
+	s := &Server{}
+	if got := s.sessionDimsLocked(); got != (dims{cols: pty.SpawnCols, rows: pty.SpawnRows}) {
+		t.Errorf("零值 arbiter sessionDimsLocked() = %+v, want %+v（spawn 尺寸回落——last 零值 ≠ 会话尺寸未知，PTY 实际尺寸 = spawn 值）",
+			got, dims{cols: pty.SpawnCols, rows: pty.SpawnRows})
+	}
+	s.arbiter.last = dims{cols: 100, rows: 30}
+	if got := s.sessionDimsLocked(); got != (dims{cols: 100, rows: 30}) {
+		t.Errorf("last={100,30} 时 sessionDimsLocked() = %+v, want {100 30}（参与期恒等锁）", got)
+	}
 }
