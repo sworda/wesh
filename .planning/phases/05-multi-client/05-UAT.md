@@ -3,7 +3,7 @@ status: testing
 phase: 05-multi-client
 created: 2026-08-21
 started: 2026-08-21T01:14:49.772Z
-updated: 2026-08-22T08:20:00.000Z
+updated: 2026-08-22T12:35:00.000Z
 source: [05-09-PLAN.md, 05-VERIFICATION.md]
 ---
 
@@ -13,16 +13,18 @@ source: [05-09-PLAN.md, 05-VERIFICATION.md]
 
 ## 自动化执行说明（2026-08-21）
 
-本机为永久 headless 环境（无 GUI/浏览器，禁装 playwright——见根 CODEBUDDY.md）。Phase 5 多客户端行为的**协议层**由 `web/uat/phase05.mjs` 覆盖（22/22 pass + 1 skipped）；**渲染/交互逻辑面**由 `web/uat/phase05-dom.mjs`（jsdom + 真实 dist + 真实 spawn 实例，phase04-dom.mjs 同基建）覆盖（16/16 pass，四连跑稳定）。
+本机为永久 headless 环境（无 GUI/浏览器，禁装 playwright——见根 CODEBUDDY.md）。Phase 5 多客户端行为的**协议层**由 `web/uat/phase05.mjs` 覆盖（28/28 pass + 1 skipped）；**渲染/交互逻辑面**由 `web/uat/phase05-dom.mjs`（jsdom + 真实 dist + 真实 spawn 实例，phase04-dom.mjs 同基建）覆盖（19/19 pass）；**终端核心层**由 `web/uat/phase05-dims.mjs`（@xterm/headless，与浏览器同 buffer 代码路径）覆盖（3/3 pass）。
 
 **2026-08-22 自动化扩编**：协议层新增 S8（D-11 attach SIGWINCH 强制重绘，vim 实证）/S9（D-06/D-07 递补升格全链：升格 Welcome → ro 期 INPUT 丢弃 → 升格后 INPUT/RESIZE 生效 → PTY 尺寸跟随）；DOM 层新建 D1-D5 十六断言。七项人工清单中六项已由自动化等价或更强断言闭环（result=pass, source=automated），仅 Test 1 的**像素级**一致性（留白/多端逐屏视觉）结构性不可测，保留人工核对。
+
+**2026-08-22 G-05-1 回归锁三层扩编**（05-12，gap 闭合证据层）：协议层新增 S10 会话尺寸下发断言（S10a 异尺寸 attach Welcome 携会话尺寸而非自身窗口尺寸 / S10b owner resize 经 50ms 防抖后全端收 'W' 推送 / S10c 升格 Welcome 携新 owner 尺寸）；DOM 层新增 D6 约束渲染断言（D6a 宽端旁观 .xterm-rows 约束到会话 rows / D6b 长行输出在会话 cols 处折行——叠写回归的 DOM 层等价物 / D6c 升格后约束解除回窗口尺寸）；终端核心层新建 phase05-dims.mjs（probe10 探针机制转正——D6H-1 等价锁：约束渲染 ≡ 窄端原生逐屏严格一致；D6H-2 负对照：同字节流喂 120 列换行点分叉，证明断言区分度）。
 
 **自动化覆盖边界**（任何 headless 方案结构性不可测，含 playwright）：浏览器多端像素一致性、原生 Basic 弹窗形态、节流工具制造的真实慢网。协议层与 DOM 逻辑面断言已全覆盖，残余像素/平台原生风险按 CODEBUDDY.md 显式豁免条款接受。
 
 ### 前置
 
 - 构建：`pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh`
-- 自动化复跑：`node web/uat/phase05.mjs ./wesh && node web/uat/phase05-dom.mjs ./wesh`
+- 自动化复跑：`node web/uat/phase05.mjs ./wesh && node web/uat/phase05-dom.mjs ./wesh && node web/uat/phase05-dims.mjs ./wesh`
 - Test 1 人工执行启动命令（默认 bind 0.0.0.0:7681 有两道安全闸——无凭据拒听（D-03）、
   凭据走明文 HTTP 拒听（D-05），报错均为设计行为不是故障）：
   - 局域网直接分发：`./wesh --writable --credential user:pass --insecure-http -- bash`

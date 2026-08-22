@@ -22,8 +22,8 @@ created: 2026-08-20
 | **Framework** | Go stdlib `testing` + `-race`（CI 强制）；UAT = Node 原生 WS 脚本（web/uat/phaseNN.mjs 零依赖传统）+ @xterm/headless 6.0.0 + jsdom 25.0.1 |
 | **Config file** | none（CI `.github/workflows/ci.yml`：`go test -race -count=1 -v ./...` + `pnpm -C web install --frozen-lockfile && pnpm -C web build`） |
 | **Quick run command** | `go test -race -count=1 ./internal/server/` |
-| **Full suite command** | `go test -race -count=1 ./... && time pnpm -C web build && go build -o /tmp/wesh-uat/wesh ./cmd/wesh && node web/uat/phase05.mjs && node web/uat/phase02.mjs && node web/uat/phase03.mjs && node web/uat/phase04.mjs` |
-| **Estimated runtime** | ~60 秒（Go 全量+race+构建+四个 UAT 脚本） |
+| **Full suite command** | `go test -race -count=1 ./... && time pnpm -C web build && go build -o /tmp/wesh-uat/wesh ./cmd/wesh && node web/uat/phase05.mjs && node web/uat/phase02.mjs && node web/uat/phase03.mjs && node web/uat/phase04.mjs && node web/uat/phase05-dom.mjs && node web/uat/phase05-dims.mjs` |
+| **Estimated runtime** | ~110 秒（Go 全量+race+构建+七个 UAT 脚本；2026-08-22 实测 go test 39.8s + pnpm 2.3s + 七脚本连跑 63s） |
 
 ---
 
@@ -51,6 +51,9 @@ created: 2026-08-20
 | 05-01-06 | 05-02 | 2 | RES-04 | 全局背压 DoS | 全体可写端 stall → 信用门闭合（子进程输出暂停可观测）；一端恢复/死亡 → 门开 | integration | `go test -race -run TestGlobalCredit ./internal/server/` | ❌ W0 | ⬜ pending |
 | 05-01-07 | 05-03 | 3 | MULTI-02 | owner 权限抢夺 | owner 被 1013 踢出 → 晋升先于其重连登记（同一 hubMu 时序闭合）；重连旧 owner 归队 FIFO 尾；全程单 owner（review #3） | integration | `go test -race -run TestSuccessionKickRace ./internal/server/` | ❌ W0 | ⬜ pending |
 | 05-01-08 | 05-07 | 7 | RES-03 | 计数器泄漏 | 客户端计数对称不变量：register/remove 交错序列逐步 n == len(set) + 非成员移除幂等（review #7） | unit（同包白盒） | `go test -race -run TestClientCountInvariant ./internal/server/` | ❌ W0（clients_test.go） | ⬜ pending |
+| 05-10-01 | 05-10 | 1 | MULTI-01, MULTI-04 | — | Welcome 三通道（attach/升格/运行期推送）恒携会话 cols/rows = 会话尺寸（恒 = PTY 实际尺寸） | unit + integration | `go test -race -run 'TestSessionDimsLocked|TestWelcomeSessionDims|TestResizeArbitration' ./internal/server/` | ✅ | ✅ green |
+| 05-11-01 | 05-11 | 1 | MULTI-01, MULTI-04 | T-05G-04 | 宽端视口约束渲染 = 逐轴 min(fit, sessionDims)；上行 RESIZE 恒报 fit 尺寸；非法尺寸键 console.warn 降级 | build + DOM（行为断言由 05-12 D6 承载） | `time pnpm -C web build && node web/uat/phase05-dom.mjs ./wesh` | ✅ | ✅ green |
+| 05-12-01 | 05-12 | 2 | MULTI-01, MULTI-04 | — | S10/D6/D6H 三层断言锁定尺寸下发协议面 + 约束渲染 + headless 等价/负对照 | UAT（协议 + jsdom + headless） | `node web/uat/phase05.mjs ./wesh && node web/uat/phase05-dom.mjs ./wesh && node web/uat/phase05-dims.mjs ./wesh` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 

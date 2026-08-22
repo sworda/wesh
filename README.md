@@ -101,12 +101,12 @@ ExecStart=/usr/local/bin/wesh --tls-cert /etc/wesh/cert.pem --tls-key /etc/wesh/
 - **辅助交互**：resize 期间右上角显示 `COLSxROWS` 浮层、离开页面前浏览器标准确认框拦截（均默认开；经 `--client-option resizeOverlay=false` / `confirmBeforeUnload=false` 或同名 URL query 关闭）。
 - **偏好下发与覆盖**：上表白名单键可经 `--client-option` 下发；URL query 同键覆盖（如 `?fontSize=16&cursorBlink=false`，字符串值需 JSON 引号并 URL 编码）；优先级 URL query > `--client-option` > 内置默认；`theme` 为完整 JSON 对象，未指定的色键保留内置调色板；非法 query 静默忽略（终端不受影响）。
 
-**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；分享 token 通道（含无认证模式）Hello 同样携 ticket——token 经 `/api/attach` 换一次性 ticket 后随 Hello 核销；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw","prefs":{...}?}`（`prefs` 为可选键）。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
+**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；分享 token 通道（含无认证模式）Hello 同样携 ticket——token 经 `/api/attach` 换一次性 ticket 后随 Hello 核销；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw","cols":N,"rows":N,"prefs":{...}?}`（`cols`/`rows` 恒在 = 当前会话尺寸；`prefs` 为可选键）。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
 
 | 类型字节 | 含义 | 载荷 |
 |----------|------|------|
 | `'H'` | Hello（C→S，必须为首帧） | JSON `{"version":"wesh.v1","cols":N,"rows":N,"ticket":"..."?}`（ticket 可选，认证模式或分享 token 通道携带） |
-| `'W'` | Welcome（S→C，握手成功） | JSON `{"mode":"ro"\|"rw","prefs":{...}?}`（`prefs` 可选——`--client-option`/`--osc52` 下发时携带，无配置时该键缺席） |
+| `'W'` | Welcome（S→C，握手成功） | JSON `{"mode":"ro"\|"rw","cols":N,"rows":N,"prefs":{...}?}`（`cols`/`rows` 恒在 = 当前会话尺寸；运行期尺寸变化经 `'W'` 帧再推送——递补升格推送同通道先例——前端据以约束视口渲染；`prefs` 可选——`--client-option`/`--osc52` 下发时携带，无配置时该键缺席） |
 | `'E'` | Error（S→C） | JSON `{"code":"...","message":"..."}` |
 | `'0'` | INPUT（C→S）/ OUTPUT（S→C） | 原始字节 |
 | `'1'` | RESIZE（C→S） | JSON `{"cols":N,"rows":N}`，钳制 [1,1000] |
@@ -180,7 +180,7 @@ location /s/ {
 
 ### resize 行为
 
-≥2 客户端时终端尺寸取参与集最小公共矩形，各端按自己窗口渲染、多余面积留白；减员到 1 端恢复该端尺寸。参与集按写权限分层：owner 模式仅 owner 参与（递补后新 owner 尺寸接管）；all 模式全部 rw 端参与；纯 ro 会话取各端 Hello 首尺寸。**纯 ro 会话中旁观者运行期窗口缩放不上报**（省流量裁决）——缩到小于 PTY 尺寸的旁观者看到裁剪画面，重新 attach 恢复。
+≥2 客户端时终端尺寸取参与集最小公共矩形（会话尺寸），经 Welcome 帧下发、运行期尺寸变化经 `'W'` 帧再推送更新；窗口大于会话矩形的端约束视口到会话尺寸渲染（超出面积为页面背景留白，行编辑回显等相对寻址流异尺寸双端逐屏一致）；窗口小于会话尺寸的轴按窗口渲染（裁剪语义不变）；减员到 1 端恢复该端尺寸（last-wins，推送解除约束）。参与集按写权限分层：owner 模式仅 owner 参与（递补后新 owner 尺寸接管）；all 模式全部 rw 端参与；纯 ro 会话取各端 Hello 首尺寸。**纯 ro 会话中旁观者运行期窗口缩放不上报**（省流量裁决）——缩到小于 PTY 尺寸的旁观者看到裁剪画面，重新 attach 恢复。
 
 ### 输入限速
 

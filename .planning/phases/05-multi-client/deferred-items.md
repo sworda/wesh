@@ -21,3 +21,16 @@
   信用门/踢出路径零改动（仅 /s/ 路由、attach token 分支、checkTicket 无认证携票
   分支、main.go 打印——既有测试无一走这些新路径：无凭据无 shares 时 ticket
   store 保持 nil，checkTicket 零漂移）。维持原判：环境负载敏感 flaky，越界不修复。
+
+## 2026-08-22（05-12 执行期）
+
+- **[gofmt-drift] GOROOT gofmt 标记 05-10 三文件 CJK 注释排版**：`$(go env GOROOT)/bin/gofmt -l .`
+  输出 internal/server/clients.go、clients_test.go、resize.go——diff 纯为 `//（` →
+  `// （`（全角括号前补半角空格）注释排版，零语义改动，系 05-10 提交（75e4def/9cc76f4）
+  引入的 HEAD 漂移（01-03/02-06/03-06/05-09 已登记同类陷阱的又一次实例）。05-12 plan
+  零 Go 文件改动，按 plan 授权跳过段 1 gofmt 清零；越界不修复，留给下一次 Go 文件
+  触碰 plan 按先例独立 style 提交清零。
+- **[untracked-artifact] 仓库根 `wesh` 二进制未跟踪且未被 .gitignore 覆盖**：标准构建
+  命令 `go build -o wesh ./cmd/wesh` 的默认产物路径即在仓库根，历史上各 plan 验证均
+  产生该文件但从未入库（构建产物不该入库）。建议后续在 .gitignore 补 `/wesh` 一行；
+  05-12 面外，登记不处理。
