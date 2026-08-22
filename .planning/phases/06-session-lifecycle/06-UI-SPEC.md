@@ -1,10 +1,11 @@
 ---
 phase: 6
 slug: session-lifecycle
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-08-22
+reviewed_at: 2026-08-23
 ---
 
 # Phase 6 — UI Design Contract
@@ -201,7 +202,7 @@ Accent reserved for: 状态面板提示行的**动作链接槽位**——终态�
 
 UI 元素清单：`status-panel`（static-content + interactive-control——Reconnecting 变体 + Session ended 修订）、`terminal-viewport`（media + interactive-control——重连首屏）、`reconnect-loop`（interactive-control——重连状态机，可视面 = Reconnecting 面板）、`document-title`（static-content——重连后标题）。本 phase 仍无 form / list-collection / nav 元素。
 
-Applicable state considerations resolved: 6 covered, 1 backstop, 1 dismissed
+Applicable state considerations resolved: 8 covered, 1 backstop, 1 dismissed
 
 | Category | Element(s) | Status | Resolution / Reason |
 |----------|------------|--------|---------------------|
@@ -211,7 +212,9 @@ Applicable state considerations resolved: 6 covered, 1 backstop, 1 dismissed
 | populated（重连成功首屏） | terminal-viewport | ✅ covered | term.clear() + 服务端 SIGWINCH 强制重绘（D-05）；不保留旧 buffer（G-05-1 同源花屏风险裁决） |
 | long-text | status-panel | ✅ covered | EXIT message 为服务端组短句（三形态均 ≤ ~45 字符），480px max-width 内自然折行；textContent 渲染无 HTML 注入面 |
 | long-text | document-title | ✅ covered | 不变（sanitize + 128 code point 截断）；重连后 [ro] 前缀随新 WELCOME 自然重应用（P5 D-12 先例） |
-| empty / partial / overflow / zero-one-many | （无 form/list 元素） | dismissed | 本 phase 无数据集合与列表；面板文案为契约短文本无溢出场景（01 裁决同款） |
+| overflow | status-panel | ✅ covered | 面板文案为契约约束短文本（C-1..C-9 逐字锁定，EXIT message ≤ ~45 字符），480px max-width 内自然折行——无 scroll/clip/truncate 场景 |
+| overflow | document-title | ✅ covered | 128 code point 截断（P5 既有裁决）承载溢出语义；重连后标题保持最后 remoteTitle 直到下次 OSC 2/重绘（P5 D-12） |
+| empty / partial / zero-one-many | （无 form/list 元素） | dismissed | 本 phase 无数据集合与列表（01 裁决同款） |
 | 真实断网栈与浏览器原生 online/offline 事件 | reconnect-loop | 🧪 backstop | headless 硬约束：协议层 `web/uat/phase06.mjs`（杀 WS → 重连接回原 PTY）+ jsdom `phase06-dom.mjs`（合成 CloseEvent{1006}/online/offline 事件驱动状态机断言）自动化覆盖；真实 OS 断网栈/浏览器原生事件时序按项目约束豁免，UAT 以 skipped+reason 记录（06-VALIDATION §Manual-Only Verifications 同判） |
 
 <!-- Status vocabulary (locked by probe-core projectTruths):
@@ -235,11 +238,11 @@ Applicable state considerations resolved: 6 covered, 1 backstop, 1 dismissed
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved (2026-08-23)
