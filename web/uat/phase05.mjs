@@ -2,7 +2,9 @@
 // 覆盖 MULTI-01/03/05 与 RES-03 协议面：分享链接全链（ro/rw/错 token/D-05 总闸）、
 // 双客户端输出一致、满员 503 双点位、1013 慢消费者踢出（raw-socket stall 夹具）、
 // D-11 attach SIGWINCH 强制重绘（S8）、D-06/D-07 递补升格全链（S9：升格 Welcome →
-// ro 期 INPUT 丢弃 → 升格后 INPUT 生效 + RESIZE 驱动 PTY 尺寸恢复）。
+// ro 期 INPUT 丢弃 → 升格后 INPUT 生效 + RESIZE 驱动 PTY 尺寸恢复）、
+// G-05-1 会话尺寸下发（S10：Welcome 恒携会话 cols/rows——attach carriage /
+// 运行期 resize 推送 / 升格携新 owner 尺寸，05-10 服务端半侧的协议层回归锁）。
 // 渲染层多端像素一致性（S7）按 headless 硬约束豁免（CODEBUDDY.md 平台原生行为豁免
 // 条款），人工核对清单见 .planning/phases/05-multi-client/05-UAT.md（外部浏览器可执行）。
 //
@@ -567,7 +569,75 @@ async function s9PromotionChain() {
   }
 }
 
-const scenarios = [s1DualClientConsistency, s2s3ShareLinkChains, s4WrongToken, s5FullCapacity503, s6SlowConsumerKick, s7PixelLayerManual, s8SigwinchRedrawOnAttach, s9PromotionChain];
+// ---------- S10：G-05-1 会话尺寸下发（05-10 服务端半侧协议断言：attach carriage / 运行期推送 / 升格尺寸） ----------
+// A(40x10, owner) + B(120x40, ro 旁观) 异尺寸双端：Welcome 恒携**会话尺寸**而非接收端自身
+// 窗口尺寸（B 收 40x10 而非 120x40——数值不相等即证明 carriage 语义在场，有区分度）；
+// owner RESIZE 经 50ms 防抖重算后全端（含上报者自身）收携新尺寸的 'W' 推送；
+// owner 断开升格后 B 收携自身 Hello 登记尺寸（cand.dims 120x40）的升格 Welcome。
+async function s10SessionDims() {
+  console.log('S10: 会话尺寸下发（Welcome carriage / resize 推送 / 升格尺寸，G-05-1）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    const a = await dialHello(inst.port, { cols: 40, rows: 10 });
+    const wA = welcomeOf(a.frames);
+    const b = await dialHello(inst.port, { cols: 120, rows: 40 });
+    const wB = welcomeOf(b.frames);
+    // S10a：attach carriage——A=rw 携自身 40x10；B=ro（D-07 降级）携会话尺寸 40x10
+    // 而非自身窗口 120x40（若实现误回填自身 Hello 尺寸 cols 会是 120——断言有区分度）
+    check('S10a', '异尺寸双端 attach：Welcome 携会话尺寸（owner 40x10 / 旁观者同 40x10 而非自身 120x40）',
+      wA.mode === 'rw' && wA.cols === 40 && wA.rows === 10
+      && wB.mode === 'ro' && wB.cols === 40 && wB.rows === 10,
+      `A=${wA.mode}/${wA.cols}x${wA.rows} B=${wB.mode}/${wB.cols}x${wB.rows}`);
+
+    // S10b：运行期推送——A 发 RESIZE(60x15)，50ms 防抖经轮询吸纳（S9b stty 同款形态，
+    // 断言前无需显式等待）；B 收第二帧 WELCOME(mode=ro, 60x15)（推送按接收端当前 mode
+    // 组帧）；同窗口断言 A 同样收到该推送（上报者自身也在广播集内，mode=rw）
+    const baseA = a.frames.length;
+    const baseB = b.frames.length;
+    a.ws.send(concat(new Uint8Array([RESIZE]), enc.encode(JSON.stringify({ cols: 60, rows: 15 }))));
+    const t0 = Date.now();
+    let pushB = null, pushA = null;
+    while (Date.now() - t0 < 5000 && !(pushB && pushA)) {
+      if (!pushB) {
+        const wfs = b.frames.slice(baseB).filter((f) => f[0] === WELCOME);
+        if (wfs.length > 0) pushB = JSON.parse(dec.decode(wfs[wfs.length - 1].subarray(1)));
+      }
+      if (!pushA) {
+        const wfs = a.frames.slice(baseA).filter((f) => f[0] === WELCOME);
+        if (wfs.length > 0) pushA = JSON.parse(dec.decode(wfs[wfs.length - 1].subarray(1)));
+      }
+      if (!(pushB && pushA)) await sleep(50);
+    }
+    check('S10b', 'owner RESIZE 后全端收携新会话尺寸的 W 推送（旁观者 ro/60x15，上报者自身 rw/60x15 同收）',
+      pushB !== null && pushB.mode === 'ro' && pushB.cols === 60 && pushB.rows === 15
+      && pushA !== null && pushA.mode === 'rw' && pushA.cols === 60 && pushA.rows === 15,
+      `B推送=${pushB ? `${pushB.mode}/${pushB.cols}x${pushB.rows}` : '（未到）'} A推送=${pushA ? `${pushA.mode}/${pushA.cols}x${pushA.rows}` : '（未到）'}`);
+
+    // S10c：升格尺寸——owner 断开后 B 收升格 Welcome(mode=rw) 携 cand.dims=120x40
+    // （B 的 Hello 登记尺寸；owner 模式升格后参与集单员，arbitrate 单员 = cand.dims）。
+    // 取最后一帧 WELCOME：容忍升格 Welcome 与紧随的 recalcNow 推送两帧相继到达（同值幂等）
+    const baseB2 = b.frames.length;
+    a.ws.close();
+    await waitClose(a.ws, 3000);
+    const t1 = Date.now();
+    let promo = null;
+    while (Date.now() - t1 < 5000) {
+      const wfs = b.frames.slice(baseB2).filter((f) => f[0] === WELCOME);
+      if (wfs.length > 0) { promo = JSON.parse(dec.decode(wfs[wfs.length - 1].subarray(1))); break; }
+      await sleep(50);
+    }
+    check('S10c', 'owner 断开后旁观者收升格 Welcome(mode=rw) 携新 owner 尺寸 120x40',
+      promo !== null && promo.mode === 'rw' && promo.cols === 120 && promo.rows === 40,
+      `升格=${promo ? `${promo.mode}/${promo.cols}x${promo.rows}` : '（未到）'}`);
+
+    b.ws.close();
+    await waitClose(b.ws, 3000);
+  } finally {
+    inst.kill();
+  }
+}
+
+const scenarios = [s1DualClientConsistency, s2s3ShareLinkChains, s4WrongToken, s5FullCapacity503, s6SlowConsumerKick, s7PixelLayerManual, s8SigwinchRedrawOnAttach, s9PromotionChain, s10SessionDims];
 let failed = 0;
 for (const s of scenarios) {
   try {
