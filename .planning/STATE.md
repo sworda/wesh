@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 6
 current_phase_name: 会话生命周期与重连
-status: planning
+status: "Phase 05 shipped — PR #6"
 stopped_at: Completed 05-13-PLAN.md
-last_updated: "2026-08-22T11:56:36.900Z"
+last_updated: "2026-08-22T15:43:38.628Z"
 last_activity: 2026-08-22
-last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 5
   total_plans: 37
   completed_plans: 37
+last_activity_desc: Phase 05 execution started
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 
 Phase: 6 — 会话生命周期与重连
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-08-22 — Phase 05 complete, transitioned to Phase 6
+Status: Phase 05 shipped — PR #6
+Last activity: 2026-08-22
 
 Progress: [██████████] 100%
 
