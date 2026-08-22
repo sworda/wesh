@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-10-PLAN.md
-last_updated: "2026-08-22T03:43:35.704Z"
+stopped_at: Completed 05-11-PLAN.md
+last_updated: "2026-08-22T04:15:31.264Z"
 last_activity: 2026-08-22
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 36
-  completed_plans: 34
+  completed_plans: 35
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 2 of 12
+Plan: 3 of 12
 Status: Ready to execute
 Last activity: 2026-08-22 — Phase 05 execution started
 
-Progress: [█████████░] 94%
+Progress: [██████████] 97%
 
 ## Performance Metrics
 
@@ -94,6 +94,7 @@ Progress: [█████████░] 94%
 | Phase 05 P08 | 22min | 2 tasks | 2 files |
 | Phase 05 P09 | 37min | 2 tasks | 15 files |
 | Phase 05 P10 | 28min | 2 tasks | 10 files |
+| Phase 05 P11 | 22min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -178,6 +179,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-10]: attach 升档序列重排——addMember/recalcNow 前移至 Welcome 组帧之前（Welcome 恒携 attach 完成后生效的会话尺寸）；Welcome 恒首帧与 hubMu > sess.fdMu 锁序两不变量保持，推送不触达未登记的 attach 者自身
 - [Phase ?]: [Phase 05-10]: 运行期尺寸下发唯一挂点 = recalcNow 的 last 变化分支（attach/detach/kick/升格/防抖五调用点全覆盖，目标不变零推送）；升格 Welcome 携 cand.dims（单员参与集恒等）；推送按各端当前 mode 组帧 + prefs 双档（D-13 不漂移），trySend 失败走 kickOrCreditLocked
 - [Phase ?]: [Phase 05-10]: TestAllPolicy 适配 G-05-1 推送（Rule 1：planner 回归自检遗漏 all 模式 2→1 推送落 B 读流）；plan 字面 B(60,20)->60/24 算术矛盾按意图修正 B(60,50)->60/43
+- [Phase ?]: [Phase 05-11]: 上报/渲染双概念拆分——refit() 唯一入口收编窗口监听/onopen/升格/prefs 四调用点；上报恒 fit.proposeDimensions() 窗口物理尺寸驱动仲裁，渲染 term.resize 逐轴 min(fit, sessionDims)；不采用 CSS 约束容器（proposeDimensions 会被污染致两概念无法拆分）
+- [Phase ?]: [Phase 05-11]: term.onResize 订阅拆除 + sendResize lastReported 等值去重——ro 期 isRO 门拦截不记账使升格后首次 refit 必真实上报（05-08 纠正链保持）；onopen Hello 发出后同步 lastReported 防握手 Welcome 后冗余等值 RESIZE（线序零漂移）
+- [Phase ?]: [Phase 05-11]: ro 一次性 console 提示改 roNotified 门闩承载（运行期尺寸推送打破每 attach 仅一次不变量），文案逐字不动；roNotified 接线前 export 防 noUnusedLocals（queryKeys 先例第二次沿用），接线后去 export
 
 ### Pending Todos
 
@@ -196,6 +200,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-22T03:43:35.683Z
-Stopped at: Completed 05-10-PLAN.md
+Last session: 2026-08-22T04:15:31.244Z
+Stopped at: Completed 05-11-PLAN.md
 Resume file: None

@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 10
+open_count: 11
 waived_count: 0
 fixed_count: 1
-total_count: 11
-last_updated: 2026-08-22T03:42:50.331Z
+total_count: 12
+last_updated: 2026-08-22T04:15:52.151Z
 ---
 
 # Broken Windows Ledger
@@ -26,6 +26,7 @@ last_updated: 2026-08-22T03:42:50.331Z
 | 9 | 05 | stub | internal/server/clients.go |  | inputQ.droppedInputs 队列满丢弃计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T14:24:41.172Z |  |
 | 10 | 05 | deviation | internal/server/multi_test.go |  | TestAllPolicy 适配 G-05-1 运行期推送（2→1 last-wins 推送帧显式消费断言，planner 回归自检遗漏面） | open |  | 2026-08-22T03:42:50.177Z |  |
 | 11 | 05 | deviation | internal/server/multi_test.go |  | plan 字面 all 子测 B(60,20)->60/24 算术矛盾，按意图修正 B(60,50)->60/43 rows 维区分度 | open |  | 2026-08-22T03:42:50.331Z |  |
+| 12 | 05 | deviation | web/src/main.ts |  | 05-11: roNotified Task 1 export 防 noUnusedLocals 接线前误报（queryKeys 04-05 先例第二次沿用），Task 2 接线后去 export（ced81ed/31d8a68） | open |  | 2026-08-22T04:15:52.151Z |  |
 
 ````json
 [
@@ -159,6 +160,18 @@ last_updated: 2026-08-22T03:42:50.331Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-22T03:42:50.331Z",
+    "resolved_at": null
+  },
+  {
+    "id": 12,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "web/src/main.ts",
+    "line": null,
+    "description": "05-11: roNotified Task 1 export 防 noUnusedLocals 接线前误报（queryKeys 04-05 先例第二次沿用），Task 2 接线后去 export（ced81ed/31d8a68）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:15:52.151Z",
     "resolved_at": null
   }
 ]
