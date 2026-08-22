@@ -1,2 +1,12 @@
 node_modules/
 web/dist/*.gz
+
+# local build artifacts
+/wesh
+/tags
+
+# local review / debug output
+/review_output/
+/.opencodereview/
+/.planning/debug/
+/.planning/research/.cache/

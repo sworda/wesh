@@ -35,10 +35,14 @@ function startWesh(args) {
     //（默认 0.0.0.0 无凭据自 Phase 3 起拒绝启动）；协议断言语义零改动。
     const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
+    let stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });
     child.stdout.on('data', (d) => {
-      const m = /listening on http:\/\/[^\s]+:(\d+)/.exec(d.toString());
+      // IN-04 累积缓冲后匹配（phase05.mjs 形态回填）：listening 行跨 chunk
+      // 分块时逐 chunk 直接正则永不命中，8s 超时假失败
+      stdoutBuf += d.toString();
+      const m = /listening on http:\/\/[^\s]+:(\d+)/.exec(stdoutBuf);
       if (m) {
         clearTimeout(to);
         resolve({ port: Number(m[1]), kill: () => child.kill('SIGKILL'), child });
@@ -59,11 +63,16 @@ function dialHello(port, { version = SUBPROTOCOL, sendHello = true } = {}) {
     ws.onmessage = (ev) => frames.push(new Uint8Array(ev.data));
     ws.onopen = () => { if (sendHello) ws.send(helloFrame(version)); };
     ws.onerror = () => reject(new Error('WS 连接失败'));
+    // IN-04 总超时 watchdog：被测二进制挂死（Welcome 永不到达）时 10s 拒绝而非永久悬挂
+    const watchdog = setTimeout(() => {
+      clearInterval(poll);
+      reject(new Error('握手总超时：10s 未收到 Welcome'));
+    }, 10000);
     // Welcome 到达即视为握手完成
     const poll = setInterval(() => {
-      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); resolve({ ws, frames }); }
+      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); clearTimeout(watchdog); resolve({ ws, frames }); }
     }, 10);
-    ws.onclose = (ev) => { clearInterval(poll); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
+    ws.onclose = (ev) => { clearInterval(poll); clearTimeout(watchdog); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
   });
 }
 
@@ -189,36 +198,34 @@ async function scenarioHelloTimeout() {
   }
 }
 
-// ---------- 场景 5：单客户端（第二连接 409） ----------
-async function scenarioSingleClient() {
-  console.log('场景 5: 第二连接 409');
+// ---------- 场景 5：多客户端（第二连接成功 + 断开后服务端存活可再 attach） ----------
+// Phase 5 适配：409 单客户端门已拆除（Attach 守卫区③位换 max-clients 503 闸——
+// 容量上限断言由 phase05.mjs S5 双点位承接，未丢失）；第二连接成功即多客户端特性
+// 本身。生命周期预期改写：客户端断开不再使服务端退出（单次语义终结，服务端生命
+// 周期只随子进程）——断言面由『拒绝/退出』改写为『存活、可再 attach』，数量守恒。
+async function scenarioMultiClient() {
+  console.log('场景 5: 多客户端（第二连接成功 + 断开后服务端存活可再 attach）');
   const inst = await startWesh(['--', 'sleep', '30']);
   try {
-    const { ws } = await dialHello(inst.port); // 主连接占用
-    const { default: http } = await import('node:http');
-    const status = await new Promise((resolve, reject) => {
-      const key = Buffer.from('uat-second-client-key').toString('base64');
-      const req = http.request({
-        host: '127.0.0.1', port: inst.port, path: '/ws',
-        headers: {
-          Connection: 'Upgrade', Upgrade: 'websocket',
-          'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': '13',
-          'Sec-WebSocket-Protocol': SUBPROTOCOL,
-        },
-      });
-      req.on('response', (res) => { res.resume(); resolve(res.statusCode); });
-      req.on('upgrade', () => resolve(101));
-      req.on('error', reject);
-      req.end();
-    });
-    check('T5', '第二客户端握手 → HTTP 409（Unable to connect）', status === 409, `status=${status}`);
-    ws.close();
+    const { ws: ws1 } = await dialHello(inst.port); // 主连接占用
+    const { ws: ws2, frames: frames2 } = await dialHello(inst.port);
+    const welcome2 = JSON.parse(dec.decode(frames2.find((f) => f[0] === WELCOME).subarray(1)));
+    check('T5a', '第二客户端握手成功 → Welcome(mode=ro)（多客户端同会话，409 门 Phase 5 拆除）',
+      ws1.readyState === WebSocket.OPEN && welcome2.mode === 'ro', `mode=${welcome2.mode}`);
+    ws1.close(); ws2.close();
+    await waitClose(ws1, 3000); await waitClose(ws2, 3000);
+    // 全部客户端断开后服务端存活——可再 attach（D-10 唯一终结路径 = 子进程退出）
+    const { ws: ws3, frames: frames3 } = await dialHello(inst.port);
+    const welcome3 = JSON.parse(dec.decode(frames3.find((f) => f[0] === WELCOME).subarray(1)));
+    check('T5b', '全部客户端断开后服务端存活、可再 attach（单次语义终结）', welcome3.mode === 'ro', `mode=${welcome3.mode}`);
+    ws3.close();
+    await waitClose(ws3, 3000);
   } finally {
     inst.kill();
   }
 }
 
-const scenarios = [scenarioRO, scenarioRW, scenarioExit, scenarioVersionMismatch, scenarioHelloTimeout, scenarioSingleClient];
+const scenarios = [scenarioRO, scenarioRW, scenarioExit, scenarioVersionMismatch, scenarioHelloTimeout, scenarioMultiClient];
 let failed = 0;
 for (const s of scenarios) {
   try {

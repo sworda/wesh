@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: 协议基线** - wesh.v1 类型化帧、WS 三层上限、合规关闭码、默认只读、ping/pong 保活 (completed 2026-08-15)
 - [x] **Phase 3: 认证与传输安全** - 一次性 ticket、时序安全比较、失败节流、Origin 白名单、TLS 加固 (completed 2026-08-18)
 - [x] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发 (completed 2026-08-19)
-- [ ] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接
+- [x] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接 (completed 2026-08-22)
 - [ ] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程
 - [ ] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传
 - [ ] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志
@@ -175,7 +175,53 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 一个客户端停止读取 TCP 流时其他客户端无卡顿：慢客户端 outbox 写满被 1013 踢出，重连后从最新输出看起；PTY 读循环永不因任何客户端阻塞
   3. 异尺寸两客户端按最小公共矩形 `min(cols)×min(rows)` 渲染，2→1 时恢复 last-wins；启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
 
-**Plans**: TBD
+**Plans**: 13/13 plans executed（12 executed + 1 gap closure — REVIEW WR-01/WR-02）
+**Wave 1**
+
+- [x] 05-01-PLAN.md — tracer：多客户端 fan-out 主干（clients.go 注册表/hub/outbox/writer + 409 门拆除 + 生命周期改造断开不退出/子进程退出广播 1000）+ e2e 单次语义迁移 + TestMultiClientFanout/TestDetach/TestExitBroadcast（MULTI-01）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 05-02-PLAN.md — 全局信用门（全体可写端满停读 PTY/半水位恢复/统一 Broadcast）+ D-11 SIGWINCH 新客重绘 + TestSlowConsumerKick/TestGlobalCredit（MULTI-03/RES-04）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 05-03-PLAN.md — 写权限体系：--write-policy=owner|all + owner FIFO 递补 + 降级/升格 Welcome + prefs 双档 osc52（含 D-05 one-way 确认门）+ 权限测试组 + TestSuccessionKickRace 继承竞态时序闭合（MULTI-02）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 05-04-PLAN.md — resize 仲裁器：arbitrate 纯函数 + D-09 参与集分层 + 50ms 防抖 + ro 忽略闸 + TestArbitrate/TestResizeArbitration（MULTI-04）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 05-05-PLAN.md — RES-02 输入限速（x/time/rate 超限丢弃）+ CR-01 完整背压（256KiB 输入队列 + input-writer 独占 Master.Write）+ TestInputRateLimit（RES-02）
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [x] 05-06-PLAN.md — 分享链接：shareTokens 两条目 store + /s/{token}/ 门禁 + attach token 分支 + 启动打印两行 + outboundIPv4（含 D-01/D-03 one-way 确认门）+ TestShareToken（MULTI-05）
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [x] 05-07-PLAN.md — --max-clients（默认 32）+ ③位 503 闸 + /api/attach 早闸（含 D-08 one-way 确认门）+ TestMaxClients503 + TestClientCountInvariant 计数对称不变量（RES-03）
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [x] 05-08-PLAN.md — 前端：/s/ token 进入 + 响应分派矩阵 + 1013/503/无效链接三专版 + 文案清扫 R1-R3 + 升格 rw 分支 + ro 不发 RESIZE + OSC52 门闩 + dist 重建（MULTI-02/03/04/05）
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [x] 05-09-PLAN.md — 收口：phase05.mjs 协议 UAT（链接全链/双客户端一致/满员 503/S6 1013 踢出活跃场景）+ 05-UAT.md 人工清单 + phase02/03.mjs 生命周期适配 + README 多客户端节（含反代脱敏示例/暴露面清单/标定方法论）+ 全量六段式（MULTI-01/03/05/RES-03）
+
+**Gap closure** *(UAT G-05-1：异尺寸双端行编辑叠写——D-09 min-rect 不变量不覆盖相对寻址流；用户裁决方向 A = 会话尺寸下发 + 前端视口约束，2026-08-22)*
+
+- [x] 05-10-PLAN.md — 服务端：Welcome 恒携会话 cols/rows + recalcNow 推送挂点（运行期 'W' 再推送复用升格先例）+ attach 升档时序重排 + 升格携新 owner 尺寸 + Go 行为测试组（MULTI-01/MULTI-04）
+- [x] 05-11-PLAN.md — 前端：sessionDims/refit 统一入口（上报=fit / 渲染=逐轴 min 拆分）+ WELCOME 尺寸应用与升格解除 + ro 提示门闩 + dist 重建（MULTI-01/MULTI-04）
+- [x] 05-12-PLAN.md — UAT 三层断言（S10 协议 / D6 DOM 约束渲染 / phase05-dims.mjs headless 等价+负对照）+ README/05-UAT 同步 + 全量六段式回归（MULTI-01/MULTI-04）
+
+**Gap closure** *(VERIFICATION 2026-08-22 复验 gaps_found：G-05-1 缝合面残留 WR-01 推送循环内踢出致 stale 扇出 + WR-02 creditBlocked 端尺寸推送丢失——05-REVIEW 逐字补丁，不可 defer)*
+
+- [x] 05-13-PLAN.md — pushSessionDimsLocked 嵌套重算 arbiter.last 复检（stale 扇出中止）+ 注释论证改写 + afterDrain 开门补发当前会话尺寸 Welcome（option (a)）+ TestPushSessionDimsKickRecalc/TestAfterDrainResendsDims 两白盒回归（MULTI-04/RES-04）
+
 **UI hint**: yes
 **Research flag**: outbox 容量/水位/strikes 默认参数需负载测试标定（可在执行中以测试任务消化，Phase 9 回填）。**resize 仲裁分歧已闭合**：以需求 MULTI-04 为准——所有模式下 ≥2 客户端一律最小公共矩形；ARCHITECTURE.md §2.9 "owner 模式跟随 owner 尺寸"表述作废。
 
@@ -246,7 +292,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
-| 5. 多客户端共享 | TBD | Not started | - |
+| 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
 | 6. 会话生命周期与重连 | TBD | Not started | - |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |

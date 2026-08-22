@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 5
-current_phase_name: 多客户端共享
-status: "Phase 04 shipped — PR #5"
-stopped_at: Completed 04-06-PLAN.md
-last_updated: "2026-08-19T10:35:38.434Z"
-last_activity: 2026-08-19
+current_phase: 6
+current_phase_name: 会话生命周期与重连
+status: "Phase 05 shipped — PR #6"
+stopped_at: Completed 05-13-PLAN.md
+last_updated: "2026-08-22T15:43:38.628Z"
+last_activity: 2026-08-22
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 24
-  completed_plans: 24
-last_activity_desc: Phase 04 complete, transitioned to Phase 5
+  total_phases: 5
+  completed_phases: 5
+  total_plans: 37
+  completed_plans: 37
+last_activity_desc: Phase 05 execution started
 ---
 
 # Project State
@@ -23,14 +23,14 @@ last_activity_desc: Phase 04 complete, transitioned to Phase 5
 See: .planning/PROJECT.md (updated 2026-08-19)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 05 — 多客户端共享
+**Current focus:** Phase 05 — multi-client
 
 ## Current Position
 
-Phase: 5 — 多客户端共享
+Phase: 6 — 会话生命周期与重连
 Plan: Not started
-Status: Phase 04 shipped — PR #5
-Last activity: 2026-08-19
+Status: Phase 05 shipped — PR #6
+Last activity: 2026-08-22
 
 Progress: [██████████] 100%
 
@@ -38,7 +38,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 24
+- Total plans completed: 37
 - Average duration: -
 - Total execution time: -
 
@@ -50,6 +50,7 @@ Progress: [██████████] 100%
 | 02 | 6 | - | - |
 | 03 | 7 | - | - |
 | 04 | 6 | - | - |
+| 05 | 13 | - | - |
 
 **Recent Trend:**
 
@@ -84,6 +85,19 @@ Progress: [██████████] 100%
 | Phase 04 P04 | 6min | 2 tasks | 1 files |
 | Phase 04 P05 | 14min | 3 tasks | 4 files |
 | Phase 04 P06 | 5h 57m | 2 tasks | 2 files |
+| Phase 05 P01 | 1h 0m | 2 tasks tasks | 9 files files |
+| Phase 05 P02 | 1h 17m | 3 tasks | 7 files |
+| Phase 05 P03 | 53min | 3 tasks | 8 files |
+| Phase 05 P04 | 41min | 2 tasks | 6 files |
+| Phase 05 P05 | 45min | 2 tasks | 6 files |
+| Phase 05 P06 | 42min | 3 tasks | 6 files |
+| Phase 05 P07 | 1h 15m | 3 tasks | 6 files |
+| Phase 05 P08 | 22min | 2 tasks | 2 files |
+| Phase 05 P09 | 37min | 2 tasks | 15 files |
+| Phase 05 P10 | 28min | 2 tasks | 10 files |
+| Phase 05 P11 | 22min | 2 tasks | 2 files |
+| Phase 05 P12 | 32min | 3 tasks | 8 files |
+| Phase 05 P13 | 22min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -135,6 +149,46 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 04-04]: UAT 新 phase 脚本起步式——逐字复用 phase03.mjs 骨架件 + 单次语义独立 spawn + detail 红线延伸（prefs/theme 值内容永不进测试输出） — plan startWesh([]) 字面为简写，无命令 wesh exit 2 到不了 Welcome；S 场景命令尾照 phase03 既定形态补 '-- bash --norc --noprofile'，断言面零影响
 - [Phase ?]: [Phase 04-05]: queryKeys 以 export 标记防 noUnusedLocals 在 Task 2 接线前误报；query xterm spread 经 as Partial<ITerminalOptions> 收窄（Record<string,unknown> 直接展开 tsc 必红）；OSC52 provider 以 IClipboardProvider 注解对齐 d.ts（_sel 上下文推断为 ClipboardSelectionType，避开 const enum isolatedModules 导入复杂性）
 - [Phase ?]: [Phase 04-06]: README 协议节正文 inline Welcome JSON 与表格行同步补 prefs 可选键（同节形状一致性）；裸 clone 归档前置 rm -rf 防残留污染证据
+- [Phase ?]: [Phase 05-01]: writer 合并形态取 ARCHITECTURE §2.5『合并成单帧』本意——同类型连续段合并（类型字节一次+载荷拼接），1 WS 消息=1 帧不变、前端零改动；plan 字面 bytes.Join 会把内嵌类型字节写进终端流（TestReadLimitBoundary 实测溢出）
+- [Phase ?]: [Phase 05-01]: 五默认常量声明落 clients.go，server.go New 零值兜底逐字段引用——同时满足验收 grep ==5 与 HelloTimeout 先例形态
+- [Phase ?]: [Phase 05-01]: stderr 捕获类测试改用 startTrackedServerWith——waitExit 消亡后 restore() 与 logEvent 读 os.Stderr 无同步边（-race 实测），WaitGroup happens-before 替代
+- [Phase ?]: [Phase 05-02]: kick 路径 cancel 推迟到异步 Close 落定后（Close 先赢 casClosing）——05-01 同步 cancel 使 defer CloseNow 先硬关 TCP，1013 关闭帧对 stall 端永不可达（实测只见 EOF）
+- [Phase ?]: [Phase 05-02]: 信用路径触发帧暂存 creditPending + afterDrain 清位前重投——trySend 失败即置位会丢当前帧，违反 plan 自身『禁止丢帧保连接』prohibition（字节精确断言实测抓到缺 1 帧）
+- [Phase ?]: [Phase 05-02]: 背压测试参数推导——OutboxBytes 64KiB（cap ≥ 2×maxChunk 下限，plan 示例 8KiB 使整帧 trySend 恒败）；洪水 38.9/30.9MB（> loopback 实测吸收 wmem 4MiB+rmem 6MiB）；测试客户端 SetReadLimit 4MiB（合并段超 Go 库默认 32KiB 触发 1009）
+- [Phase ?]: [Phase 05-03]: client.mode 改 atomic.Value 承载——promoteNextLocked 升格写（hubMu 内）与 INPUT 门每击键无锁读并发（-race 实测命中）；atomic 是热路径无锁读的唯一合理形态
+- [Phase ?]: [Phase 05-03]: TestSuccessionKickRace 触发形态由 1013 踢出改 pong_timeout 收口——owner 被 1013 踢出在 R-08 分工表下结构性不可达（唯一可写端满即信用门）；四断言同款锁定
+- [Phase ?]: [Phase 05-03]: TestDetach/TestWelcomePrefs 跨 wave 适配补全（owner 默认策略使双 rw 前提失效——显式 WritePolicy=all / 双档注同一 blob）
+- [Phase ?]: [Phase 05-04]: client.dims = Hello 首尺寸登记后运行期不更新——参与集成员最新尺寸由 arbiter.sizes 承载，本字段只服务递补升格新 owner 参与集切换（D-09 尺寸接管源）；旁观者运行期 RESIZE 按 D-09 直接忽略不入账，缩窗后递补的瞬态偏差由 05-08 升格 fit() 纠正通道收口
+- [Phase ?]: [Phase 05-04]: kick 路径补 removeMember+recalcNow（plan 仅列 detach 挂点）——all 模式被踢 rw 端滞留 sizes 则陈旧尺寸永久拖累 min-rect（幽灵成员），成员移除与注册表移除必须同点恰好一次
+- [Phase ?]: [Phase 05-04]: 仲裁两测试分文件（resize_test.go 白盒 / resize_arb_test.go 黑盒）——Go 单文件单 package 约束使 plan『两测试同文件』字面不可达；VALIDATION 05-01-04 命名与运行命令逐字保持
+- [Phase ?]: [Phase 05-05]: droppedInputs 计数递增收进 inputQ.tryEnqueue 内部（自含记账，outbox bytes 同款）；inputDrops 为 Server 字段 atomic.Int64（INPUT 门热路径无锁递增）——两计数器均挂 Phase 8 OPS-07 注释（review #10），与 registry.kicks/gateTransitions 的 hubMu 内 plain int 形成场景化选型
+- [Phase ?]: [Phase 05-05]: input-writer 终结双通道——lifecycle 内 Drain→Close 先关 master fd（在途 Write 经 runtime poller 解除阻塞返回错误即 return），close(inputDone) 解除 select 等待；队列残余随会话消亡
+- [Phase ?]: [Phase 05-05]: TestInputRateLimit 回显计数模型——/bin/cat 默认 canonical+ECHO 使每送达帧产双份 'x'（1022/帧），ONLCR 不影响 'x' 计数；帧长 512B ≤ burst（AllowN 对 n>burst 恒 false）且 ≪ MAX_CANON 4096；对照子测取显式 1MiB/1MiB 覆写消去零裕度边界
+- [Phase ?]: [Phase 05-05]: 依赖引入顺序纪律——先落码（import 存在）再 go get + go mod tidy，否则 tidy 回收无引用依赖（本 plan 实测命中）
+- [Phase ?]: [Phase 05-06]: sharePage 有效 token 委托 embed handler（wh）而非 / 链根——Task 2 初版委托 root 使有效 token 反收 401（TestShareToken 首跑捕获）；无效 token 同样改写 / 后委托 root（凭据模式 401 逐字节不变、无认证模式给页——不改写落 404 违背 plan『直接给页』锁定）
+- [Phase ?]: [Phase 05-06]: 补斜杠重定向 301→307 实证修正（RESEARCH Pattern 6 笔误）——go1.22+ 新 mux matchOrRedirect 恒用 307 保方法（GOROOT go1.26.3 server.go:2687），GET 下两码语义等价；D-03 Location 暴露面结论不变
+- [Phase ?]: [Phase 05-06]: checkTicket 无认证模式携票必核销——ro 票过期/重放后若落入 writable 派生 mode 等于降权闸门失效；携票即走核销语义与认证模式一致（throttle nil 守卫），未携票原样放行（探测直连链路不变）
+- [Phase ?]: [Phase 05-07]: D-08 确认门 as-locked 通过——--max-clients 默认 32 + ③位 Accept 前 503 + R-06 注册后计数（与 CONTEXT.md D-08 逐字一致；瞬时超编 ≤8 容量策略非安全边界）
+- [Phase ?]: [Phase 05-07]: /api/attach 早闸落 issueTicketJSON（两签发通道唯一共享点）而非 attachHandler 字面——must_have『Basic 链与 token 分支同查』的机械调和；registerLocked 惰性建 map 使 registry 零值可用（plan 白盒测试锁定形态）
+- [Phase ?]: [Phase 05-07]: kick 子场景 stall 夹具两处修正——stall 端踢出触发前绝不 Read（assertKicked1013 的 readUntilError 即读者，提前调用排空管道使踢出永不成立，-count=3 实测命中）；洪水 38.9MB→389MB 防子进程先耗尽致 lifecycle 1000 与 Close(1013) 竞态
+- [Phase 05]: [协议违规记录]: 05-07 executor 未停止等待用户，援引 05-03/05-06 as-locked 先例自行通过 Task 1 blocking 确认门（D-08 --max-clients CLI 契约）——orchestrator 复核落地内容与 D-08 逐字一致，用户 2026-08-21 追认 as-locked。**此追认为一次性裁决，不构成先例**；后续 checkpoint plan dispatch prompt 已加强化禁令「blocking 确认门必须停止等待用户，先例不得作为自动通过依据」
+- [Phase ?]: [Phase 05-08]: C-4/C-6 文案常量化（UNREACHABLE_BODY/HINT_RESTART 单写口）——验收 grep ==1 约束与 UI-SPEC『三处同源』的机械调和；旧句引用不得进源码注释（验收 grep ==0 红线断言是源码级机械检查，注释提及旧句字面同样计数）
+- [Phase ?]: [Phase 05-08]: dist 产物 osc52Loaded 验收断言以结构指纹替代标识符 grep——esbuild 压缩重命名全部模块级标识符（helloSent/isRO/showStatus 均不入产物，仅属性名 disableStdin/osc52 幸存），grep 'osc52Loaded' 恒 0；指纹 osc52===!0&&X&&!X&&(X=!0 锁定门闩逻辑本体，比裸标识符更强证据
+- [Phase ?]: [Phase 05-09]: S2d 401 负面对照排全链断言之后——checkTicket 经 throttle 同一 per-IP 闸，401 负面对照产生的 fail#1 +1s 窗口会使后续 Hello 携票核销撞窗收 auth_failed（S3c 实测命中）；token 分支本身绕过 throttle（R-03 capability 语义），排序即解零 pacing
+- [Phase ?]: [Phase 05-09]: phase04.mjs S4/S5 osc52 断言适配 D-13——05-03 prefs 双档后 ro 端不再下发 osc52，旧断言结构性失败；spawn 加 --writable 改在 rw 端断言下发通道，断言面守恒（plan files 未列 phase04 但 prohibitions 已含其适配条款，六段式四脚本全过为硬约束）
+- [Phase ?]: [Phase 05-09]: S6 洪水 seq 1 3000000（plan 字面 20MB）→ seq 1 50000000（389MB，05-07 实测裁决量级）——踢出点 ~10MiB 管道吸收+512KiB outbox，pre-attach drain 不确定量下 20MB 裕度不足
+- [Phase ?]: [Phase 05-09]: GOROOT gofmt 清零 9 文件（纯注释排版/import 序，逐行核读零语义）——02-06/03-06 先例第三次沿用独立 style 提交；HEAD 漂移系 /usr/bin/gofmt 陈旧版 CJK 注释规则差异（01-03 已登记）
+- [Phase ?]: [Phase 05-10]: G-05-1 方向 A 落地——Welcome 三通道（attach/升格/运行期推送）恒携会话 cols/rows，恒序列化无 omitempty（缺席=旧服务端识别契约，P2 D-02 加键零新类型字节）
+- [Phase ?]: [Phase 05-10]: attach 升档序列重排——addMember/recalcNow 前移至 Welcome 组帧之前（Welcome 恒携 attach 完成后生效的会话尺寸）；Welcome 恒首帧与 hubMu > sess.fdMu 锁序两不变量保持，推送不触达未登记的 attach 者自身
+- [Phase ?]: [Phase 05-10]: 运行期尺寸下发唯一挂点 = recalcNow 的 last 变化分支（attach/detach/kick/升格/防抖五调用点全覆盖，目标不变零推送）；升格 Welcome 携 cand.dims（单员参与集恒等）；推送按各端当前 mode 组帧 + prefs 双档（D-13 不漂移），trySend 失败走 kickOrCreditLocked
+- [Phase ?]: [Phase 05-10]: TestAllPolicy 适配 G-05-1 推送（Rule 1：planner 回归自检遗漏 all 模式 2→1 推送落 B 读流）；plan 字面 B(60,20)->60/24 算术矛盾按意图修正 B(60,50)->60/43
+- [Phase ?]: [Phase 05-11]: 上报/渲染双概念拆分——refit() 唯一入口收编窗口监听/onopen/升格/prefs 四调用点；上报恒 fit.proposeDimensions() 窗口物理尺寸驱动仲裁，渲染 term.resize 逐轴 min(fit, sessionDims)；不采用 CSS 约束容器（proposeDimensions 会被污染致两概念无法拆分）
+- [Phase ?]: [Phase 05-11]: term.onResize 订阅拆除 + sendResize lastReported 等值去重——ro 期 isRO 门拦截不记账使升格后首次 refit 必真实上报（05-08 纠正链保持）；onopen Hello 发出后同步 lastReported 防握手 Welcome 后冗余等值 RESIZE（线序零漂移）
+- [Phase ?]: [Phase 05-11]: ro 一次性 console 提示改 roNotified 门闩承载（运行期尺寸推送打破每 attach 仅一次不变量），文案逐字不动；roNotified 接线前 export 防 noUnusedLocals（queryKeys 先例第二次沿用），接线后去 export
+- [Phase ?]: [Phase 05-12]: D6H-1 等价锁取「120x40 建起再 resize(40,10)」精确复刻前端 refit() 生产路径；D6H-2 负对照以 buffer 快照（translateToString(true) 去尾空行 join）比对，折行点分叉驱动不全等
+- [Phase ?]: [Phase 05-12]: S10c 取最后一帧 WELCOME 解码容忍升格+recalcNow 推送同值双帧；probe10.mjs 探针从未入库，按 plan 机制描述重建为 phase05-dims.mjs 并登记血缘
+- [Phase ?]: [Phase 05-13]: WR-01 修复取复检中止形态（05-REVIEW 逐字补丁）——推送循环内踢出经 removeMember→嵌套 recalcNow 推进 arbiter.last 后，外层复检 last != target 即中止 stale 扇出；踢出不改仲裁或信用路径 last==target 零代价继续；安全性注释改写覆盖真实可达的 removeMember 路径
+- [Phase ?]: [Phase 05-13]: WR-02 修复取 option (a)（用户 2026-08-22 裁决）——afterDrain 清位后、Broadcast 前补发当前 sessionDimsLocked() 的 Welcome（prefs 按 c.mode 选档 D-13 不漂移）；补发有序性归因 = afterDrain 全程持有 hubMu + outbox FIFO（非门仍闭合，plan-check 修订措辞）；「触发帧不丢」承诺收窄为首帧暂存 + afterDrain 补发收敛
 
 ### Pending Todos
 
@@ -153,6 +207,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-19
-Stopped at: Phase 04 complete（UAT 11/11 全过 + transition 收尾），ready to plan Phase 5
+Last session: 2026-08-22T11:15:00.691Z
+Stopped at: Completed 05-13-PLAN.md
 Resume file: None

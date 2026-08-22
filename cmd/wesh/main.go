@@ -31,6 +31,11 @@ type config struct {
 	showVersion  bool
 	writable     bool
 	pingInterval time.Duration
+	// Phase 5 写权限体系（D-05，one-way 公开契约，P2 D-15 同纪律）：
+	writePolicy    string // --write-policy=owner|all（默认 owner；仅在 --writable 总闸开启时有意义）
+	writePolicySet bool   // --write-policy 是否被显式设置（parseArgs 经 fs.Visit 填充，validateStartup 组合校验消费）
+	// Phase 5 容量策略（D-08，one-way 公开契约，P2 D-15 同纪律）：
+	maxClients int // --max-clients（默认 32；容量策略是部署关切开 flag，与 P2 D-10 攻击面上限常量不同类）
 	// Phase 3 认证与传输安全（one-way 公开契约，P2 D-15 同纪律）：
 	credentials  []server.Credential // D-01：--credential 逐组收集 / WESH_CREDENTIAL env 兜底
 	tlsCert      string              // D-04：--tls-cert，与 tlsKey 成对才启用 TLS
@@ -50,12 +55,14 @@ type clientOption struct {
 	value json.RawMessage
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 13 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 15 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
 // Phase 4：--client-option（P4 D-15 可重复，白名单 + JSON parse 期校验）、
-// --osc52（P4 D-12 OSC52 剪贴板写开关，默认关）。
+// --osc52（P4 D-12 OSC52 剪贴板写开关，默认关）；
+// Phase 5：--write-policy（D-05，owner|all 默认 owner，parse 期枚举校验）、
+// --max-clients（D-08，默认 32，≤0 经 validateStartup 拒绝）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -66,12 +73,31 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
 	fs.BoolVar(&cfg.writable, "writable", false, "allow client input (default read-only)")
 	fs.DurationVar(&cfg.pingInterval, "ping-interval", 5*time.Second, "WS ping interval (0 = disable)")
+	// D-05：写权限策略（one-way 公开契约）。--writable 保持总闸（不给 = 全员只读，
+	// 现状语义零漂移）；write-policy 仅在总闸开启时有意义（组合校验见
+	// validateStartup）。parse 期枚举校验在 Parse 返回处（值非敏感，直接 return
+	// error 即可——client-option 的记录式上报仅用于值含敏感内容的场景）。
+	fs.StringVar(&cfg.writePolicy, "write-policy", server.WritePolicyOwner, "write policy when --writable is on: owner|all (default owner)")
+	// D-08：最大并发客户端数（one-way 公开契约——容量策略是部署关切开 flag，
+	// 与 P2 D-10 攻击面上限常量不同类）。默认 32（ARCHITECTURE §6『10–100 连接
+	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小），Phase 9 负载
+	// 标定回填。满员行为：/ws Accept 前 HTTP 503（守卫区③位）+ /api/attach
+	// 503 早闸（OQ2）；≤0 经 validateStartup 拒绝（exit 2 配置校验矩阵形态）。
+	fs.IntVar(&cfg.maxClients, "max-clients", 32, "maximum simultaneous attached clients (default 32)")
 	// D-01：可重复凭据 flag，fs.Func 回调内 parse 期校验（畸形值即时报错——
 	// systemd 配置错误零窗口暴露）。Pitfall 8：help 必须提示 ps 可见性。
+	// 红线（SEC-01 启动面延伸，WR-01）：校验错误记入 credErr 而非直接
+	// return——flag 包会把回调返回的错误包装为 `invalid value %q for flag
+	// -credential: …` 并打印到 stderr，%q 处正是原始 flag 值全文（空 user
+	// 形态的手误会把密码分量完整写进 stderr，systemd 部署下落 journald
+	// 持久化）；记录后于 Parse 返回处统一上报，两通道（flag 自打印与返回
+	// 错误串）均不含值。client-option 同款记录式先例见下方 clientOptErr 注释。
+	var credErr error
 	fs.Func("credential", "basic auth credential user:pass (repeatable; value visible to local users via ps, prefer WESH_CREDENTIAL env in production)", func(s string) error {
 		c, err := server.ParseCredential(s)
 		if err != nil {
-			return err
+			credErr = errors.New("invalid --credential: credential must be user:pass") // 只含错误类别，禁含值（SEC-01）
+			return nil
 		}
 		cfg.credentials = append(cfg.credentials, c)
 		return nil
@@ -126,13 +152,33 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	if err := fs.Parse(args); err != nil {
 		return cfg, nil, err
 	}
+	// D-05：fs.Visit 判定 --write-policy 是否被显式设置（Visit 只遍历已设置
+	// flag）——validateStartup 组合校验消费：显式设置却未开 --writable 总闸
+	// 属配置矛盾 fail-fast；默认 owner 未显式设置 + 无 --writable 是纯 ro
+	// 会话正常形态不拒。
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "write-policy" {
+			cfg.writePolicySet = true
+		}
+	})
 	if cfg.showVersion {
 		return cfg, nil, nil
+	}
+	// D-01：--credential 回调内校验错误统一上报点——插入点在 showVersion 早退
+	// 之后（纯信息路径不被配置校验阻断，03-04 先例）；记录式原因见 flag 定义注释。
+	if credErr != nil {
+		return cfg, nil, credErr
 	}
 	// P4 D-15：--client-option 回调内校验错误统一上报点——插入点在 showVersion
 	// 早退之后（纯信息路径不被配置校验阻断，03-04 先例）；记录式原因见 flag 定义注释。
 	if clientOptErr != nil {
 		return cfg, nil, clientOptErr
+	}
+	// D-05：--write-policy parse 期枚举校验（插入点同 03-04 先例——showVersion
+	// 早退之后）。枚举值非敏感，直接 return error（不经 clientOptErr 记录式——
+	// 该形态仅用于值含敏感内容的 --client-option）。
+	if cfg.writePolicy != server.WritePolicyOwner && cfg.writePolicy != server.WritePolicyAll {
+		return cfg, nil, fmt.Errorf("invalid --write-policy %q: must be owner or all", cfg.writePolicy)
 	}
 	// D-04：cert/key 必须成对——只给其一 parse 期报错（分层纪律：此处报配置
 	// 形态错误，validateStartup 不重复此项）。
@@ -157,25 +203,27 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	return cfg, argv, nil
 }
 
-// aggregateClientPrefs 把 --client-option 收集项与 --osc52 合成单个 prefs blob
-// （P4 D-13 Welcome 内嵌一次性下发；服务端对 blob 不透明透传不解析——白名单/JSON
-// 校验已在 parse 期完成）。零配置（无 client-option 且 osc52=false）返回 nil——
-// Welcome JSON 不出 prefs 键（旧前端零漂移，P2 D-02）。同 key 重复给出时
-// last-wins（后者覆盖前者）；osc52=true 时并入 "osc52":true（D-12：osc52 不在
-// --client-option 白名单内，只能经服务端 flag 开启）。
-func aggregateClientPrefs(opts []clientOption, osc52 bool) json.RawMessage {
+// aggregateClientPrefs 把 --client-option 收集项与 --osc52 合成 prefs 双档 blob
+// （05-03 D-13 + P5-6）：ro 档（旁观者 + 降级递补者）= 聚合结果剔除 osc52 键——
+// 即使全局 --osc52 开启也永不下发（osc52 是服务端专有键，聚合期已知，结构性排除
+// 出 --client-option 白名单）；rw 档 = 聚合结果原样（按全局 --osc52 并入）。
+// 产双 blob 保持服务端不透明透传纪律——不做运行期 JSON 手术（P5-6）。
+// 零配置（无 client-option 且 osc52=false）两档均返回 nil——Welcome JSON 不出
+// prefs 键（旧前端零漂移，P2 D-02）。同 key 重复给出时 last-wins（后者覆盖前者）。
+func aggregateClientPrefs(opts []clientOption, osc52 bool) (ro, rw json.RawMessage) {
 	if len(opts) == 0 && !osc52 {
-		return nil
+		return nil, nil
 	}
 	m := make(map[string]json.RawMessage, len(opts)+1)
 	for _, o := range opts {
 		m[o.key] = o.value // last-wins：同 key 后者覆盖前者
 	}
+	roBlob, _ := json.Marshal(m) // ro 档：永不含 osc52 键（D-13）；固定值类型 marshal 不会失败
 	if osc52 {
-		m["osc52"] = json.RawMessage("true")
+		m["osc52"] = json.RawMessage("true") // D-12：osc52 只能经服务端 flag 开启
 	}
-	b, _ := json.Marshal(m) // 固定值类型（json.RawMessage），marshal 不会失败
-	return b
+	rwBlob, _ := json.Marshal(m) // rw 档：按全局 --osc52 下发
+	return roBlob, rwBlob
 }
 
 // isLoopbackBind 判定 bind 地址是否仅本机可达（RESEARCH Pattern 7 裁决）：
@@ -190,6 +238,49 @@ func isLoopbackBind(bind string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// outboundIPv4 取本机出站 IPv4（05-06 分享链接 host 回填，D-04/R-04，RESEARCH
+// Pattern 7 形态）：UDP-dial 路由感知优先——net.Dial("udp", "192.0.2.1:80")
+// （RFC 5737 TEST-NET-1 文档地址；UDP dial 无握手零流量，仅让内核按路由表选出
+// 站接口的本地地址——结构性避开 docker0/bridge：朴素接口扫描在多 docker 桥接口
+// 机器上必中 docker0，2026-08-19 本机实证）；失败 fallback net.Interfaces()
+// 索引序首个 up && !loopback 接口的首个 IPv4；全失败返回 ""（调用方兜底打印
+// bind 原样，不阻断启动——失败退化为次优展示地址而非功能故障，operator 可从
+// listening on 行获得真实地址）。
+func outboundIPv4() string {
+	if conn, err := net.Dial("udp", "192.0.2.1:80"); err == nil { // RFC 5737，永不真实路由
+		defer conn.Close()
+		if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			if ip4 := addr.IP.To4(); ip4 != nil {
+				return ip4.String()
+			}
+		}
+	}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, ifa := range ifaces {
+			if ifa.Flags&net.FlagUp == 0 || ifa.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := ifa.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				var ip net.IP
+				switch v := a.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip4 := ip.To4(); ip4 != nil {
+					return ip4.String()
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // validateStartup 是 D-03/D-05 启动校验矩阵（RESEARCH Pattern 7 八行）的纯函数
 // 落地——无任何副作用（禁止 listen/spawn/写文件），必须先于 pty.Start/net.Listen
 // 执行：拒绝路径零资源占用，测试不挂死（main_test.go captureFd 纪律）。
@@ -197,6 +288,21 @@ func isLoopbackBind(bind string) bool {
 // cert/key 成对校验在 parseArgs 已落 parse 期（D-04 分层，此处不重复）。
 // 红线：warn/err 文案不得含凭据值（SEC-01 日志红线延伸到启动面）。
 func validateStartup(cfg config) (warn string, err error) {
+	// D-05 组合校验（配置矛盾 fail-fast，P3 校验矩阵纪律）：显式设置
+	// --write-policy 却未开 --writable 总闸 → 拒绝（写策略只在可写会话有意义，
+	// 显式要求写策略却没开写总闸是用户配置错误，exit 2 零窗口暴露）。
+	// 默认 owner 未显式设置 + 无 --writable 是纯 ro 会话正常形态不拒。
+	// 与 bind 安全形态无关（纯配置矛盾），故在 loopback 早退之前判定。
+	if cfg.writePolicySet && !cfg.writable {
+		return "", errors.New("--write-policy is set but --writable is not; write policy only applies when client input is enabled")
+	}
+	// D-08 数值校验（配置错误 fail-fast，P3 校验矩阵纪律）：--max-clients ≤0
+	// 无意义（容量必须为正——0/负值会使③位 503 闸恒触发，全员被拒）。纯配置
+	// 有效性与 bind 安全形态无关，故在 loopback 早退之前判定（write-policy
+	// 组合校验同款落点）。
+	if cfg.maxClients <= 0 {
+		return "", errors.New("--max-clients must be positive")
+	}
 	if isLoopbackBind(cfg.bind) {
 		return "", nil // loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05）
 	}
@@ -268,7 +374,13 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefs: aggregateClientPrefs(cfg.clientOptions, cfg.osc52)})
+	prefsRO, prefsRW := aggregateClientPrefs(cfg.clientOptions, cfg.osc52)
+	// MULTI-05 分享链接（05-06，D-01/D-02）：启动时生成 ro/rw 两明文 token——
+	// 每轮启动重新随机（重启即废全部旧链接，吊销语义 = 重启）；main 持明文供
+	// 启动打印，server 只存 SHA-256 预哈希（Options 注释）。
+	shareRO := server.GenerateShareToken()
+	shareRW := server.GenerateShareToken()
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ShareTokenRO: shareRO, ShareTokenRW: shareRW})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
 	scheme := "http"
@@ -276,6 +388,28 @@ func run(args []string) int {
 		scheme = "https"
 	}
 	fmt.Printf("listening on %s://%s\n", scheme, ln.Addr())
+	// MULTI-05 分享链接两行（05-06，D-03/D-04/D-05）：启动打印是产品行为
+	// （MULTI-05 明确授权），token 永不入 logEvent/stderr 事件流（D-03 红线——
+	// 这两处 stdout Printf 与 URL 路径本身是 token 的全部合法输出面）。
+	// host 回填（D-04/R-04）：bind 为全网卡形态（0.0.0.0/::/空串）→ outboundIPv4
+	// 路由感知回填（空则兜底 bind 原样，不阻断启动）；具体 bind 原样使用
+	// （loopback bind 打印 loopback——链接本机自用）；端口取 ln.Addr() 实际值
+	// （--port 0 随机端口形态，D-06）；scheme 随 TLS 分岔（上方既有分支）。
+	// rw 行仅 --writable 时打印（D-05 总闸——不给 --writable 只打印 ro 行）。
+	shareHost := cfg.bind
+	if cfg.bind == "" || cfg.bind == "0.0.0.0" || cfg.bind == "::" {
+		if ip := outboundIPv4(); ip != "" {
+			shareHost = ip
+		}
+	}
+	sharePort := cfg.port
+	if ta, ok := ln.Addr().(*net.TCPAddr); ok {
+		sharePort = ta.Port
+	}
+	fmt.Printf("share read-only:  %s://%s/s/%s/\n", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), shareRO)
+	if cfg.writable {
+		fmt.Printf("share read-write: %s://%s/s/%s/\n", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), shareRW)
+	}
 	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与
 	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
 	// WS 长连接语义（升级后的连接读写在握手后长期空闲/突发均属正常）。

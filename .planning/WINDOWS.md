@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 5
+open_count: 14
 waived_count: 0
 fixed_count: 1
-total_count: 6
-last_updated: 2026-08-18T16:20:13.593Z
+total_count: 15
+last_updated: 2026-08-22T04:55:53.347Z
 ---
 
 # Broken Windows Ledger
@@ -21,6 +21,15 @@ last_updated: 2026-08-18T16:20:13.593Z
 | 4 | 02 | deviation | internal/server/limits_test.go |  | TestReadLimitBoundary 载荷 zeros→'A'（PTY ECHOCTL 实测 2× 回显失真） | open |  | 2026-08-15T09:18:23.988Z |  |
 | 5 | 03 | deviation | internal/server/server.go |  | 03-03: ServeMux 405 被 / 子树吞掉，补显式同文 fallback（已修复并验证） | open |  | 2026-08-17T08:48:16.807Z |  |
 | 6 | 04 | deviation | web/pnpm-workspace.yaml |  | pnpm.overrides 机制迁移：package.json pnpm 字段 → pnpm-workspace.yaml（pnpm 11 不读前者） | fixed |  | 2026-08-18T16:18:48.026Z | 2026-08-18T16:20:13.593Z |
+| 7 | 05 | stub | internal/server/clients.go |  | registry.gateTransitions 门开闭周期计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T09:37:49.973Z |  |
+| 8 | 05 | stub | internal/server/server.go |  | inputDrops 限速丢弃计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T14:24:41.015Z |  |
+| 9 | 05 | stub | internal/server/clients.go |  | inputQ.droppedInputs 队列满丢弃计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T14:24:41.172Z |  |
+| 10 | 05 | deviation | internal/server/multi_test.go |  | TestAllPolicy 适配 G-05-1 运行期推送（2→1 last-wins 推送帧显式消费断言，planner 回归自检遗漏面） | open |  | 2026-08-22T03:42:50.177Z |  |
+| 11 | 05 | deviation | internal/server/multi_test.go |  | plan 字面 all 子测 B(60,20)->60/24 算术矛盾，按意图修正 B(60,50)->60/43 rows 维区分度 | open |  | 2026-08-22T03:42:50.331Z |  |
+| 12 | 05 | deviation | web/src/main.ts |  | 05-11: roNotified Task 1 export 防 noUnusedLocals 接线前误报（queryKeys 04-05 先例第二次沿用），Task 2 接线后去 export（ced81ed/31d8a68） | open |  | 2026-08-22T04:15:52.151Z |  |
+| 13 | 05 | deviation | web/uat/phase05-dims.mjs |  | 05-12: probe10.mjs 探针从未入库（G-05-1 诊断期一次性用具），按 plan Task 2 机制描述重建转正为门禁断言，文件头注释登记血缘 | open |  | 2026-08-22T04:55:53.043Z |  |
+| 14 | 05 | deviation | web/uat/phase05-dom.mjs |  | 05-12: phase05-dom.mjs/phase05-flood-driver.mjs 为 05-09 产物但从未入库（git 历史零记录），随 Task 2 补录使 D6 修改可提交（ce91dc5） | open |  | 2026-08-22T04:55:53.195Z |  |
+| 15 | 05 | deviation | .planning/phases/05-multi-client/05-VALIDATION.md |  | 05-12: plan 字面 05-10-01 行 go test -run 选择器 '\\\|' 在 RE2 下为字面管道符零匹配假绿，改裸 '\|' 实测 green 回填（fd26ebe） | open |  | 2026-08-22T04:55:53.347Z |  |
 
 ````json
 [
@@ -95,6 +104,114 @@ last_updated: 2026-08-18T16:20:13.593Z
     "reason": "",
     "recorded_at": "2026-08-18T16:18:48.026Z",
     "resolved_at": "2026-08-18T16:20:13.593Z"
+  },
+  {
+    "id": 7,
+    "kind": "stub",
+    "phase": "05",
+    "file": "internal/server/clients.go",
+    "line": null,
+    "description": "registry.gateTransitions 门开闭周期计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-20T09:37:49.973Z",
+    "resolved_at": null
+  },
+  {
+    "id": 8,
+    "kind": "stub",
+    "phase": "05",
+    "file": "internal/server/server.go",
+    "line": null,
+    "description": "inputDrops 限速丢弃计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-20T14:24:41.015Z",
+    "resolved_at": null
+  },
+  {
+    "id": 9,
+    "kind": "stub",
+    "phase": "05",
+    "file": "internal/server/clients.go",
+    "line": null,
+    "description": "inputQ.droppedInputs 队列满丢弃计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-20T14:24:41.172Z",
+    "resolved_at": null
+  },
+  {
+    "id": 10,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "internal/server/multi_test.go",
+    "line": null,
+    "description": "TestAllPolicy 适配 G-05-1 运行期推送（2→1 last-wins 推送帧显式消费断言，planner 回归自检遗漏面）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T03:42:50.177Z",
+    "resolved_at": null
+  },
+  {
+    "id": 11,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "internal/server/multi_test.go",
+    "line": null,
+    "description": "plan 字面 all 子测 B(60,20)->60/24 算术矛盾，按意图修正 B(60,50)->60/43 rows 维区分度",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T03:42:50.331Z",
+    "resolved_at": null
+  },
+  {
+    "id": 12,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "web/src/main.ts",
+    "line": null,
+    "description": "05-11: roNotified Task 1 export 防 noUnusedLocals 接线前误报（queryKeys 04-05 先例第二次沿用），Task 2 接线后去 export（ced81ed/31d8a68）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:15:52.151Z",
+    "resolved_at": null
+  },
+  {
+    "id": 13,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "web/uat/phase05-dims.mjs",
+    "line": null,
+    "description": "05-12: probe10.mjs 探针从未入库（G-05-1 诊断期一次性用具），按 plan Task 2 机制描述重建转正为门禁断言，文件头注释登记血缘",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:55:53.043Z",
+    "resolved_at": null
+  },
+  {
+    "id": 14,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "web/uat/phase05-dom.mjs",
+    "line": null,
+    "description": "05-12: phase05-dom.mjs/phase05-flood-driver.mjs 为 05-09 产物但从未入库（git 历史零记录），随 Task 2 补录使 D6 修改可提交（ce91dc5）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:55:53.195Z",
+    "resolved_at": null
+  },
+  {
+    "id": 15,
+    "kind": "deviation",
+    "phase": "05",
+    "file": ".planning/phases/05-multi-client/05-VALIDATION.md",
+    "line": null,
+    "description": "05-12: plan 字面 05-10-01 行 go test -run 选择器 '\\|' 在 RE2 下为字面管道符零匹配假绿，改裸 '|' 实测 green 回填（fd26ebe）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:55:53.347Z",
+    "resolved_at": null
   }
 ]
 ````

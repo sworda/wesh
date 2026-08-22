@@ -28,21 +28,22 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ 窗口标题同步（OSC 2 单一写口，ro 形态恒 `[ro] ` 前缀最前）— Phase 4（CORE-03；UAT T3 5/5）
 - ✓ 前端 xterm.js 生态：Unicode 11/CJK/IME、超链接（裸 URL + OSC 8 双通道）、现代剪贴板（选中即复制 150ms 防抖/Ctrl+Shift+V/安全上下文静默降级/OSC52 write-only）— Phase 4（FE-02/FE-04/FE-05；UAT T1-T2/T4-T7 全过）
 - ✓ 客户端偏好下发（--client-option 白名单 + Welcome prefs + query 覆盖 + theme 合并不丢内置调色板）— Phase 4（FE-07；UAT T10 6/6）
+- ✓ 原生多客户端 attach 同一会话，写入权限可配置（全员可写 / 主写旁观 + 递补升格）— Phase 5（MULTI-01/02；TestMultiClientFanout/TestAllPolicy/TestOwnerPolicy -race 绿 + S1b 双端 338958 字节逐字节一致；异尺寸按 min-rect 约束渲染经 S10/D6/D6H 三层锁定）
+- ✓ 慢客户端不拖累他人：有界 outbox 写满 1013 踢出、重连从最新输出看起、PTY 读循环永不阻塞 — Phase 5（MULTI-03/RES-04；TestSlowConsumerKick/TestGlobalCredit -race 绿 + S6 三断言）
+- ✓ 背压控制与每客户端限速（全局信用门 + 每客户端输入速率限制）— Phase 5（RES-02/RES-04；TestInputRateLimit/TestGlobalCredit -race 绿）
+- ✓ 最大并发客户端数限制（满员 503 + 客户端计数不变量）— Phase 5（RES-03；TestMaxClients503/TestClientCountInvariant + S5）
+- ✓ 多客户端 resize 仲裁（单端 last-wins / ≥2 端 min-rect / 2→1 恢复）与 ro/rw 一次性分享链接即打即用 — Phase 5（MULTI-04/05；TestArbitrate/TestResizeArbitration + TestShareToken + S2-S4 全链）
 
 ### Active
 
 **核心终端（对标 ttyd）**
 - [ ] 断线自动重连接回同一进程（共享进程模型；历史现场恢复依赖 tmux/herdr）
 
-**多客户端共享（改进 ttyd 限制 #2）**
-- [ ] 原生多客户端 attach 同一会话，写入权限可配置（全员可写 / 主写旁观）
-
 **安全（改进 ttyd 限制 #3 + 源码核实的新发现）**
 （Phase 3 已全部闭合，见 Validated）
 
 **资源控制（改进 ttyd 限制 #4/#5）**
-- [ ] 背压控制与每客户端限速
-- [ ] 最大连接数限制
+（Phase 5 已全部闭合，见 Validated）
 
 **部署与集成**
 - [ ] 端口/绑定地址/UNIX socket 监听配置
@@ -148,4 +149,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-19 after Phase 4（含 Phase 3 演化补录）*
+*Last updated: 2026-08-22 after Phase 5（多客户端共享闭合，含 WR-01/WR-02 缝合面修复复验通过）*

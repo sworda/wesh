@@ -86,9 +86,9 @@ func TestHalfOpenPerIP429(t *testing.T) {
 		t.Fatalf("echo payload = %q, want %q", got, payload)
 	}
 
-	// 清理：正常关闭 → D-11 收口。
+	// 清理：正常关闭 → 多客户端推论：detach 不触发 exitf（静默反证）。
 	c1.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0)
+	assertNoExit(t, exitCh)
 }
 
 // TestSubprotocolRequired（SEC-08/D-03）：子协议双闸之 HTTP 预检——无子协议与错子协议
@@ -130,9 +130,9 @@ func TestSubprotocolRequired(t *testing.T) {
 	}
 
 	// 收口：(a)(b) 未建连不触发终结；(c) 直接 Close——服务端预认证首读随关闭帧
-	// 终结，走既有 D-11 路径 exitf(0)（半开名额经 defer release 兜底释放）。
+	// 终结，多客户端推论下不触发 exitf（半开名额经 defer release 兜底释放）。
 	c.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0)
+	assertNoExit(t, exitCh)
 }
 
 // TestHelloTimeout（SEC-08/D-04）：5s 未认证超时的测试注入形态（HelloTimeout=200ms）——
@@ -167,8 +167,8 @@ func TestHelloTimeout(t *testing.T) {
 		t.Fatalf("close reason = %q, want %q", ce.Reason, "hello_timeout")
 	}
 
-	// 服务端 reader 随 hello_timeout 关闭终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端 reader 随 hello_timeout 关闭终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestPrematureFrame（D-04/D-06）：抢跑帧——Hello 前直接发 INPUT 帧，服务端 1002 直关；
@@ -210,8 +210,8 @@ func TestPrematureFrame(t *testing.T) {
 		t.Fatalf("close code = %d, want %d (1002)", ce.Code, websocket.StatusProtocolError)
 	}
 
-	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestVersionMismatch（D-06/D-07）：Hello.version 不符的正常客户端路径——先收 'E'
@@ -271,8 +271,8 @@ func TestVersionMismatch(t *testing.T) {
 		t.Fatalf("close reason = %q, want %q (same machine string as error code, D-07)", ce.Reason, proto.ErrVersionMismatch)
 	}
 
-	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → D-11 收口。
-	waitExit(t, exitCh, 0)
+	// 服务端关 conn 后落入读循环，下一拍 reader 终结 → 多客户端推论：不触发 exitf。
+	assertNoExit(t, exitCh)
 }
 
 // TestReadOnlyDropsInput（CORE-04/D-13，Pitfall 7 服务端边界回归）：ro 模式下裸 WS
@@ -314,7 +314,8 @@ func TestReadOnlyDropsInput(t *testing.T) {
 		// 静默证明成立：窗口内无任何读事件（读到数据=INPUT 未被丢弃；读到错误=连接被误关）
 	}
 
-	// 连接存活断言：ro 下 RESIZE 放行（D-13），写路径不报错。
+	// 连接存活断言：ro 下 RESIZE 被静默忽略（05-04 D-09 第二闸，修订 P2 D-13
+	// 放行语义）——忽略 ≠ 关连接，写路径不报错。
 	resize, err := json.Marshal(struct {
 		Cols int `json:"cols"`
 		Rows int `json:"rows"`
@@ -340,11 +341,15 @@ func TestReadOnlyDropsInput(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("read goroutine did not terminate after close handshake")
 	}
-	waitExit(t, exitCh, 0)
+	// 多客户端推论：客户端断开不触发 exitf（静默反证）。
+	assertNoExit(t, exitCh)
 }
 
-// TestReadOnlyAllowsResize（CORE-04/D-13）：ro 下 RESIZE 放行尺寸跟随——Hello 携
-// (111,44) 生效（80x24 首帧窗口消除），RESIZE(120,50) 后 stty 跟随。
+// TestReadOnlyAllowsResize（CORE-04/D-13，05-04 起经 D-09 修订）：ro 下 Hello 携
+// (111,44) 生效（80x24 首帧窗口消除——纯 ro 会话全部 ro 端 Hello 首尺寸参与仲裁，
+// D-09 矩阵第三行，否则会话冻结 80x24）；运行期 RESIZE(120,50) 自 05-04 起被服务端
+// 直接忽略（D-09 第二闸——P2 D-13『ro 放行 RESIZE』为单客户端语境，多客户端下 ro
+// 尺寸不参与仲裁），第二个 stty 保持 "44 111" 不跟随。
 //
 // argv 为测试编排夹具（非产品 spawn 路径）：前导 sleep 0.5 是硬要求——sh 随 spawn
 // 立即执行，attach 前 PTY 输出被 onChunk drain 丢弃（server.go 现状），无前导休眠则
@@ -388,7 +393,9 @@ func TestReadOnlyAllowsResize(t *testing.T) {
 		t.Fatalf("first stty size = %q %q, want \"44 111\" (Hello-carried size)", rows, cols)
 	}
 
-	// ro 下发 RESIZE {cols:120, rows:50} → 放行（D-13：只改视图尺寸不改 shell 输入）。
+	// ro 下发 RESIZE {cols:120, rows:50} → 05-04 起 D-09 第二闸忽略（修订 P2 D-13
+	// 放行语义：多客户端下 ro 尺寸不参与仲裁；纯 ro 会话运行期缩放不上报，运行期
+	// 窗口裁剪行为推论见 RESEARCH Pattern 4/A3，README 明示归 05-09）。
 	resize, err := json.Marshal(struct {
 		Cols int `json:"cols"`
 		Rows int `json:"rows"`
@@ -400,10 +407,11 @@ func TestReadOnlyAllowsResize(t *testing.T) {
 		t.Fatalf("write RESIZE: %v", err)
 	}
 
-	// 第二个 stty：尺寸跟随。
+	// 第二个 stty：尺寸不跟随（D-09 第二闸忽略证据——RESIZE 已送达服务端，
+	// 若被放行 stty 必读出 "50 120"）。
 	rows, cols = readSize()
-	if rows != "50" || cols != "120" {
-		t.Fatalf("second stty size = %q %q, want \"50 120\" (RESIZE applied in ro mode)", rows, cols)
+	if rows != "44" || cols != "111" {
+		t.Fatalf("second stty size = %q %q, want \"44 111\" (ro RESIZE ignored since 05-04, D-09 second gate)", rows, cols)
 	}
 
 	// sh 随夹具结束退出 → D-10：lifecycle 发 1000 正常关闭帧（客户端读取循环

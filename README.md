@@ -10,9 +10,9 @@
 >
 > **行为变更（Phase 3）**：Phase 1/2 的 `wesh -- bash` 用法在非 loopback 监听下现在需要 `--no-auth` 或凭据才能启动——这是刻意的安全收口，不是回归。认证/TLS/逃生门语义见下方「认证与传输安全」。
 
-## 单次语义（Phase 1）
+## 生命周期（Phase 5 行为变更）
 
-Phase 1 为单次语义：**子进程退出或 WS 断开，服务端即整体退出**（退出码 = 子进程退出码）。断线重连与 `--once` 等完整生命周期语义在后续阶段（Phase 6）提供——**WS 断开即退出是当前阶段的预期行为，不是 bug**。
+Phase 5 起 wesh 原生支持多客户端共享同一会话：**客户端断开不再使服务端退出**（Phase 1-4 为单次语义——任何 WS 断开即整体退出，该行为已终结）。服务端生命周期只随子进程：**子进程退出仍正常广播关闭全部连接并按子进程退出码退出**；无客户端期间子进程继续运行，随时可重新 attach（含分享链接）。断线自动重连与 `--once` 等完整生命周期语义在 Phase 6 提供。
 
 ## 用法
 
@@ -27,6 +27,8 @@ wesh [flags] -- <cmd> [args...]
 | `--port` | `7681` | 监听端口；`0` = 随机端口，启动时打印实际端口 |
 | `--bind` | `0.0.0.0` | 监听地址 |
 | `--writable` | `false` | 只读模式：客户端输入被丢弃；开启后客户端输入写入终端 |
+| `--write-policy` | `owner` | 多客户端写权限：`owner` = 首个 rw attach 可写、后续 rw 旁观并按 attach 顺序递补升格；`all` = 全员可写（协作排障）。不给 `--writable` 时本 flag 无效果（全员只读） |
+| `--max-clients` | `32` | 最大并发 attach 客户端数；满员时新客户端在 `/api/attach` 与 WS 握手两处收到 503 |
 | `--ping-interval` | `5s` | WS ping 保活间隔（防反代空闲超时断连）；`0` = 禁用 |
 | `--credential` | — | Basic 认证凭据 `user:pass`，可重复（多组按人撤销）。**flag 值对同机用户可见（`ps`），生产建议用 `WESH_CREDENTIAL` env**（flag 非空时 env 整体忽略，flag 优先） |
 | `--tls-cert` | — | TLS 证书文件；必须与 `--tls-key` 成对给出才启用 TLS |
@@ -39,7 +41,15 @@ wesh [flags] -- <cmd> [args...]
 | `--version` | — | 打印版本并退出 |
 | `--help` | — | 打印用法 |
 
-启动后仅打印单行：`listening on http(s)://host:port`（无 banner、无 emoji；启用 TLS 时为 `https`）。浏览器打开该地址即进入终端；Phase 1 同时只允许一个客户端连接，第二个连接会收到 409。
+启动后打印三行（无 banner、无 emoji；启用 TLS 时 scheme 为 `https`）：
+
+```
+listening on http://host:port
+share read-only:  http://host:port/s/<ro-token>/
+share read-write: http://host:port/s/<rw-token>/   # 仅 --writable 时打印
+```
+
+浏览器打开 `listening on` 地址即进入终端；两条 `/s/` 分享链接复制即用（ro 只读旁观 / rw 可写），见下方「多客户端共享（Phase 5）」。多客户端共享同一会话，第二客户端不再收到 409——仅在满员（`--max-clients`）时收到 503。
 
 ## 构建
 
@@ -91,12 +101,12 @@ ExecStart=/usr/local/bin/wesh --tls-cert /etc/wesh/cert.pem --tls-key /etc/wesh/
 - **辅助交互**：resize 期间右上角显示 `COLSxROWS` 浮层、离开页面前浏览器标准确认框拦截（均默认开；经 `--client-option resizeOverlay=false` / `confirmBeforeUnload=false` 或同名 URL query 关闭）。
 - **偏好下发与覆盖**：上表白名单键可经 `--client-option` 下发；URL query 同键覆盖（如 `?fontSize=16&cursorBlink=false`，字符串值需 JSON 引号并 URL 编码）；优先级 URL query > `--client-option` > 内置默认；`theme` 为完整 JSON 对象，未指定的色键保留内置调色板；非法 query 静默忽略（终端不受影响）。
 
-**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw","prefs":{...}?}`（`prefs` 为可选键）。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
+**协议（wesh.v1）**：WebSocket 连接必须协商子协议 `wesh.v1`（缺失或不含该值的请求在升级前以 HTTP 400 拒绝）。建连后客户端首帧必须是 Hello `{"version":"wesh.v1","cols":N,"rows":N}`——认证模式下 Hello 还须携带 `"ticket":"..."`（`POST /api/attach` 换取的一次性票；无认证模式省略该字段）；分享 token 通道（含无认证模式）Hello 同样携 ticket——token 经 `/api/attach` 换一次性 ticket 后随 Hello 核销；5s 内未收到合法 Hello 以 1008 关闭，抢跑（Hello 前的数据帧）或畸形帧以 1002 关闭，ticket 核销失败以 `auth_failed` + 1008 关闭。服务端握手成功回 Welcome `{"mode":"ro"|"rw","cols":N,"rows":N,"prefs":{...}?}`（`cols`/`rows` 恒在 = 当前会话尺寸；`prefs` 为可选键）。所有帧为 WebSocket 二进制帧：1 字节类型 + 载荷。
 
 | 类型字节 | 含义 | 载荷 |
 |----------|------|------|
-| `'H'` | Hello（C→S，必须为首帧） | JSON `{"version":"wesh.v1","cols":N,"rows":N,"ticket":"..."?}`（ticket 可选，仅认证模式） |
-| `'W'` | Welcome（S→C，握手成功） | JSON `{"mode":"ro"\|"rw","prefs":{...}?}`（`prefs` 可选——`--client-option`/`--osc52` 下发时携带，无配置时该键缺席） |
+| `'H'` | Hello（C→S，必须为首帧） | JSON `{"version":"wesh.v1","cols":N,"rows":N,"ticket":"..."?}`（ticket 可选，认证模式或分享 token 通道携带） |
+| `'W'` | Welcome（S→C，握手成功） | JSON `{"mode":"ro"\|"rw","cols":N,"rows":N,"prefs":{...}?}`（`cols`/`rows` 恒在 = 当前会话尺寸；运行期尺寸变化经 `'W'` 帧再推送——递补升格推送同通道先例——前端据以约束视口渲染；`prefs` 可选——`--client-option`/`--osc52` 下发时携带，无配置时该键缺席） |
 | `'E'` | Error（S→C） | JSON `{"code":"...","message":"..."}` |
 | `'0'` | INPUT（C→S）/ OUTPUT（S→C） | 原始字节 |
 | `'1'` | RESIZE（C→S） | JSON `{"cols":N,"rows":N}`，钳制 [1,1000] |
@@ -116,15 +126,92 @@ Error 帧含三个正常客户端可见码：`version_mismatch`（随后以 1008
 | 1008 | 策略违反（Hello 超时/版本不符/认证失败） |
 | 1009 | 超出消息上限 |
 | 1011 | 内部错误 |
-| 1001 / 1013 | 已在协议占住（服务端下线 / 踢出可重试），由后续阶段启用发送路径 |
+| 1013 | 慢消费者踢出（Phase 5 启用）：接收过慢导致 outbox 写满的客户端被断开，close reason 为机器串 `slow_consumer`；手动刷新即可从最新输出重新 attach |
+| 1001 | 已在协议占住（服务端下线），由后续阶段启用发送路径 |
 
 1005/1006/1015 永不发送。
 
 消息上限（C→S）：握手完成前（预认证窗口）4KiB，握手完成后稳态 16KiB——单帧与单消息累积字节同顶，超限由 WS 库自动以 1009 关闭并在服务端 stderr 打单行事件。保活：握手完成后服务端按 `--ping-interval`（默认 5s）发 WS ping，pong 超时 10s 主动断开连接；`0` = 禁用。
 
-**默认只读**：不带 `--writable` 时浏览器键盘不产生输入（终端标题带 `[ro] ` 前缀），裸 WS 客户端发来的 INPUT 帧同样被服务端静默丢弃——只读是服务端边界，不只是前端行为；RESIZE 在只读下照常生效。`--writable` 开启后 Welcome 带 `mode=rw`，客户端输入写入终端。
+**默认只读**：不带 `--writable` 时浏览器键盘不产生输入（终端标题带 `[ro] ` 前缀），裸 WS 客户端发来的 INPUT 帧同样被服务端静默丢弃——只读是服务端边界，不只是前端行为。多客户端仲裁下 ro 端运行期 RESIZE 不参与尺寸仲裁（服务端直接忽略、前端 ro 形态不上报——连接不受影响）；纯 ro 会话取各端 Hello 首尺寸的最小公共矩形。`--writable` 开启后 Welcome 带 `mode=rw`，可写客户端输入写入终端。
 
 **部署注意**：per-IP 半开连接上限（默认 8，超限 HTTP 429）在**直连部署**下有效；置于反向代理之后时所有客户端聚合为代理 IP，该限制可能误伤正常用户——可信头（X-Forwarded-For）透传属后续阶段（SEC-07）。
+
+## 多客户端共享（Phase 5）
+
+多个浏览器客户端可同时 attach 同一会话：输出实时扇出到全部客户端；慢客户端被保护性踢出，不拖累他人。
+
+### 分享链接
+
+启动时打印 ro/rw 两行分享链接，复制即用——浏览器打开链接直接进入终端（ro 只读旁观 / rw 可写），无需输入凭据；与 Basic 凭据通道正交（operator 走凭据、旁观者走链接）。token 每轮启动重新随机生成——**重启即废全部旧链接（吊销 = 重启）**；rw 行仅 `--writable` 时打印（不给 = 全员只读，现状语义不变）。
+
+**⚠️ 反代访问日志脱敏建议**：`/s/{token}/` 的 token 在 URL 路径段，nginx/Cloudflare/Caddy 等反代的访问日志会记录完整路径——token 即访问凭证，置于反代之后时务必脱敏。nginx 二选一：
+
+```nginx
+# 形态一：map 脱敏后写入日志（保留日志，隐藏 token）
+map $uri $sanitized_uri {
+    ~*^/s/   /s/<redacted>/;
+    default  $uri;
+}
+log_format wesh_sanitized '$remote_addr [$time_local] "$request_method $sanitized_uri $server_protocol" $status $body_bytes_sent';
+access_log /var/log/nginx/wesh-access.log wesh_sanitized;
+
+# 形态二：/s/ 路径直接关闭访问日志
+location /s/ {
+    access_log off;
+    proxy_pass http://127.0.0.1:7681;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+**分享链接暴露面清单**（转发链接前请知悉）：
+
+- 浏览器历史与地址栏可见完整链接——含屏幕共享与截屏旁观，演示时注意；
+- 浏览器扩展、桌面搜索索引、杀毒软件 URL 扫描可能读取历史中的链接；
+- 明文 `http://` 部署时网络监听（PCAP）可见完整 URL——**不可信网络务必 TLS**（`--tls-cert`/`--tls-key`）；
+- 怀疑泄露时重启 wesh 即废全部旧链接（吊销 = 重启）。
+
+### 写权限与递补（--write-policy）
+
+- `owner`（默认）：首个以 rw 身份 attach 的客户端成为 owner 可写；后续 rw attach 降级旁观（`[ro] ` 标题前缀、键盘禁用）并进入递补队列——owner 断开后按 attach 顺序自动升格（标题前缀消失、键盘激活，无 toast/badge 通知组件）。
+- `all`：全员可写（协作排障场景）。**多写者输入交错不做排序承诺**（与 screen 同款语义）。
+
+### resize 行为
+
+≥2 客户端时终端尺寸取参与集最小公共矩形（会话尺寸），经 Welcome 帧下发、运行期尺寸变化经 `'W'` 帧再推送更新；窗口大于会话矩形的端约束视口到会话尺寸渲染（超出面积为页面背景留白，行编辑回显等相对寻址流异尺寸双端逐屏一致）；窗口小于会话尺寸的轴按窗口渲染（裁剪语义不变）；减员到 1 端恢复该端尺寸（last-wins，推送解除约束）。参与集按写权限分层：owner 模式仅 owner 参与（递补后新 owner 尺寸接管）；all 模式全部 rw 端参与；纯 ro 会话取各端 Hello 首尺寸。**纯 ro 会话中旁观者运行期窗口缩放不上报**（省流量裁决）——缩到小于 PTY 尺寸的旁观者看到裁剪画面，重新 attach 恢复。
+
+### 输入限速
+
+每客户端持续输入超过约 **32KiB/s**、或单次粘贴超过 64KiB burst 的部分会被**静默丢弃**（连接不受影响，也不会收到错误提示）——大粘贴建议分段进行。
+
+### 慢客户端（1013）
+
+接收过慢的客户端会被服务端以 1013 主动断开（outbox 有界写满即踢，他人不受影响）——页面显示 Disconnected 面板，**手动刷新**即可从最新输出看起（URL 中 token 保留，刷新凭原链接重新 attach）。当前版本无自动重连（Phase 6 提供）。
+
+### 容量（--max-clients）
+
+`--max-clients` 默认 32；满员时新客户端在 `/api/attach` 与 WS 握手两处收到 503（前端显示 Server is full 面板），槽位随断开/踢出释放。计数口径为注册成功后计数——**单源 IP 瞬时超编 ≤ per-IP 半开帽（默认 8）**（容量策略非安全边界）。
+
+### 默认参数与 Phase 9 标定
+
+下列初值为一阶推算的合理值（非负载实测），Phase 9 负载标定后回填：
+
+| 参数 | 初值 | 一阶依据 |
+|------|------|----------|
+| outbox 字节容量/客户端 | 512KiB | 16×32KiB 读块；100KB/s 慢链路约 5s 抖动容忍；32 客户端账面最坏 16MiB（共享帧实占更低） |
+| 信用门恢复水位 | 50% | 半水位迟滞防门震颤 |
+| 输入限速 rate / burst | 32KiB/s / 64KiB | 人类击键 ~10B/s、快粘 ~50KB 瞬时；持续超限远超合法、远低于洪水 |
+| `--max-clients` | 32 | 团队围观/教学场景区间下沿；账面内存与 goroutine 开销微小 |
+| resize 防抖 | 50ms | SIGWINCH 风暴防线 |
+
+标定方法 = **负载矩阵**（客户端数 1/4/16/32 × 输出速率 × 慢链路注入），验收标准 = 合法慢端零误踢 + 内存上界成立 + 信用门开闭频率可接受；数据源 = 本 phase 已埋计数器（踢出数/门开闭次数/输入丢弃计数/注册数，Phase 8 接入 metrics）。
+
+### 行为变更（单客户端 → 多客户端）
+
+- **客户端断开不再使服务端退出**（旧版单次语义终结）；子进程退出仍正常关闭全部连接并退出。
+- 第二客户端不再收到 409——仅满员（`--max-clients`）时收到 503。
 
 ## 测试
 

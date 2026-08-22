@@ -84,8 +84,9 @@ func readCloseErr(t *testing.T, c *websocket.Conn, ctx context.Context) websocke
 //
 // 进程全局替换不并行——同包测试默认串行（无 t.Parallel），且五测中仅
 // TestOversize1009 一处断言 stderr（plan 裁决：避免 fd 替换竞争，其余以
-// CloseError 为准）。恢复时序安全：logEvent 与 exitf 同 goroutine 程序序，
-// waitExit 返回即 stderr 行已落盘（channel happens-before），恢复无竞态。
+// CloseError 为准）。恢复时序安全（多客户端形态）：logEvent 在服务端读循环内、
+// 客户端观测 CloseError 之后数微秒写出——TestOversize1009 以 assertNoExit 的
+// 200ms 静默窗口覆盖该余量（远超读循环调度延迟），恢复无竞态。
 func captureStderr(t *testing.T) func() string {
 	t.Helper()
 	old := os.Stderr
@@ -111,12 +112,14 @@ func captureStderr(t *testing.T) func() string {
 // TestOversize1009（RES-01 + D-12②）：稳态 16KiB 档——总长 16385 字节的消息
 // （ReadLimitPostAuth+1，首字节随意：超限在协议解析前由库拦截）触发库自动 1009；
 // 服务端 stderr 留下恰一行 message_too_big 事件（remote/code/reason 三要素），
-// 随后 exitf(0) 经既有 D-11 单一路径收口。
+// 随后经 detach 收口（多客户端推论：不触发 exitf）。
 func TestOversize1009(t *testing.T) {
 	restore := captureStderr(t)
 	defer restore() // 失败路径兜底恢复 os.Stderr（幂等，成功路径显式调用后空转）
 
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+	// handler 追踪变体：restore() 写 os.Stderr 前需与 handler 内 logEvent 的读
+	// 建立同步边（waitExit 消亡后的替代形态，见 startTrackedServerWith 注释）。
+	exitCh, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -129,8 +132,11 @@ func TestOversize1009(t *testing.T) {
 	if ce.Code != websocket.StatusMessageTooBig {
 		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
 	}
-	// logEvent 与 exitf 同 goroutine 程序序——waitExit 返回即 stderr 行必然已写出。
-	waitExit(t, exitCh, 0)
+	// 同步边：等该连接的 Attach handler 返回——logEvent 在 handler 内先于返回
+	// 执行，WaitGroup happens-before 使 restore() 的 os.Stderr 写与该读同步。
+	waitHandlers()
+	// 多客户端推论：超限断开不再触发 exitf——200ms 静默反证。
+	assertNoExit(t, exitCh)
 
 	// D-12② 超限可见性三腿之二：stderr 恰一行 message_too_big 事件，三要素齐全。
 	out := restore()
@@ -226,7 +232,8 @@ func TestReadLimitBoundary(t *testing.T) {
 	if ce.Code != websocket.StatusMessageTooBig {
 		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
 	}
-	waitExit(t, exitCh, 0)
+	// 多客户端推论：断开不触发 exitf（静默反证）。
+	assertNoExit(t, exitCh)
 }
 
 // TestFragmentedFlood1009（RES-01 等效防线主证据）：1 字节 × N 分片洪水在累积
@@ -258,7 +265,8 @@ func TestFragmentedFlood1009(t *testing.T) {
 	if ce.Code != websocket.StatusMessageTooBig {
 		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
 	}
-	waitExit(t, exitCh, 0)
+	// 多客户端推论：断开不触发 exitf（静默反证）。
+	assertNoExit(t, exitCh)
 }
 
 // TestEmptyFragmentFloodResilience（RES-01，D-09 修订残余风险的显式断言形态）：
@@ -267,7 +275,8 @@ func TestFragmentedFlood1009(t *testing.T) {
 // D-09 修订：空帧无应用层钩子（库 read.go:457-479 内部吞掉空 continuation 帧，
 // 字节计数不递减故字节硬顶永不触发）——本测试断言"存活+内存平坦"而非 1009；
 // 残余 CPU 消耗受攻击者带宽约束（客户端 mask 帧 ≥6 字节/帧），预认证窗口另有
-// 5s 超时 + per-IP 8 + 409 门盒住。内存断言为宽松参考防线（backstop 非精确门禁）：
+// 5s 超时 + per-IP 8 盒住（409 单客户端门已随 Phase 5 注册表拆除，max-clients
+// 503 闸 05-07 重建）。内存断言为宽松参考防线（backstop 非精确门禁）：
 // HeapAlloc 增量 < 8MiB，防回归性分配（SEC-08 结构目标：无消息级缓冲预分配）。
 func TestEmptyFragmentFloodResilience(t *testing.T) {
 	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
@@ -325,7 +334,7 @@ func TestEmptyFragmentFloodResilience(t *testing.T) {
 	}
 
 	c.Close(websocket.StatusNormalClosure, "")
-	waitExit(t, exitCh, 0)
+	assertNoExit(t, exitCh)
 }
 
 // TestPreHelloReadLimit（SEC-08/D-11）：预认证 4KiB 档——Dial（带 wesh.v1 子协议）
@@ -348,5 +357,6 @@ func TestPreHelloReadLimit(t *testing.T) {
 	if ce.Code != websocket.StatusMessageTooBig {
 		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
 	}
-	waitExit(t, exitCh, 0)
+	// 多客户端推论：断开不触发 exitf（静默反证）。
+	assertNoExit(t, exitCh)
 }

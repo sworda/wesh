@@ -23,7 +23,8 @@ import (
 // Phase 3：D-01 --credential 可重复（计数断言——摘要不导出，计数即契约）、
 // D-04 --tls-cert/--tls-key 成对装配、D-12 --origin parse 期规范化
 // （小写 host + 剥默认端口）、D-03/D-05 两逃生门默认 false；
-// Phase 4：P4 D-15 --client-option 可重复（计数断言）、P4 D-12 --osc52 默认 false。
+// Phase 4：P4 D-15 --client-option 可重复（计数断言）、P4 D-12 --osc52 默认 false；
+// Phase 5：D-05 --write-policy 默认 owner，显式传 owner/all 原样解析。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
@@ -35,7 +36,8 @@ func TestParseArgs(t *testing.T) {
 		wantPort         int
 		wantWritable     bool
 		wantPingInterval time.Duration
-		wantCredentials  int // D-01：凭据组数（不断言哈希值——Credential 字段不导出）
+		wantWritePolicy  string // D-05：零值 = 期望默认 owner
+		wantCredentials  int    // D-01：凭据组数（不断言哈希值——Credential 字段不导出）
 		wantTLSCert      string
 		wantTLSKey       string
 		wantNoAuth       bool
@@ -61,6 +63,9 @@ func TestParseArgs(t *testing.T) {
 		{name: "escape hatches", args: []string{"--no-auth", "--insecure-http", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantNoAuth: true, wantInsecureHTTP: true, wantArgv: []string{"bash"}},
 		{name: "client options", args: []string{"--client-option", "fontSize=16", "--client-option", "cursorBlink=false", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantClientOptions: 2, wantArgv: []string{"bash"}},
 		{name: "osc52 flag", args: []string{"--osc52", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantOSC52: true, wantArgv: []string{"bash"}},
+		// D-05：--write-policy 显式传值原样解析（默认值由零值语义统一断言 = owner）。
+		{name: "write policy all", args: []string{"--writable", "--write-policy", "all", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantWritable: true, wantPingInterval: 5 * time.Second, wantWritePolicy: "all", wantArgv: []string{"bash"}},
+		{name: "write policy owner explicit", args: []string{"--writable", "--write-policy", "owner", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantWritable: true, wantPingInterval: 5 * time.Second, wantWritePolicy: "owner", wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -79,6 +84,14 @@ func TestParseArgs(t *testing.T) {
 			}
 			if cfg.pingInterval != tt.wantPingInterval {
 				t.Errorf("pingInterval = %v, want %v", cfg.pingInterval, tt.wantPingInterval)
+			}
+			// D-05：零值 wantWritePolicy = 期望默认 owner（含全部既有行）。
+			wantWritePolicy := tt.wantWritePolicy
+			if wantWritePolicy == "" {
+				wantWritePolicy = "owner"
+			}
+			if cfg.writePolicy != wantWritePolicy {
+				t.Errorf("writePolicy = %q, want %q", cfg.writePolicy, wantWritePolicy)
 			}
 			if len(cfg.credentials) != tt.wantCredentials {
 				t.Errorf("credentials count = %d, want %d", len(cfg.credentials), tt.wantCredentials)
@@ -148,19 +161,26 @@ func TestCredentialFlagEnv(t *testing.T) {
 }
 
 // TestTLSKeyPairError（D-04 + parse 期校验纪律）：--tls-cert/--tls-key 单给报错
-// （文案含 both 双旗名）；--credential 畸形与 --origin 含 glob 字符在 fs.Func
-// 回调内 parse 期报错（配置错误零窗口暴露）。
+// （文案含 both 双旗名）；--credential 畸形（fs.Func 回调内 parse 期校验、
+// credErr 记录式于 Parse 返回处统一报错，WR-01）与 --origin 含 glob 字符
+// （回调内即时报错）均为配置错误零窗口暴露；--write-policy 非枚举值在 Parse
+// 返回处报错（D-05，值非敏感直接 return error 形态）。
+// WR-01 红线断言：malformed credential 行的 err 只含错误类别，不含 flag 值
+// 内容（记录式上报杜绝 flag 包 invalid value %q 包装回显——TestClientOptionError
+// forbiddenSub 同款先例；凭据值敏感度高于 prefs 值，同红线更须锁定）。
 func TestTLSKeyPairError(t *testing.T) {
 	t.Setenv("WESH_CREDENTIAL", "")
 	tests := []struct {
-		name    string
-		args    []string
-		wantSub string
+		name         string
+		args         []string
+		wantSub      string
+		forbiddenSub string // 值内容禁入错误串（SEC-01 启动面红线，WR-01；TestClientOptionError 先例）
 	}{
-		{"tls-cert without key", []string{"--tls-cert", "/tmp/c.pem", "--", "bash"}, "both --tls-cert and --tls-key"},
-		{"tls-key without cert", []string{"--tls-key", "/tmp/k.pem", "--", "bash"}, "both --tls-cert and --tls-key"},
-		{"malformed credential", []string{"--credential", "no-colon-here", "--", "bash"}, "credential must be user:pass"},
-		{"origin glob rejected", []string{"--origin", "https://*.example.com", "--", "bash"}, "glob"},
+		{"tls-cert without key", []string{"--tls-cert", "/tmp/c.pem", "--", "bash"}, "both --tls-cert and --tls-key", ""},
+		{"tls-key without cert", []string{"--tls-key", "/tmp/k.pem", "--", "bash"}, "both --tls-cert and --tls-key", ""},
+		{"malformed credential", []string{"--credential", "no-colon-here", "--", "bash"}, "credential must be user:pass", "no-colon-here"},
+		{"origin glob rejected", []string{"--origin", "https://*.example.com", "--", "bash"}, "glob", ""},
+		{"malformed write-policy", []string{"--write-policy", "sometimes", "--", "bash"}, "must be owner or all", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -170,6 +190,9 @@ func TestTLSKeyPairError(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wantSub) {
 				t.Errorf("parseArgs(%v) error = %q, want containing %q", tt.args, err, tt.wantSub)
+			}
+			if tt.forbiddenSub != "" && strings.Contains(err.Error(), tt.forbiddenSub) {
+				t.Errorf("parseArgs(%v) error = %q, must not contain value content %q", tt.args, err, tt.forbiddenSub)
 			}
 		})
 	}
@@ -210,14 +233,17 @@ func TestClientOptionError(t *testing.T) {
 	}
 }
 
-// TestAggregateClientPrefs（P4 D-13 聚合语义表）：零配置 → nil（Welcome JSON 不出
-// prefs 键，旧前端零漂移）；keys + osc52=true → 含各 key 值与 osc52:true；同 key
-// 重复 → last-wins。断言经 json.Unmarshal 为 map 进行（不逐字节——map marshal
-// 键序确定性不依赖断言顺序）。各语义独立 subtest，回归可定位。
+// TestAggregateClientPrefs（P4 D-13 聚合语义 + 05-03 D-13 双档分化表）：零配置 →
+// 两档均 nil（Welcome JSON 不出 prefs 键，旧前端零漂移）；keys + osc52=true →
+// rw 档含各 key 值与 osc52:true，ro 档含各 key 值但永不含 osc52 键（D-13：旁观者
+// 强制不下发，即使全局 --osc52 开启）；同 key 重复 → 两档均 last-wins。
+// 断言经 json.Unmarshal 为 map 进行（不逐字节——map marshal 键序确定性不依赖
+// 断言顺序）。各语义独立 subtest，回归可定位。
 func TestAggregateClientPrefs(t *testing.T) {
 	t.Run("zero config returns nil", func(t *testing.T) {
-		if got := aggregateClientPrefs(nil, false); got != nil {
-			t.Errorf("aggregateClientPrefs(nil, false) = %s, want nil (no prefs key on wire)", got)
+		ro, rw := aggregateClientPrefs(nil, false)
+		if ro != nil || rw != nil {
+			t.Errorf("aggregateClientPrefs(nil, false) = (%s, %s), want both nil (no prefs key on wire)", ro, rw)
 		}
 	})
 	t.Run("keys and osc52 merged", func(t *testing.T) {
@@ -225,21 +251,37 @@ func TestAggregateClientPrefs(t *testing.T) {
 			{key: "fontSize", value: json.RawMessage("18")},
 			{key: "theme", value: json.RawMessage(`{"background":"#000"}`)},
 		}
+		ro, rw := aggregateClientPrefs(opts, true)
 		var m map[string]json.RawMessage
-		if err := json.Unmarshal(aggregateClientPrefs(opts, true), &m); err != nil {
-			t.Fatalf("aggregate result unmarshal: %v", err)
+		if err := json.Unmarshal(rw, &m); err != nil {
+			t.Fatalf("aggregate rw result unmarshal: %v", err)
 		}
 		if len(m) != 3 {
-			t.Errorf("prefs keys = %d, want 3 (fontSize, theme, osc52)", len(m))
+			t.Errorf("rw prefs keys = %d, want 3 (fontSize, theme, osc52)", len(m))
 		}
 		if string(m["fontSize"]) != "18" {
-			t.Errorf("fontSize = %s, want 18", m["fontSize"])
+			t.Errorf("rw fontSize = %s, want 18", m["fontSize"])
 		}
 		if string(m["theme"]) != `{"background":"#000"}` {
-			t.Errorf("theme = %s, want %s", m["theme"], `{"background":"#000"}`)
+			t.Errorf("rw theme = %s, want %s", m["theme"], `{"background":"#000"}`)
 		}
 		if string(m["osc52"]) != "true" {
-			t.Errorf("osc52 = %s, want true (D-12 并入)", m["osc52"])
+			t.Errorf("rw osc52 = %s, want true (D-12 并入)", m["osc52"])
+		}
+		// D-13 双档断言：ro 档（旁观者+降级递补者）永不含 osc52 键——即使全局
+		// --osc52 开启（PITFALLS C5 对策另一半：OSC52 不劫持旁观者剪贴板）。
+		var mRO map[string]json.RawMessage
+		if err := json.Unmarshal(ro, &mRO); err != nil {
+			t.Fatalf("aggregate ro result unmarshal: %v", err)
+		}
+		if len(mRO) != 2 {
+			t.Errorf("ro prefs keys = %d, want 2 (fontSize, theme — osc52 强制缺席)", len(mRO))
+		}
+		if _, present := mRO["osc52"]; present {
+			t.Errorf("ro prefs must not contain osc52 key (D-13), got %s", mRO["osc52"])
+		}
+		if string(mRO["fontSize"]) != "18" {
+			t.Errorf("ro fontSize = %s, want 18", mRO["fontSize"])
 		}
 	})
 	t.Run("same key last-wins", func(t *testing.T) {
@@ -247,15 +289,18 @@ func TestAggregateClientPrefs(t *testing.T) {
 			{key: "fontSize", value: json.RawMessage("14")},
 			{key: "fontSize", value: json.RawMessage("22")},
 		}
-		var m map[string]json.RawMessage
-		if err := json.Unmarshal(aggregateClientPrefs(opts, false), &m); err != nil {
-			t.Fatalf("aggregate result unmarshal: %v", err)
-		}
-		if len(m) != 1 {
-			t.Errorf("prefs keys = %d, want 1 (collapsed)", len(m))
-		}
-		if string(m["fontSize"]) != "22" {
-			t.Errorf("fontSize = %s, want 22 (last-wins)", m["fontSize"])
+		ro, rw := aggregateClientPrefs(opts, false)
+		for _, blob := range []json.RawMessage{ro, rw} {
+			var m map[string]json.RawMessage
+			if err := json.Unmarshal(blob, &m); err != nil {
+				t.Fatalf("aggregate result unmarshal: %v", err)
+			}
+			if len(m) != 1 {
+				t.Errorf("prefs keys = %d, want 1 (collapsed)", len(m))
+			}
+			if string(m["fontSize"]) != "22" {
+				t.Errorf("fontSize = %s, want 22 (last-wins)", m["fontSize"])
+			}
 		}
 	})
 }
@@ -296,10 +341,18 @@ func TestNoCommandError(t *testing.T) {
 	}
 }
 
-// TestStartupMatrix（D-03/D-05，RESEARCH Pattern 7 八行矩阵）：直调 validateStartup
-// 纯函数全覆盖。wantErr 行断言与 RESEARCH 逐字一致的拒绝文案；wantWarnSub 行断言
-// 警告非空且含对应逃生门 flag 名（D-03/D-05 显式确认语义）；全部行断言 warn/err
-// 不含凭据值——SEC-01 日志红线延伸到启动面（启动输出任何形态不得泄露凭据）。
+// TestStartupMatrix（D-03/D-05，RESEARCH Pattern 7 八行矩阵 + 05-03 D-05 组合
+// 校验两行 + 05-07 D-08 数值校验两行）：直调 validateStartup 纯函数全覆盖。
+// wantErr 行断言与 RESEARCH 逐字
+// 一致的拒绝文案；wantWarnSub 行断言警告非空且含对应逃生门 flag 名（D-03/D-05
+// 显式确认语义）；全部行断言 warn/err 不含凭据值——SEC-01 日志红线延伸到启动面
+// （启动输出任何形态不得泄露凭据）。05-03 新增：write-policy × writable 组合校验
+// （配置矛盾 fail-fast——显式设置 write-policy 却未开 --writable 总闸即拒，与 bind
+// 安全形态无关；默认 owner 未显式设置 + 无 --writable 是纯 ro 会话正常形态放行）。
+// 05-07 新增：--max-clients ≤0 拒绝（D-08 数值校验——容量必须为正，0/负值会使
+// ③位 503 闸恒触发全员被拒；纯配置有效性与 bind 无关，loopback 行也不豁免）。
+// 既有行基线同步：validateStartup 新增 ≤0 拒绝后，既有行 config 零值 maxClients=0
+// 会被误拒——全部既有行注入 maxClients: 32 基值（wantErr/wantWarn 断言语义不变）。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
@@ -310,22 +363,32 @@ func TestStartupMatrix(t *testing.T) {
 		name        string
 		cfg         config
 		wantErrSub  string // 非空 = 拒绝启动，文案须含此子串
+		wantErrSub2 string // 非空 = 拒绝文案须同时含此第二子串（组合校验双 flag 名断言）
 		wantWarnSub string // 非空 = 放行但 stderr 醒目警告须含此子串（逃生门 flag 名）
 	}{
 		// loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05 现状保持）。
-		{"loopback no creds plaintext", config{bind: "127.0.0.1"}, "", ""},
-		{"loopback creds plaintext", config{bind: "127.0.0.1", credentials: creds}, "", ""},
-		{"loopback creds TLS", config{bind: "localhost", credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", ""},
+		{"loopback no creds plaintext", config{bind: "127.0.0.1", maxClients: 32}, "", "", ""},
+		{"loopback creds plaintext", config{bind: "127.0.0.1", maxClients: 32, credentials: creds}, "", "", ""},
+		{"loopback creds TLS", config{bind: "localhost", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
 		// WR-01：IPv6 loopback（::1）与 IPv4 loopback 同等待遇——无凭据明文放行免警告。
-		{"loopback ipv6 no creds plaintext", config{bind: "::1"}, "", ""},
+		{"loopback ipv6 no creds plaintext", config{bind: "::1", maxClients: 32}, "", "", ""},
 		// 非 loopback + 无凭据：拒绝（D-03 逐字文案），TLS 不救无凭据。
-		{"non-loopback no creds refused", config{bind: "0.0.0.0"}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", ""},
-		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", noAuth: true}, "", "--no-auth"},
+		{"non-loopback no creds refused", config{bind: "0.0.0.0", maxClients: 32}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", "", ""},
+		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", maxClients: 32, noAuth: true}, "", "", "--no-auth"},
 		// 非 loopback + 凭据 + 明文：拒绝（D-05 逐字文案）；逃生门放行 + 醒目警告。
-		{"non-loopback creds plaintext refused", config{bind: "0.0.0.0", credentials: creds}, "refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key", ""},
-		{"non-loopback creds plaintext insecure-http escape", config{bind: "0.0.0.0", credentials: creds, insecureHTTP: true}, "", "--insecure-http"},
+		{"non-loopback creds plaintext refused", config{bind: "0.0.0.0", maxClients: 32, credentials: creds}, "refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key", "", ""},
+		{"non-loopback creds plaintext insecure-http escape", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, insecureHTTP: true}, "", "", "--insecure-http"},
 		// 非 loopback + 凭据 + TLS：最强形态免警告。
-		{"non-loopback creds TLS", config{bind: "0.0.0.0", credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", ""},
+		{"non-loopback creds TLS", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
+		// 05-03 D-05 组合校验：显式 write-policy 无 --writable → 拒绝（配置矛盾
+		// fail-fast，文案须含双 flag 名；loopback 安全形态也不豁免——纯配置矛盾
+		// 与 bind 无关）；默认 owner 未显式设置 + 无 --writable → 纯 ro 会话放行。
+		{"explicit write-policy without writable refused", config{bind: "127.0.0.1", maxClients: 32, writePolicy: "all", writePolicySet: true}, "--write-policy", "--writable", ""},
+		{"default owner without writable allowed", config{bind: "127.0.0.1", maxClients: 32, writePolicy: "owner"}, "", "", ""},
+		// 05-07 D-08 数值校验：--max-clients ≤0 → 拒绝（容量必须为正；bind
+		// 127.0.0.1 隔离其他校验维度——纯配置有效性 loopback 也不豁免）。
+		{"max-clients zero refused", config{bind: "127.0.0.1", maxClients: 0}, "--max-clients", "", ""},
+		{"max-clients negative refused", config{bind: "127.0.0.1", maxClients: -1}, "--max-clients", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -342,6 +405,8 @@ func TestStartupMatrix(t *testing.T) {
 					t.Errorf("validateStartup = nil err, want containing %q", tt.wantErrSub)
 				} else if !strings.Contains(errStr, tt.wantErrSub) {
 					t.Errorf("err = %q, want containing %q", errStr, tt.wantErrSub)
+				} else if tt.wantErrSub2 != "" && !strings.Contains(errStr, tt.wantErrSub2) {
+					t.Errorf("err = %q, want also containing %q", errStr, tt.wantErrSub2)
 				}
 				if warn != "" {
 					t.Errorf("refusal path warn = %q, want empty", warn)

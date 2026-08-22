@@ -58,11 +58,15 @@ function startWesh(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
+    let stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });
     child.stdout.on('data', (d) => {
+      // IN-04 累积缓冲后匹配（phase05.mjs 形态回填）：listening 行跨 chunk
+      // 分块时逐 chunk 直接正则永不命中，8s 超时假失败
+      stdoutBuf += d.toString();
       // scheme 感知（03-04 启动行 TLS 场景打印 https://）——http-only 正则会 8s 超时
-      const m = /listening on (https?):\/\/[^\s]+:(\d+)/.exec(d.toString());
+      const m = /listening on (https?):\/\/[^\s]+:(\d+)/.exec(stdoutBuf);
       if (m) {
         clearTimeout(to);
         resolve({ port: Number(m[2]), scheme: m[1], kill: () => child.kill('SIGKILL'), child });
@@ -99,11 +103,16 @@ function dialHello(port, { ticket, scheme = 'ws' } = {}) {
     ws.onmessage = (ev) => frames.push(new Uint8Array(ev.data));
     ws.onopen = () => ws.send(helloFrame(ticket));
     ws.onerror = () => reject(new Error('WS 连接失败'));
+    // IN-04 总超时 watchdog：被测二进制挂死（Welcome 永不到达）时 10s 拒绝而非永久悬挂
+    const watchdog = setTimeout(() => {
+      clearInterval(poll);
+      reject(new Error('握手总超时：10s 未收到 Welcome'));
+    }, 10000);
     // Welcome 到达即视为握手完成
     const poll = setInterval(() => {
-      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); resolve({ ws, frames }); }
+      if (frames.some((f) => f[0] === WELCOME)) { clearInterval(poll); clearTimeout(watchdog); resolve({ ws, frames }); }
     }, 10);
-    ws.onclose = (ev) => { clearInterval(poll); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
+    ws.onclose = (ev) => { clearInterval(poll); clearTimeout(watchdog); reject(new Error(`握手被关闭 code=${ev.code} reason=${ev.reason}`)); };
   });
 }
 
@@ -186,7 +195,9 @@ async function scenarioAuthFlow() {
   }
 
   // S1f: 非法 ticket → Error{auth_failed} + close 1008 reason=auth_failed（D-10 统一口径）。
-  // 独立 spawn 实例：单次语义下同进程第二次 WS 建连不可行；新实例节流状态全新无 pacing 需求。
+  // 独立 spawn 实例：隔离节流计数（非法 ticket 核销失败计入 D-08 统一 per-IP 计数器，
+  // 与场景 1 主链路的爬梯状态隔离）——多客户端下同进程多 WS 建连已是 Phase 5 特性，
+  // 此处独立 spawn 仅为节流隔离；新实例节流状态全新无 pacing 需求。
   const inst2 = await startWesh(['--credential', UAT_CREDENTIAL, '--writable', '--', 'bash', '--norc', '--noprofile']);
   try {
     const ws = new WebSocket(`ws://127.0.0.1:${inst2.port}/ws`, [SUBPROTOCOL]);
@@ -256,10 +267,12 @@ async function scenarioOrigin() {
     const evilStatus = await rawUpgrade(inst.port, { Origin: 'https://evil.example', 'Sec-WebSocket-Protocol': SUBPROTOCOL });
     check('S3c', '/ws 邪恶 Origin → 403', evilStatus === 403, `status=${evilStatus}`);
 
-    // S3d: /ws 无 Origin → 非 403（D-13 非浏览器放行证明；400 = 越过 Origin 闸撞上子协议预检）
+    // S3d: /ws 无 Origin → 非 403（D-13 非浏览器放行证明；400 = 越过 Origin 闸撞上
+    // ①位子协议预检——握手在 Accept 前被拒绝，不建 WS 连接不触发任何会话状态变更；
+    // 原断言集中的 409 单客户端门已于 Phase 5 拆除，容量上限断言由 phase05.mjs S5 承接）
     const noOriginStatus = await rawUpgrade(inst.port, {});
-    check('S3d', '/ws 无 Origin → 非 403 放行（400/101/409 任一）',
-      noOriginStatus !== 403 && [400, 101, 409].includes(noOriginStatus), `status=${noOriginStatus}`);
+    check('S3d', '/ws 无 Origin → 非 403 放行（①位子协议预检 400）',
+      noOriginStatus !== 403 && noOriginStatus === 400, `status=${noOriginStatus}`);
   } finally {
     inst.kill();
   }
