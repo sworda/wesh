@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/sworda/wesh/internal/proto"
@@ -127,4 +128,119 @@ func TestWriterMergeControlFramesOnly(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAfterDrainResendsDims（WR-02 白盒回归，05-13，用户裁决 option (a)）：锁定
+// 「blocked 丢推送 → 恢复补发收敛」全链。两子测（TestClientCountInvariant 同文件
+// 白盒纪律——&Server{} 直构造 + hubCond 装配，零值注册表可用）：
+//
+//  1. 「blocked 期后续推送帧不覆写暂存」（守卫语义锁——WR-02 缺陷链前半的行为
+//     固定）：已 creditBlocked 端再触发 kickOrCreditLocked（尺寸推送帧），幂等
+//     置位守卫 `if !c.creditBlocked` 跳过二次暂存——creditPending 仍逐字节 ==
+//     首触发帧（防二次暂存覆写首帧的既有语义），creditBlocked 仍 true，kicks==0
+//     （注册表仅 c 一端——剔除 c 后无其他未 blocked rw，结构上必走信用分支，
+//     不触发踢出路径）。
+//  2. 「afterDrain 开门补发当前会话尺寸」（WR-02 收敛锁）：恢复后 outbox 恰 2 帧
+//     ——[0] 逐字节 == 原 creditPending（重投有序性：补发帧排在暂存帧之后），
+//     [1] Welcome 携当前 sessionDimsLocked()（arbiter.last=100x30）且 prefs 按
+//     c.mode 选档（rw→14/ro→13，D-13 双档在补发通道不漂移的机械证据）。ro 行
+//     同构验证旁观者恢复路径——ro 永不持信用（R-08 分工表），ro 行进信用集是
+//     防御性夹具驱动，非生产可达路径，断言补发选档正确性即可。
+func TestAfterDrainResendsDims(t *testing.T) {
+	t.Run("blocked期后续推送帧不覆写暂存", func(t *testing.T) {
+		s := &Server{}
+		s.hubCond = sync.NewCond(&s.hubMu)
+
+		first := append([]byte{proto.Output}, []byte("first-trigger-output")...)
+		c := &client{
+			outbox:        newOutbox(4096),
+			done:          make(chan struct{}),
+			cancel:        func() {},
+			remote:        "c",
+			creditBlocked: true,
+			creditPending: first,
+		}
+		c.mode.Store(proto.ModeRW)
+		s.registry.registerLocked(c) // 注册表仅 c 一端——剔除 c 后无其他未 blocked rw，必走信用分支
+
+		s.kickOrCreditLocked(c, proto.WelcomeFrame(proto.ModeRW, nil, 100, 30))
+
+		if !bytes.Equal(c.creditPending, first) {
+			t.Fatalf("creditPending = %q, want 首触发帧 %q（幂等置位守卫下后续推送帧不覆写暂存）", c.creditPending, first)
+		}
+		if !c.creditBlocked {
+			t.Fatal("creditBlocked = false, want true（守卫不清位）")
+		}
+		if s.registry.kicks != 0 {
+			t.Fatalf("registry.kicks = %d, want 0（信用分支不触发踢出）", s.registry.kicks)
+		}
+	})
+
+	t.Run("afterDrain开门补发当前会话尺寸", func(t *testing.T) {
+		tests := []struct {
+			name         string
+			mode         string
+			wantFontSize float64
+		}{
+			{"rw端补发携rw档prefs", proto.ModeRW, 14},
+			{"ro旁观者同构验证（防御夹具非生产可达）", proto.ModeRO, 13},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				s := &Server{}
+				s.hubCond = sync.NewCond(&s.hubMu)
+				s.arbiter.last = dims{cols: 100, rows: 30} // sessionDimsLocked 非零分支
+				s.clientPrefsRW = json.RawMessage(`{"fontSize":14}`)
+				s.clientPrefsRO = json.RawMessage(`{"fontSize":13}`) // 选档区分度夹具
+
+				pending := append([]byte{proto.Output}, []byte("stalled-output-frame")...)
+				c := &client{
+					outbox:        newOutbox(4096), // bytes=0 < cap/2 → 恢复判定必过
+					done:          make(chan struct{}),
+					cancel:        func() {},
+					remote:        "c",
+					creditBlocked: true,
+					creditPending: pending,
+				}
+				c.mode.Store(tt.mode)
+				s.registry.registerLocked(c)
+
+				s.afterDrain(c)
+
+				if c.creditBlocked {
+					t.Fatal("afterDrain 后 creditBlocked 仍 true, want false（既有恢复语义不变）")
+				}
+				if c.creditPending != nil {
+					t.Fatalf("afterDrain 后 creditPending = %q, want nil（重投后清零）", c.creditPending)
+				}
+				batch, _ := c.outbox.drain()
+				if len(batch) != 2 {
+					t.Fatalf("drain 得 %d 帧, want 2（重投暂存帧在前、Welcome 补发帧在后）", len(batch))
+				}
+				if !bytes.Equal(batch[0], pending) {
+					t.Fatalf("frame[0] = %q, want 原 creditPending %q（重投有序性：补发帧排在暂存帧之后）", batch[0], pending)
+				}
+				if batch[1][0] != proto.Welcome {
+					t.Fatalf("frame[1] 类型字节 = %q, want 'W'（Welcome 补发帧）", batch[1][0])
+				}
+				var m map[string]any
+				if err := json.Unmarshal(batch[1][1:], &m); err != nil {
+					t.Fatalf("Welcome 补发帧 JSON 解码: %v", err)
+				}
+				if m["mode"] != tt.mode {
+					t.Fatalf("补发帧 mode = %v, want %q（按各端当前生效 mode 组帧）", m["mode"], tt.mode)
+				}
+				if m["cols"] != float64(100) || m["rows"] != float64(30) {
+					t.Fatalf("补发帧尺寸 = %vx%v, want 100x30（当前会话尺寸 = arbiter.last）", m["cols"], m["rows"])
+				}
+				prefs, ok := m["prefs"].(map[string]any)
+				if !ok {
+					t.Fatalf("补发帧 prefs 缺失或非对象: %v", m["prefs"])
+				}
+				if prefs["fontSize"] != tt.wantFontSize {
+					t.Fatalf("补发帧 prefs.fontSize = %v, want %v（按 c.mode 选档，D-13 在补发通道不漂移）", prefs["fontSize"], tt.wantFontSize)
+				}
+			})
+		}
+	})
 }

@@ -387,7 +387,10 @@ func (s *Server) allWritableBlockedLocked() bool {
 // 触发帧不丢（must_haves prohibitions 硬约束——丢帧保连接 = 有序流画面静默损坏，
 // RESEARCH Anti-Pattern 2）：信用路径把被拒的当前帧暂存 c.creditPending，
 // afterDrain 半水位恢复时重投（TestGlobalCredit 门转换字节精确断言实测发现：
-// 不暂存则恢复端流缺一段——review #1 行为证据锁住的正是此窗口）。
+// 不暂存则恢复端流缺一段——review #1 行为证据锁住的正是此窗口）。首帧暂存边界
+//（WR-02，05-13）：幂等置位守卫（`if !c.creditBlocked`）下已 blocked 的后续帧
+// 不覆写暂存——防二次暂存覆写首帧的既有语义；尺寸推送类帧的收敛出口 =
+// afterDrain 开门时补发当前 sessionDimsLocked() 的 Welcome（见 afterDrain 注释）。
 //
 // 迟滞带论证（review #2）：门关闭阈值 = outbox 写满（100% 字节上界才置
 // creditBlocked）、恢复阈值 = drain 至 <50%——2:1 迟滞带内建于分工表，非
@@ -417,7 +420,8 @@ func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 
 // afterDrain 在一次成功批量写出后做信用门恢复判定（R-01 半水位迟滞）：outbox 当前
 // 字节 < cap/2（半水位，defaultOutboxBytes 的 50% = 256KiB）且 c.creditBlocked →
-// 重投触发帧 + 清位 + hubCond.Broadcast 开门。锁序 R-07：drain 完才取 hubMu
+// 重投触发帧 + 清位 + 补发当前会话尺寸 Welcome（WR-02）+ hubCond.Broadcast
+// 开门。锁序 R-07：drain 完才取 hubMu
 // （本函数），绝不反序同持；hubMu > outboxMu 的同序同持与 onChunk→trySend 同款。
 //
 // 重投有序性：暂存帧在清位/Broadcast 之前入队——门仍闭合（flag 未清），onChunk
@@ -426,6 +430,15 @@ func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 // + 类型字节）——要求 outbox cap ≥ 64KiB（默认 512KiB，测试覆写下限同此；cap
 // 小于单帧的场景下 trySend 本就恒败，属配置错误不在此兜底）；防御性失败分支保位
 // 保帧，下次 drain 再试。
+//
+// WR-02 补发（05-13，用户裁决 option (a)）：恢复开门时向该端补发一帧当前
+// sessionDimsLocked() 的 Welcome——creditBlocked 期间被 kickOrCreditLocked 的
+// `if !c.creditBlocked` 守卫跳过的尺寸推送帧由此收敛，该端 sessionDims 不过期至
+// 下次尺寸事件。补发帧在清位后、Broadcast 前入队：afterDrain 全程持有 hubMu，
+// onChunk 无法进入临界区夹入新帧；补发帧经 outbox FIFO 排在重投的 creditPending
+// 之后，客户端字节流严格有序保持。入队必成沿用重投的数学保证（余量 ≥ cap/2+1
+// ≫ ~100B Welcome），`_ =` 不兜底（失败属配置错误）；prefs 按 c.mode 选档
+//（pushSessionDimsLocked 逐字同形态，D-13 双档纪律在补发通道不漂移）。
 func (s *Server) afterDrain(c *client) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
@@ -443,6 +456,15 @@ func (s *Server) afterDrain(c *client) {
 	}
 	c.creditBlocked = false
 	s.registry.gateTransitions++ // Phase 8 OPS-07 门开闭周期计数挂点（review #10）
+	// WR-02（05-13，option (a)）：补发一帧当前会话尺寸的 Welcome——收敛 creditBlocked
+	// 期间被守卫静默丢弃的尺寸推送帧（选档同 pushSessionDimsLocked，D-13 不漂移）。
+	sd := s.sessionDimsLocked()
+	mode := c.mode.Load().(string)
+	prefs := s.clientPrefsRO
+	if mode == proto.ModeRW {
+		prefs = s.clientPrefsRW
+	}
+	_ = c.outbox.trySend(proto.WelcomeFrame(mode, prefs, sd.cols, sd.rows)) // 补发阻塞期错过的尺寸推送
 	s.hubCond.Broadcast()
 }
 
