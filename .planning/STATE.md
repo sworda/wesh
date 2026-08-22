@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-12-PLAN.md
-last_updated: "2026-08-22T10:44:33.549Z"
+stopped_at: Completed 05-13-PLAN.md
+last_updated: "2026-08-22T11:15:00.713Z"
 last_activity: 2026-08-22
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 5
   total_plans: 37
-  completed_plans: 36
+  completed_plans: 37
 ---
 
 # Project State
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 4 of 12
-Status: Ready to execute
-Last activity: 2026-08-22 — Phase 05 execution started
+Plan: 13 of 13
+Status: Phase 05 all plans executed — awaiting re-verification (05-13 gap-closure done)
+Last activity: 2026-08-22 — Completed 05-13-PLAN.md (WR-01/WR-02 gap closure)
 
 Progress: [██████████] 100%
 
@@ -96,6 +96,7 @@ Progress: [██████████] 100%
 | Phase 05 P10 | 28min | 2 tasks | 10 files |
 | Phase 05 P11 | 22min | 2 tasks | 2 files |
 | Phase 05 P12 | 32min | 3 tasks | 8 files |
+| Phase 05 P13 | 22min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -185,6 +186,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-11]: ro 一次性 console 提示改 roNotified 门闩承载（运行期尺寸推送打破每 attach 仅一次不变量），文案逐字不动；roNotified 接线前 export 防 noUnusedLocals（queryKeys 先例第二次沿用），接线后去 export
 - [Phase ?]: [Phase 05-12]: D6H-1 等价锁取「120x40 建起再 resize(40,10)」精确复刻前端 refit() 生产路径；D6H-2 负对照以 buffer 快照（translateToString(true) 去尾空行 join）比对，折行点分叉驱动不全等
 - [Phase ?]: [Phase 05-12]: S10c 取最后一帧 WELCOME 解码容忍升格+recalcNow 推送同值双帧；probe10.mjs 探针从未入库，按 plan 机制描述重建为 phase05-dims.mjs 并登记血缘
+- [Phase ?]: [Phase 05-13]: WR-01 修复取复检中止形态（05-REVIEW 逐字补丁）——推送循环内踢出经 removeMember→嵌套 recalcNow 推进 arbiter.last 后，外层复检 last != target 即中止 stale 扇出；踢出不改仲裁或信用路径 last==target 零代价继续；安全性注释改写覆盖真实可达的 removeMember 路径
+- [Phase ?]: [Phase 05-13]: WR-02 修复取 option (a)（用户 2026-08-22 裁决）——afterDrain 清位后、Broadcast 前补发当前 sessionDimsLocked() 的 Welcome（prefs 按 c.mode 选档 D-13 不漂移）；补发有序性归因 = afterDrain 全程持有 hubMu + outbox FIFO（非门仍闭合，plan-check 修订措辞）；「触发帧不丢」承诺收窄为首帧暂存 + afterDrain 补发收敛
 
 ### Pending Todos
 
@@ -203,6 +206,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-22T05:00:54.954Z
-Stopped at: Completed 05-12-PLAN.md
+Last session: 2026-08-22T11:15:00.691Z
+Stopped at: Completed 05-13-PLAN.md
 Resume file: None
