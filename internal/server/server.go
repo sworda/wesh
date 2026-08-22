@@ -657,19 +657,30 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 	} else {
-		// 升档序列（顺序敏感，PATTERNS 注意 5/6）：停 5s 计时器 → per-IP release
-		//（Hello 完成即不计半开，D-04：NAT 场景正常浏览器不受限）→ hubMu 内：
-		// 模式判定矩阵（ticket 绑定 mode × --writable × write-policy × owner 在位
-		// → 生效 mode + rwEligible + 是否立 owner，clients.go decideModeLocked；
-		// ticket 绑定值 = 认证模式 checkTicket 核销返回（D-11），无认证模式为其
-		// s.writable 派生值）→ 构造 client（Hello 首尺寸登记 dims 字段——递补升格
-		// 时新 owner 参与集切换的尺寸来源）→ Welcome 帧按生效 mode 与 prefs 双档
+		// 升档序列（顺序敏感，PATTERNS 注意 5/6；G-05-1 重排后时序）：停 5s 计时器 →
+		// per-IP release（Hello 完成即不计半开，D-04：NAT 场景正常浏览器不受限）→
+		// hubMu 内：模式判定矩阵（ticket 绑定 mode × --writable × write-policy ×
+		// owner 在位 → 生效 mode + rwEligible + 是否立 owner，clients.go
+		// decideModeLocked；ticket 绑定值 = 认证模式 checkTicket 核销返回（D-11），
+		// 无认证模式为其 s.writable 派生值）→ 构造 client（Hello 首尺寸登记 dims
+		// 字段——递补升格时新 owner 参与集切换的尺寸来源）→ Hello 首尺寸按 D-09
+		// 参与集规则入 arbiter 并即时重算（05-04：消除 80x24 首帧窗口——参与集
+		// attach 即时重算不防抖，新 owner/新 rw 端立即参与仲裁；ro 旁观者不参与、
+		// 不重算）→ sessionDimsLocked 取重算后的会话尺寸（G-05-1：Welcome 恒携
+		// attach 完成后生效的会话尺寸——重排前 Welcome 组帧在 addMember/recalcNow
+		// 之前，会携带过时的 pre-attach 尺寸）→ Welcome 帧按生效 mode 与 prefs 双档
 		// 选档（P4 D-13 空则不出键——旧前端零漂移；05-03 D-13：ro 档永不含 osc52）
-		// 经 outbox 首条入队 → 注册表登记（+ owner 指针登记）→ Hello 首尺寸按
-		// D-09 参与集规则入 arbiter 并即时重算（05-04：消除 80x24 首帧窗口——
-		// 参与集 attach 即时重算不防抖，新 owner/新 rw 端立即参与仲裁；ro 旁观者
-		// 不参与、不重算）→ 16KiB 稳态档（SetReadLimit 经库 atomic store 下一条
-		// 消息起生效，read.go:97-105）→ writer + pinger 启动。
+		// 携会话尺寸经 outbox 首条入队 → 注册表登记（+ owner 指针登记）→ 16KiB
+		// 稳态档（SetReadLimit 经库 atomic store 下一条消息起生效，read.go:97-105）
+		// → writer + pinger 启动。
+		// 不变量保持论证（G-05-1 重排）：
+		//   - Welcome 恒首帧：Welcome 入队仍先于 registerLocked——onChunk 遍历注册表
+		//     扇出，cl 未登记前绝无 OUTPUT 夹入（P2 D-02 时序纪律不受影响）；
+		//     addMember/recalcNow 不触注册表，提前执行无扇出面（其运行期推送循环
+		//     遍历注册表，attach 者自身尚未登记故不触达——其会话尺寸由 Welcome
+		//     承载，零重复帧）。
+		//   - 锁序保持：recalcNow → sess.Resize 取 sess.fdMu，hubMu > sess.fdMu
+		//     同序（resize.go:8-9 纪律）不变。
 		// 注册刻意在握手完成后才发生：此前 OUTPUT 一律经 hub 空扇出丢弃——
 		// Welcome 恒为 S→C 首帧（writer 全程唯一写端，FIFO 保证首帧无时序竞态，
 		// P2 D-02 时序纪律），且未认证客户端在预认证窗口内收不到任何 PTY 输出。
@@ -692,28 +703,34 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			limiter: rate.NewLimiter(rate.Limit(s.inputRate), s.inputBurst),
 		}
 		cl.mode.Store(effMode) // 生效模式初始值（atomic 承载：INPUT 门无锁读者，见 clients.go）
-		// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
-		// trySend 恒成功——Welcome ≪ cap），按生效 mode 选 prefs 档（ro 档永不
-		// 含 osc52，D-13/P5-6）。握手期 Error 帧（version_mismatch/auth_failed）
-		// 发生在注册前，维持直写不变。入队先于登记且全程持 hubMu——hub 扇出
-		// 遍历注册表，若先登记 onChunk 可在 Welcome 前夹入 OUTPUT（首帧时序竞态）。
-		prefs := s.clientPrefsRO
-		if effMode == proto.ModeRW {
-			prefs = s.clientPrefsRW
-		}
-		cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs))
-		s.registry.registerLocked(cl)
-		if becomeOwner {
-			s.registry.owner = cl // D-06：首个 rw attach 立 owner
-		}
 		// D-09 参与集登记（resize.go participates 矩阵逐字）：rw 端（owner 模式
 		// 仅 owner / all 模式全部 rw 端）与无 --writable 纯 ro 会话的全部 ro 端
 		// 以 Hello 首尺寸参与仲裁；含可写端会话的 ro 旁观者不参与（其 RESIZE 经
 		// D-09 第二闸忽略，尺寸永不影响可写端 PTY 尺寸）。attach 即时重算不防抖
 		//（RESEARCH Pattern 4：无风暴风险）；旁观者 attach 不改变参与集，不重算。
+		// G-05-1 重排：参与集登记/重算前移至 Welcome 组帧之前——Welcome 恒携
+		// attach 完成后生效的会话尺寸（重排前组帧在前，会携带过时的 pre-attach
+		// 尺寸）。recalcNow 的运行期推送不触达 attach 者自身（尚未 registerLocked，
+		// 推送循环遍历注册表）——其会话尺寸由下方 Welcome 承载，零重复帧。
 		if s.participates(effMode) {
 			s.addMember(cl, cl.dims)
 			s.recalcNow()
+		}
+		sd := s.sessionDimsLocked() // G-05-1：重算后的会话尺寸（零参与者期间 = spawn 80x24 回落）
+		// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
+		// trySend 恒成功——Welcome ≪ cap），按生效 mode 选 prefs 档（ro 档永不
+		// 含 osc52，D-13/P5-6）并携会话尺寸（G-05-1 恒在键）。握手期 Error 帧
+		//（version_mismatch/auth_failed）发生在注册前，维持直写不变。入队先于
+		// 登记且全程持 hubMu——hub 扇出遍历注册表，若先登记 onChunk 可在 Welcome
+		// 前夹入 OUTPUT（首帧时序竞态）。
+		prefs := s.clientPrefsRO
+		if effMode == proto.ModeRW {
+			prefs = s.clientPrefsRW
+		}
+		cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, sd.cols, sd.rows))
+		s.registry.registerLocked(cl)
+		if becomeOwner {
+			s.registry.owner = cl // D-06：首个 rw attach 立 owner
 		}
 		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。

@@ -509,6 +509,15 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 // （D-09）——升格后 addMember(新 owner, Hello 登记尺寸) + recalcNow 即时重算，
 // 新 owner 尺寸接管。
 //
+// 升格 Welcome 尺寸取值论证（G-05-1，05-10）：组帧携 cand.dims（Hello 登记尺寸）
+// 而非重算后的 arbiter.last——owner 模式升格后参与集 = {cand} 单员（旧 owner 已在
+// detach/kick 的 removeMember 移除，递补链上被同义踢出的候选亦非成员），arbitrate
+// 单员 = cand.dims，故升格 Welcome 尺寸恒等于升格后 recalcNow 的 last。保持
+// trySend 在前、失败踢出重扫的既有形态——不得为重算尺寸把 addMember/recalcNow
+// 前移（trySend 失败路径要回滚参与集，复杂度换取的值相同）。cand.dims 运行期不
+// 更新（clients.go dims 字段注释既定）：旁观期缩窗的瞬态偏差由前端升格分支
+// refit→RESIZE 上报纠正（05-08 纠正链，05-11 保持），随后 recalcNow 推送收口。
+//
 // 调用时序闭合（review #3）：本函数在 detach 与 kickSlowConsumerLocked 两路径的
 // removeLocked 之后同步调用（同一 hubMu 持有内、异步 go Close 之前）——晋升恒在
 // hubMu 内完成；被移除 owner 的重连必须经 HTTP→ticket→WS→Hello→registerLocked
@@ -528,7 +537,7 @@ func (s *Server) promoteNextLocked() {
 			s.registry.owner = nil // 无可递补者：下一个 rw attach 按矩阵成为新 owner
 			return
 		}
-		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW)) {
+		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW, cand.dims.cols, cand.dims.rows)) {
 			s.kickSlowConsumerLocked(cand) // 升格通知不可达 = stalled，同义踢出后重扫
 			continue
 		}

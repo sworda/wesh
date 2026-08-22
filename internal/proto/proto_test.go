@@ -62,7 +62,7 @@ func TestDecodeHello(t *testing.T) {
 // TestWelcomeFrameErrorFrame 锁定 S→C 控制帧组帧形状：
 // 1 字节类型 + JSON 载荷，解码往返后字段精确相等。
 func TestWelcomeFrameErrorFrame(t *testing.T) {
-	wf := WelcomeFrame(ModeRO, nil)
+	wf := WelcomeFrame(ModeRO, nil, 80, 24)
 	if len(wf) == 0 || wf[0] != Welcome {
 		t.Fatalf("WelcomeFrame[0] = %#x, want 'W'(%#x)", wf[0], Welcome)
 	}
@@ -72,6 +72,11 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 	}
 	if wp.Mode != ModeRO {
 		t.Errorf("WelcomeFrame mode = %q, want %q", wp.Mode, ModeRO)
+	}
+
+	// G-05-1（05-10）：会话尺寸 round-trip——组帧携带的 cols/rows 解码后精确相等。
+	if wp.Cols != 80 || wp.Rows != 24 {
+		t.Errorf("WelcomeFrame dims = %dx%d, want 80x24（G-05-1 会话尺寸载荷）", wp.Cols, wp.Rows)
 	}
 
 	const msg = "protocol version wesh.v1 required"
@@ -92,7 +97,7 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 
 	// P4 D-13：prefs 往返与 omitempty 缺席两回归锁（各自独立 subtest，回归可定位）。
 	t.Run("prefs round-trip", func(t *testing.T) {
-		wf := WelcomeFrame(ModeRW, json.RawMessage(`{"fontSize":16,"resizeOverlay":false}`))
+		wf := WelcomeFrame(ModeRW, json.RawMessage(`{"fontSize":16,"resizeOverlay":false}`), 132, 43)
 		var wp WelcomePayload
 		if err := json.Unmarshal(wf[1:], &wp); err != nil {
 			t.Fatalf("WelcomeFrame prefs payload unmarshal: %v", err)
@@ -100,12 +105,32 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 		if string(wp.Prefs) != `{"fontSize":16,"resizeOverlay":false}` {
 			t.Errorf("WelcomeFrame prefs = %s, want %s", wp.Prefs, `{"fontSize":16,"resizeOverlay":false}`)
 		}
+		// G-05-1：异尺寸 round-trip（132x43——与调用点实参精确相等）。
+		if wp.Cols != 132 || wp.Rows != 43 {
+			t.Errorf("WelcomeFrame dims = %dx%d, want 132x43（G-05-1 会话尺寸载荷）", wp.Cols, wp.Rows)
+		}
 	})
 	t.Run("prefs omitted when nil (omitempty)", func(t *testing.T) {
 		// 旧前端零漂移回归锁：nil prefs 组帧后帧体无 "prefs" 键（P2 D-02 加字段纪律）。
-		wf := WelcomeFrame(ModeRO, nil)
+		wf := WelcomeFrame(ModeRO, nil, 80, 24)
 		if bytes.Contains(wf, []byte("prefs")) {
-			t.Errorf("WelcomeFrame(ModeRO, nil) = %s, must not contain %q key", wf[1:], "prefs")
+			t.Errorf("WelcomeFrame(ModeRO, nil, ...) = %s, must not contain %q key", wf[1:], "prefs")
+		}
+	})
+	t.Run("dims keys always present (G-05-1)", func(t *testing.T) {
+		// 恒序列化契约锁：prefs nil 时 cols/rows 键仍恒在（无 omitempty——新前端靠
+		//「缺席 = 旧服务端」识别遗留形态）。map 解码断言键存在性（struct 解码对
+		// 缺席键零值静默，无法区分「键缺席」与「键值为 0」）。
+		wf := WelcomeFrame(ModeRO, nil, 80, 24)
+		var wm map[string]any
+		if err := json.Unmarshal(wf[1:], &wm); err != nil {
+			t.Fatalf("WelcomeFrame payload unmarshal to map: %v", err)
+		}
+		if _, present := wm["cols"]; !present {
+			t.Errorf("Welcome JSON = %v, must always contain %q key（G-05-1 恒序列化契约）", wm, "cols")
+		}
+		if _, present := wm["rows"]; !present {
+			t.Errorf("Welcome JSON = %v, must always contain %q key（G-05-1 恒序列化契约）", wm, "rows")
 		}
 	})
 }

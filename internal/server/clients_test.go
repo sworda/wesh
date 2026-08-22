@@ -93,8 +93,10 @@ func TestClientCountInvariant(t *testing.T) {
 //   - Welcome–OUTPUT 相邻（类型不同）→ 各自单发；
 //   - 空批 → nil（writer len(batch)==0 分支前置，双保险）。
 func TestWriterMergeControlFramesOnly(t *testing.T) {
-	wRO := proto.WelcomeFrame(proto.ModeRO, json.RawMessage(`{"fontSize":14}`))
-	wRW := proto.WelcomeFrame(proto.ModeRW, json.RawMessage(`{"fontSize":14,"osc52":true}`))
+	// G-05-1（05-10）：WelcomeFrame 签名携会话尺寸——本测试锁定 mergeBatch 形状，
+	// 尺寸值不参与断言，任取 80x24。
+	wRO := proto.WelcomeFrame(proto.ModeRO, json.RawMessage(`{"fontSize":14}`), 80, 24)
+	wRW := proto.WelcomeFrame(proto.ModeRW, json.RawMessage(`{"fontSize":14,"osc52":true}`), 80, 24)
 	e1 := proto.ErrorFrame(proto.ErrServerError, "boom-1")
 	e2 := proto.ErrorFrame(proto.ErrServerError, "boom-2")
 	out := func(payload string) []byte { return append([]byte{proto.Output}, payload...) }

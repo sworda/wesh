@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sworda/wesh/internal/proto"
+	"github.com/sworda/wesh/internal/pty"
 )
 
 // dims 终端尺寸（cols×rows）。入仲裁前已经 proto.ClampDim 钳制 [1,1000]
@@ -129,6 +130,23 @@ func (s *Server) recalcNow() {
 	}
 	s.arbiter.last = target
 	_ = s.sess.Resize(target.cols, target.rows)
+}
+
+// sessionDimsLocked 返回当前会话尺寸（G-05-1，05-10；hubMu 内调用——读
+// arbiter.last 与同锁字段一致）：会话尺寸恒等于 PTY 实际尺寸，两个分支同源论证——
+//   - arbiter.last 非零（曾有参与者）：last 即最近一次 recalcNow 应用到 PTY 的
+//     目标尺寸（重算后 min-rect/last-wins）；全部 detach 后 last 遗留 = PTY 保持
+//     的最后一次应用尺寸（0 人零值哨兵不动 PTY），同源成立。
+//   - arbiter.last 零值（从未有参与者）：不等于「会话尺寸未知」——首个参与端
+//     attach 前 PTY 保持 spawn 尺寸（spawn.go StartWithSize 钉死 SpawnCols×
+//     SpawnRows 80x24，且零参与者期间无任何 Resize 路径触达：recalcNow 零值
+//     分支提前返回不发起 Resize），故回落 dims{pty.SpawnCols, pty.SpawnRows}
+//     与 PTY 实际尺寸同源（spawn 常量单一事实源，防双写漂移）。
+func (s *Server) sessionDimsLocked() dims {
+	if s.arbiter.last == (dims{}) {
+		return dims{cols: pty.SpawnCols, rows: pty.SpawnRows}
+	}
+	return s.arbiter.last
 }
 
 // 参与集判定（D-09 矩阵逐字）：升档生效 mode 为 rw（owner 模式仅 owner /

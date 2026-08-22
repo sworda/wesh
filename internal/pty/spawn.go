@@ -28,9 +28,18 @@ type Session struct {
 	closed bool // Close 后置位；Resize 见置位返回 os.ErrClosed（幂等语义）
 }
 
+// SpawnCols/SpawnRows 为 PTY spawn 初始尺寸的单一事实源（G-05-1 导出，05-10）：
+// StartWithSize 的 Winsize 字面量与服务端零参与者会话尺寸回落值（server 包
+// sessionDimsLocked）必须同源——两处各写魔法数会在调整时双写漂移（服务端下发
+// 的会话尺寸与真实 PTY 尺寸分叉）。
+const (
+	SpawnCols = 80
+	SpawnRows = 24
+)
+
 // Start 以 exec 数组形式 spawn argv（绝不经 shell，D-02/D-15），替换式注入 env
-// 白名单（SEC-06），初始尺寸 80x24（首个客户端 RESIZE 到达即纠正，PITFALLS C10
-// 首帧窗口可接受）。
+// 白名单（SEC-06），初始尺寸 80x24（SpawnCols×SpawnRows；首个客户端 RESIZE 到达
+// 即纠正，PITFALLS C10 首帧窗口可接受）。
 func Start(argv []string) (*Session, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("pty: empty argv")
@@ -39,7 +48,7 @@ func Start(argv []string) (*Session, error) {
 	cmd.Env = whitelistEnv()                  // SEC-06：替换式注入，非追加
 	// 不设 cmd.Stdin/Stdout/Stderr（StartWithAttrs 仅在三者全 nil 时接管 tty）与
 	// cmd.Dir（Phase 1 继承服务端 cwd；OPS-04 可配留 Phase 7）。
-	master, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	master, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: SpawnRows, Cols: SpawnCols})
 	if err != nil {
 		// creack/pty 失败路径只关自己打开的 fd（Pitfall 1，实测 fd 0/1/2 完好）；
 		// 本包遵守"只关成功打开且登记在册的 fd"纪律。

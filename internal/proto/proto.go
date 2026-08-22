@@ -22,9 +22,12 @@ const (
 	Output = '0' // 0x30, S→C, master 读块直发
 
 	Hello   = 'H' // 0x48, C→S, JSON {"version":V,"cols":C,"rows":R}
-	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw","prefs"?}——P4 起可携可选 prefs（D-13 一次性下发）；
+	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw","cols":C,"rows":R,"prefs"?}——P4 起可携可选
+	// prefs（D-13 一次性下发）；G-05-1（2026-08-22 方向 A 裁决）起恒携会话尺寸 cols/rows 键
+	//（P2 D-02 加键兼容增量：旧前端忽略未知键，新前端对缺席键的旧服务端不约束渲染）；
 	// 05-03 起运行期再推送用于 owner 递补升格通知（R-09——P2 D-01/D-02 纪律：
-	// 既有帧类型的运行期再推送不算动协议，零新类型字节）
+	// 既有帧类型的运行期再推送不算动协议，零新类型字节）；G-05-1 起运行期再推送同为
+	// 尺寸下发通道（recalcNow 检测到会话尺寸变化时按各端当前 mode 组帧广播）
 	Error = 'E' // 0x45, S→C, JSON {"code":C,"message":M}
 	// 'X' EXIT / 'T' TITLE / 'P' PREFS —— 类型字节本 phase 占住，语义分属 Phase 6/4（D-01）；
 	// 'P' 帧运行期推送仍 v2 再议——P4 prefs 仅经 Welcome 内嵌一次性下发（D-13）。
@@ -92,8 +95,17 @@ type HelloPayload struct {
 // Prefs 为 P4 D-13 客户端偏好一次性下发通道（--client-option 聚合 + osc52 并入），
 // 服务端不透明透传不解析；omitempty：nil/空时 JSON 不出 prefs 键——旧前端零漂移
 // （P2 D-02 加字段不动协议纪律，与 HelloPayload.Ticket 同形态）。
+// Cols/Rows 为当前会话尺寸（G-05-1，2026-08-22 用户裁决方向 A）：刻意不加
+// omitempty——会话尺寸恒在（含零参与者期间的 80x24 spawn 回落），新前端靠
+// 「缺席 = 旧服务端」识别遗留形态。根因登记：D-09 min-rect 不变量「无需 S→C 尺寸
+// 下发」的假设只覆盖绝对寻址流（光标定位）与纯文本流，不覆盖 readline 行编辑等
+// 相对寻址流——行编辑按终端宽度生成环绕点/光标上行，40 列 PTY 字节流在 120 列端
+// 换行点分叉产生异尺寸双端叠写；会话尺寸下发使各端按同尺寸约束渲染（05-11 前端
+// 消费），同 cols 渲染同字节流 = 两端逐屏严格一致。
 type WelcomePayload struct {
 	Mode  string          `json:"mode"`
+	Cols  int             `json:"cols"` // G-05-1：会话 cols（恒序列化，无 omitempty）
+	Rows  int             `json:"rows"` // G-05-1：会话 rows（恒序列化，无 omitempty）
 	Prefs json.RawMessage `json:"prefs,omitempty"`
 }
 
@@ -117,12 +129,16 @@ func DecodeHello(payload []byte) (HelloPayload, bool) {
 	return hp, true
 }
 
-// WelcomeFrame 组 Welcome 帧：1 字节类型 + JSON {"mode":M,"prefs"?}，调用方直接
-// c.Write（与 onChunk 的 1+payload 组帧模式同构）。prefs 为 P4 D-13 内嵌下发的
-// 客户端偏好 blob——nil/空时 omitempty 使 JSON 不出 prefs 键（旧前端零漂移）。
+// WelcomeFrame 组 Welcome 帧：1 字节类型 + JSON {"mode":M,"cols":C,"rows":R,"prefs"?}，
+// 调用方直接 c.Write（与 onChunk 的 1+payload 组帧模式同构）。prefs 为 P4 D-13 内嵌
+// 下发的客户端偏好 blob——nil/空时 omitempty 使 JSON 不出 prefs 键（旧前端零漂移）。
+// cols/rows 为当前会话尺寸（G-05-1）：恒序列化（无 omitempty——「缺席 = 旧服务端」
+// 识别契约），调用方取值须与 PTY 实际尺寸同源（server.sessionDimsLocked——参与期为
+// 仲裁器 last，零参与者期间为 spawn 80x24 回落）。三条组帧通道：attach 升档 Welcome
+// / 递补升格 Welcome（R-09）/ 运行期尺寸变化再推送（G-05-1，recalcNow 唯一挂点）。
 // 固定 schema 下 json.Marshal 不会失败。
-func WelcomeFrame(mode string, prefs json.RawMessage) []byte {
-	b, _ := json.Marshal(WelcomePayload{Mode: mode, Prefs: prefs})
+func WelcomeFrame(mode string, prefs json.RawMessage, cols, rows int) []byte {
+	b, _ := json.Marshal(WelcomePayload{Mode: mode, Cols: cols, Rows: rows, Prefs: prefs})
 	return append([]byte{Welcome}, b...)
 }
 
