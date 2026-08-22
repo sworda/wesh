@@ -146,13 +146,22 @@ func (s *Server) recalcNow() {
 // proto.ModeRO/ModeRW 字符串，allWritableBlockedLocked 同款读法先例）；prefs 按
 // mode 选档（rw → clientPrefsRW / ro → clientPrefsRO——D-13 双档纪律在推送通道
 // 不漂移：ro 端推送永不含 osc52）。trySend 失败走 kickOrCreditLocked（R-08 分工
-// 复用：连 ~100B 推送都容不下的端 = 事实 stalled；触发帧不丢——信用路径暂存
-// creditPending 既有形态）。
+// 复用：连 ~100B 推送都容不下的端 = 事实 stalled；首触发帧暂存 creditPending
+// 不丢——已 blocked 期间的后续尺寸推送帧不再暂存，由 afterDrain 开门时按当前
+// sessionDimsLocked() 补发收敛，WR-02 见 clients.go afterDrain）。
 //
 // range 内踢出安全性：removeLocked 的 map delete 在 range 期间为 Go spec 安全
 //（未到达的被删条目不再产出），onChunk → kickOrCreditLocked（clients.go:354-358）
-// 同形态先例。踢出若触发 promoteNextLocked → 嵌套 recalcNow → 嵌套推送：每次
-// 踢出永久移除一端保证有界终止（≤ max-clients）。
+// 同形态先例。循环内踢出经 clients.go:479-480 removeMember → 嵌套 recalcNow
+// 真实可达——被踢者是参与集成员且其持有某轴最小值时仲裁结果改变（纯 ro 会话
+// 全部 ro 端均为成员、all 模式被踢 rw 端亦为成员）：嵌套 recalcNow 把
+// arbiter.last 推进到 T2，嵌套推送把 W(T2) 送达全部留存端，外层捕获的 target
+//（T1）已 stale——kickOrCreditLocked 返回后的 arbiter.last != target 复检即
+// 防旧值反超的防线（嵌套推送已送达更新值，stale 外层扇出直接中止）。踢出不改
+// 仲裁（嵌套 recalcNow 因 target==last 提前返回、last 不变）或走信用路径（无
+// 成员变动）时 last==target，外层循环正确继续。每次踢出永久移除一端保证嵌套
+// 有界终止（≤ max-clients）。promoteNextLocked 自推送循环内不可达（owner 模式
+// 唯一可写端恒走信用、all 模式 owner 恒 nil），不纳入主论证。
 func (s *Server) pushSessionDimsLocked(target dims) {
 	for c := range s.registry.set {
 		mode := c.mode.Load().(string)
@@ -163,6 +172,11 @@ func (s *Server) pushSessionDimsLocked(target dims) {
 		frame := proto.WelcomeFrame(mode, prefs, target.cols, target.rows)
 		if !c.outbox.trySend(frame) {
 			s.kickOrCreditLocked(c, frame)
+			// 踢出可能经 removeMember→嵌套 recalcNow 把 arbiter.last 推进到更新值，
+			// 嵌套推送已向全部留存客户端送达新值——本循环的 target 已过时，中止防旧值反超。
+			if s.arbiter.last != target {
+				return
+			}
 		}
 	}
 }
