@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
-status: verifying
-stopped_at: Completed 05-09-PLAN.md
-last_updated: "2026-08-21T00:31:58.024Z"
-last_activity: 2026-08-20
-last_activity_desc: Phase 05 planning complete
+status: executing
+stopped_at: Completed 05-10-PLAN.md
+last_updated: "2026-08-22T03:43:35.704Z"
+last_activity: 2026-08-22
+last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 5
-  completed_phases: 5
-  total_plans: 33
-  completed_plans: 33
+  completed_phases: 4
+  total_plans: 36
+  completed_plans: 34
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 9 of 9
-Status: Phase complete — ready for verification
-Last activity: 2026-08-20 — Phase 05 execution started
+Plan: 2 of 12
+Status: Ready to execute
+Last activity: 2026-08-22 — Phase 05 execution started
 
-Progress: [██████████] 100%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -93,6 +93,7 @@ Progress: [██████████] 100%
 | Phase 05 P07 | 1h 15m | 3 tasks | 6 files |
 | Phase 05 P08 | 22min | 2 tasks | 2 files |
 | Phase 05 P09 | 37min | 2 tasks | 15 files |
+| Phase 05 P10 | 28min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -173,6 +174,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-09]: phase04.mjs S4/S5 osc52 断言适配 D-13——05-03 prefs 双档后 ro 端不再下发 osc52，旧断言结构性失败；spawn 加 --writable 改在 rw 端断言下发通道，断言面守恒（plan files 未列 phase04 但 prohibitions 已含其适配条款，六段式四脚本全过为硬约束）
 - [Phase ?]: [Phase 05-09]: S6 洪水 seq 1 3000000（plan 字面 20MB）→ seq 1 50000000（389MB，05-07 实测裁决量级）——踢出点 ~10MiB 管道吸收+512KiB outbox，pre-attach drain 不确定量下 20MB 裕度不足
 - [Phase ?]: [Phase 05-09]: GOROOT gofmt 清零 9 文件（纯注释排版/import 序，逐行核读零语义）——02-06/03-06 先例第三次沿用独立 style 提交；HEAD 漂移系 /usr/bin/gofmt 陈旧版 CJK 注释规则差异（01-03 已登记）
+- [Phase ?]: [Phase 05-10]: G-05-1 方向 A 落地——Welcome 三通道（attach/升格/运行期推送）恒携会话 cols/rows，恒序列化无 omitempty（缺席=旧服务端识别契约，P2 D-02 加键零新类型字节）
+- [Phase ?]: [Phase 05-10]: attach 升档序列重排——addMember/recalcNow 前移至 Welcome 组帧之前（Welcome 恒携 attach 完成后生效的会话尺寸）；Welcome 恒首帧与 hubMu > sess.fdMu 锁序两不变量保持，推送不触达未登记的 attach 者自身
+- [Phase ?]: [Phase 05-10]: 运行期尺寸下发唯一挂点 = recalcNow 的 last 变化分支（attach/detach/kick/升格/防抖五调用点全覆盖，目标不变零推送）；升格 Welcome 携 cand.dims（单员参与集恒等）；推送按各端当前 mode 组帧 + prefs 双档（D-13 不漂移），trySend 失败走 kickOrCreditLocked
+- [Phase ?]: [Phase 05-10]: TestAllPolicy 适配 G-05-1 推送（Rule 1：planner 回归自检遗漏 all 模式 2→1 推送落 B 读流）；plan 字面 B(60,20)->60/24 算术矛盾按意图修正 B(60,50)->60/43
 
 ### Pending Todos
 
@@ -191,6 +196,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-21T00:31:58.004Z
-Stopped at: Completed 05-09-PLAN.md
+Last session: 2026-08-22T03:43:35.683Z
+Stopped at: Completed 05-10-PLAN.md
 Resume file: None
