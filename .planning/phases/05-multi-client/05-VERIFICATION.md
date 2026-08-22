@@ -1,10 +1,20 @@
 ---
 phase: 05-multi-client
-verified: 2026-08-21T01:10:57Z
-status: human_needed
-score: 3/3 roadmap success criteria verified (8/8 requirements satisfied)
+verified: 2026-08-22T05:35:00Z
+status: gaps_found
+score: 3/3 roadmap success criteria verified (8/8 requirements satisfied)；gap-closure truths 14/15 verified
 behavior_unverified: 0
 overrides_applied: 0
+re_verification:
+  previous_status: human_needed
+  previous_score: 3/3 roadmap criteria（8/8 requirements）
+  gaps_closed:
+    - "G-05-1 主场景（异尺寸双端相对寻址流叠写）：S→C 会话尺寸下发三通道 + 前端 refit() 视口约束落地，三层自动化回归锁（S10/D6/D6H）本次独立复跑全过——用户实测的确定性叠写路径已消除并门禁化"
+    - "前次 follow-up WR-01（--credential 回显泄露，main.go:92）已修复：credErr 记录式上报，flag 回显通道不含值（main.go:89-100 核读确认）"
+    - "前次 follow-up WR-02（writer 合并控制帧竞态，clients.go:569）已修复：mergeBatch 合并条件已加 proto.Output 守卫（clients.go:575 核读确认）"
+  gaps_remaining:
+    - "G-05-1 闭合缝合面残留：尺寸推送挂点 pushSessionDimsLocked 存在代码核读确认的可达乱序/丢失路径（05-REVIEW WR-01/WR-02，修复未落地）——同缺陷类（端按错误会话尺寸约束渲染→相对寻址流叠写）在窄窗口内可瞬态复发，详见 gaps"
+  regressions: []
 deferred:
   - truth: "1013 被踢后的自动重连（当前为手动刷新面板）"
     addressed_in: "Phase 6"
@@ -19,179 +29,186 @@ deferred:
     addressed_in: "Phase 7"
     evidence: "ROADMAP Phase 7 成功准则 1：TOML 配置文件支持，CLI 参数覆盖配置文件（OPS-09）；05-CONTEXT deferred 锁定"
 behavior_unverified_items: []
+gaps:
+  - truth: "05-10 must_have：『owner 窗口 resize 经 50ms 防抖重算后，全部在线客户端（含 ro 旁观者与上报者自身）收到携新会话尺寸的推送』+ 05-10 success criterion『任意时刻任意在线客户端持有的最近一帧 Welcome 尺寸 == 服务端会话尺寸』——在代码核读确认的可达交织下不成立"
+    status: partial
+    reason: "G-05-1 主场景已闭合并三层锁定，但闭合缝合面（recalcNow 推送挂点）残留两条代码核读确认的可达缺陷路径（05-REVIEW WR-01/WR-02，修复均未落地），同属 G-05-1 缺陷类（端 sessionDims ≠ PTY 实际尺寸 → 相对寻址流叠写/错渲），瞬态自愈但确为可达：WR-01 = pushSessionDimsLocked 循环内踢出触发 removeMember→嵌套 recalcNow（clients.go:479-480 核读确认该调用链），嵌套推送把 W(T2) 送达全部留存端后，外层循环仍用捕获的 T1 继续向未访问端投递（resize.go:156-168 无权威性复检）——map 遍历序下约半数留存端终值 = 过期 T1 而 PTY = T2；WR-02 = 已 creditBlocked 端 trySend 失败时被 `if !c.creditBlocked` 守卫跳过暂存（clients.go:411-415），尺寸推送帧静默丢弃，afterDrain 恢复只重投 creditPending 不补发尺寸（clients.go:429-447），该端 sessionDims 过期至下次尺寸事件。显式裁定：WR-01/WR-02 不完全重开 G-05-1（用户实测的确定性路径已死且门禁化），但 WR-01 使 G-05-1 症状类在窄窗口内残留可达——gap 闭合不能判为完整，须修后收口"
+    artifacts:
+      - path: "internal/server/resize.go"
+        issue: "pushSessionDimsLocked（:156-168）循环内 kickOrCreditLocked 返回后无 `s.arbiter.last != target` 权威性复检；:152-155 安全性注释只论证了实际不可达的 promoteNextLocked 嵌套路径，漏掉真实可达的 removeMember→嵌套 recalcNow 路径"
+      - path: "internal/server/clients.go"
+        issue: "kickOrCreditLocked（:411-415）已 blocked 端静默丢帧 + afterDrain（:429-447）恢复路径不补发会话尺寸"
+    missing:
+      - "WR-01 修复（05-REVIEW 已给逐字补丁）：pushSessionDimsLocked 在 kickOrCreditLocked 返回后复检 `if s.arbiter.last != target { return }`——嵌套推送已把更新值送达全部留存端，stale 外层扇出直接中止；同时把 resize.go:152-155 注释的嵌套路径论证从 promoteNextLocked 换成 removeMember→recalcNow；补白盒回归测试（推送循环内踢出改变仲裁结果的交织）"
+      - "WR-02 修复（两选一）：(a) afterDrain 清位开门时向该端补发一帧当前 sessionDimsLocked() 的 Welcome（收敛性正解，05-REVIEW 已给逐字补丁）；(b) 收窄 resize.go:148-150『触发帧不丢』注释承诺 + deferred-items 挂账"
+deferred_note: "WR-01/WR-02 不属于任何后续 phase 的 goal/success criteria（Phase 6 生命周期 / Phase 7 配置 / Phase 8 观测 / Phase 9 标定均不覆盖尺寸推送正确性），不可 defer"
 human_verification:
   - test: "双客户端视觉一致（MULTI-01 渲染层，backstop truth）"
-    expected: "两浏览器窗口 attach 同一会话输出逐屏一致；异尺寸窗口按 min-rect 渲染、多余面积留白；关掉一端后剩余端恢复自身尺寸渲染"
-    why_human: "headless 硬约束——本机永不具备浏览器（CODEBUDDY.md 平台原生行为显式豁免条款），像素层一致性任何自动化（含 playwright）结构性不可测；协议层等价断言已由 phase05.mjs S1b 覆盖（双客户端 OUTPUT payload 338958 字节逐字节一致，本次验证独立复跑通过）。清单：05-UAT.md 第 1 项"
+    expected: "两浏览器窗口 attach 同一会话输出逐屏一致；异尺寸窗口约束到会话矩形渲染、多余面积留白（G-05-1 修复形态）；关掉一端后剩余端恢复自身尺寸渲染"
+    why_human: "headless 硬约束——本机永不具备浏览器（CODEBUDDY.md 平台原生行为显式豁免条款），像素层一致性任何自动化结构性不可测；协议层等价断言本次独立复跑全过（S1b 双端 338958 字节逐字节一致 + D6H-1 约束渲染≡窄端原生逐屏严格一致 + D6H-2 负对照分叉）。清单：05-UAT.md 第 1 项"
   - test: "新客首屏 SIGWINCH 重绘（D-11）"
     expected: "会话运行 vim/htop 时新客户端 attach 秒见重绘画面，非黑屏等下次输出"
-    why_human: "浏览器渲染行为不可测；协议层证据 = TestSigwinchOnAttach（落盘标记，-race 绿）+ server.go:713 调用点。清单：05-UAT.md 第 2 项"
+    why_human: "浏览器渲染行为不可测；协议层证据 = TestSigwinchOnAttach（落盘标记，全量 -race 绿）+ server.go 调用点。清单：05-UAT.md 第 2 项"
   - test: "ro 形态三要素 + console 一次性提示"
-    expected: "[ro] 标题前缀、键盘不可输入、窗口拖动无上行 RESIZE 帧（DevTools 帧面板观测）、console 一条 read-only mode 提示"
-    why_human: "DevTools 帧面板与标题栏属浏览器平台行为；源码侧已验证（main.ts:214/246/453 与 dist 产物检索串）。清单：05-UAT.md 第 3 项"
+    expected: "[ro] 标题前缀、键盘不可输入、窗口拖动无上行 RESIZE 帧、console 一条 read-only mode 提示（尺寸推送形态下仍恰一次）"
+    why_human: "DevTools 帧面板与标题栏属浏览器平台行为；jsdom 层 D1b/D1d 本次复跑通过（infos=1 条 / 上行帧=[]）。清单：05-UAT.md 第 3 项"
   - test: "递补升格 UX（owner 模式 D-06/D-07）"
-    expected: "第二 rw 端降级旁观 → 关闭 owner 标签页 → 前缀消失、键盘激活、可输入；全程无 toast/badge"
-    why_human: "浏览器 UI 行为；服务端机制已由 TestSuccession/TestSuccessionKickRace 锁定（-race 绿）。清单：05-UAT.md 第 4 项"
+    expected: "第二 rw 端降级旁观 → 关闭 owner 标签页 → 前缀消失、键盘激活、可输入、约束解除恢复窗口渲染；全程无 toast/badge"
+    why_human: "浏览器 UI 行为；服务端机制 TestSuccession/TestSuccessionKickRace + 协议层 S9a-c/S10c + jsdom D2c/D6c 本次复跑全过。清单：05-UAT.md 第 4 项"
   - test: "1013 专版 + 手动刷新链路（D-10）"
     expected: "stall 被踢后 Disconnected 面板 + Reload this page；刷新凭原 URL 重新 attach 成功并从最新输出看起；其他端不受影响"
-    why_human: "真实慢网与浏览器面板行为；协议层已由 phase05.mjs S6 三断言覆盖（本次独立复跑通过）。清单：05-UAT.md 第 5 项"
-  - test: "503 专版与无效链接专版"
-    expected: "--max-clients 1 实例第二客户端 attach → Server is full 面板；错误 token /s/ URL → 凭据模式 Basic 框 / Invalid share link 面板"
-    why_human: "浏览器面板与原生 Basic 弹窗行为；协议层已由 phase05.mjs S4/S5 覆盖（本次独立复跑通过）。清单：05-UAT.md 第 6/7 项"
-follow_ups:
-  - id: "WR-01"
-    severity: "WARNING（SEC-01 启动面红线，建议优先修）"
-    file: "cmd/wesh/main.go:89-96（二次打印点 :317）"
-    issue: "--credential 解析失败时 flag 包把原始值回显 stderr（`invalid value %q for flag -credential`，密码分量可落 journald）——同文件 client-option 已用记录式上报防同一通道，凭据 flag 未应用"
-    verification_evidence: "本次核读 main.go:92 确认 credential 回调仍 `return err` 直抛（clientOptErr 记录式仅覆盖 --client-option）；属 Phase 3 既有代码面、非本 phase 引入，不影响本 phase 任何成功准则，判 follow-up 不阻塞"
-    suggested_fix: "credential 回调改 client-option 同款记录式（值内容零回显），补『err 不含值内容』断言（TestClientOptionError forbiddenSub 先例）；REVIEW.md 已给出逐字补丁"
-  - id: "WR-02"
-    severity: "WARNING（真实竞态缺陷，窄窗口功能降级，建议尽快修）"
-    file: "internal/server/clients.go:567-578"
-    issue: "writer 批内同类型合并不限帧类型——attach Welcome 与升格 Welcome 相邻同批时合并产物为两段 JSON 拼接（`W{...}{...}`），前端 JSON.parse 抛错整帧丢弃：被升格端 prefs/welcomeDone/osc52 整会话不生效（mode 层面前端默认态恰好等于 rw 而意外正确，无提权后果）"
-    verification_evidence: "本次核读 clients.go:569 确认合并条件为 `batch[j][0] == batch[i][0]` 且无 `batch[i][0] == proto.Output` 限制（REVIEW 建议修复未落地）；窗口为 goroutine 调度间隙（µs-ms 级），现有测试不构造该交织（TestSuccession 中 attach Welcome 早已被 drain），属未被任何测试行使的竞态路径；不使任何成功准则为假，判 follow-up 不阻塞"
-    suggested_fix: "合并仅限 OUTPUT 数据帧（`... && batch[i][0] == proto.Output`），控制帧（W/E）恒单发 + 白盒回归测试（REVIEW.md 已给出逐字补丁与测试建议）"
+    why_human: "真实慢网与浏览器面板行为；协议层 phase05.mjs S6 三断言本次复跑通过。清单：05-UAT.md 第 5 项"
+  - test: "503 专版与无效链接专版（含 G-05-7 无认证错 token 401 → Invalid 面板）"
+    expected: "--max-clients 1 实例第二客户端 attach → Server is full 面板；错误 token /s/ URL → 凭据模式 Basic 框 / 无认证模式直接 Invalid share link 面板"
+    why_human: "浏览器面板与原生 Basic 弹窗行为；协议层 S4c-e（401 同文无 oracle / 无认证错 token 401 / 未携 404 探测信号）与 jsdom D4a/D4b 本次复跑全过。清单：05-UAT.md 第 6/7 项"
 process_notes:
-  - "负载 flake：05-05/05-06 各出现一次 server 包全量 -race 单败（+12s 形态），均 14+ 次复跑未重现，已登记 .planning/phases/05-multi-client/deferred-items.md 维持越界不修复原判；本次验证 go test -race -count=1 ./... 独立全量绿（server 37.6s）"
-  - "05-07 确认门协议违规：executor 未停止等待用户自行通过 D-08 blocking 确认门，用户 2026-08-21 追认 as-locked（STATE.md 记录，一次性裁决不构成先例）；落地内容经本次逐项核读与 D-08 逐字一致（--max-clients 默认 32、③位 Accept 前 503、release 恰好一次、≤0 拒绝）"
+  - "前次两个 follow-up 已核实修复：credential 回显（main.go:89-100 credErr 记录式）与 writer 合并控制帧（clients.go:575 mergeBatch 加 proto.Output 守卫）——re_verification.gaps_closed 登记"
+  - "05-REVIEW 四个 INFO（S8a/S9a 检查点 ID 复用 / stall 夹具注释 off-by-one / pushSessionDimsLocked 无守卫类型断言 / 无认证 401 body 文案提及 operator credentials）均为打磨级，不使任何 truth 为假，随 REVIEW 挂账不阻塞"
+  - "G-05-7（无认证错 token → 401）顺带核读：shareResult 三态拆分与 shareInvalid→401 落位（server.go:351-352/368-369），sharetoken 测试与 S4c-e/D4b 本次复跑全过——05-UAT.md 已标 resolved，无争议"
+  - "负载 flake 前次登记 deferred-items.md 维持原判；本次验证 go test -race -count=1 ./... 独立全量绿（server 38.3s）未重现"
 ---
 
-# Phase 5: 多客户端共享 — Verification Report
+# Phase 5: 多客户端共享 — Verification Report（复验：G-05-1 gap 闭合后）
 
 **Phase Goal:** 多个客户端可同时 attach 同一 PTY 会话，权限可配、慢客户端不拖累他人——核心差异化能力
-**Verified:** 2026-08-21T01:10:57Z
-**Status:** human_needed
-**Re-verification:** No — initial verification
+**Verified:** 2026-08-22T05:35:00Z
+**Status:** gaps_found
+**Re-verification:** Yes — after G-05-1 gap closure（05-10/05-11/05-12）
 
 ## Goal Achievement
 
-### Observable Truths（ROADMAP 成功准则）
+### Observable Truths（ROADMAP 成功准则 — 回归层）
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | 两个浏览器 attach 同一会话输出实时一致；all 模式全员可写，owner 模式仅 owner 可写、ro 链接旁观者输入被丢弃 | ✓ VERIFIED | fan-out 逐字节一致：TestMultiClientFanout + TestSecondClientAttach（-race 绿）+ phase05.mjs S1b（338958 字节逐字节一致，本次独立复跑 exit 0）；all：TestAllPolicy 双端 INPUT 生效；owner：TestOwnerPolicy（A=rw/B=ro 降级、B INPUT 丢弃）+ S1a（A=rw/B=ro D-07 形态）；decideModeLocked 矩阵 clients.go:313-324 |
-| 2 | 一个客户端停止读取 TCP 流时其他客户端无卡顿：慢客户端 outbox 写满被 1013 踢出，重连后从最新输出看起；PTY 读循环永不因任何客户端阻塞 | ✓ VERIFIED | TestSlowConsumerKick（CloseError 1013）+ phase05.mjs S6 三断言（raw-socket 真 stall：stderr code=1013 reason=slow_consumer 命中 / 第二客户端 7.5MB<19.9MB<29.8MB 单调增长 / resume 终结，本次独立复跑通过）；hub 仅非阻塞 trySend（clients.go:354-358）；信用门 TestGlobalCredit（门闭/开 + 字节精确 + dead-owner 5s 有界开门）；重连从最新输出看起 = 无 ring drain 语义 + 前端 1013 面板手动刷新（main.ts:649-658，D-10 边界） |
-| 3 | 异尺寸两客户端按 min(cols)×min(rows) 渲染，2→1 恢复 last-wins；启动打印含一次性 token 的 ro/rw 两条分享链接，即打即用 | ✓ VERIFIED | TestArbitrate 表测（0/1/2/3 成员 + 2→1）+ TestResizeArbitration Getsize 集成（132x43+80x24→80x24；2→1→132x43；防抖合并；owner 参与集；ro 忽略）；分享链接：main.go:396-399 两行打印（rw 行仅 --writable）+ phase05.mjs S2/S3 全链（GET 200 无 challenge → POST token → ticket → Welcome mode=ro/rw）+ S3d D-05 总闸负向 |
+| 1 | 两个浏览器 attach 同一会话输出实时一致；all 模式全员可写，owner 模式仅 owner 可写、ro 链接旁观者输入被丢弃 | ✓ VERIFIED | 回归：TestMultiClientFanout/TestAllPolicy/TestOwnerPolicy 全量 -race 绿（server 38.3s，本次独立运行）；phase05.mjs S1b 双端 338958 字节逐字节一致 + S1a D-07 形态（本次复跑 28/28） |
+| 2 | 一个客户端停止读取 TCP 流时其他客户端无卡顿：慢客户端 outbox 写满被 1013 踢出，重连后从最新输出看起；PTY 读循环永不因任何客户端阻塞 | ✓ VERIFIED | 回归：TestSlowConsumerKick/TestGlobalCredit -race 绿；S6 三断言（1013 slow_consumer 命中 / 字节单调增长 / resume 终结）本次复跑通过；hub 非阻塞 trySend + 信用门路径未受 G-05-1 改动触碰（onChunk clients.go:345-359 形态不变） |
+| 3 | 异尺寸两客户端按 min(cols)×min(rows) 渲染，2→1 恢复 last-wins；启动打印含一次性 token 的 ro/rw 两条分享链接，即打即用 | ✓ VERIFIED（渲染不变量见 gaps 残留窗口） | 仲裁：TestArbitrate/TestResizeArbitration 四子测 -race 绿；渲染约束新形态由 S10/D6/D6H 三层锁定（见下表）；分享链接 S2/S3/S4 全链本次复跑通过。**注意**：渲染不变量在 WR-01/WR-02 窄窗口内瞬态失真（自愈）——主路径成立且门禁化，残留计入 gaps 不重复扣分 |
 
-**Score:** 3/3 truths verified（0 behavior-unverified——全部行为依赖型 truth 均有对应行为测试且本次全量 -race 通过）
+**Score:** 3/3 roadmap truths verified
 
-### Required Artifacts
+### Observable Truths（G-05-1 gap 闭合 — 05-10/05-11/05-12 must_haves）
+
+| # | Truth（来源 plan） | Status | Evidence |
+|---|-------|--------|----------|
+| 4 | attach Welcome 恒携会话 cols/rows，数值 = attach 完成后生效的会话尺寸（05-10） | ✓ VERIFIED | proto.go:105-108 Cols/Rows 恒序列化无 omitempty；server.go:716-731 升档重排（addMember/recalcNow → sessionDimsLocked → Welcome 组帧 → registerLocked）核读确认；TestWelcomeSessionDims（owner attach 40x10 / 旁观者携 40x10 ≠ 自身 120x40 / all min-rect 60x43 ≠ B 自身 60x50）+ S10a（A=rw/40x10 B=ro/40x10）本次复跑通过；proto_test.go dims round-trip + 恒在键 map 断言（:77-80/:120-135） |
+| 5 | owner resize 防抖后全部在线客户端收到携新会话尺寸的推送（05-10） | ✗ FAILED（partial） | 主路径 VERIFIED：recalcNow last 变化分支唯一挂点（resize.go:135-140）+ resize_arb 推送子测 + S10b（B=ro/60x15 A=rw/60x15 同收）本次复跑通过。**但** WR-01/WR-02 代码核读确认两条可达违例路径（修复未落地），详见 gaps——「全部在线客户端」「任意时刻 ==」在窄窗口内不成立 |
+| 6 | 递补升格 Welcome 携新会话尺寸（= cand.dims）（05-10） | ✓ VERIFIED | clients.go:540 WelcomeFrame(rw, prefsRW, cand.dims.cols, cand.dims.rows) + 单员恒等论证注释（:512-519）核读确认；TestWelcomeSessionDims 升格子测 + S10c（升格=rw/120x40）本次复跑通过 |
+| 7 | 尺寸变化检测唯一挂点 = recalcNow last 变化分支，目标不变零推送（05-10） | ✓ VERIFIED | resize.go:135-140：`target == (dims{}) || target == s.arbiter.last` 提前返回，变化才 Resize+推送；五调用点（attach/detach/kick/升格/防抖）核读全覆盖 |
+| 8 | 既有行为零回归（05-10：S1b/ro 双闸/升格 PTY 跟随）（05-11：ro 零上行/升格纠正链）（05-12：全套既有断言） | ✓ VERIFIED | 全量 go test -race 5/5 包 ok；phase02 12/12、phase03 18/18、phase04 10/10、t1-width 5/5、phase05.mjs 28/28+1skip、phase05-dom 19/19（D1b 恰一次 / D1d 零上行 / D2c 升格恢复）、phase05-dims 3/3——全部本次独立复跑 exit 0 |
+| 9 | 宽端约束渲染到会话矩形留白；同 cols 渲染同字节流逐屏一致（05-11） | ✓ VERIFIED | main.ts:284-285 逐轴 min(fit, sessionDims)；D6a（.xterm-rows=10 而非 24）+ D6b（80 个 A 折行为相邻两 div 各 40 字符——无约束形态下单行必败，区分度在场）+ D6H-1（120x40→resize(40,10) ≡ 窄端原生逐行全等）本次复跑通过 |
+| 10 | rw 上行 RESIZE 恒为窗口 fit 尺寸；升格纠正链不断裂（05-11） | ✓ VERIFIED | main.ts:289 sendResize(d.cols, d.rows) 恒报 fit + :265-267 lastReported 去重（ro 期 isRO 门拦截不记账→升格后首次 refit 必真实上报）；S9b stty 尺寸跟随 + D6c 升格解除本次复跑通过 |
+| 11 | 升格 Welcome 到达后约束解除：sessionDims 先更新再 refit，min(fit, session) 自然回窗口（05-11） | ✓ VERIFIED | main.ts:507（赋值）→ mode 分支 → :548（统一 refit）顺序核读确认；D6c（[ro] 前缀消失 + 行数回 24）本次复跑通过 |
+| 12 | 重复 Welcome 全链幂等；ro 提示每连接恰一次（05-11） | ✓ VERIFIED | roNotified 门闩（main.ts:526-527）+ term.resize 变化守卫（:286）+ sendResize 去重 + overlay fitChanged 门（:294-295）核读确认；D1b/D2a 本次复跑通过（infos=1 不随推送增长） |
+| 13 | 旧服务端（Welcome 无尺寸键）前端行为零漂移（05-11） | ✓ VERIFIED | main.ts:498-508 两键均缺席不动 sessionDims（恒 null → 渲染=fit）；非法键 console.warn 降级；成对校验 typeof/Number.isInteger/[1,1000] 核读确认 |
+| 14 | headless 等价锁 + 负对照（05-12） | ✓ VERIFIED | phase05-dims.mjs 本次复跑 3/3：D6H-1 同 40 列渲染同一字节流逐屏严格一致；D6H-2 同流喂 120 列换行点分叉不全等（负对照证明断言区分度） |
+| 15 | 文档同步：README 协议表/resize 节 + 05-UAT.md + 05-VALIDATION.md（05-12） | ✓ VERIFIED | README:109 'W' 行恒在 cols/rows + :183 resize 节新形态（约束视口渲染/裁剪不变/减员恢复）；05-UAT.md:20 三层扩编段；05-VALIDATION.md:54-56 三行映射 + Full suite command 两脚本——核读落盘 |
+
+**Score:** 14/15 gap-closure truths verified（#5 partial → gaps）
+
+### Required Artifacts（05-10/11/12 新增面，三级+数据流）
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `internal/server/clients.go` | registry/hub/outbox/writer/信用门/权限矩阵/inputQ | ✓ VERIFIED | 644 行实质实现；onChunk 共享帧扇出、kickOrCreditLocked 分工表、promoteNextLocked 双调用点、inputWriter 独占 Master.Write |
-| `internal/server/server.go` | 升档登记/③位 503/INPUT 门链/RESIZE 门/lifecycle 广播 | ✓ VERIFIED | 965 行；③位 503（:544）、issueTicketJSON 早闸（:400）、shareAttach（:360）、升档序列（:656-713）全部落位 |
-| `internal/server/resize.go` | arbitrate 纯函数 + arbiter + D-09 参与集 | ✓ VERIFIED | 140 行；arbitrate(:35) 0/1/N 分支、reportResize 防抖、recalcNow 即时、participates(:138) 矩阵 |
-| `internal/server/sharetoken.go` | shareTokens store + sharePage + mux 装配 | ✓ VERIFIED | 122 行；subtle 双组位或比较(:65-67)、/s/{token}/ GET + 405 fallback(:116-122) |
-| `internal/pty/io.go` | SignalForegroundGroup（D-11） | ✓ VERIFIED | :50-61 TIOCGPGRP→kill(-pgid, SIGWINCH)，静默降级，fdMu 纪律 |
-| `cmd/wesh/main.go` | --write-policy/--max-clients flag + 双档 prefs + 打印两行 + outboundIPv4 | ✓ VERIFIED | flag(:80/:86)、fs.Visit(:151)、组合校验(:283/:290)、双档聚合(:200-214)、打印(:396-399)、UDP-dial 回填(:236-269) |
-| `web/src/main.ts` | /s/ 进入 + 分派矩阵 + 三专版 + 升格分支 + isRO 门 + osc52 门闩 | ✓ VERIFIED | shareMatch(:359)、JSON{token}(:375)、C-3/C-2(:389/:404)、升格 rw(:454-465)、isRO 门(:246)、osc52Loaded(:533)、C-1(:653-658)；replaceState 零调用、旧单客户端文案零残留 |
-| `web/dist/index.html` | 重建产物 | ✓ VERIFIED | mtime 2026-08-21 08:19:52 +0800（与 05-09 构建记录一致）；三专版/read-only mode/1013 文案检索串均在产物中 |
-| `web/uat/phase05.mjs` | S1-S7 场景矩阵 | ✓ VERIFIED | 450 行；本次独立复跑 18/18 + 1 skipped（S7 豁免）exit 0 |
-| `internal/server/{multi,slowclient,resize_arb,resize,sharetoken,clients}_test.go` | 16 个 phase-5 命名测试 | ✓ VERIFIED | -list 枚举 16/16 存在；全量 -race 绿 |
-| `README.md` | 多客户端节 | ✓ VERIFIED | write-policy/max-clients=8、access_log/log_format=3、暴露面=3、32KiB=3、超编=1、标定=3、断开不再使服务端退出=2 |
-| `05-UAT.md` | 七组人工清单 | ✓ VERIFIED（存在） | 七组关键词 grep==7；status: draft 待外部浏览器执行（→ human_needed 路由） |
+| `internal/proto/proto.go` | WelcomePayload Cols/Rows 恒在 + WelcomeFrame 4 参签名 | ✓ VERIFIED | :105-108 无 omitempty；:140 签名携 cols/rows；5 个调用点全同步 |
+| `internal/pty/spawn.go` | SpawnCols/SpawnRows 导出常量 | ✓ VERIFIED | :36-37 常量 + :51 StartWithSize 引用（单一事实源） |
+| `internal/server/resize.go` | sessionDimsLocked + pushSessionDimsLocked 挂 recalcNow | ⚠️ VERIFIED-with-gap | 两函数落位且挂点唯一（:135-140/:156-168/:180-185）；**WR-01 权威性复检缺失 + 注释论证覆盖错误路径**（见 gaps） |
+| `internal/server/server.go` | attach 升档序列重排 | ✓ VERIFIED | :716-731 新时序核读；Welcome 恒首帧与锁序不变量注释更新 |
+| `internal/server/clients.go` | 升格 Welcome 携 cand.dims | ⚠️ VERIFIED-with-gap | :540 升格组帧核读；**WR-02 静默丢帧 + afterDrain 不补发**（:411-415/:429-447，见 gaps） |
+| `web/src/main.ts` | 四状态 + refit() + sendResize 去重 + WELCOME 尺寸分支 + roNotified 门闩 | ✓ VERIFIED | :242-247 四状态 / :278-309 refit / :265-267 去重 / :498-548 WELCOME 链 / :526 门闩 / :401-404 connect 重置 / :661-673 onopen 同步；term.onResize 订阅零残留（全文件 grep 无调用） |
+| `web/dist/index.html` | 重建产物 | ✓ VERIFIED | mtime 2026-08-22 12:45（晚于 main.ts 12:04）；Math.min 指纹 ×10；'ignoring invalid session dims' 检索串 src/dist 各 1 命中一致 |
+| `internal/server/{multi,resize,resize_arb}_test.go` + `internal/proto/proto_test.go` | 新测试组 | ✓ VERIFIED | TestWelcomeSessionDims/TestSessionDimsLocked/运行期尺寸变化推送子测/dims round-trip/恒在键断言全部存在且本次 -race 通过 |
+| `web/uat/phase05.mjs` S10 / `phase05-dom.mjs` D6 / `phase05-dims.mjs` | 三层回归锁 | ✓ VERIFIED | 本次独立复跑：28/28+1skip / 19/19 / 3/3，exit 全 0 |
 
-gsd-tools verify.artifacts：9 plan 中 8 个 all_passed；05-04 单条「Missing pattern: TestArbitrate」为已登记偏差——Go 单文件单 package 约束使两测试分文件（resize_test.go 白盒 / resize_arb_test.go 黑盒），TestArbitrate 实测存在于 resize_test.go:12 且 -race 绿，非缺失。
-
-### Key Link Verification
+### Key Link Verification（新增挂点逐条核读）
 
 | From | To | Via | Status | Details |
 |------|----|----|--------|---------|
-| pty/io.go ReadLoop | clients.go onChunk | `go sess.ReadLoop(s.onChunk)`（server.go:282） | ✓ WIRED | 唯一读者；hub 组帧一次 make+copy（clients.go:351-353） |
-| server.go Attach 升档 | clients.go registry | hubMu 内 decideModeLocked→构造 client→Welcome 入队→registerLocked（server.go:656-698） | ✓ WIRED | Welcome 恒首帧；go s.writer+s.pinger（:707-708） |
-| clients.go writer | websocket Conn.Write | notEmpty 信号→drain→合并写出（clients.go:556-588） | ✓ WIRED | 每客户端专属写端 goroutine |
-| server.go lifecycle | clients.go registry | 快照→并行 Close(1000)→WaitGroup→exitf（server.go:935-955） | ✓ WIRED | D-10 唯一终结路径 |
-| server.go INPUT case | limiter→inputQ→inputWriter | AllowN(:752)→tryEnqueue(:761)→dequeue→Master.Write（clients.go:608-609） | ✓ WIRED | 读循环零同步写（CR-01 修复） |
-| server.go RESIZE case | resize.go arbiter→sess.Resize | ro 忽略(:767)→reportResize(:775)→recalcNow→Resize(:131) | ✓ WIRED | 双闸（mode 门 + 成员判定） |
-| main.go | sharetoken.go→/s/ 门禁→attach token 分支 | GenerateShareToken(:368-369)→Options→newShareTokens(server.go:269)→sharePage/shareAttach | ✓ WIRED | S2/S3 全链 UAT 实证 |
-| server.go Attach ③位 / issueTicketJSON | registry.n 计数 | n.Load() >= maxClients（server.go:544/:400） | ✓ WIRED | 双点位 503；S5 UAT 实证 |
-| main.go aggregateClientPrefs | Welcome 选档 | ClientPrefsRO/RW→server.go:678-682 按 effMode 选档 | ✓ WIRED | D-13 双档 |
-| web/src/main.ts | /api/attach + 升格 Welcome + onclose 1013 | fetch body JSON{token}(:375)；rw 分支(:454-465)；1013 专版(:649-658) | ✓ WIRED | dist 产物检索串一致 |
-| server.go Attach 完成 | pty.SignalForegroundGroup | server.go:713 无条件调用 | ✓ WIRED | TestSigwinchOnAttach 落盘证据 |
-
-注：gsd-tools verify.key-links 对本 phase 全部报「Source file not found」——plan `from` 字段含括号描述（如 `internal/server/server.go (Attach 升档)`）工具无法解析为路径，属工具限制；上表为逐条人工核读结果。
+| recalcNow last 变化分支 | pushSessionDimsLocked | resize.go:138-140 | ✓ WIRED | 唯一挂点；目标不变零推送 |
+| attach 升档 | Welcome 携会话尺寸 | addMember/recalcNow(:716-717) → sessionDimsLocked(:719) → WelcomeFrame(:730) → registerLocked(:731) | ✓ WIRED | 恒首帧不变量保持；推送循环不触达未登记的 attach 者自身 |
+| promoteNextLocked | 升格 Welcome 携 cand.dims | clients.go:540 | ✓ WIRED | 单员恒等论证注释在场 |
+| pushSessionDimsLocked | kickOrCreditLocked → removeMember → 嵌套 recalcNow | resize.go:164-166 → clients.go:479-480 | ⚠️ WIRED- defective | 嵌套推送 T2 后外层继续 T1——WR-01 乱序路径（见 gaps） |
+| WELCOME 分支 | sessionDims → refit | main.ts:507 → mode 分支 → :548 | ✓ WIRED | 成对校验 [1,1000]，非法降级保持旧值 |
+| onopen Hello | lastReported 同步 | main.ts:661-673 | ✓ WIRED | 握手后等值 RESIZE 零重发 |
 
 ### Data-Flow Trace (Level 4)
 
 | Artifact | Data Variable | Source | Produces Real Data | Status |
 |----------|---------------|--------|--------------------|--------|
-| onChunk fan-out | chunk | PTY master Read（io.go:20） | ✓（S1b 338958 字节真实 seq 输出双端一致） | ✓ FLOWING |
-| INPUT 输入链 | data[1:] | WS Read（每次新分配 payload） | ✓（echo/cat 回显测试绿；TestInputRateLimit 计数模型） | ✓ FLOWING |
-| Welcome 帧 | mode/prefs | decideModeLocked + aggregateClientPrefs | ✓（S2/S3 Welcome mode=ro/rw UAT 实证） | ✓ FLOWING |
-| resize 仲裁 | sizes map | Hello 首尺寸 + RESIZE 上报 | ✓（TestResizeArbitration Getsize 读回实证） | ✓ FLOWING |
-| 分享链接 | token | crypto/rand 16B 启动生成 | ✓（S2a GET 200 无 challenge 全链） | ✓ FLOWING |
-| registry.n | 注册计数 | registerLocked/removeLocked 对称 | ✓（TestClientCountInvariant 逐步不变量） | ✓ FLOWING |
+| sessionDimsLocked | arbiter.last / spawn 回落 | 仲裁器重算 / pty.SpawnCols×SpawnRows | ✓（S10a 旁观者 40x10 ≠ 自身 120x40 实测） | ✓ FLOWING |
+| pushSessionDimsLocked | target | arbitrate(members) | ✓（S10b 60x15 双端实测；WR-01/02 窄窗口失真见 gaps） | ✓ FLOWING（残留窗口挂账） |
+| 前端 sessionDims | Welcome cols/rows | S→C 三通道 | ✓（D6a/D6b 约束渲染实测） | ✓ FLOWING |
+| refit 上报 | fit.proposeDimensions | 窗口物理尺寸 | ✓（S9b stty 跟随实测） | ✓ FLOWING |
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |----------|---------|--------|--------|
-| go vet 静态检查 | `go vet ./...` | exit 0 | ✓ PASS |
-| 全量测试（含 -race） | `go test -race -count=1 ./...` | 5/5 包 ok（server 37.6s，含 16 个 phase-5 命名测试） | ✓ PASS |
-| GOROOT gofmt | `test -z "$($(go env GOROOT)/bin/gofmt -l .)"` | 零差异 | ✓ PASS |
-| 前端单测 | `node --test src/lib/*.test.ts` | fail 0 | ✓ PASS |
-| 二进制构建 | `go build -o /tmp/wesh-uat/wesh ./cmd/wesh` | exit 0 | ✓ PASS |
-| dist 产物时间戳与内容 | `ls -l web/dist/` + grep 检索串 | mtime=2026-08-21 08:19:52 +0800；四组文案串均在 | ✓ PASS |
+| 构建+静态检查 | `go build -o wesh ./cmd/wesh && go vet ./...` | exit 0 | ✓ PASS |
+| G-05-1 新测试组 | `go test ./internal/server/ -run 'TestSessionDimsLocked\|TestWelcomeSessionDims\|TestResizeArbitration' -race` | 3 测试 8 子测全 PASS（3.4s） | ✓ PASS |
+| 全量测试 | `go test ./... -race -count=1` | 5/5 包 ok（server 38.3s，单次运行） | ✓ PASS |
+| dist 一致性 | `ls -l` + `grep -c 'Math\.min'` + 检索串 | mtime 晚于 src；指纹 ×10；warn 串 src/dist 一致 | ✓ PASS |
 
 ### Probe Execution（独立进程复跑，非 SUMMARY 转述）
 
 | Probe | Command | Result | Status |
 |-------|---------|--------|--------|
-| phase05.mjs 协议 UAT | `node web/uat/phase05.mjs` | 18/18 通过 + 1 skipped（S7 豁免），exit 0；S1b 逐字节一致/S2-S3 链接全链/S4 无 oracle/S5 双点位 503/S6 1013 三断言全部实测通过 | ✓ PASS |
-| phase02.mjs 回归 | `node web/uat/phase02.mjs` | 12/12，exit 0（多客户端生命周期适配后断言 11→12 只增） | ✓ PASS |
-| phase03.mjs 回归 | `node web/uat/phase03.mjs` | 18/18，exit 0 | ✓ PASS |
-| phase04.mjs 回归 | `node web/uat/phase04.mjs` | 10/10，exit 0 | ✓ PASS |
+| phase05.mjs（S10 G-05-1 协议面） | `node web/uat/phase05.mjs ./wesh` | 28/28 + 1 skipped，exit 0；S10a/b/c 全 PASS（区分度实测值：B 旁观者 40x10≠120x40 / 推送双端同收 60x15 / 升格 120x40） | ✓ PASS |
+| phase05-dom.mjs（D6 约束渲染） | `node web/uat/phase05-dom.mjs ./wesh` | 19/19，exit 0；D6a 行数=10 / D6b 40+40 折行 / D6c 升格回 24 全 PASS；D1b/D1d/D2c 零回归 | ✓ PASS |
+| phase05-dims.mjs（headless 等价+负对照） | `node web/uat/phase05-dims.mjs ./wesh` | 3/3，exit 0；D6H-1 逐屏全等 / D6H-2 负对照不全等 | ✓ PASS |
+| phase02/03/04 回归 | 三脚本连跑 | 12/12、18/18、10/10，exit 全 0 | ✓ PASS |
+| phase04-t1-width 回归 | `node web/uat/phase04-t1-width.mjs` | 5/5（U11 4/4 + U6 1/1），exit 0 | ✓ PASS |
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|------------|-------------|--------|----------|
-| MULTI-01 | 05-01, 05-09 | 多 WS 客户端同时 attach 同一会话，输出实时扇出 | ✓ SATISFIED | TestMultiClientFanout/TestDetach/TestExitBroadcast + phase05.mjs S1 |
-| MULTI-02 | 05-03, 05-08 | 写权限可配 all/owner | ✓ SATISFIED | TestOwnerPolicy/TestAllPolicy/TestSuccession/TestSuccessionKickRace + --write-policy flag + 组合校验 |
-| MULTI-03 | 05-02, 05-08, 05-09 | 慢客户端有界 outbox 写满 1013 踢出 | ✓ SATISFIED | TestSlowConsumerKick + phase05.mjs S6（raw-socket 真 stall 三断言） |
-| MULTI-04 | 05-04, 05-08 | resize 仲裁 min-rect/last-wins/2→1 恢复 | ✓ SATISFIED | TestArbitrate 表测 + TestResizeArbitration Getsize 集成 |
-| MULTI-05 | 05-06, 05-08, 05-09 | 启动打印 ro/rw 两条分享链接即打即用 | ✓ SATISFIED | TestShareToken + main.go 打印 + phase05.mjs S2/S3/S4 全链 |
-| RES-02 | 05-05 | 每客户端输入速率限制 | ✓ SATISFIED | TestInputRateLimit（超限丢弃 + 存活 + 对照全量送达） |
-| RES-03 | 05-07, 05-09 | 最大并发客户端数满员拒绝 | ✓ SATISFIED | TestMaxClients503 + TestClientCountInvariant + phase05.mjs S5 双点位 |
-| RES-04 | 05-02 | PTY 输出背压 | ✓ SATISFIED | TestGlobalCredit（门闭/半水位开/字节精确/dead-owner 有界开门） |
+| MULTI-01 | 05-01, 05-09, 05-10/11/12 | 多 WS 客户端同时 attach 同一会话，输出实时扇出 | ✓ SATISFIED | TestMultiClientFanout + S1b 逐字节一致（复跑）+ S10/D6/D6H 一致性扩编 |
+| MULTI-02 | 05-03, 05-08 | 写权限可配 all/owner | ✓ SATISFIED | TestOwnerPolicy/TestAllPolicy/TestSuccession -race 绿；S1a/S9 复跑 |
+| MULTI-03 | 05-02, 05-08, 05-09 | 慢客户端有界 outbox 写满 1013 踢出 | ✓ SATISFIED | TestSlowConsumerKick + S6 三断言复跑 |
+| MULTI-04 | 05-04, 05-08, 05-10/11/12 | resize 仲裁 min-rect/last-wins/2→1 恢复 | ✓ SATISFIED | TestArbitrate/TestResizeArbitration 四子测 + S9b/S10b PTY 跟随复跑（推送缝合面残留见 gaps，不否定仲裁本身） |
+| MULTI-05 | 05-06, 05-08, 05-09 | 启动打印 ro/rw 两条分享链接即打即用 | ✓ SATISFIED | TestShareToken + S2/S3/S4 全链复跑 |
+| RES-02 | 05-05 | 每客户端输入速率限制 | ✓ SATISFIED | TestInputRateLimit -race 绿 |
+| RES-03 | 05-07, 05-09 | 最大并发客户端数满员拒绝 | ✓ SATISFIED | TestMaxClients503/TestClientCountInvariant + S5 复跑 |
+| RES-04 | 05-02 | PTY 输出背压 | ✓ SATISFIED | TestGlobalCredit -race 绿（WR-02 为该机制与新推送的交界面缺陷，不否定信用门本身） |
 
-计划 requirements 并集 = {MULTI-01..05, RES-02/03/04} 与 REQUIREMENTS.md Phase 5 映射完全一致；REQUIREMENTS.md 无额外映射到 Phase 5 的条目——**无孤儿需求**。
+计划 requirements 并集（含 05-10/11/12 各 [MULTI-01, MULTI-04]）= {MULTI-01..05, RES-02/03/04} 与 REQUIREMENTS.md Phase 5 映射（:35-39/:55-57/:129+ 全标 Complete）完全一致——**无孤儿需求**。
 
 ### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| — | — | 无 TBD/FIXME/XXX/TODO/HACK/placeholder/空实现/硬编码空数据 | — | 全 phase 修改文件扫描零命中 |
-
-两个代码评审 WARNING 经本次核读确认仍然存在（clients.go:569 / main.go:92），经裁定均为 follow-up 而非阻塞（见 frontmatter follow_ups 与下文裁定节）。
+| — | — | 无 TBD/FIXME/XXX/TODO/HACK/placeholder/空实现 | — | 05-10/11/12 九文件扫描零命中 |
+| internal/server/resize.go | 156-168 | 外层循环用捕获 target 继续投递（WR-01） | 🛑 Blocker（gap） | 窄窗口内端 sessionDims 过期 → G-05-1 缺陷类瞬态复发，见 gaps |
+| internal/server/clients.go | 411-415, 429-447 | 已 blocked 端尺寸推送静默丢弃无补发（WR-02） | ⚠️ Warning（同 gap 折叠） | 同上，影响面更窄（已严重滞后端） |
 
 ### Human Verification Required
 
-browser 渲染层与平台原生行为 6 组（对应 05-UAT.md 七组清单第 1-7 项，含 1 条 backstop truth——像素级多端一致性）：
+浏览器渲染层与平台原生行为 6 组（沿前次清单，全部协议层等价断言本次独立复跑通过；WR-01/WR-02 为代码核读确认的确定性缺陷，不属人工项）：
 
-1. **双客户端视觉一致** — 两浏览器窗口逐屏一致 + min-rect 留白 + 2→1 恢复（05-UAT.md #1，backstop）
-2. **新客首屏** — vim/htop 场景 attach 秒见重绘（05-UAT.md #2）
-3. **ro 形态三要素** — 标题前缀/键盘禁用/DevTools 帧面板无上行 RESIZE/console 一次性提示（05-UAT.md #3）
-4. **递补升格 UX** — 前缀消失 + 键盘激活 + 无通知组件（05-UAT.md #4）
-5. **1013 专版 + 手动刷新链路** — Disconnected 面板 → 刷新凭原 URL 重新 attach（05-UAT.md #5）
-6. **503 专版与无效链接专版** — Server is full / Basic 框 / Invalid share link（05-UAT.md #6/#7）
+1. **双客户端视觉一致** — 逐屏一致 + 约束留白 + 2→1 恢复（05-UAT.md #1，backstop；D6H-1/D6H-2 已把等价/分叉锁进终端核心层）
+2. **新客首屏** — vim/htop attach 秒见重绘（05-UAT.md #2）
+3. **ro 形态三要素** — 前缀/键盘禁用/零上行/console 恰一次（05-UAT.md #3；D1b/D1d 复跑绿）
+4. **递补升格 UX** — 前缀消失 + 键盘激活 + 约束解除（05-UAT.md #4；D6c 复跑绿）
+5. **1013 专版 + 手动刷新链路**（05-UAT.md #5；S6 复跑绿）
+6. **503 专版与无效链接专版**（含 G-05-7 无认证 401 → Invalid；05-UAT.md #6/#7；S4c-e/D4b 复跑绿）
 
-全部项协议层等价断言已自动化覆盖并本次独立复跑通过；残余渲染层按 CODEBUDDY.md 显式豁免条款风险接受，人工清单执行即闭环。
-
-### 评审 WARNING 裁定（WR-01 / WR-02 是否阻塞 phase goal）
-
-**WR-01（--credential 回显泄露）→ follow-up，不阻塞。** 核读确认 main.go:92 credential 回调仍 `return err` 直抛，flag 包装 `%q` 回显通道存在。但：① 缺陷面在 Phase 3 交付的 credential flag 代码，本 phase 未触碰该路径；② 不使本 phase 任何成功准则/需求为假（SEC-01 是 Phase 3 已验收需求，此为新发现的启动面泄露通道，非多客户端能力缺陷）；③ 性质是「同红线在另一 flag 上的不一致应用」，修复边界清晰（REVIEW.md 已给逐字补丁）。建议作为高优先 follow-up（SEC-01 红线延伸），不阻塞 Phase 5 验收。
-
-**WR-02（writer 合并控制帧竞态）→ follow-up，不阻塞。** 核读确认 clients.go:569 合并条件无 `proto.Output` 限制，REVIEW 可达时序推演成立。但：① 窗口为 goroutine 调度间隙（µs-ms 级）且需子进程静默，现有测试不构造该交织——属未被测试行使的竞态路径，非确定性失败；② 后果为单端功能降级（prefs/welcomeDone/osc52 不生效），mode 因前端默认态意外正确，无提权、无流损坏、无其他端影响；③ 全部成功准则在已行使路径上行为正确（TestSuccession 升格 Welcome 收达、S1/S3 全链绿）。建议尽快修（一行合并守卫 + 白盒回归），属 Phase 6 前的打磨项而非 Phase 5 验收阻塞。
-
-**负载 flake 与 05-07 门违规**：flake 两次均登记 deferred-items.md 且复跑未重现（本次独立全量 -race 绿）；门违规用户已追认且落地内容与 D-08 逐字一致（本次逐项核读）。均不阻塞。
+全部项按 CODEBUDDY.md 显式豁免条款风险接受，人工清单执行即闭环；不构成 status 路由依据（本状态由 gaps 决定）。
 
 ### Gaps Summary
 
-无 gaps。全部 must-have truths 在代码库中验证为真：artifact 三级（存在/实质/接线）+ 数据流四级全部通过，key links 人工逐条核读全 wired，16 个命名测试存在且全量 -race 绿，四个 UAT 探针独立复跑全过。唯一残留是 browser 渲染层人工核对（headless 结构性不可测，项目显式豁免），路由 human_needed。
+**G-05-1 主场景已闭合，闭合缝合面残留一条可达乱序路径（WR-01）+ 一条可达丢失路径（WR-02）——判定 gaps_found。**
+
+证据侧（闭合面）：05-10/11/12 的 15 条 must_have truths 中 14 条在代码库中验证为真且全部有行为测试/探针实测锁定（本次独立复跑：go -race 全量 5/5 包、S10 28/28、D6 19/19、D6H 3/3、phase02/03/04/t1-width 回归全绿）。用户实测的「A 小 B 大 A 内输入叠写」确定性路径已消除并被三层断言永久门禁化。前次两个 follow-up（credential 回显 / writer 合并控制帧）核读确认已修复。
+
+缺口侧（缝合面）：05-REVIEW（2026-08-22）WR-01/WR-02 经本次逐行核读确认成立且修复未落地——
+
+- **WR-01（resize.go:156-168）**：pushSessionDimsLocked 循环内踢出经 clients.go:479-480 removeMember→嵌套 recalcNow 可达（踢出 ro 成员或 all 模式 rw 离群成员且其持有某轴最小值时仲裁结果改变），嵌套推送 W(T2) 送达全部留存端后外层循环仍以捕获的 T1 组帧投给未访问端——终值倒挂（端 sessionDims=T1 ≠ PTY=T2），**G-05-1 缺陷类在窄窗口内瞬态复发**，下次尺寸事件自愈。
+- **WR-02（clients.go:411-415 + 429-447）**：已 creditBlocked 端的尺寸推送帧被 `if !c.creditBlocked` 守卫静默丢弃，afterDrain 恢复不补发——同缺陷类，影响面限于已严重滞后端，同样自愈。
+
+**显式裁定：WR-01/WR-02 不完全重开 G-05-1**（gap 原文 truth 的主场景「含行编辑回显在内逐屏一致」在全部已行使路径上成立且门禁化），**但 WR-01 使同一症状类残留可达**——05-10 自身 success criterion「任意时刻任意在线客户端持有的最近一帧 Welcome 尺寸 == 服务端会话尺寸」在该交织下为假，gap 闭合不能判完整。两条修复均为小补丁（05-REVIEW 已给逐字方案），建议以 `/gsd-plan-phase --gaps` 收口；WR-01/WR-02 不匹配任何后续 phase 的 goal/success criteria，不可 defer。
 
 ---
 
-_Verified: 2026-08-21T01:10:57Z_
+_Verified: 2026-08-22T05:35:00Z_
 _Verifier: Claude (gsd-verifier)_

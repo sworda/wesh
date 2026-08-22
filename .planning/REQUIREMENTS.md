@@ -32,11 +32,11 @@
 
 ### 多客户端（MULTI）
 
-- [x] **MULTI-01**: 多个 WS 客户端可同时 attach 同一会话，输出实时扇出
-- [x] **MULTI-02**: 写入权限可配置：全员可写（协作排障）/ 仅 owner 可写其余只读（演示旁观）
-- [x] **MULTI-03**: 慢客户端不阻塞其他客户端：每客户端有界 outbox，写满则以 1013 断开该客户端（重连后从最新输出看起）
-- [x] **MULTI-04**: 多客户端 resize 仲裁（单客户端 last-wins；≥2 客户端最小公共矩形；2→1 恢复）
-- [x] **MULTI-05**: 服务端启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
+- [ ] **MULTI-01**: 多个 WS 客户端可同时 attach 同一会话，输出实时扇出
+- [ ] **MULTI-02**: 写入权限可配置：全员可写（协作排障）/ 仅 owner 可写其余只读（演示旁观）
+- [ ] **MULTI-03**: 慢客户端不阻塞其他客户端：每客户端有界 outbox，写满则以 1013 断开该客户端（重连后从最新输出看起）
+- [ ] **MULTI-04**: 多客户端 resize 仲裁（单客户端 last-wins；≥2 客户端最小公共矩形；2→1 恢复）
+- [ ] **MULTI-05**: 服务端启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
 
 ### 安全（SEC）
 
@@ -52,9 +52,9 @@
 ### 资源控制（RES）
 
 - [x] **RES-01**: WS 消息三层上限：单帧长度、分片数量、累积字节数
-- [x] **RES-02**: 每客户端输入速率限制
-- [x] **RES-03**: 最大并发客户端数限制，满员拒绝新连接
-- [x] **RES-04**: PTY 输出背压：客户端消费不及时时暂停读 PTY 或断开慢客户端
+- [ ] **RES-02**: 每客户端输入速率限制
+- [ ] **RES-03**: 最大并发客户端数限制，满员拒绝新连接
+- [ ] **RES-04**: PTY 输出背压：客户端消费不及时时暂停读 PTY 或断开慢客户端
 
 ### 部署运维（OPS）
 
@@ -126,11 +126,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SESS-01 | Phase 6 | Pending |
 | SESS-02 | Phase 6 | Pending |
 | SESS-03 | Phase 6 | Pending |
-| MULTI-01 | Phase 5 | Complete |
-| MULTI-02 | Phase 5 | Complete |
-| MULTI-03 | Phase 5 | Complete |
-| MULTI-04 | Phase 5 | Complete |
-| MULTI-05 | Phase 5 | Complete |
+| MULTI-01 | Phase 5 | Gaps Found |
+| MULTI-02 | Phase 5 | Gaps Found |
+| MULTI-03 | Phase 5 | Gaps Found |
+| MULTI-04 | Phase 5 | Gaps Found |
+| MULTI-05 | Phase 5 | Gaps Found |
 | SEC-01 | Phase 3 | Complete |
 | SEC-02 | Phase 3 | Complete |
 | SEC-03 | Phase 3 | Complete |
@@ -140,9 +140,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEC-07 | Phase 7 | Pending |
 | SEC-08 | Phase 2 | Complete |
 | RES-01 | Phase 2 | Complete |
-| RES-02 | Phase 5 | Complete |
-| RES-03 | Phase 5 | Complete |
-| RES-04 | Phase 5 | Complete |
+| RES-02 | Phase 5 | Gaps Found |
+| RES-03 | Phase 5 | Gaps Found |
+| RES-04 | Phase 5 | Gaps Found |
 | OPS-01 | Phase 7 | Pending |
 | OPS-02 | Phase 7 | Pending |
 | OPS-03 | Phase 9 | Pending |
