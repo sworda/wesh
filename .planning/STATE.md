@@ -5,11 +5,11 @@ milestone_name: milestone
 current_phase: 6
 current_phase_name: 会话生命周期与重连
 status: "Phase 05 shipped — PR #6"
-stopped_at: Completed 05-13-PLAN.md
-last_updated: "2026-08-22T15:43:38.628Z"
+stopped_at: Phase 6 context gathered
+last_updated: "2026-08-22T18:27:40.362Z"
 last_activity: 2026-08-22
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 5
   total_plans: 37
   completed_plans: 37
@@ -207,6 +207,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-22T11:15:00.691Z
-Stopped at: Completed 05-13-PLAN.md
-Resume file: None
+Last session: 2026-08-22T18:27:40.341Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-session-lifecycle/06-CONTEXT.md
