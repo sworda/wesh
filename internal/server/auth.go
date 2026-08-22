@@ -64,6 +64,15 @@ func matchCredential(creds []Credential, user, pass string) bool {
 	return matched == 1
 }
 
+// authRequiredBody 是全部 401 响应的统一 body（2026-08-22 用户裁决：错 token
+// 触发登录弹窗时必须有提示告知 token 失效、需登录访问）。浏览器原生 Basic 弹窗
+// 本身不可定制文案（Chrome 连 realm 都不展示），唯一可达通道是 401 body——
+// 用户取消/失败后浏览器渲染该纯文本。全部挑战点位同一串：无/错凭据、错 token
+// 委托链完全同文，无枚举 oracle（OWASP 纪律延伸到文案层）。
+const authRequiredBody = `authentication required
+
+If you opened a share link and were prompted to log in, the link is invalid or has expired (share links are regenerated each time wesh restarts). Enter the operator credentials to continue, or ask the operator for a new link.`
+
 // basicAuth 整站 Basic 认证中间件（D-02：/ 与 /api/attach 挂载；/ws 不挂——
 // ticket 即其认证）。守卫顺序（敏感，与 /api/attach 守卫链口径一致）：
 //
@@ -98,7 +107,7 @@ func basicAuth(next http.Handler, creds []Credential, th *throttleStore) http.Ha
 			th.recordFail(ip, time.Now())
 			w.Header().Set("WWW-Authenticate", `Basic realm="wesh", charset="UTF-8"`) // RFC 7617
 			logEvent(r.RemoteAddr, websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed)
-			http.Error(w, "authentication required", http.StatusUnauthorized)
+			http.Error(w, authRequiredBody, http.StatusUnauthorized)
 			return
 		}
 		th.recordSuccess(ip) // D-08：认证成功清零

@@ -285,8 +285,8 @@ func TestShareToken(t *testing.T) {
 
 	// /api/attach token 分支：ro/rw token → ticket → Hello 核销得绑定 mode
 	// （全链）；错 token 与无 token 的 401 逐字节一致（无 oracle）；无认证模式
-	// 携 token 非 404 出 ticket 且 mode 绑定兑现（OQ1），无 body/错 token 维持
-	// 404（前端探测信号不变）。
+	// 携 token 非 404 出 ticket 且 mode 绑定兑现（OQ1），无 body 维持 404
+	// （前端探测信号不变），错 token → 401（G-05-7，C-3 承接）。
 	t.Run("/api/attach token 分支", func(t *testing.T) {
 		cred, err := ParseCredential("share-op:test-pass")
 		if err != nil {
@@ -364,11 +364,15 @@ func TestShareToken(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("无认证无 body attach status = %d, want %d（探测信号不变）", resp.StatusCode, http.StatusNotFound)
 		}
-		// 错 token → 404（同探测口径）。
+		// 错 token → 401（G-05-7，用户 2026-08-22 裁决：不弹登录框的通道
+		// 必须给 Invalid share link 面板——前端「携 token 401 → C-3」承接）。
 		resp = postAttachBody(t, urlNoAuth, badBody)
 		readBody(t, resp)
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("无认证错 token attach status = %d, want %d（同探测口径）", resp.StatusCode, http.StatusNotFound)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("无认证错 token attach status = %d, want %d（G-05-7 C-3 承接）", resp.StatusCode, http.StatusUnauthorized)
+		}
+		if resp.Header.Get("WWW-Authenticate") != "" {
+			t.Error("无认证错 token 401 不应携带 WWW-Authenticate 挑战头（无凭据可弹）")
 		}
 	})
 }

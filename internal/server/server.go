@@ -295,7 +295,8 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 // 无认证模式 /api/attach 显式注册 404（前端探测信号：跳过 fetch 直连 WS；
 // 显式注册避免依赖静态 handler 对 POST 的偶发行为，RESEARCH Pattern 1 决策）——
 // 05-06 起仅当 body 携有效 token 时非 404（OQ1 正交：ro/rw mode 绑定在无密码
-// 演示场景兑现）。/s/ 两路由凭据与无认证模式均注册（同 OQ1）。
+// 演示场景兑现）；G-05-7（2026-08-22 裁决）起携错 token 返 401（前端 C-3 承接）。
+// /s/ 两路由凭据与无认证模式均注册（同 OQ1）。
 // 最外层 securityHeaders 包裹全部路由（含 /ws，D-06）。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -319,7 +320,7 @@ func (s *Server) Handler() http.Handler {
 		// 128bit token，本面无 CSRF 增量。
 		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle), s.origins)
 		mux.Handle("POST /api/attach", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if s.shareAttach(w, r) {
+			if s.shareAttach(w, r) == shareHandled {
 				return
 			}
 			attachChain.ServeHTTP(w, r)
@@ -337,29 +338,50 @@ func (s *Server) Handler() http.Handler {
 		s.registerShareRoutes(mux, wh, wh) // 无认证模式 page/root 同为 wh——给页无门
 		mux.HandleFunc("POST /api/attach", func(w http.ResponseWriter, r *http.Request) {
 			// OQ1 正交（用户 2026-08-19 裁决）：body 携有效 token → 按绑定 mode
-			// 签发 ticket（ro/rw mode 绑定在无密码演示场景兑现）；否则维持 404
-			// （前端探测信号不变）。
-			if s.shareAttach(w, r) {
+			// 签发 ticket（ro/rw mode 绑定在无密码演示场景兑现）；未携 token →
+			// 404 探测信号不变（前端直连 WS 既有形态）。
+			// G-05-7（用户 2026-08-22 裁决）：携错 token → 401——前端既有
+			//「携 token 401 → C-3 Invalid share link」分支直接承接（零前端改动）；
+			// 无 WWW-Authenticate 挑战头（无认证模式无凭据可弹，挑战头只会诱导
+			// 浏览器对导航式请求弹空框）；无 recordFail（throttle 语义锚定凭据
+			// 失败，无认证模式本无节流面）。body 与凭据链 401 同一 authRequiredBody。
+			switch s.shareAttach(w, r) {
+			case shareHandled:
 				return
+			case shareInvalid:
+				http.Error(w, authRequiredBody, http.StatusUnauthorized)
+				return
+			default: // shareAbsent
+				http.NotFound(w, r) // 无认证模式探测信号（404 → 前端跳过 fetch 直连）
 			}
-			http.NotFound(w, r) // 无认证模式探测信号（404 → 前端跳过 fetch 直连）
 		})
 	}
 	mux.HandleFunc("/ws", s.Attach)
 	return securityHeaders(mux, s.tlsOn)
 }
 
+// shareResult 是 shareAttach 的三态结果（G-05-7 拆分「未携」与「携错」——
+// 无认证分支对两者响应不同：未携 404 探测信号不变，携错 401 供前端 C-3 承接）。
+type shareResult int
+
+const (
+	shareAbsent  shareResult = iota // 未携 token（含解析失败/超体/通道关闭）
+	shareInvalid                    // 携 token 但 lookup 未命中
+	shareHandled                    // 命中，已按绑定 mode 签发 ticket
+)
+
 // shareAttach 是 POST /api/attach 的分享 token peek 分支（05-06 D-01 第三认证
 // 通道）：body JSON{"token":...}（MaxBytesReader 4KiB 防御放大）解析且 lookup
-// 命中 → 按 token 绑定 mode 签发一次性 ticket 并返回 true（/api/attach 不收
-// mode 参数——mode 由 token 绑定，P3 D-11 可选 mode 参数预期细化作废）。
-// 未携/错 token → 恢复 body 供委托链重读后返回 false（调用方走原链：凭据模式
-// Origin→Basic 401 同文同码无 oracle；无认证模式 404 探测信号不变）。
+// 命中 → 按 token 绑定 mode 签发一次性 ticket 并返回 shareHandled（/api/attach
+// 不收 mode 参数——mode 由 token 绑定，P3 D-11 可选 mode 参数预期细化作废）。
+// 未携 token → shareAbsent、携错 token → shareInvalid；两者均恢复 body 供委托
+// 链重读（凭据模式调用方不区分——委托原链：Origin→Basic 401 同文同码无 oracle；
+// 无认证模式调用方按 G-05-7 分派 404/401）。
 // 解析失败一律按未携 token 处理——不回显 body 内容（T-05-06：错误响应面零泄露）。
 // 红线（D-03/SEC-01）：token 值永不入 logEvent/错误响应。
-func (s *Server) shareAttach(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) shareAttach(w http.ResponseWriter, r *http.Request) shareResult {
 	if s.shares == nil {
-		return false // 通道关闭：零读取零行为变化（本 phase main 恒生成，防御兜底）
+		return shareAbsent // 通道关闭：零读取零行为变化（本 phase main 恒生成，防御兜底）
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
 	_ = r.Body.Close()
@@ -367,20 +389,20 @@ func (s *Server) shareAttach(w http.ResponseWriter, r *http.Request) bool {
 	// 超限请求仍 413 同文）；err != nil（body >4KiB）按未携 token 处理。
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if err != nil {
-		return false
+		return shareAbsent
 	}
 	var req struct {
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil || req.Token == "" {
-		return false // 解析失败 = 未携 token（未知字段忽略纪律同 Hello）
+		return shareAbsent // 解析失败 = 未携 token（未知字段忽略纪律同 Hello）
 	}
 	mode, ok := s.shares.lookup(req.Token)
 	if !ok {
-		return false
+		return shareInvalid
 	}
 	s.issueTicketJSON(w, r, mode) // OQ2 早闸在签发点内（满员 → 503 而非 ticket）
-	return true
+	return shareHandled
 }
 
 // issueTicketJSON 签发绑定 mode 的一次性 ticket 并以 {"ticket":...} JSON 响应

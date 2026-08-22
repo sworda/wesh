@@ -1,6 +1,8 @@
 // Phase 5 协议层自动化 UAT（零依赖，Node >= 22 原生 WebSocket/fetch/net）。
 // 覆盖 MULTI-01/03/05 与 RES-03 协议面：分享链接全链（ro/rw/错 token/D-05 总闸）、
-// 双客户端输出一致、满员 503 双点位、1013 慢消费者踢出（raw-socket stall 夹具）。
+// 双客户端输出一致、满员 503 双点位、1013 慢消费者踢出（raw-socket stall 夹具）、
+// D-11 attach SIGWINCH 强制重绘（S8）、D-06/D-07 递补升格全链（S9：升格 Welcome →
+// ro 期 INPUT 丢弃 → 升格后 INPUT 生效 + RESIZE 驱动 PTY 尺寸恢复）。
 // 渲染层多端像素一致性（S7）按 headless 硬约束豁免（CODEBUDDY.md 平台原生行为豁免
 // 条款），人工核对清单见 .planning/phases/05-multi-client/05-UAT.md（外部浏览器可执行）。
 //
@@ -13,6 +15,7 @@
 //
 // 运行：node web/uat/phase05.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
 import { spawn } from 'node:child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -336,8 +339,36 @@ async function s4WrongToken() {
     check('S4b', 'POST 错 token 与无 token 的 401 同文同码（无 oracle，形状级）',
       respWrong.status === 401 && respNone.status === 401 && wrongBody === noneBody && wrongWWW === noneWWW,
       `status=${respWrong.status}/${respNone.status} 同文=${wrongBody === noneBody} 同头=${wrongWWW === noneWWW}`);
+
+    // S4c: 401 body 携带 token 失效提示（2026-08-22 裁决：弹登录框处必须告知
+    // token 错误需登录——原生弹窗不可定制文案，body 是唯一可达通道；全挑战同文保无 oracle）
+    check('S4c', '401 body 含 token 失效/需登录提示（弹窗取消后浏览器渲染面）',
+      /invalid or has expired/.test(wrongBody) && /operator credentials/.test(wrongBody),
+      '提示文案在场');
   } finally {
     inst.kill();
+  }
+
+  // S4d/S4e: 无认证形态（G-05-7，2026-08-22 裁决）：携错 token → 401 且无挑战头；
+  // 未携 token → 404 探测信号不变。独立 spawn：无认证实例（无 throttle 面，免 pacing）
+  const inst2 = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    const wrong = crypto.randomBytes(16).toString('base64url');
+    const respBad = await fetch(`http://127.0.0.1:${inst2.port}/api/attach`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: wrong }),
+    });
+    await respBad.text();
+    check('S4d', '无认证 POST 携错 token → 401 且无挑战头（G-05-7，前端 C-3 承接）',
+      respBad.status === 401 && respBad.headers.get('WWW-Authenticate') === null,
+      `status=${respBad.status} challenge缺席=${respBad.headers.get('WWW-Authenticate') === null}`);
+
+    const respNone2 = await fetch(`http://127.0.0.1:${inst2.port}/api/attach`, { method: 'POST' });
+    await respNone2.text();
+    check('S4e', '无认证 POST 未携 token → 404 探测信号不变',
+      respNone2.status === 404, `status=${respNone2.status}`);
+  } finally {
+    inst2.kill();
   }
 }
 
@@ -437,7 +468,106 @@ function s7PixelLayerManual() {
     'headless 硬约束豁免：本机永不具备浏览器，任何自动化（含 playwright）均不可测（CODEBUDDY.md 平台原生行为豁免条款）；人工核对清单 .planning/phases/05-multi-client/05-UAT.md（外部浏览器可执行）');
 }
 
-const scenarios = [s1DualClientConsistency, s2s3ShareLinkChains, s4WrongToken, s5FullCapacity503, s6SlowConsumerKick, s7PixelLayerManual];
+// ---------- S8：D-11 attach SIGWINCH 强制重绘（05-UAT.md Test 2 协议半侧） ----------
+// 全屏程序（vim）运行中新客 attach → 服务端向 PTY 前台进程组显式发 SIGWINCH →
+// vim 立即重绘当前屏幕 → 新端在无任何新输入的前提下秒收含文件内容的 OUTPUT。
+// 反向排除法：若 SIGWINCH 缺席，新端只能黑屏等下次输出，marker 内容不会到达。
+async function s8SigwinchRedrawOnAttach() {
+  console.log('S8: 新客首屏（vim 全屏程序 attach 即见重绘，D-11 SIGWINCH）');
+  const MARKFILE = '/tmp/wesh-uat-s8-vim.txt';
+  const MARK = 'UAT_S8_VIM_CONTENT_k7qx9';
+  writeFileSync(MARKFILE, `${MARK}\n`);
+  const inst = await startWesh(['--writable', '--', 'vim', '-u', 'NONE', '-i', 'NONE', '-n', MARKFILE]);
+  try {
+    // A（rw/owner）先 attach，等 vim 首绘完成（marker 出现在 A 的 OUTPUT 流）
+    const a = await dialHello(inst.port, { cols: 80, rows: 24 });
+    const t0 = Date.now();
+    while (Date.now() - t0 < 8000 && !outputText(a.frames).includes(MARK)) await sleep(50);
+    if (!outputText(a.frames).includes(MARK)) {
+      check('S8a', '前置：vim 首绘就绪', false, 'A 端 8s 内未见 marker（vim 未起？）');
+      a.ws.close();
+      return;
+    }
+
+    // B（ro）attach——自其建连起 3s 内必须收到含 marker 的重绘 OUTPUT。
+    // 全帧搜索（不取 base 切片）：重绘 OUTPUT 可能与 WELCOME 同窗口到达，
+    // dialHello 的 Welcome 轮询决议点之后入队的帧会被 base 切片误排除（实测竞态）；
+    // B 建连前不存在任何帧，marker 不可能先于 attach 出现，全窗搜索无假阳性
+    const b = await dialHello(inst.port, { cols: 80, rows: 24 });
+    const t1 = Date.now();
+    while (Date.now() - t1 < 3000 && !outputText(b.frames).includes(MARK)) await sleep(25);
+    const got = outputText(b.frames).includes(MARK);
+    check('S8a', '新客 attach 后 3s 内收到全屏重绘（含文件内容 marker，零输入驱动）',
+      got, `收到=${got} 耗时形态=${got ? '秒级' : '超时'}`);
+
+    a.ws.close(); b.ws.close();
+    await waitClose(a.ws, 3000); await waitClose(b.ws, 3000);
+  } finally {
+    inst.kill();
+    try { unlinkSync(MARKFILE); } catch { /* 已清理忽略 */ }
+  }
+}
+
+// ---------- S9：D-06/D-07 递补升格全链（05-UAT.md Test 4 协议半侧 + Test 1 尺寸恢复半侧） ----------
+// A(rw/owner) + B(ro 递补) → A 断 → B 收升格 Welcome(mode=rw)；升格后：
+//   ro 期 B 的 INPUT 被服务端静默丢弃（负向）；升格后 B 的 INPUT 生效（stty size 回显）；
+//   B 上报自身尺寸 → PTY 跟随（stty size = B 尺寸，"恢复自身尺寸渲染"的协议等价物）。
+async function s9PromotionChain() {
+  console.log('S9: 递补升格全链（owner 断 → Welcome rw → INPUT/RESIZE 生效 → PTY 尺寸跟随）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    const a = await dialHello(inst.port, { cols: 80, rows: 24 });
+    const b = await dialHello(inst.port, { cols: 100, rows: 40 });
+    const wB = welcomeOf(b.frames);
+    if (wB.mode !== 'ro') {
+      check('S9a', '前置：B 初始为 ro 递补旁观', false, `B.mode=${wB.mode}`);
+      a.ws.close(); b.ws.close();
+      return;
+    }
+    const baseB = b.frames.length;
+
+    // 负向：ro 期 B 的 INPUT 被静默丢弃（server.go:739 ro 丢 INPUT 纪律）
+    b.ws.send(concat(new Uint8Array([INPUT]), enc.encode('echo UAT_S9_RO_INPUT_NEVER\n')));
+
+    // owner 断开 → B 应在 5s 内收到第二帧 WELCOME 且 mode=rw（R-09 升格推送）
+    a.ws.close();
+    await waitClose(a.ws, 3000);
+    const t0 = Date.now();
+    let promo = null;
+    while (Date.now() - t0 < 5000) {
+      const wFrames = b.frames.slice(baseB).filter((f) => f[0] === WELCOME);
+      if (wFrames.length > 0) { promo = JSON.parse(dec.decode(wFrames[wFrames.length - 1].subarray(1))); break; }
+      await sleep(50);
+    }
+    check('S9a', 'owner 断开后 ro 端 5s 内收升格 Welcome(mode=rw)',
+      promo !== null && promo.mode === 'rw', `mode=${promo?.mode ?? '（未到）'}`);
+    if (!promo || promo.mode !== 'rw') { b.ws.close(); return; }
+
+    // 升格后 B 上报自身尺寸（前端升格分支 fit.fit() 的协议等价物）
+    b.ws.send(concat(new Uint8Array([RESIZE]), enc.encode(JSON.stringify({ cols: 100, rows: 40 }))));
+
+    // 升格后 INPUT 生效：stty size 回显 PTY 尺寸应为 B 的 40 100（resize 上报经防抖窗，轮询吸纳）
+    b.ws.send(concat(new Uint8Array([INPUT]), enc.encode('stty size; echo UAT_S9_STTY_DONE\n')));
+    const baseOut = b.frames.length;
+    const t1 = Date.now();
+    let out = '';
+    while (Date.now() - t1 < 8000 && !out.includes('UAT_S9_STTY_DONE')) {
+      out = outputText(b.frames, baseOut);
+      if (!out.includes('UAT_S9_STTY_DONE')) await sleep(50);
+    }
+    check('S9b', '升格后 INPUT 生效且 PTY 尺寸跟随新 owner 上报（stty size = 40 100）',
+      /40 100/.test(out), `stty=${/\d+ \d+/.exec(out)?.[0] ?? '（无）'}`);
+    check('S9c', 'ro 期 INPUT 被丢弃（升前台标记全程缺席）',
+      !out.includes('UAT_S9_RO_INPUT_NEVER'), `缺席=${!out.includes('UAT_S9_RO_INPUT_NEVER')}`);
+
+    b.ws.close();
+    await waitClose(b.ws, 3000);
+  } finally {
+    inst.kill();
+  }
+}
+
+const scenarios = [s1DualClientConsistency, s2s3ShareLinkChains, s4WrongToken, s5FullCapacity503, s6SlowConsumerKick, s7PixelLayerManual, s8SigwinchRedrawOnAttach, s9PromotionChain];
 let failed = 0;
 for (const s of scenarios) {
   try {

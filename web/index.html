@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- 空 favicon 声明：抑制浏览器对 /favicon.ico 的自动探测——凭据模式下该路径在
+         Basic 闸内，每次页面加载都会白刷一条 401 auth_failed 日志并白计一次节流失败
+         （2026-08-22 实测定位；data: URL 零网络请求零鉴权面变化） -->
+    <link rel="icon" href="data:," />
     <title>wesh</title>
     <style>
       /* singlefile 保证 CSS 先于 JS 内联——无白闪契约（body 背景与终端同色 #000000） */
