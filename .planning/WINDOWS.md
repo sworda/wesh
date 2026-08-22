@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 8
+open_count: 10
 waived_count: 0
 fixed_count: 1
-total_count: 9
-last_updated: 2026-08-20T14:24:41.172Z
+total_count: 11
+last_updated: 2026-08-22T03:42:50.331Z
 ---
 
 # Broken Windows Ledger
@@ -24,6 +24,8 @@ last_updated: 2026-08-20T14:24:41.172Z
 | 7 | 05 | stub | internal/server/clients.go |  | registry.gateTransitions 门开闭周期计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T09:37:49.973Z |  |
 | 8 | 05 | stub | internal/server/server.go |  | inputDrops 限速丢弃计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T14:24:41.015Z |  |
 | 9 | 05 | stub | internal/server/clients.go |  | inputQ.droppedInputs 队列满丢弃计数器（观测性 stub，review #10 授权；Phase 8 OPS-07 进 metrics 时消费） | open |  | 2026-08-20T14:24:41.172Z |  |
+| 10 | 05 | deviation | internal/server/multi_test.go |  | TestAllPolicy 适配 G-05-1 运行期推送（2→1 last-wins 推送帧显式消费断言，planner 回归自检遗漏面） | open |  | 2026-08-22T03:42:50.177Z |  |
+| 11 | 05 | deviation | internal/server/multi_test.go |  | plan 字面 all 子测 B(60,20)->60/24 算术矛盾，按意图修正 B(60,50)->60/43 rows 维区分度 | open |  | 2026-08-22T03:42:50.331Z |  |
 
 ````json
 [
@@ -133,6 +135,30 @@ last_updated: 2026-08-20T14:24:41.172Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-20T14:24:41.172Z",
+    "resolved_at": null
+  },
+  {
+    "id": 10,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "internal/server/multi_test.go",
+    "line": null,
+    "description": "TestAllPolicy 适配 G-05-1 运行期推送（2→1 last-wins 推送帧显式消费断言，planner 回归自检遗漏面）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T03:42:50.177Z",
+    "resolved_at": null
+  },
+  {
+    "id": 11,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "internal/server/multi_test.go",
+    "line": null,
+    "description": "plan 字面 all 子测 B(60,20)->60/24 算术矛盾，按意图修正 B(60,50)->60/43 rows 维区分度",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T03:42:50.331Z",
     "resolved_at": null
   }
 ]
