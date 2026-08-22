@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05
-current_phase_name: multi-client
-status: executing
+current_phase: 6
+current_phase_name: 会话生命周期与重连
+status: planning
 stopped_at: Completed 05-13-PLAN.md
-last_updated: "2026-08-22T11:15:00.713Z"
+last_updated: "2026-08-22T11:56:36.900Z"
 last_activity: 2026-08-22
 last_activity_desc: Phase 05 execution started
 progress:
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 
 ## Current Position
 
-Phase: 05 (multi-client) — EXECUTING
-Plan: 13 of 13
-Status: Phase 05 all plans executed — awaiting re-verification (05-13 gap-closure done)
-Last activity: 2026-08-22 — Completed 05-13-PLAN.md (WR-01/WR-02 gap closure)
+Phase: 6 — 会话生命周期与重连
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-22 — Phase 05 complete, transitioned to Phase 6
 
 Progress: [██████████] 100%
 
@@ -38,7 +38,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 24
+- Total plans completed: 37
 - Average duration: -
 - Total execution time: -
 
@@ -50,6 +50,7 @@ Progress: [██████████] 100%
 | 02 | 6 | - | - |
 | 03 | 7 | - | - |
 | 04 | 6 | - | - |
+| 05 | 13 | - | - |
 
 **Recent Trend:**
 
