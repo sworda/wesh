@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 11
+open_count: 14
 waived_count: 0
 fixed_count: 1
-total_count: 12
-last_updated: 2026-08-22T04:15:52.151Z
+total_count: 15
+last_updated: 2026-08-22T04:55:53.347Z
 ---
 
 # Broken Windows Ledger
@@ -27,6 +27,9 @@ last_updated: 2026-08-22T04:15:52.151Z
 | 10 | 05 | deviation | internal/server/multi_test.go |  | TestAllPolicy 适配 G-05-1 运行期推送（2→1 last-wins 推送帧显式消费断言，planner 回归自检遗漏面） | open |  | 2026-08-22T03:42:50.177Z |  |
 | 11 | 05 | deviation | internal/server/multi_test.go |  | plan 字面 all 子测 B(60,20)->60/24 算术矛盾，按意图修正 B(60,50)->60/43 rows 维区分度 | open |  | 2026-08-22T03:42:50.331Z |  |
 | 12 | 05 | deviation | web/src/main.ts |  | 05-11: roNotified Task 1 export 防 noUnusedLocals 接线前误报（queryKeys 04-05 先例第二次沿用），Task 2 接线后去 export（ced81ed/31d8a68） | open |  | 2026-08-22T04:15:52.151Z |  |
+| 13 | 05 | deviation | web/uat/phase05-dims.mjs |  | 05-12: probe10.mjs 探针从未入库（G-05-1 诊断期一次性用具），按 plan Task 2 机制描述重建转正为门禁断言，文件头注释登记血缘 | open |  | 2026-08-22T04:55:53.043Z |  |
+| 14 | 05 | deviation | web/uat/phase05-dom.mjs |  | 05-12: phase05-dom.mjs/phase05-flood-driver.mjs 为 05-09 产物但从未入库（git 历史零记录），随 Task 2 补录使 D6 修改可提交（ce91dc5） | open |  | 2026-08-22T04:55:53.195Z |  |
+| 15 | 05 | deviation | .planning/phases/05-multi-client/05-VALIDATION.md |  | 05-12: plan 字面 05-10-01 行 go test -run 选择器 '\\\|' 在 RE2 下为字面管道符零匹配假绿，改裸 '\|' 实测 green 回填（fd26ebe） | open |  | 2026-08-22T04:55:53.347Z |  |
 
 ````json
 [
@@ -172,6 +175,42 @@ last_updated: 2026-08-22T04:15:52.151Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-22T04:15:52.151Z",
+    "resolved_at": null
+  },
+  {
+    "id": 13,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "web/uat/phase05-dims.mjs",
+    "line": null,
+    "description": "05-12: probe10.mjs 探针从未入库（G-05-1 诊断期一次性用具），按 plan Task 2 机制描述重建转正为门禁断言，文件头注释登记血缘",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:55:53.043Z",
+    "resolved_at": null
+  },
+  {
+    "id": 14,
+    "kind": "deviation",
+    "phase": "05",
+    "file": "web/uat/phase05-dom.mjs",
+    "line": null,
+    "description": "05-12: phase05-dom.mjs/phase05-flood-driver.mjs 为 05-09 产物但从未入库（git 历史零记录），随 Task 2 补录使 D6 修改可提交（ce91dc5）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:55:53.195Z",
+    "resolved_at": null
+  },
+  {
+    "id": 15,
+    "kind": "deviation",
+    "phase": "05",
+    "file": ".planning/phases/05-multi-client/05-VALIDATION.md",
+    "line": null,
+    "description": "05-12: plan 字面 05-10-01 行 go test -run 选择器 '\\|' 在 RE2 下为字面管道符零匹配假绿，改裸 '|' 实测 green 回填（fd26ebe）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-22T04:55:53.347Z",
     "resolved_at": null
   }
 ]

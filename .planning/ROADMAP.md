@@ -175,7 +175,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 一个客户端停止读取 TCP 流时其他客户端无卡顿：慢客户端 outbox 写满被 1013 踢出，重连后从最新输出看起；PTY 读循环永不因任何客户端阻塞
   3. 异尺寸两客户端按最小公共矩形 `min(cols)×min(rows)` 渲染，2→1 时恢复 last-wins；启动时打印含一次性 token 的 ro/rw 两条分享链接，即打即用
 
-**Plans**: 11/12 plans executed（9 executed + 3 gap closure — UAT G-05-1）
+**Plans**: 12/12 plans executed（9 executed + 3 gap closure — UAT G-05-1）
 **Wave 1**
 
 - [x] 05-01-PLAN.md — tracer：多客户端 fan-out 主干（clients.go 注册表/hub/outbox/writer + 409 门拆除 + 生命周期改造断开不退出/子进程退出广播 1000）+ e2e 单次语义迁移 + TestMultiClientFanout/TestDetach/TestExitBroadcast（MULTI-01）
@@ -216,7 +216,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] 05-10-PLAN.md — 服务端：Welcome 恒携会话 cols/rows + recalcNow 推送挂点（运行期 'W' 再推送复用升格先例）+ attach 升档时序重排 + 升格携新 owner 尺寸 + Go 行为测试组（MULTI-01/MULTI-04）
 - [x] 05-11-PLAN.md — 前端：sessionDims/refit 统一入口（上报=fit / 渲染=逐轴 min 拆分）+ WELCOME 尺寸应用与升格解除 + ro 提示门闩 + dist 重建（MULTI-01/MULTI-04）
-- [ ] 05-12-PLAN.md — UAT 三层断言（S10 协议 / D6 DOM 约束渲染 / phase05-dims.mjs headless 等价+负对照）+ README/05-UAT 同步 + 全量六段式回归（MULTI-01/MULTI-04）
+- [x] 05-12-PLAN.md — UAT 三层断言（S10 协议 / D6 DOM 约束渲染 / phase05-dims.mjs headless 等价+负对照）+ README/05-UAT 同步 + 全量六段式回归（MULTI-01/MULTI-04）
 
 **UI hint**: yes
 **Research flag**: outbox 容量/水位/strikes 默认参数需负载测试标定（可在执行中以测试任务消化，Phase 9 回填）。**resize 仲裁分歧已闭合**：以需求 MULTI-04 为准——所有模式下 ≥2 客户端一律最小公共矩形；ARCHITECTURE.md §2.9 "owner 模式跟随 owner 尺寸"表述作废。
@@ -288,7 +288,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
-| 5. 多客户端共享 | 11/12 | In Progress|  |
+| 5. 多客户端共享 | 12/12 | In Progress|  |
 | 6. 会话生命周期与重连 | TBD | Not started | - |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |

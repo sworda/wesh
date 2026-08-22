@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: multi-client
 status: executing
-stopped_at: Completed 05-11-PLAN.md
-last_updated: "2026-08-22T04:15:31.264Z"
+stopped_at: Completed 05-12-PLAN.md
+last_updated: "2026-08-22T05:00:54.975Z"
 last_activity: 2026-08-22
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 36
-  completed_plans: 35
+  completed_plans: 36
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 05 (multi-client) — EXECUTING
-Plan: 3 of 12
+Plan: 4 of 12
 Status: Ready to execute
 Last activity: 2026-08-22 — Phase 05 execution started
 
-Progress: [██████████] 97%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -95,6 +95,7 @@ Progress: [██████████] 97%
 | Phase 05 P09 | 37min | 2 tasks | 15 files |
 | Phase 05 P10 | 28min | 2 tasks | 10 files |
 | Phase 05 P11 | 22min | 2 tasks | 2 files |
+| Phase 05 P12 | 32min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -182,6 +183,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-11]: 上报/渲染双概念拆分——refit() 唯一入口收编窗口监听/onopen/升格/prefs 四调用点；上报恒 fit.proposeDimensions() 窗口物理尺寸驱动仲裁，渲染 term.resize 逐轴 min(fit, sessionDims)；不采用 CSS 约束容器（proposeDimensions 会被污染致两概念无法拆分）
 - [Phase ?]: [Phase 05-11]: term.onResize 订阅拆除 + sendResize lastReported 等值去重——ro 期 isRO 门拦截不记账使升格后首次 refit 必真实上报（05-08 纠正链保持）；onopen Hello 发出后同步 lastReported 防握手 Welcome 后冗余等值 RESIZE（线序零漂移）
 - [Phase ?]: [Phase 05-11]: ro 一次性 console 提示改 roNotified 门闩承载（运行期尺寸推送打破每 attach 仅一次不变量），文案逐字不动；roNotified 接线前 export 防 noUnusedLocals（queryKeys 先例第二次沿用），接线后去 export
+- [Phase ?]: [Phase 05-12]: D6H-1 等价锁取「120x40 建起再 resize(40,10)」精确复刻前端 refit() 生产路径；D6H-2 负对照以 buffer 快照（translateToString(true) 去尾空行 join）比对，折行点分叉驱动不全等
+- [Phase ?]: [Phase 05-12]: S10c 取最后一帧 WELCOME 解码容忍升格+recalcNow 推送同值双帧；probe10.mjs 探针从未入库，按 plan 机制描述重建为 phase05-dims.mjs 并登记血缘
 
 ### Pending Todos
 
@@ -200,6 +203,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-22T04:15:31.244Z
-Stopped at: Completed 05-11-PLAN.md
+Last session: 2026-08-22T05:00:54.954Z
+Stopped at: Completed 05-12-PLAN.md
 Resume file: None
