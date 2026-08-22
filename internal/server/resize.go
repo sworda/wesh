@@ -152,7 +152,7 @@ func (s *Server) recalcNow() {
 //
 // range 内踢出安全性：removeLocked 的 map delete 在 range 期间为 Go spec 安全
 //（未到达的被删条目不再产出），onChunk → kickOrCreditLocked（clients.go:354-358）
-// 同形态先例。循环内踢出经 clients.go:479-480 removeMember → 嵌套 recalcNow
+// 同形态先例。循环内踢出经 clients.go:501-502 removeMember → 嵌套 recalcNow
 // 真实可达——被踢者是参与集成员且其持有某轴最小值时仲裁结果改变（纯 ro 会话
 // 全部 ro 端均为成员、all 模式被踢 rw 端亦为成员）：嵌套 recalcNow 把
 // arbiter.last 推进到 T2，嵌套推送把 W(T2) 送达全部留存端，外层捕获的 target
