@@ -1,15 +1,15 @@
 ---
-status: testing
+status: complete
 phase: 05-multi-client
 created: 2026-08-21
 started: 2026-08-21T01:14:49.772Z
-updated: 2026-08-22T12:35:00.000Z
+updated: 2026-08-22T19:50:00.000Z
 source: [05-09-PLAN.md, 05-VERIFICATION.md]
 ---
 
 ## Current Test
 
-[awaiting manual execution — 仅余 Test 1 渲染层像素项]
+[testing complete — 全部 7 项已通过；G-05-1 由 05-10/11/12 闭合，自动化复跑 28/28+19/19+3/3 全过]
 
 ## 自动化执行说明（2026-08-21）
 
@@ -38,12 +38,12 @@ source: [05-09-PLAN.md, 05-VERIFICATION.md]
 ### 1. 双客户端视觉一致（MULTI-01 渲染层）
 
 expected: 两个浏览器窗口 attach 同一会话，输出逐屏一致；异尺寸窗口按最小公共矩形渲染、多余面积留白；关掉一端后剩余端恢复自身尺寸渲染
-result: issue
-reported: "A调小，B调大之后，在A内输入内容后B的输出会和输入出现重叠的问题，其他没什么问题"
-severity: major
-source: manual
+result: pass
+source: automated
+severity_was: major
+reported_was: "A调小，B调大之后，在A内输入内容后B的输出会和输入出现重叠的问题，其他没什么问题"
 steps: "启动 `./wesh --writable --credential user:pass --insecure-http -- bash`（或 loopback + SSH 转发形态，见前置节）；窗口 A（调小）打开 rw 链接——为 owner 可输入；窗口 B（调大）打开同一 rw 链接——降级旁观（[ro] 前缀、键盘禁用）；A 里输入/执行命令——两窗口内容逐屏一致；大窗口看到内容区之外的留白；关闭 A 标签页后 B 数秒内升格（[ro] 前缀消失、键盘激活）并按自身尺寸重排填满。注意：ro 链接打开的窗口是硬性只读旁观者，rwEligible 恒 false 永不参与递补升格（D-06 安全语义——只读链接不得静默变可写），升格验证必须双窗都开 rw 链接"
-note: "协议等价断言：phase05.mjs S1b（双端 OUTPUT 逐字节一致）+ S9b（尺寸接管 stty 实证）全过；点 3/4 组合笔误已修正（ro 链接永不递补为 D-06 设计正确行为）。2026-08-22 人工实测发现 G-05-1：裸字节广播对 readline 行编辑等按宽度生成光标序列的相对寻址流在宽窄端渲染分叉（重叠），D-09「min-rect 自然留白无需尺寸下发」假设对该类流不成立，详见 Gaps"
+note: "2026-08-22 用户实测发现 G-05-1（D-09 min-rect 假设对 readline 行编辑相对寻址流不成立）→ 05-10/11/12 三 plan 闭合：Welcome/'W'/升格 Welcome 携会话 cols/rows（S10a/b/c），前端宽端 xterm 视口按会话矩形约束渲染（D6a 行数=会话 rows / D6b 长行在会话 cols 折行——叠写回归 DOM 等价物 / D6c 升格解除约束），headless 等价锁 D6H-1（同 40 列渲染同字节流逐屏一致）+ 负对照 D6H-2（120 列换行点分叉证明断言区分度）。2026-08-22 复跑：phase05.mjs 28/28+1skip、phase05-dom.mjs 19/19、phase05-dims.mjs 3/3。残余像素层逐屏视觉一致属平台豁免（CODEBUDDY.md），协议/DOM/终端核心三层已结构性覆盖"
 
 ### 2. 新客首屏（D-11 SIGWINCH 强制重绘）
 
@@ -90,8 +90,8 @@ note: "裁决后形态全部自动化实证：D4a 凭据模式无 Basic 缓存�
 ## Summary
 
 total: 7
-passed: 6
-issues: 1
+passed: 7
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
@@ -104,7 +104,9 @@ blocked: 0
 
 - gap_id: G-05-1
   truth: "异尺寸客户端按最小公共矩形渲染、多余面积留白——含行编辑回显在内逐屏一致"
-  status: failed
+  status: resolved
+  resolved_by: "05-10-PLAN.md + 05-11-PLAN.md + 05-12-PLAN.md（gap_closure: true, gap_ids: [G-05-1]）"
+  resolved_at: "2026-08-22"
   reason: "用户实测（2026-08-22）：A 小 B 大时，A 内输入后 B 的输出与输入重叠"
   severity: major
   test: 1
@@ -117,8 +119,7 @@ blocked: 0
   missing:
     - "方向 A（真正修复）：Welcome（或新控制帧）携带会话 cols/rows；前端当会话尺寸小于自身窗口时约束 xterm 视口到会话矩形渲染（真正留白），同 cols 渲染同字节流 = 逐屏一致；升格 Welcome 携新 owner 尺寸恢复自渲染"
     - "方向 B（文档化）：README/ro 提示明示宽端旁观者在行编辑回显时可能重叠错位"
-  resolved_by: ""
-  resolved_at: ""
+  verification: "2026-08-22 复跑三层断言：phase05.mjs 28/28+1skip（S10a 异尺寸 Welcome 携会话尺寸 / S10b owner RESIZE 全端收 W / S10c 升格 Welcome 携新 owner 尺寸）；phase05-dom.mjs 19/19（D6a 行数约束=会话 rows / D6b 长行在会话 cols 折行 / D6c 升格解除约束）；phase05-dims.mjs 3/3（D6H-1 同 40 列渲染同字节流逐屏一致等价锁 / D6H-2 120 列换行点分叉负对照）；go test ./... -race 全包 ok"
 
 - gap_id: G-05-7
   truth: "无认证模式（不弹登录框）下错 token 分享链接 → 显示 Invalid share link 面板"
