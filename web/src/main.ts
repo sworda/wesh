@@ -13,7 +13,9 @@ import { parseQueryPrefs, splitPrefs, mergeTheme } from './lib/prefs';
 // SUBPROTOCOL 同时是 WS 子协议 token 与 Hello.version 期望值（D-03，同源复用防双写漂移）。
 // Hello 载荷 {version, cols, rows, ticket?}——ticket 为 Phase 3 认证核销一次性票（可选，
 // 无认证模式省略该键，proto.go HelloPayload.Ticket omitempty 同形）；
-// Welcome 载荷 {mode, prefs?}——prefs 为可选偏好下发字段（D-13 omitempty，proto.go WelcomePayload.Prefs 同形）；
+// Welcome 载荷 {mode, cols, rows, prefs?}——cols/rows 为会话尺寸恒在键（G-05-1 方向 A，
+// 05-10 三通道下发，proto.go WelcomePayload.Cols/Rows 恒序列化无 omitempty；
+// 旧服务端缺席 = 不约束渲染）；prefs 为可选偏好下发字段（D-13 omitempty，proto.go WelcomePayload.Prefs 同形）；
 // Error code 含 auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）。
 const OUTPUT = 0x30,
   INPUT = 0x30,
@@ -233,12 +235,24 @@ term.onData((s) => {
   }
 });
 
-// FE-03 + CORE-02：resize 回路。window resize → 100ms debounce → fit() →
-// onResize → RESIZE 帧（JSON {"cols","rows"}，服务端钳制 [1,1000]）。
+// G-05-1 resize 链路四状态（connect() per-connection 重置块同批清零，IN-01 防漂移登记延伸）：
+// sessionDims —— 最近一帧 Welcome 携会话尺寸；null = 旧服务端/未收到，渲染不约束（行为零漂移）。
+// lastReported —— 最近一次实际上行的 fit 尺寸（sendResize 去重依据；只在真实发送后更新）。
+// prevFit —— 上一次 refit 的 fit 尺寸（overlay 触发判定：窗口物理尺寸未变不闪浮层）。
+let sessionDims: { cols: number; rows: number } | null = null;
+let lastReported: { cols: number; rows: number } | null = null;
+let prevFit: { cols: number; rows: number } | null = null;
+// roNotified —— ro console 一次性提示门闩（运行期尺寸推送打破「ro Welcome 每 attach 仅一次」
+// 天然无重复不变量后的等价物，05-11 Task 2 接线）；export 防 noUnusedLocals 在接线前误报
+//（queryKeys 先例）
+export let roNotified = false;
+
+// FE-03 + CORE-02：resize 回路。window resize → 100ms debounce → refit() →
+// RESIZE 帧（JSON {"cols","rows"} 恒为窗口 fit 尺寸，服务端钳制 [1,1000]）+ 约束渲染。
 // 发送前防护：display:none 时 proposeDimensions 返回无效值（PITFALLS C10）。
 function sendResize(cols: number, rows: number): void {
-  // Hello 完成前禁发任何数据帧：term.onResize 常驻接线在首次 fit.fit() 几乎必然触发
-  // sendResize——不门住则 RESIZE 抢跑首帧，服务端握手段以 1002 frame_before_hello 直关
+  // Hello 完成前禁发任何数据帧：onopen 首次 refit() 几乎必然走到 sendResize——
+  // 不门住则 RESIZE 抢跑首帧，服务端握手段以 1002 frame_before_hello 直关
   if (!helloSent) return;
   // D-09 第一闸：ro 客户端不发 RESIZE。Hello 携首尺寸不受影响——helloSent 门先于
   // isRO 生效（isRO 仅在 WELCOME 到达后才可能为 true，彼时 Hello 已发出）；
@@ -246,28 +260,54 @@ function sendResize(cols: number, rows: number): void {
   if (isRO) return;
   if (ws === null || ws.readyState !== WebSocket.OPEN) return;
   if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0) return;
+  // 去重：与最近一次实际上行相同的尺寸不重发。去重键 = 上行 fit 尺寸（窗口物理尺寸，
+  // 与被约束的渲染尺寸无关）；ro 期被 isRO 门拦截的调用不触 lastReported——升格后首次
+  // refit 必真实上报（05-08 尺寸接管纠正链的保持机制）
+  if (lastReported !== null && lastReported.cols === cols && lastReported.rows === rows) return;
   ws.send(concat(new Uint8Array([RESIZE]), enc.encode(JSON.stringify({ cols, rows }))));
+  lastReported = { cols, rows };
 }
 let overlayTimer: number | undefined;
-term.onResize(({ cols, rows }) => {
-  sendResize(cols, rows);
-  // FE-06 resize 浮层：welcomeDone && resizeOverlayOn 双门——onopen 初次 fit 不触发
-  //（welcomeDone 门：浮层是会话辅助不是启动尺寸指示器）；ro 模式同样显示
-  //（多客户端下 ro 不发 RESIZE——D-09，浮层为纯本地 UX 辅助，05-UI-SPEC R4）
-  if (!welcomeDone || !resizeOverlayOn) return;
+// refit 统一入口（G-05-1 前端半侧核心）：收编窗口监听/onopen/升格分支/prefs 段四个
+// 原 fit.fit() 调用点。双概念拆分——上报尺寸 = fit.proposeDimensions()（窗口物理尺寸，
+// 恒报全值驱动服务端 PTY 仲裁，永不是被约束的渲染尺寸，否则升格后尺寸接管纠正链断裂，
+// G-05-1 设计约束 3）；渲染尺寸 = 逐轴 min(fit, sessionDims)。不采用「CSS 约束容器再 fit」
+// 形态——那会使 proposeDimensions 返回被约束尺寸，上报/渲染两概念无法拆分。
+// 渲染用 term.resize（ITerminal 稳定 API，FitAddon 自身底层同调用）；term.onResize
+// 订阅已拆除——xterm 6 下 term.resize 唯一调用方是本函数（fit 插件仅经
+// proposeDimensions 使用），无旁路触发面
+function refit(): void {
+  const d = fit.proposeDimensions();
+  if (!d) return; // C10 守卫：display:none 时 proposeDimensions 返回 undefined
+  // 渲染尺寸逐轴 min：窗口小于会话尺寸的轴按窗口渲染（裁剪语义不变，README 既有明示），
+  // 大于的轴约束到会话矩形（G-05-1 修复面——同 cols 渲染同字节流，异尺寸双端逐屏一致）；
+  // 超出面积为页面背景留白（纯布局零新 UI 组件，D-07）；sessionDims null（旧服务端）不约束
+  const rCols = sessionDims ? Math.min(d.cols, sessionDims.cols) : d.cols;
+  const rRows = sessionDims ? Math.min(d.rows, sessionDims.rows) : d.rows;
+  if (term.cols !== rCols || term.rows !== rRows) {
+    term.resize(rCols, rRows); // 变化才调——幂等，Welcome 推送重放零抖动
+  }
+  sendResize(d.cols, d.rows); // 上报恒为窗口 fit 尺寸；等值去重在 sendResize 内（lastReported）
+  // FE-06 resize 浮层（D-17 语义钉死 = 窗口物理尺寸，本地 UX 辅助）：fit 尺寸未变的
+  // 推送重放/约束变化不闪浮层（会话尺寸推送不改变本地窗口，浮层无由触发）；
+  // welcomeDone && resizeOverlayOn 双门保持——onopen 初次 refit 不触发（浮层是会话辅助
+  // 不是启动尺寸指示器）；ro 端窗口 resize 浮层同显（05-UI-SPEC R4 既定语义保持）
+  const fitChanged = prevFit === null || prevFit.cols !== d.cols || prevFit.rows !== d.rows;
+  prevFit = { cols: d.cols, rows: d.rows };
+  if (!welcomeDone || !resizeOverlayOn || !fitChanged) return;
   const overlay = document.getElementById('resize-overlay')!;
-  overlay.textContent = `${cols}x${rows}`; // 服务端钳制 1000×1000 → 最长 9 字符无溢出（UI-SPEC §Resize Overlay Spec）
+  overlay.textContent = `${d.cols}x${d.rows}`; // 服务端钳制 1000×1000 → 最长 9 字符无溢出（UI-SPEC §Resize Overlay Spec）
   overlay.hidden = false;
   overlay.style.opacity = '1';
   clearTimeout(overlayTimer);
   overlayTimer = window.setTimeout(() => {
     overlay.style.opacity = '0'; // 静止 600ms 后置 0，经 transition 200ms 淡出
   }, 600);
-});
+}
 let timer: number | undefined;
 window.addEventListener('resize', () => {
   clearTimeout(timer);
-  timer = window.setTimeout(() => fit.fit(), 100);
+  timer = window.setTimeout(() => refit(), 100);
 });
 
 // CORE-03：OSC 0/2 标题变化 → sanitize → 单一写口（D-01 纯前端解析，服务端 OUTPUT 零拷贝
@@ -463,12 +503,12 @@ async function connect(): Promise<void> {
             isRO = false;
             term.options.disableStdin = false;
             setTitle(); // 单一写口去 [ro] 前缀（remoteTitle 不含前缀，04 契约既定）
-            // 触发既有 onResize→sendResize 链路（isRO 门已开），自动上报当前尺寸纠正
+            // 触发 refit→sendResize 链路（isRO 门已开），自动上报当前窗口 fit 尺寸纠正
             // 排队期间可能过期的值（owner 尺寸接管的前端半侧，05 R-09）
-            fit.fit();
+            refit();
           }
           // FE-07 prefs 应用段（UI-SPEC §Prefs Contract 步骤 2-4 逐字顺序：
-          // xterm 键 → fit.fit() → behavior 键 → osc52 条件加载）；
+          // xterm 键 → refit() → behavior 键 → osc52 条件加载）；
           // prefs 缺省（非对象）则整段跳过——nil 兼容（omitempty 缺席即无下发）；
           // 升格 Welcome 携 rw 档 prefs 重放本段：queryKeys 跳过机制幂等可重入，
           // xterm 键/behavior 键/theme 重放同值无害，osc52 由 osc52Loaded 门闩防二次加载
@@ -505,9 +545,9 @@ async function connect(): Promise<void> {
                 }
               }
               // 全部应用完重算（D-13 + RESEARCH §Pitfall 7：fontSize/lineHeight/letterSpacing
-              // 改变单元格尺寸，不 fit 则 cols/rows 与视口不符远端 TUI 画错）；
-              // 既有 onResize→RESIZE 帧链路自动同步服务端
-              fit.fit();
+              // 改变单元格尺寸，不 refit 则 cols/rows 与视口不符远端 TUI 画错）；
+              // refit 内 sendResize 恒报窗口 fit 尺寸自动同步服务端
+              refit();
               // behavior 键写前端开关量（非 xterm 选项——禁止写 term.options，UI-SPEC 步骤 4）；
               // queryKeys 同跳过；typeof boolean 校验同 query 通道（服务端只验 JSON 不验类型）；
               // 位置必须在下方 welcomeDone/beforeunload 注册点之前——开关值在注册点已是最终态
@@ -574,12 +614,12 @@ async function connect(): Promise<void> {
   };
 
   // 启动聚焦：页面打开即键盘可用，无需先点击。
-  // 顺序硬约束：线上首帧必须 Hello（D-02 携首尺寸）——fit 先行的尺寸由 Hello cols/rows
-  // 承载（消除 80x24 首帧窗口），此间 onResize 触发的 sendResize 被 helloSent 门吞掉；
-  // Hello 发出后窗口拖动经 onResize → sendResize 正常发送（握手已完成，协议合法）。
+  // 顺序硬约束：线上首帧必须 Hello（D-02 携首尺寸）——refit 先行的尺寸由 Hello cols/rows
+  // 承载（消除 80x24 首帧窗口），此间 refit 内的 sendResize 被 helloSent 门吞掉；
+  // Hello 发出后窗口拖动经 refit → sendResize 正常发送（握手已完成，协议合法）。
   sock.onopen = () => {
     opened = true;
-    fit.fit();
+    refit();
     sock.send(
       concat(
         new Uint8Array([HELLO]),
@@ -589,6 +629,9 @@ async function connect(): Promise<void> {
       ),
     );
     helloSent = true;
+    // Hello 载荷即首次尺寸上报——同步 lastReported 防握手 Welcome 到达后的 refit 把
+    // 等值尺寸作为「变化」重发一帧冗余 RESIZE（线序零漂移纪律：改造前握手后无此帧）
+    lastReported = { cols: term.cols, rows: term.rows };
     term.focus();
   };
 
