@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 06
 current_phase_name: session-lifecycle
 status: executing
-stopped_at: Completed 06-03-PLAN.md (CORE-05 前端重连状态机)
-last_updated: "2026-08-23T06:39:42.041Z"
+stopped_at: Completed 06-04-PLAN.md (--once / --exit-when-empty CLI 契约)
+last_updated: "2026-08-23T07:06:54.953Z"
 last_activity: 2026-08-23
 last_activity_desc: Phase 06 planning complete
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 44
-  completed_plans: 40
+  completed_plans: 41
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 06 (session-lifecycle) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Ready to execute
 Last activity: 2026-08-23 — Phase 06 execution started
 
-Progress: [█████████░] 91%
+Progress: [█████████░] 93%
 
 ## Performance Metrics
 
@@ -101,6 +101,7 @@ Progress: [█████████░] 91%
 | Phase 06-session-lifecycle P01 | 14min | 3 tasks | 7 files |
 | Phase 06-session-lifecycle P02 | 41min | 3 tasks | 6 files |
 | Phase 06-session-lifecycle P03 | 31min | 2 tasks | 4 files |
+| Phase 06 P04 | 12min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -199,6 +200,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-03]: fetch catch 补 welcomeDone 代际标记守卫（Rule 2）——D-04 既定形态引入双在飞 connect，较慢者迟到失败不得用 'Unable to connect' 覆盖已建立会话（Pitfall 6 同族，fetch 通道无 sock 可守卫）
 - [Phase ?]: [Phase 06-03]: scheduleAttempt 入口清双 timer 保恰好一次（Rule 2）——双在飞 attempt 先后失败重入不叠加定时器，Pitfall 5 恰好一次纪律落到定时器机械层
 - [Phase ?]: [Phase 06-03]: 404 探测直连分支不设 stopReconnect——无认证模式重连链路继续走 WS，循环终止唯一挂点 = WELCOME 到达（成功判定恒为 WELCOME 的 prohibition 直接推论）
+- [Phase ?]: [Phase 06-04]: D-12/D-14 确认门 as-locked（用户 2026-08-23 裁决）——--once BoolVar（≡ --max-clients=1 --exit-when-empty=0，help 单行标明等价关系，第二客户端拒绝走既有 503 计数路径）+ --exit-when-empty[=duration]（exitEmptyValue 实现 flag.Value + IsBoolFlag 惯例：裸写=立即退出、=duration=重连宽限、不写=不开启；空格分隔形态不传值）——与 06-CONTEXT.md D-12/D-14 逐字一致
+- [Phase ?]: [Phase 06-04]: 语法糖分层纪律落地——fs.Visit 显式设置位判定（maxClientsSet/exitEmptySet）→ parse 期展开只填未显式位 → validateStartup 锚定显式设置位判组合矛盾（review #3：不依赖展开不变量，自证性更强）；IsBoolFlag 逐字引文作 func 行尾注释以满足验收 grep ==1
 
 ### Pending Todos
 
@@ -217,6 +220,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-23T06:39:42.019Z
-Stopped at: Completed 06-03-PLAN.md (CORE-05 前端重连状态机)
+Last session: 2026-08-23T07:06:54.930Z
+Stopped at: Completed 06-04-PLAN.md (--once / --exit-when-empty CLI 契约)
 Resume file: None
