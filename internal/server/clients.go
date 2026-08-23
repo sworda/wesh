@@ -505,6 +505,10 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	if s.registry.owner == c {
 		s.promoteNextLocked()
 	}
+	// 注册表空触发断开退出（06-02，SESS-01/02）：非空→空迁移事件挂点之二——
+	// kick 移除路径同挂点（removeLocked 返回 true 之后、hubCond.Broadcast 之前，
+	// 与 detach 调用点同位同款注释纪律）。
+	s.maybeExitWhenEmptyLocked(c)
 	s.hubCond.Broadcast() // P5-7 统一挂点：kick 后门重估
 	go func() {
 		_ = c.conn.Close(websocket.StatusTryAgainLater, "slow_consumer")
@@ -692,5 +696,78 @@ func (s *Server) detach(c *client) {
 	if s.registry.owner == c {
 		s.promoteNextLocked()
 	}
+	// 注册表空触发断开退出（06-02，SESS-01/02）：非空→空迁移事件挂点之一——
+	// removeLocked 返回 true 之后、hubCond.Broadcast 之前（与 kick 调用点同位
+	// 同款注释纪律）。
+	s.maybeExitWhenEmptyLocked(c)
 	s.hubCond.Broadcast() // P5-7 统一挂点：detach 后门重估
+}
+
+// maybeExitWhenEmptyLocked 是注册表空触发断开退出的判定与执行（06-02，
+// SESS-01/02，D-13/D-14）。调用方必须已持 hubMu 且刚 removeLocked(c) 成功——
+// 事件 = 非空→空迁移（RESEARCH Pitfall 2：启动期恒空天然免疫，检测只挂
+// detach/kickSlowConsumerLocked 两移除点，严禁轮询/状态式检测）。
+//
+// 三守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
+// 子进程继续运行，P5『断开不退出』产品承诺，D-14）|| exiting（lifecycle 终结
+// 广播门——广播 Close(1000) 引发的 detach 致空属正常终结序列，不得再生
+// SIGHUP/计时器）|| 注册表非空。
+//
+// grace==0（立即形态——0 是合法显式值，D-14 set/grace 分离）：logEvent
+// exit_when_empty + SIGHUP 子进程进程组（pty.Session.SignalHangup——负 pid =
+// 进程组，setsid 使 pgid == 子进程 pid）。只发信号，不调 exitf、不经旁路
+// terminate——零新 exitf 分支（D-13 硬约束），终结由既有 lifecycle 单一路径
+// 收口（SIGHUP → 子进程死亡 → sess.Wait 返回 → exitf 以子进程退出码收口，
+// 两模式零分支差异）。
+//
+// grace>0（宽限形态）：既有 timer 先 Stop（幂等重启——再次断开重新计时）→
+// AfterFunc 启动 exitEmptyTimer（回调捕获最后离开者 remote）→ logEvent
+// exit_when_empty_wait。回调到期取 hubMu 复查『仍空且未 exiting』才发 SIGHUP
+// （RESEARCH Pitfall 4：复查是恰好一次的兜底——宽限内 attach 已由取消点
+// Stop+置 nil，本回调能进入临界区即取消点未覆盖的残余窗口）；SIGHUP 幂等
+// （kill 已死 pgid 收 ESRCH 静默忽略）；timer 随会话消亡。
+//
+// logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
+// （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
+func (s *Server) maybeExitWhenEmptyLocked(c *client) {
+	if !s.exitWhenEmpty || s.exiting || len(s.registry.set) != 0 {
+		return
+	}
+	if s.exitWhenEmptyGrace == 0 {
+		// 立即形态：无计时器，迁移点直接发 SIGHUP。
+		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty")
+		s.sess.SignalHangup()
+		return
+	}
+	if s.exitEmptyTimer != nil {
+		s.exitEmptyTimer.Stop() // 幂等重启——再次断开重新计时（取消点置 nil 后的防御兜底）
+	}
+	remote := c.remote // 回调捕获最后离开者对端——回调触发时 c 已随 detach 消亡
+	s.exitEmptyTimer = time.AfterFunc(s.exitWhenEmptyGrace, func() {
+		s.hubMu.Lock()
+		defer s.hubMu.Unlock()
+		// 复查『仍空且未 exiting』（Pitfall 4 恰好一次兜底；arbiter timer 同款
+		// 取锁纪律，resize.go initArbiter 先例）。不调 exitf——零新 exitf 分支
+		//（D-13 硬约束）；SIGHUP 幂等（已死 pgid ESRCH 静默）。
+		if s.exiting || len(s.registry.set) != 0 {
+			return
+		}
+		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty")
+		s.sess.SignalHangup()
+	})
+	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait")
+}
+
+// cancelExitEmptyTimerLocked 是宽限取消点（06-02，D-14）：宽限内任一端 attach
+// 成功（registerLocked 登记后由 Attach 升档序列在同一 hubMu 持有内调用）即取消
+// 退出——恰好一次：置 nil 防重复 Stop 与重复 exit_when_empty_cancel 事件。
+// 调用方必须已持 hubMu。code 恒 1000 收口桶（reason 区分语义，D-12② 延伸）；
+// SEC-01 红线保持——token/ticket/凭据值永不入参。
+func (s *Server) cancelExitEmptyTimerLocked(remote string) {
+	if s.exitEmptyTimer == nil {
+		return
+	}
+	s.exitEmptyTimer.Stop()
+	s.exitEmptyTimer = nil
+	logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty_cancel")
 }

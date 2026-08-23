@@ -119,6 +119,20 @@ type Server struct {
 	// acquire/release 恰好一次不变量见 halfOpenCounter 类型注释。
 	halfOpen halfOpenCounter
 
+	// Phase 6 断开退出装配（06-02，SESS-01/02）：exitWhenEmpty/exitWhenEmptyGrace
+	// 为 New 装配期固化、运行期只读（D-14 set/grace 分离——grace=0 是合法显式值
+	//「最后一个客户端断开立即退出」，set 位由 bool 承载，禁止 <=0 零值兜底吞掉
+	// 显式 0）；exitEmptyTimer 为宽限计时器（hubMu 保护——启停全在 hubMu 内：
+	// detach/kick 两移除点启动、registerLocked 成功后取消、置 nil 恰好一次，
+	// resize.go initArbiter 计时器先例；回调自有 goroutine，入内先取 hubMu 复查
+	//『仍空且未 exiting』）；exiting 为 lifecycle 终结广播门（hubMu 保护——
+	// lifecycle 注册表快照前置位：广播 Close 引发的 detach 致空属正常终结序列，
+	// 空触发检查该位抑制，不得再生 SIGHUP/计时器）。
+	exitWhenEmpty      bool
+	exitWhenEmptyGrace time.Duration
+	exitEmptyTimer     *time.Timer
+	exiting            bool
+
 	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
 }
 
@@ -149,28 +163,36 @@ type Server struct {
 // 05-06 新增：ShareTokenRO/ShareTokenRW 为生产直传字段（main 经
 // GenerateShareToken 启动生成两明文原样透传，server 只存 SHA-256 预哈希——
 // D-01 第三认证通道；任一空串 = 通道关闭，本 phase main 恒生成）。
+// 06-02 新增：ExitWhenEmpty/ExitWhenEmptyGrace 为测试可覆写字段（SESS-01/02，
+// D-14）：ExitWhenEmpty 为 set 位（所有客户端断开后退出——默认 false = 现状
+// 保持，无客户端时子进程继续运行，P5『断开不退出』产品承诺）；ExitWhenEmptyGrace
+// 为断开退出宽限（0 是合法显式值 = 最后一个客户端断开立即退出——set/grace
+// 分离，禁止 <=0 零值兜底吞掉显式 0，PATTERNS §3 注意项；仅在 ExitWhenEmpty
+// 为 true 时有意义；负值无语义，New 防御性钳 0）。
 type Options struct {
-	Writable         bool
-	WritePolicy      string
-	PingInterval     time.Duration
-	HelloTimeout     time.Duration
-	MaxHalfOpenPerIP int
-	PongTimeout      time.Duration
-	Credentials      []Credential
-	Origins          []string
-	TLS              bool
-	TicketTTL        time.Duration
-	ThrottleBase     time.Duration
-	ThrottleCap      time.Duration
-	ClientPrefsRO    json.RawMessage
-	ClientPrefsRW    json.RawMessage
-	OutboxBytes      int
-	MaxClients       int
-	InputRate        int
-	InputBurst       int
-	ResizeDebounce   time.Duration
-	ShareTokenRO     string
-	ShareTokenRW     string
+	Writable           bool
+	WritePolicy        string
+	PingInterval       time.Duration
+	HelloTimeout       time.Duration
+	MaxHalfOpenPerIP   int
+	PongTimeout        time.Duration
+	Credentials        []Credential
+	Origins            []string
+	TLS                bool
+	TicketTTL          time.Duration
+	ThrottleBase       time.Duration
+	ThrottleCap        time.Duration
+	ClientPrefsRO      json.RawMessage
+	ClientPrefsRW      json.RawMessage
+	OutboxBytes        int
+	MaxClients         int
+	InputRate          int
+	InputBurst         int
+	ResizeDebounce     time.Duration
+	ShareTokenRO       string
+	ShareTokenRW       string
+	ExitWhenEmpty      bool
+	ExitWhenEmptyGrace time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -225,6 +247,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.WritePolicy == "" {
 		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
 	}
+	// D-14 set/grace 分离：grace=0 是合法显式值（最后一个客户端断开立即退出），
+	// 禁止 <=0 零值兜底吞掉显式 0（PATTERNS §3 注意项）；负值无语义，防御性钳 0。
+	if opts.ExitWhenEmptyGrace < 0 {
+		opts.ExitWhenEmptyGrace = 0
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
@@ -247,6 +274,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		tlsOn:            opts.TLS,
 		clientPrefsRO:    opts.ClientPrefsRO,
 		clientPrefsRW:    opts.ClientPrefsRW,
+		// New 装配直传（06-02，D-14；set/grace 分离，grace 负值已在上方钳 0）。
+		exitWhenEmpty:      opts.ExitWhenEmpty,
+		exitWhenEmptyGrace: opts.ExitWhenEmptyGrace,
 	}
 	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
 	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
@@ -733,6 +763,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		if becomeOwner {
 			s.registry.owner = cl // D-06：首个 rw attach 立 owner
 		}
+		// 宽限取消点（06-02，D-14）：attach 登记成功即取消断开退出宽限计时——
+		// 宽限内任一端 attach 成功则退出取消、会话继续；恰好一次（Stop + 置 nil
+		// 防重复，实现见 clients.go cancelExitEmptyTimerLocked）。plan 字面
+		//「registerLocked 尾部」的调和：registerLocked 是 registry 方法无 Server
+		// 视角，取消点落同一 hubMu 持有内的登记之后。
+		s.cancelExitEmptyTimerLocked(cl.remote)
 		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
 		s.hubCond.Broadcast()
@@ -1052,6 +1088,12 @@ func (s *Server) lifecycle() {
 	// 循环随 CloseError 终结走 detach——detach 不进 exitf，终结由本路径独占
 	//（D-10）。
 	s.hubMu.Lock()
+	// exiting 门（06-02，D-13 防线；review #5 吸收——置位必须先于注册表快照）：
+	// 广播 Close(1000) 引发的 detach 致空属正常终结序列，空触发
+	//（clients.go maybeExitWhenEmptyLocked）检查该位抑制，不得再生 SIGHUP/宽限
+	// 计时器（事件流可信度与信号竞态防线；无此门则自然退出 exit 42 路径有
+	// SIGHUP 翻码竞态）。
+	s.exiting = true
 	clients := make([]*client, 0, len(s.registry.set))
 	for c := range s.registry.set {
 		clients = append(clients, c)
