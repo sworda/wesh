@@ -7,8 +7,11 @@
 //   D1 1006 重连全链（Reconnecting 面板 C-9 → 退避自动重连 → 清屏 → beforeunload 重注册）
 //   D2/D3 不触发边界（1002/1013/1008 → 各专版手动面板 + 守候窗零新连接）
 //   D4 双触发幂等（offline + onclose(1006) 相继到达 → 单循环，Pitfall 5）
-//   （D5-D8：Reconnect now 手动入口 / 代际守卫 / EXIT 全链 / online 快路径 + 豁免场景——
-//    同 plan Task 2 补齐）
+//   D5 Reconnect now 手动入口（点击即跳过等待立即 attempt，循环不终止）
+//   D6 代际守卫（旧 socket 迟到 onclose 零污染新会话，Pitfall 6）
+//   D7 EXIT 帧全链（真实服务端 exit 7 → Session ended 正文逐字 + 进程退出码）
+//   D8 online 快路径（清等待立即 attempt，D-04）
+//   D9 真实断网栈豁免场景（skipped+reason，指向 06-UAT.md 人工清单）
 //
 // 本文件夹具（phase05-dom.mjs loadTerminal 形态逐字复用 + 两件延伸）：
 //   - SpyWebSocket.synthClose(code)：合成 CloseEvent 驱动 onclose 分派（06-RESEARCH A2
@@ -25,7 +28,7 @@
 // 隔离纪律：每场景独立 spawn 实例 + 独立 jsdom——重连状态是页面级，隔离防串扰。
 //
 // 红线（phase04.mjs:6-9 纪律沿用）：token/凭据值永不进 check detail/控制台输出/汇总行——
-// detail 只打状态码/布尔/形状/文案常量。
+// detail 只打状态码/布尔/形状/文案常量；assertOutputClean() 运行时自净断言兜底（review #7）。
 //
 // 运行：node web/uat/phase06-dom.mjs [wesh 二进制路径]（默认 /tmp/wesh-uat/wesh）
 import { spawn } from 'node:child_process';
@@ -43,9 +46,18 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 const results = [];
+// 全部已发 detail 收集（assertOutputClean 遍历材料——review #7 运行时自净断言）
+const emittedDetails = [];
 const check = (id, name, ok, detail = '') => {
   results.push({ id, name, ok });
+  emittedDetails.push(String(detail));
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${id} ${name}${detail ? ` — ${detail}` : ''}`);
+};
+// 平台豁免记录形态：不计失败（headless 硬约束，CODEBUDDY.md 显式豁免条款）
+const skip = (id, name, reason) => {
+  results.push({ id, name, ok: null });
+  emittedDetails.push(String(reason));
+  console.log(`  SKIP  ${id} ${name} — ${reason}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, label, timeout = 5000) {
@@ -60,6 +72,12 @@ async function waitFor(fn, label, timeout = 5000) {
 // SpyWebSocket 构造计数（模块级，构造器内递增）——D2/D3/D4/D5/D8 的「零新连接 /
 // 立即 attempt」断言材料；各场景以基线快照取相对值
 let constructed = 0;
+// startWesh 解析 stdout 时把分享链接 token 留入本闭包数组（只作 assertOutputClean
+// 断言材料）——红线：token 值永不进 check detail/控制台输出/汇总行
+const sensitiveTokens = [];
+
+// 分享链接 URL → token（/s/{token}/ 路径段；值只作 assertOutputClean 断言材料——红线）
+const tokenFromUrl = (url) => /\/s\/([^/]+)\//.exec(url)[1];
 
 // 启动 wesh 实例（phase05.mjs startWesh 同形态：--bind 127.0.0.1 --port 0 + stdout
 // 解析 + stderr 捕获 + child 句柄 + SIGKILL kill）。本脚本场景 plain '/' 进入
@@ -82,6 +100,10 @@ function startWesh(args) {
         setTimeout(() => {
           const shareRO = /share read-only:\s+(\S+)/.exec(stdoutBuf)?.[1] ?? null;
           const shareRW = /share read-write:\s+(\S+)/.exec(stdoutBuf)?.[1] ?? null;
+          // token 留入模块级闭包（assertOutputClean 唯一消费点——值不进任何输出）
+          for (const link of [shareRO, shareRW]) {
+            if (link !== null) sensitiveTokens.push(tokenFromUrl(link));
+          }
           resolve({ port: Number(m[2]), scheme: m[1], shareRO, shareRW, stderrText: () => stderr, kill: () => child.kill('SIGKILL'), child });
         }, 50);
       }
@@ -198,7 +220,13 @@ async function loadTerminal(srv, opts = {}) {
   window.document.body.innerHTML = bodyHtml;
   window.eval(js);
 
-  return { window, document: window.document, sentFrames, infos, warns, unhandled, dom, dims, sockets, bu };
+  // D6 代际守卫场景二次驱动：直接调用 synthClose 留存的处理器副本（review D6 简化
+  // 建议形态——synthClose 后 this.onclose 已置 null，代际事件须以捕获副本驱动）
+  const staleClose = (inst, code) => {
+    inst._savedClose?.call(inst, makeCloseEvent(code));
+  };
+
+  return { window, document: window.document, sentFrames, infos, warns, unhandled, dom, dims, sockets, bu, staleClose };
 }
 
 // 等终端完成握手（WELCOME 处理完）：shell prompt 非空白字符出现即 OUTPUT 流通
@@ -394,7 +422,132 @@ async function d4DoubleTriggerIdempotent() {
   }
 }
 
-const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent];
+// ═══════════════════ D5：Reconnect now 手动入口（点击跳过等待，循环不终止） ═══════════════════
+async function d5ReconnectNowManual() {
+  console.log('D5: Reconnect now 手动入口（等待期点击 hint 链接 → 倒计时未完即发起新连接）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const base = constructed;
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+  try {
+    await waitReady(ctx.document);
+    ctx.sockets[ctx.sockets.length - 1].synthClose(1006);
+    await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Reconnecting' ? q : null;
+    }, 'Reconnecting 面板出现（等待期）');
+    const link = ctx.document.querySelector('#status-hint a');
+    check('D5a', "等待期 hint 内 'Reconnect now' 链接在场（#status-hint a）",
+      link?.textContent === 'Reconnect now', `link=${JSON.stringify(link?.textContent ?? '')}`);
+    link.click();
+    // 800ms 容差窗 ≪ 标称退避 1s（轮询+容差形态，review #6 吸收）：窗内到达 = 等待被
+    // 跳过（退避到期前 +1）；超时未到 = 未跳过 = FAIL
+    await waitFor(() => constructed === base + 2, '点击后立即 attempt（构造计数 +1）', 800);
+    check('D5b', '点击后 800ms 容差窗内发起新连接（倒计时未完即 attempt）', true, `构造=${constructed - base}`);
+    // 循环不终止于手动入口——若本次失败仍按退避继续；本场景成功以 WELCOME 终止
+    await waitFor(() => !panel(ctx.document).visible, '新 WELCOME 后面板隐藏', 3000);
+    check('D5c', '手动入口后循环以成功终止（新 WELCOME 面板隐藏）', true, '面板已隐藏');
+  } finally {
+    await cleanup(ctx, inst);
+  }
+}
+
+// ═══════════════════ D6：代际守卫（旧 socket 迟到 onclose 零污染新会话） ═══════════════════
+async function d6StaleGenerationGuard() {
+  console.log('D6: 代际守卫（RESEARCH Pitfall 6：stale onclose 不得触碰新会话状态）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const base = constructed;
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+  try {
+    await waitReady(ctx.document);
+    const stale = ctx.sockets[ctx.sockets.length - 1]; // 首连接实例引用留存
+    stale.synthClose(1006);
+    await waitFor(() => constructed === base + 2, '退避后自动重连', 3000);
+    await waitFor(() => !panel(ctx.document).visible, '重连成功面板隐藏', 3000);
+    // 重连成功新会话建立后，对旧实例迟到派发合成 onclose(1006)——四 handler 入口
+    // if (sock !== ws) return 代际守卫的直击断言（Pitfall 6 防线）
+    ctx.staleClose(stale, 1006);
+    await sleep(400); // 吸纳窗：守卫失效的污染同步显形（面板/新连接/拆监听）
+    check('D6a', 'stale onclose 后面板保持隐藏（新会话状态零污染）',
+      !panel(ctx.document).visible, `面板可见=${panel(ctx.document).visible}`);
+    check('D6b', 'stale onclose 后零新连接构造（无第三连接）',
+      constructed === base + 2, `构造=${constructed - base}`);
+    check('D6c', 'stale onclose 不拆新连接 beforeunload 监听（off 不增）',
+      ctx.bu.off === 1 && ctx.bu.on === 2, `on=${ctx.bu.on} off=${ctx.bu.off}`);
+  } finally {
+    await cleanup(ctx, inst);
+  }
+}
+
+// ═══════════════════ D7：EXIT 帧全链（真实服务端 exit 7 → Session ended 逐字） ═══════════════════
+async function d7ExitFrameChain() {
+  console.log('D7: EXIT 帧全链（真实服务端行为：子进程 exit 7 → EXIT 帧 + 1000 → Session ended 正文逐字）');
+  const inst = await startWesh(['--', 'sh', '-c', 'sleep 2; exit 7']);
+  const base = constructed;
+  // wesh 进程退出码捕获（exitf 退出码传递顺带锁定）——提早挂监听防错过
+  const exitCodeP = new Promise((r) => inst.child.once('exit', (code) => r(code)));
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+  try {
+    // 会话建立（2s 窗口内）——sh 无输出，以 WELCOME 处理完成的 beforeunload 注册为可观测代理
+    await waitFor(() => ctx.bu.on === 1, '会话建立（WELCOME 处理完成，beforeunload 注册）', 2000);
+    // 子进程到期退出 → 真实 EXIT 帧 + 1000 到达 → Session ended 面板
+    const p = await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Session ended' ? q : null;
+    }, 'Session ended 面板', 8000);
+    check('D7a', "Session ended 正文逐字 == 'The process exited with code 7.'（06-01 服务端组文案前端直显端到端证据）",
+      p.body === 'The process exited with code 7.', `body=${JSON.stringify(p.body)}`);
+    const exitCode = await exitCodeP;
+    check('D7b', 'wesh 进程 exit 事件码==7（进程级退出码传递）',
+      exitCode === 7, `exit=${exitCode}`);
+    check('D7c', '1000 明确终结不触发重连（零新连接构造）',
+      constructed === base + 1, `构造=${constructed - base}`);
+  } finally {
+    await cleanup(ctx, inst);
+  }
+}
+
+// ═══════════════════ D8：online 快路径（清等待立即 attempt，D-04） ═══════════════════
+async function d8OnlineFastPath() {
+  console.log('D8: online 快路径（重连等待期 dispatch online → 当前等待被清立即 attempt）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const base = constructed;
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+  try {
+    await waitReady(ctx.document);
+    ctx.sockets[ctx.sockets.length - 1].synthClose(1006);
+    await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Reconnecting' ? q : null;
+    }, 'Reconnecting 面板出现（等待期，未到 1s 退避点）');
+    // online = 清当前等待定时器立即试一次——不是新循环（D-04）
+    ctx.window.dispatchEvent(new ctx.window.Event('online'));
+    // 800ms 容差窗 ≪ 标称退避 1s（轮询+容差形态同 D5，review #6）
+    await waitFor(() => constructed === base + 2, 'online 后立即 attempt（构造计数 +1）', 800);
+    check('D8a', 'online dispatch 后 800ms 容差窗内发起新连接（退避到期前 +1）', true, `构造=${constructed - base}`);
+    await waitFor(() => !panel(ctx.document).visible, '新 WELCOME 后面板隐藏', 3000);
+    check('D8b', 'online 快路径重连成功（面板隐藏）', true, '面板已隐藏');
+  } finally {
+    await cleanup(ctx, inst);
+  }
+}
+
+// ═══════════════════ D9：真实断网栈豁免（headless 硬约束，人工清单指针） ═══════════════════
+function d9RealNetworkStackExempt() {
+  skip('D9', '真实 OS 断网栈与浏览器原生 online/offline 事件时序',
+    'headless 硬约束豁免（CODEBUDDY.md 平台原生行为豁免条款）：本脚本以合成 CloseEvent/Event dispatch 驱动同一状态机覆盖等价逻辑面，06-06 phase06.mjs 以真实 TCP 断连覆盖协议面；真实栈场景人工清单见 .planning/phases/06-session-lifecycle/06-UAT.md（06-07 产出，06-UI-SPEC §UI Considerations backstop 行）');
+}
+
+// 输出自净断言（review #7 吸收——红线由注释纪律升级为运行时自证）：遍历全部已发
+// detail，断言不含任一 token 值或 '/s/' 链接形态串；命中即 FAIL（防未来回归静默破线，
+// phase04.mjs:6-9 红线的可执行形态）。命中时不回显冒犯内容（只打布尔/计数——红线自保）
+function assertOutputClean() {
+  const leaked = emittedDetails.some((d) =>
+    d.includes('/s/') || sensitiveTokens.some((t) => t !== null && d.includes(t)));
+  check('SEC', "输出自净：全部 detail 零 token 值零 '/s/' 链接形态串（红线运行时自证）",
+    !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
+}
+
+const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d9RealNetworkStackExempt];
 let failed = 0;
 for (const s of scenarios) {
   try {
@@ -405,6 +558,7 @@ for (const s of scenarios) {
   }
   await sleep(300);
 }
+assertOutputClean();
 const skipped = results.filter((r) => r.ok === null).length;
 const passedN = results.filter((r) => r.ok === true).length;
 const failedN = results.filter((r) => r.ok === false).length;
