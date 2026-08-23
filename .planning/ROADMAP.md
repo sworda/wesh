@@ -241,11 +241,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 7 plans
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — SESS-03 EXIT 帧端到端 tracer：proto 'X'/ExitPayload/ExitFrame + lifecycle 写序安全广播（同步 Write→Close 1000）+ exit_test.go 两测 + 前端暂存承接与 dist（含 D-08/D-09 one-way 确认门）
+- [ ] 06-01-PLAN.md — SESS-03 EXIT 帧端到端 tracer：proto 'X'/ExitPayload/ExitFrame + lifecycle 写序安全广播（同步 Write→Close 1000）+ exit_test.go 两测 + exitmsg_test.go 白盒测（signalName/exitMessage）+ 前端暂存承接与 dist（含 D-08/D-09 one-way 确认门）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 06-02-PLAN.md — SESS-01/02 服务端：pty.SignalHangup（SIGHUP 进程组复活）+ Options.ExitWhenEmpty（set/grace 分离）+ 注册表空触发与宽限计时器 + exiting 门 + 六测（含 OQ1 退出状态确认门）
+- [ ] 06-02-PLAN.md — SESS-01/02 服务端：pty.SignalHangup（SIGHUP 进程组复活）+ Options.ExitWhenEmpty（set/grace 分离）+ 注册表空触发与宽限计时器 + exiting 门 + 七测（含 OQ1 退出状态确认门）
 - [ ] 06-03-PLAN.md — CORE-05 前端重连状态机：backoffMs 纯函数 + 1006 显式触发 + online/offline 双触发 + Reconnecting 面板（showStatus 参数化）+ 代际守卫 + dist
 
 **Wave 3** *(blocked on Wave 2 completion)*
