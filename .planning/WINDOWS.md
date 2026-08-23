@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 15
+open_count: 16
 waived_count: 0
 fixed_count: 1
-total_count: 16
-last_updated: 2026-08-23T07:07:13.884Z
+total_count: 17
+last_updated: 2026-08-23T07:42:10.089Z
 ---
 
 # Broken Windows Ledger
@@ -31,6 +31,7 @@ last_updated: 2026-08-23T07:07:13.884Z
 | 14 | 05 | deviation | web/uat/phase05-dom.mjs |  | 05-12: phase05-dom.mjs/phase05-flood-driver.mjs 为 05-09 产物但从未入库（git 历史零记录），随 Task 2 补录使 D6 修改可提交（ce91dc5） | open |  | 2026-08-22T04:55:53.195Z |  |
 | 15 | 05 | deviation | .planning/phases/05-multi-client/05-VALIDATION.md |  | 05-12: plan 字面 05-10-01 行 go test -run 选择器 '\\\|' 在 RE2 下为字面管道符零匹配假绿，改裸 '\|' 实测 green 回填（fd26ebe） | open |  | 2026-08-22T04:55:53.347Z |  |
 | 16 | 06 | deviation | cmd/wesh/main.go |  | 06-04: IsBoolFlag 逐字引文改作 func 行尾注释（plan『注释逐字引 GOROOT』与验收 grep IsBoolFlag==1 两约束机械调和，语义零损失） | open |  | 2026-08-23T07:07:13.884Z |  |
+| 17 | 06 | unrun-verify | web/uat/phase06-dom.mjs |  | D9 真实 OS 断网栈/浏览器原生 online/offline 事件时序按 headless 硬约束豁免（skipped+reason，指向 06-UAT.md 人工清单） | open |  | 2026-08-23T07:42:10.089Z |  |
 
 ````json
 [
@@ -224,6 +225,18 @@ last_updated: 2026-08-23T07:07:13.884Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-23T07:07:13.884Z",
+    "resolved_at": null
+  },
+  {
+    "id": 17,
+    "kind": "unrun-verify",
+    "phase": "06",
+    "file": "web/uat/phase06-dom.mjs",
+    "line": null,
+    "description": "D9 真实 OS 断网栈/浏览器原生 online/offline 事件时序按 headless 硬约束豁免（skipped+reason，指向 06-UAT.md 人工清单）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-23T07:42:10.089Z",
     "resolved_at": null
   }
 ]

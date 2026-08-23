@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 06
 current_phase_name: session-lifecycle
 status: executing
-stopped_at: Completed 06-04-PLAN.md (--once / --exit-when-empty CLI 契约)
-last_updated: "2026-08-23T07:06:54.953Z"
+stopped_at: Completed 06-05-PLAN.md (CORE-05 jsdom 重连行为证据 phase06-dom.mjs)
+last_updated: "2026-08-23T07:47:08.844Z"
 last_activity: 2026-08-23
 last_activity_desc: Phase 06 planning complete
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 44
-  completed_plans: 41
+  completed_plans: 42
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 06 (session-lifecycle) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Status: Ready to execute
 Last activity: 2026-08-23 — Phase 06 execution started
 
-Progress: [█████████░] 93%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
@@ -102,6 +102,7 @@ Progress: [█████████░] 93%
 | Phase 06-session-lifecycle P02 | 41min | 3 tasks | 6 files |
 | Phase 06-session-lifecycle P03 | 31min | 2 tasks | 4 files |
 | Phase 06 P04 | 12min | 2 tasks | 2 files |
+| Phase 06-session-lifecycle P05 | 21min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -202,6 +203,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-03]: 404 探测直连分支不设 stopReconnect——无认证模式重连链路继续走 WS，循环终止唯一挂点 = WELCOME 到达（成功判定恒为 WELCOME 的 prohibition 直接推论）
 - [Phase ?]: [Phase 06-04]: D-12/D-14 确认门 as-locked（用户 2026-08-23 裁决）——--once BoolVar（≡ --max-clients=1 --exit-when-empty=0，help 单行标明等价关系，第二客户端拒绝走既有 503 计数路径）+ --exit-when-empty[=duration]（exitEmptyValue 实现 flag.Value + IsBoolFlag 惯例：裸写=立即退出、=duration=重连宽限、不写=不开启；空格分隔形态不传值）——与 06-CONTEXT.md D-12/D-14 逐字一致
 - [Phase ?]: [Phase 06-04]: 语法糖分层纪律落地——fs.Visit 显式设置位判定（maxClientsSet/exitEmptySet）→ parse 期展开只填未显式位 → validateStartup 锚定显式设置位判组合矛盾（review #3：不依赖展开不变量，自证性更强）；IsBoolFlag 逐字引文作 func 行尾注释以满足验收 grep ==1
+- [Phase ?]: [Phase 06-05]: D1 清屏对照文本改 typeText echo 链路（Rule 3）——plan『spawn printf 先行』形态在 D-12 drain 语义下结构性不可观测（attach 前输出被丢弃无回放）；typeText InputEvent 链是 phase04-dom 已验证先例，恰为 must_have『终端经 echo 写入可观测文本』字面形态
+- [Phase ?]: [Phase 06-05]: RESEARCH A2 兑现——jsdom 25 CloseEvent 构造器探针先证可用，synthClose 置 null 抑制真实 close 混入断言面 + _savedClose 副本供 D6 代际场景二次驱动（staleClose）；assertOutputClean 运行时红线自证形态落地（review #7）
 
 ### Pending Todos
 
@@ -220,6 +223,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-23T07:06:54.930Z
-Stopped at: Completed 06-04-PLAN.md (--once / --exit-when-empty CLI 契约)
+Last session: 2026-08-23T07:47:08.817Z
+Stopped at: Completed 06-05-PLAN.md (CORE-05 jsdom 重连行为证据 phase06-dom.mjs)
 Resume file: None
