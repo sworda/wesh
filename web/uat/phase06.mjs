@@ -76,13 +76,23 @@ const tokenFromUrl = (url) => /\/s\/([^/]+)\//.exec(url)[1];
 // + share read-write: 行（仅 --writable，D-05 总闸）——链接即断言材料，token 值只存
 // 闭包变量，红线：永不进 check detail/控制台输出。ro 行齐备后 50ms 落定窗吸纳 rw 行
 // 可能的管道分块边界；stderr 持续捕获（logEvent/panic 断言通道）。
+// WR-02（06-REVIEW）：启动超时 reject 消息脱敏——--credential 后随值（空格与 = 两形态）
+// 替换为 <redacted>。场景异常通道（尾部 catch 原样打印 e.message）不经 emittedDetails，
+// assertOutputClean 扫不到——argv 原样回显会把凭据值明文送进控制台/CI 日志（S1/S3 的
+// --credential UAT_CREDENTIAL 形态），正是红线要防的通道
+const redactArgs = (args) => args.map((a, i) => {
+  if (a.startsWith('--credential=')) return '--credential=<redacted>';
+  if (i > 0 && args[i - 1] === '--credential') return '<redacted>';
+  return a;
+}).join(' ');
+
 function startWesh(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;
-    const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
+    const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${redactArgs(args)}; stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });
     child.stdout.on('data', (d) => {
       stdoutBuf += d.toString();
@@ -484,6 +494,9 @@ for (const s of scenarios) {
     await s();
   } catch (e) {
     failed++;
+    // WR-02：异常消息纳入 emittedDetails——assertOutputClean 自净断言面延伸到场景
+    // 异常通道（此前该通道绕过扫描，startWesh 启动超时等消息可携敏感值静默破线）
+    emittedDetails.push(String(e.message));
     console.log(`  FAIL  场景异常: ${e.message}`);
   }
   await sleep(300);
