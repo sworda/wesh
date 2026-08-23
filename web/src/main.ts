@@ -177,6 +177,12 @@ let lastExit: { exit_code: number; message: string } | null = null; // 最近一
 // 连接句柄提升为模块级：connect() 内赋值，onData/sendResize 等常驻接线引用当前连接；
 // 首连前 fetch 窗口内为 null（此间用户敲击被 null 闸静默吞掉，不抛 TypeError）
 let ws: WebSocket | null = null;
+// connect() 代际序号（06-REVIEW CR-01）：每次 connect() 调用单调自增。D-04 既定
+// 双在飞形态（online 事件/「Reconnect now」点击可在前一 attempt 的 fetch 飞行中再启
+// attempt）下，较旧链迟到 resolve 时据 gen 复查识别自身陈旧——fetch 通道无 sock
+// 可守卫（四 handler 的 sock !== ws 只覆盖 socket 建成后窗口），gen + welcomeDone
+// 双检查即该通道的代际守卫（06-03 deviation #1 catch 半侧的 resolve 半侧补全）
+let connectGen = 0;
 let retriedAuth = false; // auth_failed 静默重试仅一次的门闩（D-10；无限重试会把 60s TTL 正常过期放大成重试风暴）
 // ro 判定模块级化——标题写口/04-03 粘贴门/04-05 osc52 门三处共用（RESEARCH §Pattern 6 核实注）
 let isRO = false;
@@ -472,6 +478,7 @@ function showStatus(title: string, body: string, hintPrefix: string, action?: { 
 // API 剥离 URL token（D-03 路径段是分享/书签契约，1013 后手动刷新必须凭原 URL
 // 重新 attach——剥离会使 D-10 手动刷新入口失效；验收断言以源码零调用形态锁定）。
 async function connect(): Promise<void> {
+  const gen = ++connectGen; // 本链代际序号（CR-01）——每个 await 挂起点后、行动前复查
   // 每次尝试重置 per-connection 状态——auth_failed 重试不携带上次连接残留
   opened = false;
   helloSent = false;
@@ -509,6 +516,12 @@ async function connect(): Promise<void> {
             body: JSON.stringify({ token: shareToken }),
           },
     );
+    // 代际复查①（CR-01）：fetch resolve 后、状态码分派前——本链已被更新的 connect()
+    // 取代（gen 过期：双击/online 竞速）或健康会话已建立（welcomeDone，06-03
+    // deviation #1 同款代际标记）时静默丢弃返回：迟到链不得落 401/429/503 等终态
+    // 面板覆盖健康会话/更新链 UI（catch 通道已有同款守卫，本行为 resolve 通道的对称
+    // 收口）
+    if (gen !== connectGen || welcomeDone) return;
     if (resp.ok) {
       ticket = (await resp.json()).ticket;
     } else if (resp.status === 404) {
@@ -574,6 +587,16 @@ async function connect(): Promise<void> {
     return;
   }
 
+  // 代际复查②（CR-01）：resp.json() 二次挂起后、提交句柄前最后复查（复查①到本点间
+  // 仍可能被更新链取代）。通过者提交前关闭被取代的旧 socket：重连窗口期旧 socket
+  // 可能已 onopen 发出 Hello 完成 attach 而 WELCOME 尚未处理（welcomeDone 仍 false），
+  // 不 close 则成幽灵连接——浏览器协议栈透明回 pong，服务端 pinger/pongTimeout 永不
+  // 触发，永久占用注册表槽位与 owner 身份，本链新连接反被降级 ro（CR-01 场景 B 双击
+  // 形态）。健康会话不会到此（两处复查的 welcomeDone 先行拦截）——ws?.close() 只命中
+  // null/已死 socket（幂等空转）或在飞残骸（本意）；被关旧 socket 的迟到事件经
+  // sock !== ws 守卫静默空转，beforeunload 监听不误拆
+  if (gen !== connectGen || welcomeDone) return;
+  ws?.close();
   // scheme 按页面协议选 ws/wss——https 页面下必须 wss（TLS 部署可连，03-04 伺服形态）
   ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws', [SUBPROTOCOL]); // D-03：wesh.v1 子协议建连
   const sock = ws; // 闭包内引用本连接的确定句柄（TS 对模块级可空 let 不做闭包收窄）

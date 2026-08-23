@@ -12,6 +12,7 @@
 //   D7 EXIT 帧全链（真实服务端 exit 7 → Session ended 正文逐字 + 进程退出码）
 //   D8 online 快路径（清等待立即 attempt，D-04）
 //   D9 真实断网栈豁免场景（skipped+reason，指向 06-UAT.md 人工清单）
+//   D10 CR-01 代际守卫 fetch 半侧（双在飞 attempt 较旧链迟到成功不踩占健康连接）
 //
 // 本文件夹具（phase05-dom.mjs loadTerminal 形态逐字复用 + 两件延伸）：
 //   - SpyWebSocket.synthClose(code)：合成 CloseEvent 驱动 onclose 分派（06-RESEARCH A2
@@ -23,7 +24,10 @@
 //     断言材料（各场景以基线快照取相对值，跨场景单调不累读）；
 //   - beforeunload 记账：包装 window.addEventListener/removeEventListener，对
 //     'beforeunload' 类型分别递增 on/off（D1 移除后重注册 / D6 stale 不拆除断言材料；
-//     包装转发原实现，行为零漂移）。
+//     包装转发原实现，行为零漂移）；
+//   - attach fetch 闸（loadTerminal opts.holdAttachFetchN）：hold 第 N 次 fetch 的
+//     resolve（请求照常发出、服务端真实应答，仅 promise 放行被闸，ctx.releaseHeldFetch
+//     放行）——D10 双在飞 attempt 较旧链迟到成功的复现材料。
 //
 // 隔离纪律：每场景独立 spawn 实例 + 独立 jsdom——重连状态是页面级，隔离防串扰。
 //
@@ -159,7 +163,21 @@ async function loadTerminal(srv, opts = {}) {
       if (handler !== null && handler !== undefined) handler.call(this, makeCloseEvent(code));
     }
   };
-  window.fetch = (u, o) => fetch(new URL(u, origin), o);
+  // CR-01 D10 夹具：hold 第 holdN 次 fetch 的 resolve（双在飞 attempt 较旧链迟到成功
+  // 复现——请求照常发出、服务端真实应答，仅 resolve 被闸至 releaseHeldFetch 放行；
+  // 与「网络闪断后 TCP 重传迟到成功」同形态）。本应用 fetch 唯一用途即 /api/attach
+  //（main.ts 单调用点），按调用序号计数安全
+  const holdN = opts.holdAttachFetchN ?? 0;
+  let fetchSeq = 0;
+  let releaseHeld = null;
+  window.fetch = (u, o) => {
+    const p = fetch(new URL(u, origin), o);
+    fetchSeq++;
+    if (fetchSeq === holdN) {
+      return new Promise((resolve) => { releaseHeld = () => resolve(p); });
+    }
+    return p;
+  };
   window.TextEncoder = TextEncoder;
   window.TextDecoder = TextDecoder;
   window.matchMedia = (q) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false });
@@ -226,7 +244,7 @@ async function loadTerminal(srv, opts = {}) {
     inst._savedClose?.call(inst, makeCloseEvent(code));
   };
 
-  return { window, document: window.document, sentFrames, infos, warns, unhandled, dom, dims, sockets, bu, staleClose };
+  return { window, document: window.document, sentFrames, infos, warns, unhandled, dom, dims, sockets, bu, staleClose, releaseHeldFetch: () => releaseHeld?.() };
 }
 
 // 等终端完成握手（WELCOME 处理完）：shell prompt 非空白字符出现即 OUTPUT 流通
@@ -531,6 +549,40 @@ async function d8OnlineFastPath() {
   }
 }
 
+// ═══════════════════ D10：CR-01 代际守卫 fetch 半侧（stale 迟到成功不踩占健康连接） ═══════════════════
+async function d10StaleLateSuccessNoClobber() {
+  console.log('D10: CR-01 双在飞 attempt 迟到成功不踩占（stale fetch 迟到 resolve → 零新构造/面板隐藏/无 ro 降级）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const base = constructed;
+  // hold 第 2 次 fetch = 重连 attempt 1 的 attach 请求（第 1 次为首连，正常放行）
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port }, { holdAttachFetchN: 2 });
+  try {
+    await waitReady(ctx.document);
+    // 1006 → 重连循环 → 退避 1s 到期 attempt 1：connect() 同步发出 fetch #2（被闸悬挂）——
+    // runAttempt 在途正文出现即 fetch 已发出（runAttempt → void connect() 同步段单任务内完成）
+    ctx.sockets[ctx.sockets.length - 1].synthClose(1006);
+    await waitFor(() => panel(ctx.document).body.includes('Retrying now'), 'attempt 1 在途（fetch #2 已发出被闸）', 3000);
+    // attempt 1 的 fetch 悬挂期间点击「Reconnect now」→ attempt 2（D-04 既定双在飞形态）：
+    // fetch #3 正常放行 → 新连接 → WELCOME → 健康会话建立在 attempt 2 上
+    ctx.document.querySelector('#status-hint a').click();
+    await waitFor(() => constructed === base + 2, 'attempt 2 建连（构造计数 +1）', 3000);
+    await waitFor(() => !panel(ctx.document).visible, 'attempt 2 WELCOME 后面板隐藏', 3000);
+    // 放行被闸的 stale fetch #2（迟到成功）：修复前 404 探测后无条件 ws = new WebSocket
+    // 踩占句柄（构造 +1，stale socket attach 成 ro 写 [ro] 前缀 + disableStdin）；
+    // 修复后 gen 代际复查①直接丢弃返回
+    ctx.releaseHeldFetch();
+    await sleep(400); // 吸纳窗（D6 同款）：若守卫失效，踩占连接同步构造并 attach 显形
+    check('D10a', 'stale fetch 迟到 resolve 后零新连接构造（未踩占健康句柄）',
+      constructed === base + 2, `构造=${constructed - base}`);
+    check('D10b', '面板保持隐藏（健康会话 UI 零污染）',
+      !panel(ctx.document).visible, `面板可见=${panel(ctx.document).visible}`);
+    check('D10c', "标题无 '[ro] ' 前缀（未被踩占连接的 ro attach 降级——修复前会写 [ro] + disableStdin）",
+      !ctx.document.title.startsWith('[ro] '), `title=${JSON.stringify(ctx.document.title)}`);
+  } finally {
+    await cleanup(ctx, inst);
+  }
+}
+
 // ═══════════════════ D9：真实断网栈豁免（headless 硬约束，人工清单指针） ═══════════════════
 function d9RealNetworkStackExempt() {
   skip('D9', '真实 OS 断网栈与浏览器原生 online/offline 事件时序',
@@ -547,7 +599,7 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d9RealNetworkStackExempt];
+const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d9RealNetworkStackExempt];
 let failed = 0;
 for (const s of scenarios) {
   try {
