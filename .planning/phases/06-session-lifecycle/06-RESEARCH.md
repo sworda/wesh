@@ -479,17 +479,17 @@ const exitOf = (frames) => JSON.parse(dec.decode(frames.find((f) => f[0] === EXI
 | A3 | 凭据模式重连的 fetch /api/attach 不经人工交互自动携浏览器 Basic 缓存凭据 | Pattern 6 循环规则 | LOW——P3 已 UAT 验证（main.ts:413-416 注释「A2 假设，UAT 必验」的兑现先例）；分享链接模式 URL token 保留可重 POST（P5 D-03） |
 | A4 | `--once` 断开退出路径的进程退出状态 255（os.Exit(-1) 截断）可被接受 | Pitfall 8 / OQ1 | MEDIUM——机制 GOROOT 级确定，可接受性是产品裁决；若用户要 exit 0 或 129，lifecycle 需加一处映射分支（小改但触公开行为） |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **--once/--exit-when-empty 收口路径的进程退出状态**
+1. **--once/--exit-when-empty 收口路径的进程退出状态** — [RESOLVED → 06-02 Task 1 blocking 确认门（checkpoint:decision：accept-255 / map-to-0 / map-to-129 三选项）；门裁决值驱动 06-02 测试断言常量、06-06 phase06.mjs S3/S4/S5 进程级断言、06-07 README 明示文案]
    - What we know: D-13 锁定「SIGHUP 进程组 → Drain → exitf 以子进程退出码收口」；SIGHUP 致死 → `ExitCode() = -1`（GOROOT 逐字核实）→ `os.Exit(-1)` → Unix 退出状态 255。Phase 1 旧语义为 exit 0（git 历史 `terminate(true, 0)`）。D-09 对 EXIT 帧载荷已确立「信号死亡 exit_code=-1」先例——同语义延伸到进程退出状态即 255。
    - What's unclear: 部署脚本/文档对 wesh 自身退出状态的预期（0 = 正常收口 vs 255 = 信号收口 vs 129 = 128+SIGHUP shell 惯例）。
    - Recommendation: 照单收（lifecycle 零分支改动，D-13 字面形态；README 明示「--once/--exit-when-empty 收口 = 子进程被 SIGHUP 终结，wesh 退出状态 255」）——plan-check 或计划评审时向用户确认一行裁决；备选 = terminate 前映射 -1→0（保 P1 语义）或 128+sig。
-2. **Reconnecting 面板 hint 的「Reconnect now」链接形态**
+2. **Reconnecting 面板 hint 的「Reconnect now」链接形态** — [RESOLVED → 06-03 Task 2：showStatus 参数化（第四可选参 `action?: { label, onClick }`，缺省保持 Reload 现状零漂移），R3/OQ2 定稿]
    - What we know: showStatus 当前硬编码 "Reload this page" 链接（main.ts:370-377 逐字核实）；D-03 要 hint 处放可点「Reconnect now」；D-11 要 hint 文案含「若服务端已退出请从 shell 重启」。
    - What's unclear: showStatus 参数化（第四参传动作链接 label+callback）vs 为 Reconnecting 单独建变体函数。
    - Recommendation: 参数化 showStatus（动作链接 label/onClick 可选参数，默认保持 Reload 现状零漂移）——三态面板单组件纪律（P5 D-07 哲学）下唯一不复制 DOM 结构的形态。
-3. **EXIT 帧广播 Write 超时时长**
+3. **EXIT 帧广播 Write 超时时长** — [RESOLVED → 06-01 Task 2：2s 常量入 server 常量区（lifecycle EXIT 广播段同步 Write(2s)→Close(1000) 形态，P2 D-10 常量纪律）]
    - What we know: Close 内建 5s+5s 上界（库源码核实）；EXIT 同步直写需要自带超时 ctx 防 stall 端拖延 exitf。
    - What's unclear: 具体值（2s 为建议值——足够快客户端收下 ~100B 帧，远小于 Close 上界）。
    - Recommendation: 2s 常量入 proto 或 server 常量区（P2 D-10 常量纪律，Phase 9 标定注释同款挂账）。
