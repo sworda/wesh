@@ -505,8 +505,11 @@ async function d7ExitFrameChain() {
   const exitCodeP = new Promise((r) => inst.child.once('exit', (code) => r(code)));
   const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
   try {
-    // 会话建立（2s 窗口内）——sh 无输出，以 WELCOME 处理完成的 beforeunload 注册为可观测代理
-    await waitFor(() => ctx.bu.on === 1, '会话建立（WELCOME 处理完成，beforeunload 注册）', 2000);
+    // 会话建立——sh 无输出，以 WELCOME 处理完成的 beforeunload 注册为可观测代理；
+    // 期限取 5000ms 默认族（WR-01：WS 帧按序到达 WELCOME→EXIT→close 1000，等待无需
+    // 抢在子进程 sleep 2 自杀时点前——原 2000ms 期限与其耦合，慢机器上假性 FAIL；
+    // 放宽不削弱 D7a 逐字文案/D7b 退出码/D7c 零新连接任一断言面）
+    await waitFor(() => ctx.bu.on === 1, '会话建立（WELCOME 处理完成，beforeunload 注册）', 5000);
     // 子进程到期退出 → 真实 EXIT 帧 + 1000 到达 → Session ended 面板
     const p = await waitFor(() => {
       const q = panel(ctx.document);
