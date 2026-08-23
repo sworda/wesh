@@ -1,11 +1,19 @@
 ---
-status: pending-manual
+status: testing
 phase: 06-session-lifecycle
 created: 2026-08-23
-source: [06-07-PLAN.md, 06-05-SUMMARY.md, 06-06-SUMMARY.md]
+source: [06-VERIFICATION.md, 06-07-PLAN.md, 06-05-SUMMARY.md, 06-06-SUMMARY.md]
+started: 2026-08-23T10:05:00Z
+updated: 2026-08-23T10:05:00Z
 ---
 
 ## Current Test
+
+number: 1
+name: 断网 30s 恢复自动重连（CORE-05 主场景观感）
+expected: |
+  断网后数秒内出现「Reconnecting」面板（attempt 计数 + 下次重试倒计时，退避 1s×2 封顶 30s）；断网约 30s 期间计数递增、倒计时周期变长；恢复网络后 5s 内自动接回原会话（同一 shell 进程，断网前现场仍在上游）
+awaiting: user response
 
 [awaiting manual execution — 开发机为永久 headless 环境（无 GUI/浏览器，禁装 playwright——见根 CODEBUDDY.md），本清单供外部有浏览器的机器人工执行]
 
