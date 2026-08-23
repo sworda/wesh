@@ -36,6 +36,11 @@ type config struct {
 	writePolicySet bool   // --write-policy 是否被显式设置（parseArgs 经 fs.Visit 填充，validateStartup 组合校验消费）
 	// Phase 5 容量策略（D-08，one-way 公开契约，P2 D-15 同纪律）：
 	maxClients int // --max-clients（默认 32；容量策略是部署关切开 flag，与 P2 D-10 攻击面上限常量不同类）
+	// Phase 6 会话生命周期（D-12/D-14，one-way 公开契约，P2 D-15 同纪律）：
+	once          bool           // --once（≡ --max-clients=1 --exit-when-empty=0 语法糖；展开见 parseArgs）
+	exitEmpty     exitEmptyValue // --exit-when-empty[=duration]（可选值 flag，三形态见类型注释）
+	maxClientsSet bool           // --max-clients 是否被显式设置（fs.Visit 填充；--once 展开与 validateStartup 冲突校验消费）
+	exitEmptySet  bool           // --exit-when-empty 是否被显式设置（同上）
 	// Phase 3 认证与传输安全（one-way 公开契约，P2 D-15 同纪律）：
 	credentials  []server.Credential // D-01：--credential 逐组收集 / WESH_CREDENTIAL env 兜底
 	tlsCert      string              // D-04：--tls-cert，与 tlsKey 成对才启用 TLS
@@ -53,6 +58,16 @@ type config struct {
 type clientOption struct {
 	key   string
 	value json.RawMessage
+}
+
+// exitEmptyValue 是 --exit-when-empty[=duration] 的 flag.Value 实现（D-14 三形态：
+// 不写 = 不开启；裸写 = 最后一个客户端断开立即退出（grace 0）；=duration = 重连
+// 宽限）。可选值惯例（GOROOT flag.go:350-356：实现该布尔方法的 Value 使命令行
+// 解析器把 -name 等价于 -name=true，而非消费下一命令行参数）——空格分隔形态
+// `--exit-when-empty 30s` 结构性不传值（30s 落入 argv），值只能经 = 号形态传入。
+type exitEmptyValue struct {
+	set   bool
+	grace time.Duration
 }
 
 // parseArgs 解析 flags。全名无短选项（P2 D-15），共 15 个：
