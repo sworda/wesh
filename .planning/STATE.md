@@ -6,7 +6,7 @@ current_phase: 6
 current_phase_name: 会话生命周期与重连
 status: "Phase 05 shipped — PR #6"
 stopped_at: Phase 6 UI-SPEC approved
-last_updated: "2026-08-23T00:39:52.255Z"
+last_updated: "2026-08-23T02:34:54.303Z"
 last_activity: 2026-08-23
 last_activity_desc: Phase 06 planning complete
 progress:
