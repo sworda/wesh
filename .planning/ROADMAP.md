@@ -238,7 +238,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 子进程退出后所有在线客户端收到含退出码的类型化终结帧提示（非静默断开），随后以 1000 正常关闭
   3. 断网 30s 恢复后前端自动重连（指数退避 + 上限 + 手动入口）并接回同一 PTY 进程，输入输出一致（无滚动回放，屏幕靠程序重绘或 tmux/herdr 恢复——文档明示）
 
-**Plans**: 5/7 plans executed
+**Plans**: 6/7 plans executed
 **Wave 1**
 
 - [x] 06-01-PLAN.md — SESS-03 EXIT 帧端到端 tracer：proto 'X'/ExitPayload/ExitFrame + lifecycle 写序安全广播（同步 Write→Close 1000）+ exit_test.go 两测 + exitmsg_test.go 白盒测（signalName/exitMessage）+ 前端暂存承接与 dist（含 D-08/D-09 one-way 确认门）
@@ -255,7 +255,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 06-06-PLAN.md — phase06.mjs 协议层 UAT：EXIT 双端广播（ro/rw 同帧 + 帧序 + 进程退出码）/信号死亡/--once 全链/--exit-when-empty 立即与宽限/断连重接同一 PTY
+- [x] 06-06-PLAN.md — phase06.mjs 协议层 UAT：EXIT 双端广播（ro/rw 同帧 + 帧序 + 进程退出码）/信号死亡/--once 全链/--exit-when-empty 立即与宽限/断连重接同一 PTY
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -315,7 +315,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
-| 6. 会话生命周期与重连 | 5/7 | In Progress|  |
+| 6. 会话生命周期与重连 | 6/7 | In Progress|  |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |
 | 9. 发布与打磨 | TBD | Not started | - |

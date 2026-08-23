@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 16
+open_count: 17
 waived_count: 0
 fixed_count: 1
-total_count: 17
-last_updated: 2026-08-23T07:42:10.089Z
+total_count: 18
+last_updated: 2026-08-23T08:24:59.916Z
 ---
 
 # Broken Windows Ledger
@@ -32,6 +32,7 @@ last_updated: 2026-08-23T07:42:10.089Z
 | 15 | 05 | deviation | .planning/phases/05-multi-client/05-VALIDATION.md |  | 05-12: plan 字面 05-10-01 行 go test -run 选择器 '\\\|' 在 RE2 下为字面管道符零匹配假绿，改裸 '\|' 实测 green 回填（fd26ebe） | open |  | 2026-08-22T04:55:53.347Z |  |
 | 16 | 06 | deviation | cmd/wesh/main.go |  | 06-04: IsBoolFlag 逐字引文改作 func 行尾注释（plan『注释逐字引 GOROOT』与验收 grep IsBoolFlag==1 两约束机械调和，语义零损失） | open |  | 2026-08-23T07:07:13.884Z |  |
 | 17 | 06 | unrun-verify | web/uat/phase06-dom.mjs |  | D9 真实 OS 断网栈/浏览器原生 online/offline 事件时序按 headless 硬约束豁免（skipped+reason，指向 06-UAT.md 人工清单） | open |  | 2026-08-23T07:42:10.089Z |  |
+| 18 | 06 | unrun-verify | web/uat/phase06.mjs |  | S7 真实断网栈/浏览器原生事件序列 skipped（headless 硬约束豁免）——人工清单见 .planning/phases/06-session-lifecycle/06-UAT.md（06-07 产出）；协议层等价物 S6 已覆盖 | open |  | 2026-08-23T08:24:59.916Z |  |
 
 ````json
 [
@@ -237,6 +238,18 @@ last_updated: 2026-08-23T07:42:10.089Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-23T07:42:10.089Z",
+    "resolved_at": null
+  },
+  {
+    "id": 18,
+    "kind": "unrun-verify",
+    "phase": "06",
+    "file": "web/uat/phase06.mjs",
+    "line": null,
+    "description": "S7 真实断网栈/浏览器原生事件序列 skipped（headless 硬约束豁免）——人工清单见 .planning/phases/06-session-lifecycle/06-UAT.md（06-07 产出）；协议层等价物 S6 已覆盖",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-23T08:24:59.916Z",
     "resolved_at": null
   }
 ]

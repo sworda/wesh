@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 06
 current_phase_name: session-lifecycle
 status: executing
-stopped_at: Completed 06-05-PLAN.md (CORE-05 jsdom 重连行为证据 phase06-dom.mjs)
-last_updated: "2026-08-23T07:47:08.844Z"
+stopped_at: Completed 06-06-PLAN.md (phase06.mjs 协议层 UAT 七场景)
+last_updated: "2026-08-23T08:24:35.723Z"
 last_activity: 2026-08-23
 last_activity_desc: Phase 06 planning complete
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 44
-  completed_plans: 42
+  completed_plans: 43
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 06 (session-lifecycle) — EXECUTING
-Plan: 6 of 7
+Plan: 7 of 7
 Status: Ready to execute
 Last activity: 2026-08-23 — Phase 06 execution started
 
-Progress: [██████████] 95%
+Progress: [██████████] 98%
 
 ## Performance Metrics
 
@@ -103,6 +103,7 @@ Progress: [██████████] 95%
 | Phase 06-session-lifecycle P03 | 31min | 2 tasks | 4 files |
 | Phase 06 P04 | 12min | 2 tasks | 2 files |
 | Phase 06-session-lifecycle P05 | 21min | 2 tasks | 1 files |
+| Phase 06-session-lifecycle P06 | 23min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -205,6 +206,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-04]: 语法糖分层纪律落地——fs.Visit 显式设置位判定（maxClientsSet/exitEmptySet）→ parse 期展开只填未显式位 → validateStartup 锚定显式设置位判组合矛盾（review #3：不依赖展开不变量，自证性更强）；IsBoolFlag 逐字引文作 func 行尾注释以满足验收 grep ==1
 - [Phase ?]: [Phase 06-05]: D1 清屏对照文本改 typeText echo 链路（Rule 3）——plan『spawn printf 先行』形态在 D-12 drain 语义下结构性不可观测（attach 前输出被丢弃无回放）；typeText InputEvent 链是 phase04-dom 已验证先例，恰为 must_have『终端经 echo 写入可观测文本』字面形态
 - [Phase ?]: [Phase 06-05]: RESEARCH A2 兑现——jsdom 25 CloseEvent 构造器探针先证可用，synthClose 置 null 抑制真实 close 混入断言面 + _savedClose 副本供 D6 代际场景二次驱动（staleClose）；assertOutputClean 运行时红线自证形态落地（review #7）
+- [Phase ?]: [Phase 06-06]: S5① 宽限计时起点锚定服务端 detach——c1 close 后先 waitClose（握手完成⇒detach 已发生）再 sleep 400ms，取消窗 1100ms 余量论证严格成立
+- [Phase ?]: [Phase 06-06]: OQ1 accept-255 协议层兑现——phase06.mjs S3/S4/S5 进程级退出状态 255 断言全绿（Go 层 exitf 桩收 -1，os.Exit(-1) Unix 截断只在真实二进制出现，06-02 下游消费点闭合）
+- [Phase ?]: [Phase 06-06]: 断连重接同一 PTY 协议层证据形态——echo S6PID=$$ 进程 ID 相等主证据（/S6PID=(\d+)/ 数字锚定防回显误命中）+ weshmark42 变量存活次级佐证 + 首连接无 EXIT 帧 + 服务端存活顺带锁定 D-14 默认
 
 ### Pending Todos
 
@@ -223,6 +227,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-23T07:47:08.817Z
-Stopped at: Completed 06-05-PLAN.md (CORE-05 jsdom 重连行为证据 phase06-dom.mjs)
+Last session: 2026-08-23T08:24:35.699Z
+Stopped at: Completed 06-06-PLAN.md (phase06.mjs 协议层 UAT 七场景)
 Resume file: None
