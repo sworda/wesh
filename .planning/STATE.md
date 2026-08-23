@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06
 current_phase_name: session-lifecycle
-status: executing
-stopped_at: Completed 06-06-PLAN.md (phase06.mjs 协议层 UAT 七场景)
-last_updated: "2026-08-23T08:24:35.723Z"
+status: verifying
+stopped_at: Completed 06-07-PLAN.md (Phase 6 收口：README/UAT/VALIDATION + 全量回归)
+last_updated: "2026-08-23T09:03:03.278Z"
 last_activity: 2026-08-23
 last_activity_desc: Phase 06 planning complete
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 44
-  completed_plans: 43
+  completed_plans: 44
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 
 Phase: 06 (session-lifecycle) — EXECUTING
 Plan: 7 of 7
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-23 — Phase 06 execution started
 
-Progress: [██████████] 98%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -104,6 +104,7 @@ Progress: [██████████] 98%
 | Phase 06 P04 | 12min | 2 tasks | 2 files |
 | Phase 06-session-lifecycle P05 | 21min | 2 tasks | 1 files |
 | Phase 06-session-lifecycle P06 | 23min | 2 tasks | 1 files |
+| Phase 06-session-lifecycle P07 | 26min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -209,6 +210,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-06]: S5① 宽限计时起点锚定服务端 detach——c1 close 后先 waitClose（握手完成⇒detach 已发生）再 sleep 400ms，取消窗 1100ms 余量论证严格成立
 - [Phase ?]: [Phase 06-06]: OQ1 accept-255 协议层兑现——phase06.mjs S3/S4/S5 进程级退出状态 255 断言全绿（Go 层 exitf 桩收 -1，os.Exit(-1) Unix 截断只在真实二进制出现，06-02 下游消费点闭合）
 - [Phase ?]: [Phase 06-06]: 断连重接同一 PTY 协议层证据形态——echo S6PID=$$ 进程 ID 相等主证据（/S6PID=(\d+)/ 数字锚定防回显误命中）+ weshmark42 变量存活次级佐证 + 首连接无 EXIT 帧 + 服务端存活顺带锁定 D-14 默认
+- [Phase ?]: [Phase 06-07]: -max-clients help 重复标注裁决为修复（06-04 deferred 既定路由）——移除 help 文案自含 (default 32)，flag 包自动追加为单一事实源；纯展示层零语义，one-way 契约面不动
+- [Phase ?]: [Phase 06-07]: 旧 UAT 脚本对 EXIT 帧零适配落锤——phase02 T4a 仅断言 close code、phase03 无子进程退出场景，九脚本首跑全绿；六段式段 1 顺带清零三文件既有 gofmt 漂移（deferred-items 既定路由终点）
 
 ### Pending Todos
 
@@ -227,6 +230,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-23T08:24:35.699Z
-Stopped at: Completed 06-06-PLAN.md (phase06.mjs 协议层 UAT 七场景)
+Last session: 2026-08-23T09:03:03.255Z
+Stopped at: Completed 06-07-PLAN.md (Phase 6 收口：README/UAT/VALIDATION + 全量回归)
 Resume file: None
