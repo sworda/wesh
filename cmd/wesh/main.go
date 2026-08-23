@@ -70,14 +70,47 @@ type exitEmptyValue struct {
 	grace time.Duration
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 15 个：
+// String 实现 flag.Value 契约（PrintDefaults 取注册时零值串 ""，不显示 default
+// 标注——不写即不开启的零配置形态）。
+func (v *exitEmptyValue) String() string {
+	if !v.set {
+		return ""
+	}
+	return v.grace.String()
+}
+
+func (v *exitEmptyValue) IsBoolFlag() bool { return true } // GOROOT flag.go:350-356 逐字："If a Value has an IsBoolFlag() bool method returning true, the command-line parser makes -name equivalent to -name=true rather than using the next command-line argument."——裸写 ≡ =true 不消费下一参数
+
+// Set 三形态：裸写（可选值惯例下送来 "true"）→ set + grace 0（立即退出）；
+// =duration → time.ParseDuration 解析；err!=nil 或 d<0 报错——d<0 检查是负值
+// 拒绝的唯一闸（time.ParseDuration("-5s") 解析成功，负 duration 是合法语法）。
+// 错误上报纪律：duration 值非敏感（T-06-04a accept），直接 return error——
+// flag 包会包装为 `invalid value %q for flag -exit-when-empty` 回显值，可接受，
+// 非 SEC-01 面（credErr/clientOptErr 记录式仅用于值含敏感内容的 flag，既定注释）。
+func (v *exitEmptyValue) Set(s string) error {
+	v.set = true
+	if s == "true" { // 裸写 = 最后一个客户端断开立即退出
+		v.grace = 0
+		return nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return fmt.Errorf("invalid --exit-when-empty duration %q: must be a non-negative duration (e.g. 30s)", s)
+	}
+	v.grace = d
+	return nil
+}
+
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 17 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
 // Phase 4：--client-option（P4 D-15 可重复，白名单 + JSON parse 期校验）、
 // --osc52（P4 D-12 OSC52 剪贴板写开关，默认关）；
 // Phase 5：--write-policy（D-05，owner|all 默认 owner，parse 期枚举校验）、
-// --max-clients（D-08，默认 32，≤0 经 validateStartup 拒绝）。
+// --max-clients（D-08，默认 32，≤0 经 validateStartup 拒绝）；
+// Phase 6：--once（D-12 语法糖 ≡ --max-clients=1 --exit-when-empty=0）、
+// --exit-when-empty[=duration]（D-14 可选值，裸写 = 立即退出，默认不开启）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -160,6 +193,15 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// P4 D-12：OSC52 剪贴板写开关（write-only，默认关）——安全敏感项只能经本
 	// flag 由服务端开启，结构性排除出 --client-option 白名单与 URL query。
 	fs.BoolVar(&cfg.osc52, "osc52", false, "enable OSC52 clipboard write (write-only; default off)")
+	// D-12：--once 语法糖（one-way 公开契约）≡ --max-clients=1
+	// --exit-when-empty=0——help 文案单行标明等价关系；展开见下方 fs.Visit 之后。
+	// 第二客户端拒绝走既有 503 计数路径（D-12：409 单客户端门不复活）。
+	fs.BoolVar(&cfg.once, "once", false, "accept only one client and exit when it disconnects (equivalent to --max-clients=1 --exit-when-empty=0)")
+	// D-14：--exit-when-empty[=duration] 可选值 flag（one-way 公开契约）——
+	// 三形态：不写 = 不开启（现状保持：无客户端时子进程继续运行）；裸写 =
+	// 立即退出；=duration = 重连宽限。空格分隔形态不传值（可选值惯例，见类型
+	// 注释），help 用法行明示 = 号形态。
+	fs.Var(&cfg.exitEmpty, "exit-when-empty", "exit after all clients disconnect (optional grace: --exit-when-empty=30s; bare = exit immediately)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -175,7 +217,28 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		if f.Name == "write-policy" {
 			cfg.writePolicySet = true
 		}
+		// D-12/D-14：--once 展开与 validateStartup 冲突校验消费的显式设置判定
+		//（write-policy 同款形态——Visit 只遍历已设置 flag）。
+		if f.Name == "max-clients" {
+			cfg.maxClientsSet = true
+		}
+		if f.Name == "exit-when-empty" {
+			cfg.exitEmptySet = true
+		}
 	})
+	// D-12：--once 语法糖展开 ≡ --max-clients=1 --exit-when-empty=0——未显式给
+	// --max-clients 则置 1、未显式给 --exit-when-empty 则置 set+grace 0；显式给定
+	// 时不覆盖（用户值保持，矛盾检测归 validateStartup——分层纪律：parse = 形状
+	// 与展开，validate = 组合矛盾）。
+	if cfg.once {
+		if !cfg.maxClientsSet {
+			cfg.maxClients = 1
+		}
+		if !cfg.exitEmptySet {
+			cfg.exitEmpty.set = true
+			cfg.exitEmpty.grace = 0
+		}
+	}
 	if cfg.showVersion {
 		return cfg, nil, nil
 	}
@@ -311,6 +374,18 @@ func validateStartup(cfg config) (warn string, err error) {
 	if cfg.writePolicySet && !cfg.writable {
 		return "", errors.New("--write-policy is set but --writable is not; write policy only applies when client input is enabled")
 	}
+	// D-12 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
+	// bind 安全形态无关，loopback 早退之前判定）：--once 与显式矛盾值同给即拒，
+	// 双 flag 名进文案。判定锚定显式设置位而非展开后终值（review #3 吸收——
+	// 展开只填未显式位时两形态逻辑等价，但显式设置位判定不依赖该不变量，
+	// 自证性更强）；--once + 显式 --max-clients=1 / 显式裸 --exit-when-empty
+	// 为一致冗余放行（设置位为真但值一致）。
+	if cfg.once && cfg.maxClientsSet && cfg.maxClients != 1 {
+		return "", errors.New("--once conflicts with --max-clients: --once implies --max-clients=1")
+	}
+	if cfg.once && cfg.exitEmptySet && cfg.exitEmpty.grace != 0 {
+		return "", errors.New("--once conflicts with --exit-when-empty grace: --once implies immediate exit (--exit-when-empty=0)")
+	}
 	// D-08 数值校验（配置错误 fail-fast，P3 校验矩阵纪律）：--max-clients ≤0
 	// 无意义（容量必须为正——0/负值会使③位 503 闸恒触发，全员被拒）。纯配置
 	// 有效性与 bind 安全形态无关，故在 loopback 早退之前判定（write-policy
@@ -395,7 +470,10 @@ func run(args []string) int {
 	// 启动打印，server 只存 SHA-256 预哈希（Options 注释）。
 	shareRO := server.GenerateShareToken()
 	shareRW := server.GenerateShareToken()
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ShareTokenRO: shareRO, ShareTokenRW: shareRW})
+	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
+	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
+	// 组合语义，06-02 空触发机制消费）。
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
 	scheme := "http"
