@@ -29,8 +29,12 @@ const (
 	// 既有帧类型的运行期再推送不算动协议，零新类型字节）；G-05-1 起运行期再推送同为
 	// 尺寸下发通道（recalcNow 检测到会话尺寸变化时按各端当前 mode 组帧广播）
 	Error = 'E' // 0x45, S→C, JSON {"code":C,"message":M}
-	// 'X' EXIT / 'T' TITLE / 'P' PREFS —— 类型字节本 phase 占住，语义分属 Phase 6/4（D-01）；
-	// 'P' 帧运行期推送仍 v2 再议——P4 prefs 仅经 Welcome 内嵌一次性下发（D-13）。
+	// 'X' EXIT 已于 Phase 6 启用（SESS-03，D-08 用户裁决）：子进程退出终结帧，
+	// 先于 1000 广播（D-10 序列）。与 'E' Error 的语义边界——终结 ≠ 错误：
+	// exit 0 是正常终结，不挤占 Error code 空间（review E/X 共存核实吸收）。
+	Exit = 'X' // 0x58, S→C, JSON {"exit_code":N,"message":M}——信号死亡 exit_code=-1（D-09）
+	// 'T' TITLE 已终局不实现（P5 D-12）；'P' PREFS 运行期推送仍 v2 再议——
+	// P4 prefs 仅经 Welcome 内嵌一次性下发（D-13）。
 )
 
 // Subprotocol 子协议 token：HTTP 预检（Sec-WebSocket-Protocol 头）、
@@ -116,6 +120,14 @@ type ErrorPayload struct {
 	Message string `json:"message"`
 }
 
+// ExitPayload 显式 json tag（防字段名漂移，ErrorPayload 同构）。ExitCode 为子进程
+// 退出码——信号死亡 = -1（exec ExitCode 语义同源，D-09）；Message 为英文人话
+// （前端直显；服务端组文案唯一写口——前端不自维护信号文案表、不改写不拼接）。
+type ExitPayload struct {
+	ExitCode int    `json:"exit_code"`
+	Message  string `json:"message"`
+}
+
 // DecodeHello 解码 Hello 帧载荷 {"version":V,"cols":C,"rows":R}。
 // 解码失败返回 ok=false；成功时 Cols/Rows 经 ClampDim 钳制到 [1,1000] 后返回。
 // 不做 version 校验——校验语义在 server 握手段（02-02）。
@@ -167,6 +179,14 @@ func ValidClientOptionKey(key string) bool {
 func ErrorFrame(code, message string) []byte {
 	b, _ := json.Marshal(ErrorPayload{Code: code, Message: message})
 	return append([]byte{Error}, b...)
+}
+
+// ExitFrame 组 EXIT 帧：1 字节类型 + JSON {"exit_code":N,"message":M}，调用方
+// 直接 c.Write（lifecycle 广播段同步直写——禁止经 outbox.trySend 异步入队，
+// RESEARCH Pitfall 1 关闭帧超车竞态）。固定 schema 下 json.Marshal 不会失败。
+func ExitFrame(exitCode int, message string) []byte {
+	b, _ := json.Marshal(ExitPayload{ExitCode: exitCode, Message: message})
+	return append([]byte{Exit}, b...)
 }
 
 // resizePayload 显式 json tag，防字段名漂移。

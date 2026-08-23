@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -952,9 +953,79 @@ func (s *Server) logIfMessageTooBig(remote string, err error) {
 	}
 }
 
+// signalName 返回信号的约定大写名（"SIGHUP" 形态）供 exitMessage 消费
+// （06-01 review 吸收——映射表抽为独立 helper，exitmsg_test.go 白盒逐行锁定）。
+// RESEARCH Pitfall 3：Signal.String() 产出小写描述词（"hangup"——GOROOT
+// zerrors 表），禁止裸用——显式映射是唯一合法形态（D-09 服务端组文案唯一
+// 写口）。未在映射表的信号返回 ("", false)，调用方回退数字形态。
+func signalName(sig syscall.Signal) (string, bool) {
+	switch sig {
+	case syscall.SIGHUP:
+		return "SIGHUP", true
+	case syscall.SIGINT:
+		return "SIGINT", true
+	case syscall.SIGQUIT:
+		return "SIGQUIT", true
+	case syscall.SIGILL:
+		return "SIGILL", true
+	case syscall.SIGABRT:
+		return "SIGABRT", true
+	case syscall.SIGKILL:
+		return "SIGKILL", true
+	case syscall.SIGSEGV:
+		return "SIGSEGV", true
+	case syscall.SIGPIPE:
+		return "SIGPIPE", true
+	case syscall.SIGALRM:
+		return "SIGALRM", true
+	case syscall.SIGTERM:
+		return "SIGTERM", true
+	case syscall.SIGUSR1:
+		return "SIGUSR1", true
+	case syscall.SIGUSR2:
+		return "SIGUSR2", true
+	case syscall.SIGCHLD:
+		return "SIGCHLD", true
+	}
+	return "", false
+}
+
+// exitMessage 组装 EXIT 帧 message（D-09 三形态，文案与 06-UI-SPEC §Session
+// Ended Contract 文案表逐字一致；服务端组文案唯一写口——前端不自维护信号文案
+// 表、textContent 直显）：
+//  1. err==nil（正常退出含 exit 0）→ "The process exited with code 0."
+//  2. ExitError 且 code>=0 → "The process exited with code N."
+//  3. ExitError 且 code<0（信号死亡，ExitCode()=-1——GOROOT exec_posix.go 语义）
+//     → signalName 命中组大写名形态 "…killed by signal SIGNAME."；未命中/
+//     WaitStatus 断言失败回退数字形态（断言失败为防御性兜底——unix 上
+//     ExitError.Sys() 恒为 WaitStatus，真实进程不可达）
+//  4. 非 ExitError（Wait 返回其他错误）→ 兜底 terminated 文案
+func exitMessage(err error, code int) string {
+	if err == nil {
+		return "The process exited with code 0."
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return "The process terminated."
+	}
+	if code >= 0 {
+		return fmt.Sprintf("The process exited with code %d.", code)
+	}
+	// 信号死亡分支：WaitStatus 提取信号号（Signaled 守卫）。断言失败时 sig 保持
+	// 占位值 code（恒 -1）——回退数字形态产出 "signal -1"，语义即「信号号未知」。
+	sig := code
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		sig = int(ws.Signal())
+	}
+	if name, ok := signalName(syscall.Signal(sig)); ok {
+		return fmt.Sprintf("The process was killed by signal %s.", name)
+	}
+	return fmt.Sprintf("The process was killed by signal %d.", sig)
+}
+
 // lifecycle 是 D-10 唯一终结路径触发源（多客户端形态）：子进程退出 → 带时限
-// drain（Pitfall 4）→ 广播 1000 关闭全部已注册客户端 → exitf（退出码 = 子进程
-// 退出码，退出码传递语义不变）。
+// drain（Pitfall 4）→ 广播 EXIT 帧 + 1000 关闭全部已注册客户端（D-10 序列，
+// Phase 6 SESS-03）→ exitf（退出码 = 子进程退出码，退出码传递语义不变）。
 func (s *Server) lifecycle() {
 	err := s.sess.Wait()
 	code := 0
@@ -967,10 +1038,19 @@ func (s *Server) lifecycle() {
 	// master fd，在途 Master.Write 经 runtime poller 解除阻塞返回错误（与 Read
 	// 同机制，D-12 语义）；close(inputDone) 使 select 等待中的 inputWriter 退出。
 	close(s.inputDone)
-	// 广播 1000：hubMu 下取注册表快照后并行 Close 全部客户端（Close 自带 5s+5s
-	// 上界——close.go:87-89，并行等待自然有界）。广播期间新 attach 或断开的路径
-	// 均经 detach/reader 收口，不影响本快照的关闭语义；被关闭客户端的读循环随
-	// CloseError 终结走 detach——detach 不进 exitf，终结由本路径独占（D-10）。
+	// EXIT 帧组帧一次（D-09 载荷：exit_code + 服务端组文案 message）——全客户端
+	// 共享只读引用（P5-1 纪律）；ro/rw 全员同帧（终结无权限语义）。
+	exitFrame := proto.ExitFrame(code, exitMessage(err, code))
+	// 广播 EXIT 帧 + 1000（D-10 序列）：hubMu 下取注册表快照后，每客户端
+	// goroutine 内【先同步 Write(EXIT) 再 Close(1000)】——写序论证（RESEARCH
+	// Pattern 2 / Pitfall 1）：库帧级写串行化保同 goroutine 先写先发，wire 序恒
+	// EXIT 在 1000 前；禁止经 outbox.trySend 异步入队（writer drain 与 Close
+	// 关闭帧竞态，关闭帧超车则客户端收 1000 却无退出码）。Write 失败不补救直接
+	// Close——进程已退出场景无需保帧（CONTEXT discretion 授权）。Close 自带
+	// 5s+5s 上界（close.go:87-89，并行等待自然有界）。广播期间新 attach 或断开
+	// 的路径均经 detach/reader 收口，不影响本快照的关闭语义；被关闭客户端的读
+	// 循环随 CloseError 终结走 detach——detach 不进 exitf，终结由本路径独占
+	//（D-10）。
 	s.hubMu.Lock()
 	clients := make([]*client, 0, len(s.registry.set))
 	for c := range s.registry.set {
@@ -982,6 +1062,13 @@ func (s *Server) lifecycle() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// 2s Write 超时（RESEARCH OQ3 定值，Phase 9 标定挂账；拒绝可配化——
+			// P2 D-10 常量纪律）：stall/慢链路 2s 未写完 ~100B EXIT 帧即放弃
+			// 直写，该端退化为 1000 + 前端硬编码回退文案（R2 回退路径既有，
+			// 非致命）；2s ≪ Close 内建 5s+5s 上界。
+			wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = c.conn.Write(wctx, websocket.MessageBinary, exitFrame)
+			cancel()
 			_ = c.conn.Close(websocket.StatusNormalClosure, "")
 		}()
 	}

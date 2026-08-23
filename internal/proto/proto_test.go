@@ -135,6 +135,43 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 	})
 }
 
+// TestExitFrame 锁定 EXIT 帧组帧形状（D-08/D-09，SESS-03）：1 字节 'X' 类型 +
+// JSON {"exit_code":N,"message":M}——解码往返后字段精确相等；两形态行覆盖正常
+// 退出（exit 42）与信号死亡（exit_code=-1 + 大写信号名文案）；Exit 与 Error
+// 类型字节区分断言钉死语义独立（终结 ≠ 错误，exit 0 不挤占 Error code 空间——
+// D-08 用户裁决，review E/X 共存核实吸收）。
+func TestExitFrame(t *testing.T) {
+	if Exit == Error {
+		t.Fatalf("Exit == Error == %#x(%q)——终结与错误类型字节必须区分（D-08）", Exit, Exit)
+	}
+	tests := []struct {
+		name    string
+		code    int
+		message string
+	}{
+		{"正常退出 exit 42", 42, "The process exited with code 42."},
+		{"信号死亡 SIGHUP", -1, "The process was killed by signal SIGHUP."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ef := ExitFrame(tt.code, tt.message)
+			if len(ef) == 0 || ef[0] != Exit {
+				t.Fatalf("ExitFrame[0] = %#x, want 'X'(%#x)", ef[0], Exit)
+			}
+			var ep ExitPayload
+			if err := json.Unmarshal(ef[1:], &ep); err != nil {
+				t.Fatalf("ExitFrame payload unmarshal: %v", err)
+			}
+			if ep.ExitCode != tt.code {
+				t.Errorf("ExitFrame exit_code = %d, want %d", ep.ExitCode, tt.code)
+			}
+			if ep.Message != tt.message {
+				t.Errorf("ExitFrame message = %q, want %q", ep.Message, tt.message)
+			}
+		})
+	}
+}
+
 // TestValidClientOptionKey 表驱动锁定客户端偏好白名单（P4 D-14）：恰 10 键通过；
 // osc52（D-12 安全不对称——只能经服务端 --osc52 开启）、allowProposedApi（危险面
 // 注入）、空串、大小写变体（fontsize——大小写敏感）与任意未知键一律拒绝。
@@ -201,6 +238,7 @@ func TestProtocolConstants(t *testing.T) {
 		{"Hello", Hello, 'H'},
 		{"Welcome", Welcome, 'W'},
 		{"Error", Error, 'E'},
+		{"Exit", Exit, 'X'},
 		{"Input", Input, '0'},
 		{"Resize", Resize, '1'},
 		{"Output", Output, '0'},
