@@ -9,20 +9,23 @@ import { sanitizeTitle } from './lib/title';
 import { parseQueryPrefs, splitPrefs, mergeTheme } from './lib/prefs';
 
 // 帧常量与 internal/proto/proto.go 手工对齐（D-16，两侧注释互相指路）：
-// '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error；
+// '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error / 'X' EXIT；
 // SUBPROTOCOL 同时是 WS 子协议 token 与 Hello.version 期望值（D-03，同源复用防双写漂移）。
 // Hello 载荷 {version, cols, rows, ticket?}——ticket 为 Phase 3 认证核销一次性票（可选，
 // 无认证模式省略该键，proto.go HelloPayload.Ticket omitempty 同形）；
 // Welcome 载荷 {mode, cols, rows, prefs?}——cols/rows 为会话尺寸恒在键（G-05-1 方向 A，
 // 05-10 三通道下发，proto.go WelcomePayload.Cols/Rows 恒序列化无 omitempty；
 // 旧服务端缺席 = 不约束渲染）；prefs 为可选偏好下发字段（D-13 omitempty，proto.go WelcomePayload.Prefs 同形）；
-// Error code 含 auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）。
+// Error code 含 auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）；
+// EXIT 载荷 {exit_code, message}——子进程退出终结帧（Phase 6 D-08/D-09，proto.go Exit/ExitPayload
+// 同形）；信号死亡 exit_code=-1；message 为服务端组文案唯一写口，前端直显不改写。
 const OUTPUT = 0x30,
   INPUT = 0x30,
   RESIZE = 0x31,
   HELLO = 0x48,
   WELCOME = 0x57,
   ERROR = 0x45,
+  EXIT = 0x58,
   SUBPROTOCOL = 'wesh.v1';
 
 // wesh tango 调色板常量化（RESEARCH §Pitfall 3 修正前提——运行期与构造期
@@ -169,6 +172,7 @@ function hideLinkTooltip(): void {
 let opened = false; // 是否曾成功 onopen——三态文案分派依据（UI-SPEC §Copywriting）
 let helloSent = false; // Hello 首帧发出后才置位——此前 sendResize 门吞掉全部数据帧（防 RESIZE 抢跑被 1002 直关）
 let lastError: { code: string; message: string } | null = null; // 最近一帧 Error{code,message}，onclose 展示用（D-07）
+let lastExit: { exit_code: number; message: string } | null = null; // 最近一帧 EXIT{exit_code,message}，onclose 1000 展示用（D-10）
 // 连接句柄提升为模块级：connect() 内赋值，onData/sendResize 等常驻接线引用当前连接；
 // 首连前 fetch 窗口内为 null（此间用户敲击被 null 闸静默吞掉，不抛 TypeError）
 let ws: WebSocket | null = null;
@@ -392,6 +396,7 @@ async function connect(): Promise<void> {
   opened = false;
   helloSent = false;
   lastError = null;
+  lastExit = null; // IN-01 防漂移登记同款——auth_failed 重试/重连不携带上连接的 EXIT 暂存
   // isRO/welcomeDone 同属 per-connection（IN-01 防漂移登记，Phase 6 自动重连落地前提）；
   // osc52Loaded/retriedAuth 为页面级门闩，刻意不重置
   isRO = false;
@@ -647,6 +652,13 @@ async function connect(): Promise<void> {
           console.warn('discard malformed ERROR frame');
         }
         break;
+      case EXIT: // D-09/D-10：暂存 {exit_code,message}，onclose 1000 分支正文显示 message
+        try {
+          lastExit = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+        } catch {
+          console.warn('discard malformed EXIT frame');
+        }
+        break;
       default: // 未知 S→C 类型静默跳过（前向兼容，D-02 同纪律）
         break;
     }
@@ -707,7 +719,9 @@ async function connect(): Promise<void> {
       case 1000:
         showStatus(
           'Session ended',
-          'The process exited and the wesh server has stopped.',
+          // R2：正文 = EXIT 帧服务端组文案（退出码/信号人话，D-09/D-10）；未收 EXIT
+          //（旧服务端/异常路径）回退既有硬编码文案逐字不变（前向兼容 P2 D-02）
+          lastExit?.message ?? 'The process exited and the wesh server has stopped.',
           'Start wesh again from your shell, then',
         );
         break;
