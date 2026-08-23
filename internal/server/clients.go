@@ -388,7 +388,7 @@ func (s *Server) allWritableBlockedLocked() bool {
 // RESEARCH Anti-Pattern 2）：信用路径把被拒的当前帧暂存 c.creditPending，
 // afterDrain 半水位恢复时重投（TestGlobalCredit 门转换字节精确断言实测发现：
 // 不暂存则恢复端流缺一段——review #1 行为证据锁住的正是此窗口）。首帧暂存边界
-//（WR-02，05-13）：幂等置位守卫（`if !c.creditBlocked`）下已 blocked 的后续帧
+// （WR-02，05-13）：幂等置位守卫（`if !c.creditBlocked`）下已 blocked 的后续帧
 // 不覆写暂存——防二次暂存覆写首帧的既有语义；尺寸推送类帧的收敛出口 =
 // afterDrain 开门时补发当前 sessionDimsLocked() 的 Welcome（见 afterDrain 注释）。
 //
@@ -438,7 +438,7 @@ func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 // onChunk 无法进入临界区夹入新帧；补发帧经 outbox FIFO 排在重投的 creditPending
 // 之后，客户端字节流严格有序保持。入队必成沿用重投的数学保证（余量 ≥ cap/2+1
 // ≫ ~100B Welcome），`_ =` 不兜底（失败属配置错误）；prefs 按 c.mode 选档
-//（pushSessionDimsLocked 逐字同形态，D-13 双档纪律在补发通道不漂移）。
+// （pushSessionDimsLocked 逐字同形态，D-13 双档纪律在补发通道不漂移）。
 func (s *Server) afterDrain(c *client) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
@@ -584,7 +584,7 @@ func (s *Server) promoteNextLocked() {
 // 同类型连续段合并成单条消息 = 类型字节一次 + 载荷顺序拼接，减少帧数与小包。
 //
 // 合并仅限 OUTPUT 数据帧（WR-02）：合并后 OUTPUT 字节流与逐帧接收完全相同
-//（有序 delta 流语义不变，前端 buf[0] 分派零改动，must_have「扇出对前端透明」）。
+// （有序 delta 流语义不变，前端 buf[0] 分派零改动，must_have「扇出对前端透明」）。
 // 控制帧（W/E）恒单发——其载荷是独立 JSON 文档，拼接产物（W{...}{...}）前端
 // JSON.parse 抛错整帧丢弃（main.ts "discard malformed WELCOME"）。可达时序：
 // attach Welcome 先入队（server.go 升档，hubMu 内），go writer 在 hubMu 释放后

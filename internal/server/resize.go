@@ -118,7 +118,7 @@ func (s *Server) removeMember(c *client) {
 //
 // 目标尺寸变化才调 sess.Resize（P5-3：Linux 同尺寸 TIOCSWINSZ 内核不发
 // SIGWINCH，且避免无谓 ioctl）；推送挂点同此唯一变化检测点——目标尺寸不变
-//（含零值哨兵提前返回）零推送（无放大无循环），attach/detach/kick/升格/防抖
+// （含零值哨兵提前返回）零推送（无放大无循环），attach/detach/kick/升格/防抖
 // 五调用点自动全覆盖。参数序 (cols, rows)——io_test.go:24-25
 // 注释锁定，切勿按 (rows, cols) 序误传；会话 closed 时 Resize 返回
 // os.ErrClosed，忽略（Attach 读循环既有纪律同款）。
@@ -151,12 +151,12 @@ func (s *Server) recalcNow() {
 // sessionDimsLocked() 补发收敛，WR-02 见 clients.go afterDrain）。
 //
 // range 内踢出安全性：removeLocked 的 map delete 在 range 期间为 Go spec 安全
-//（未到达的被删条目不再产出），onChunk → kickOrCreditLocked（clients.go:354-358）
+// （未到达的被删条目不再产出），onChunk → kickOrCreditLocked（clients.go:354-358）
 // 同形态先例。循环内踢出经 clients.go:501-502 removeMember → 嵌套 recalcNow
 // 真实可达——被踢者是参与集成员且其持有某轴最小值时仲裁结果改变（纯 ro 会话
 // 全部 ro 端均为成员、all 模式被踢 rw 端亦为成员）：嵌套 recalcNow 把
 // arbiter.last 推进到 T2，嵌套推送把 W(T2) 送达全部留存端，外层捕获的 target
-//（T1）已 stale——kickOrCreditLocked 返回后的 arbiter.last != target 复检即
+// （T1）已 stale——kickOrCreditLocked 返回后的 arbiter.last != target 复检即
 // 防旧值反超的防线（嵌套推送已送达更新值，stale 外层扇出直接中止）。踢出不改
 // 仲裁（嵌套 recalcNow 因 target==last 提前返回、last 不变）或走信用路径（无
 // 成员变动）时 last==target，外层循环正确继续。每次踢出永久移除一端保证嵌套
