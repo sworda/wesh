@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 06
 current_phase_name: session-lifecycle
 status: executing
-stopped_at: Completed 06-01-PLAN.md (SESS-03 EXIT 帧契约+广播+前端承接)
-last_updated: "2026-08-23T04:03:18.123Z"
+stopped_at: Completed 06-02-PLAN.md (SESS-01/02 断开退出服务端机制+七测)
+last_updated: "2026-08-23T05:58:57.703Z"
 last_activity: 2026-08-23
 last_activity_desc: Phase 06 planning complete
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 44
-  completed_plans: 38
+  completed_plans: 39
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 ## Current Position
 
 Phase: 06 (session-lifecycle) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-08-23 — Phase 06 execution started
 
-Progress: [█████████░] 86%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -99,6 +99,7 @@ Progress: [█████████░] 86%
 | Phase 05 P12 | 32min | 3 tasks | 8 files |
 | Phase 05 P13 | 22min | 2 tasks | 4 files |
 | Phase 06-session-lifecycle P01 | 14min | 3 tasks | 7 files |
+| Phase 06-session-lifecycle P02 | 41min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -192,6 +193,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-13]: WR-02 修复取 option (a)（用户 2026-08-22 裁决）——afterDrain 清位后、Broadcast 前补发当前 sessionDimsLocked() 的 Welcome（prefs 按 c.mode 选档 D-13 不漂移）；补发有序性归因 = afterDrain 全程持有 hubMu + outbox FIFO（非门仍闭合，plan-check 修订措辞）；「触发帧不丢」承诺收窄为首帧暂存 + afterDrain 补发收敛
 - [Phase ?]: [Phase 06-01]: D-08/D-09 确认门 as-locked（用户 2026-08-23 裁决）——EXIT 帧 = 'X'(0x58) + {"exit_code":N,"message":M} 三形态文案 + EXIT→1000 广播序列，与 06-CONTEXT D-08/D-09/D-10 逐字一致
 - [Phase ?]: [Phase 06-01]: EXIT 广播写序安全形态落地——lifecycle 组帧一次共享只读 + 每客户端 goroutine 同步 Write(EXIT,2s ctx)→Close(1000)（Pitfall 1：禁止 outbox 异步入队）；2s 为 RESEARCH OQ3 定值，拒绝可配化（P2 D-10），Phase 9 标定挂账
+- [Phase ?]: [Phase 06-02]: OQ1 确认门用户裁决 accept-255（2026-08-23）——--once/--exit-when-empty 收口路径子进程被 SIGHUP 终结，exitf 以 -1 收口、wesh 进程退出状态 255（lifecycle 零分支改动，与 D-09 exit_code=-1 同源）；下游三消费点（06-02 测试断言 -1 / 06-06 S3-S5 进程级 255 / 06-07 README 文案）按裁决值单点落地
+- [Phase ?]: [Phase 06-02]: stall 夹具断言序戒律再生效——踢出触发前绝不 Read：KickTrigger 翻转为先 waitExit(-1)（结构性证据）再读 1013 取证（05-07 登记戒律的回归形态，实测竞态 ~50% 翻 1000）
 
 ### Pending Todos
 
@@ -210,6 +213,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-23T04:03:18.100Z
-Stopped at: Completed 06-01-PLAN.md (SESS-03 EXIT 帧契约+广播+前端承接)
+Last session: 2026-08-23T05:58:57.680Z
+Stopped at: Completed 06-02-PLAN.md (SESS-01/02 断开退出服务端机制+七测)
 Resume file: None

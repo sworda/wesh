@@ -238,14 +238,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 子进程退出后所有在线客户端收到含退出码的类型化终结帧提示（非静默断开），随后以 1000 正常关闭
   3. 断网 30s 恢复后前端自动重连（指数退避 + 上限 + 手动入口）并接回同一 PTY 进程，输入输出一致（无滚动回放，屏幕靠程序重绘或 tmux/herdr 恢复——文档明示）
 
-**Plans**: 1/7 plans executed
+**Plans**: 2/7 plans executed
 **Wave 1**
 
 - [x] 06-01-PLAN.md — SESS-03 EXIT 帧端到端 tracer：proto 'X'/ExitPayload/ExitFrame + lifecycle 写序安全广播（同步 Write→Close 1000）+ exit_test.go 两测 + exitmsg_test.go 白盒测（signalName/exitMessage）+ 前端暂存承接与 dist（含 D-08/D-09 one-way 确认门）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 06-02-PLAN.md — SESS-01/02 服务端：pty.SignalHangup（SIGHUP 进程组复活）+ Options.ExitWhenEmpty（set/grace 分离）+ 注册表空触发与宽限计时器 + exiting 门 + 七测（含 OQ1 退出状态确认门）
+- [x] 06-02-PLAN.md — SESS-01/02 服务端：pty.SignalHangup（SIGHUP 进程组复活）+ Options.ExitWhenEmpty（set/grace 分离）+ 注册表空触发与宽限计时器 + exiting 门 + 七测（含 OQ1 退出状态确认门）
 - [ ] 06-03-PLAN.md — CORE-05 前端重连状态机：backoffMs 纯函数 + 1006 显式触发 + online/offline 双触发 + Reconnecting 面板（showStatus 参数化）+ 代际守卫 + dist
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -315,7 +315,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
-| 6. 会话生命周期与重连 | 1/7 | In Progress|  |
+| 6. 会话生命周期与重连 | 2/7 | In Progress|  |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |
 | 9. 发布与打磨 | TBD | Not started | - |
