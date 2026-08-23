@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 6
-current_phase_name: 会话生命周期与重连
-status: "Phase 05 shipped — PR #6"
-stopped_at: Phase 6 UI-SPEC approved
-last_updated: "2026-08-23T02:34:54.303Z"
+current_phase: 06
+current_phase_name: session-lifecycle
+status: executing
+stopped_at: Completed 06-01-PLAN.md (SESS-03 EXIT 帧契约+广播+前端承接)
+last_updated: "2026-08-23T04:03:18.123Z"
 last_activity: 2026-08-23
 last_activity_desc: Phase 06 planning complete
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 44
-  completed_plans: 37
+  completed_plans: 38
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-19)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 05 — multi-client
+**Current focus:** Phase 06 — session-lifecycle
 
 ## Current Position
 
-Phase: 6 — 会话生命周期与重连
-Plan: Not started
-Status: Phase 05 shipped — PR #6
-Last activity: 2026-08-23 — Phase 06 planning complete
+Phase: 06 (session-lifecycle) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-08-23 — Phase 06 execution started
 
-Progress: [██████████] 100%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -98,6 +98,7 @@ Progress: [██████████] 100%
 | Phase 05 P11 | 22min | 2 tasks | 2 files |
 | Phase 05 P12 | 32min | 3 tasks | 8 files |
 | Phase 05 P13 | 22min | 2 tasks | 4 files |
+| Phase 06-session-lifecycle P01 | 14min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -189,6 +190,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-12]: S10c 取最后一帧 WELCOME 解码容忍升格+recalcNow 推送同值双帧；probe10.mjs 探针从未入库，按 plan 机制描述重建为 phase05-dims.mjs 并登记血缘
 - [Phase ?]: [Phase 05-13]: WR-01 修复取复检中止形态（05-REVIEW 逐字补丁）——推送循环内踢出经 removeMember→嵌套 recalcNow 推进 arbiter.last 后，外层复检 last != target 即中止 stale 扇出；踢出不改仲裁或信用路径 last==target 零代价继续；安全性注释改写覆盖真实可达的 removeMember 路径
 - [Phase ?]: [Phase 05-13]: WR-02 修复取 option (a)（用户 2026-08-22 裁决）——afterDrain 清位后、Broadcast 前补发当前 sessionDimsLocked() 的 Welcome（prefs 按 c.mode 选档 D-13 不漂移）；补发有序性归因 = afterDrain 全程持有 hubMu + outbox FIFO（非门仍闭合，plan-check 修订措辞）；「触发帧不丢」承诺收窄为首帧暂存 + afterDrain 补发收敛
+- [Phase ?]: [Phase 06-01]: D-08/D-09 确认门 as-locked（用户 2026-08-23 裁决）——EXIT 帧 = 'X'(0x58) + {"exit_code":N,"message":M} 三形态文案 + EXIT→1000 广播序列，与 06-CONTEXT D-08/D-09/D-10 逐字一致
+- [Phase ?]: [Phase 06-01]: EXIT 广播写序安全形态落地——lifecycle 组帧一次共享只读 + 每客户端 goroutine 同步 Write(EXIT,2s ctx)→Close(1000)（Pitfall 1：禁止 outbox 异步入队）；2s 为 RESEARCH OQ3 定值，拒绝可配化（P2 D-10），Phase 9 标定挂账
 
 ### Pending Todos
 
@@ -207,6 +210,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-22T23:16:14.605Z
-Stopped at: Phase 6 UI-SPEC approved
-Resume file: .planning/phases/06-session-lifecycle/06-UI-SPEC.md
+Last session: 2026-08-23T04:03:18.100Z
+Stopped at: Completed 06-01-PLAN.md (SESS-03 EXIT 帧契约+广播+前端承接)
+Resume file: None

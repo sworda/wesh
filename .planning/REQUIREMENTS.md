@@ -28,7 +28,7 @@
 
 - [ ] **SESS-01**: --once 模式：只接受一个客户端，其断开后服务端退出
 - [ ] **SESS-02**: 可配置"所有客户端断开后退出"模式
-- [ ] **SESS-03**: 子进程退出后客户端收到明确提示（类型化错误帧，含退出码），而非静默断开
+- [x] **SESS-03**: 子进程退出后客户端收到明确提示（类型化错误帧，含退出码），而非静默断开
 
 ### 多客户端（MULTI）
 
@@ -125,7 +125,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FE-07 | Phase 4 | Complete |
 | SESS-01 | Phase 6 | Pending |
 | SESS-02 | Phase 6 | Pending |
-| SESS-03 | Phase 6 | Pending |
+| SESS-03 | Phase 6 | Complete |
 | MULTI-01 | Phase 5 | Complete |
 | MULTI-02 | Phase 5 | Complete |
 | MULTI-03 | Phase 5 | Complete |
