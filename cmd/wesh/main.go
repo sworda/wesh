@@ -131,7 +131,7 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小），Phase 9 负载
 	// 标定回填。满员行为：/ws Accept 前 HTTP 503（守卫区③位）+ /api/attach
 	// 503 早闸（OQ2）；≤0 经 validateStartup 拒绝（exit 2 配置校验矩阵形态）。
-	fs.IntVar(&cfg.maxClients, "max-clients", 32, "maximum simultaneous attached clients (default 32)")
+	fs.IntVar(&cfg.maxClients, "max-clients", 32, "maximum simultaneous attached clients")
 	// D-01：可重复凭据 flag，fs.Func 回调内 parse 期校验（畸形值即时报错——
 	// systemd 配置错误零窗口暴露）。Pitfall 8：help 必须提示 ps 可见性。
 	// 红线（SEC-01 启动面延伸，WR-01）：校验错误记入 credErr 而非直接
