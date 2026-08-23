@@ -49,15 +49,23 @@ const helloFrame = ({ ticket, version = SUBPROTOCOL, cols = 80, rows = 24 } = {}
       : { version, cols, rows, ticket })));
 
 const results = [];
+// 全部已发 detail 收集（assertOutputClean 遍历材料——review #7 运行时自净断言）
+const emittedDetails = [];
 const check = (id, name, ok, detail = '') => {
-  results.push({ id, name, ok, detail });
+  results.push({ id, name, ok });
+  emittedDetails.push(String(detail));
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${id} ${name}${detail ? ` — ${detail}` : ''}`);
 };
 // 平台豁免记录形态：不计失败（headless 硬约束，CODEBUDDY.md 显式豁免条款）
 const skip = (id, name, reason) => {
-  results.push({ id, name, ok: null, detail: reason });
+  results.push({ id, name, ok: null });
+  emittedDetails.push(String(reason));
   console.log(`  SKIP  ${id} ${name} — ${reason}`);
 };
+
+// startWesh 解析 stdout 时把分享链接 token 留入本闭包数组（只作 assertOutputClean
+// 断言材料）——红线：token 值永不进 check detail/控制台输出/汇总行
+const sensitiveTokens = [];
 
 // 分享链接 URL → token（/s/{token}/ 路径段；值只作断言材料——红线）
 const tokenFromUrl = (url) => /\/s\/([^/]+)\//.exec(url)[1];
@@ -87,6 +95,10 @@ function startWesh(args) {
         setTimeout(() => {
           const shareRO = /share read-only:\s+(\S+)/.exec(stdoutBuf)?.[1] ?? null;
           const shareRW = /share read-write:\s+(\S+)/.exec(stdoutBuf)?.[1] ?? null;
+          // token 留入模块级闭包（assertOutputClean 唯一消费点——值不进任何输出）
+          for (const link of [shareRO, shareRW]) {
+            if (link !== null) sensitiveTokens.push(tokenFromUrl(link));
+          }
           resolve({ port: Number(m[2]), scheme: m[1], shareRO, shareRW, stderrText: () => stderr, kill: () => child.kill('SIGKILL'), child });
         }, 50);
       }
@@ -258,7 +270,214 @@ async function s2ExitSignalDeath() {
   }
 }
 
-const scenarios = [s1ExitDualBroadcast, s2ExitSignalDeath];
+// ---------- S3：--once 全链（SESS-01 协议层终证：单接 → 双点位 503 → 断开退出） ----------
+async function s3OnceFullChain() {
+  console.log('S3: --once 全链（单客户端 → 第二客户端双点位 503 → 断开后进程退出 255 + stderr 无异常栈）');
+  const inst = await startWesh(['--once', '--credential', UAT_CREDENTIAL, '--', 'bash', '--norc', '--noprofile']);
+  try {
+    // A：Basic → ticket → 携票握手成功（占满 max-clients=1 唯一槽位）
+    const respA = await fetch(`http://127.0.0.1:${inst.port}/api/attach`, {
+      method: 'POST', headers: { Authorization: basicAuthHeader() },
+    });
+    const bodyA = respA.status === 200 ? await respA.json() : {};
+    const a = await dialHello(inst.port, { ticket: bodyA.ticket });
+    check('S3a', '--once 首客户端 attach 成功（Basic → ticket → Welcome）',
+      respA.status === 200 && a.ws.readyState === WebSocket.OPEN, `attach=${respA.status}`);
+
+    // 第二客户端双点位拒绝（phase05.mjs S5b/c 先例逐字形态）：503 = 既有 max-clients
+    // 计数路径（--once ≡ --max-clients=1 --exit-when-empty=0 语法糖展开，D-12；409 不复活）
+    const resp2 = await fetch(`http://127.0.0.1:${inst.port}/api/attach`, {
+      method: 'POST', headers: { Authorization: basicAuthHeader() },
+    });
+    check('S3b', '第二客户端 POST /api/attach → 503（max-clients 计数早闸）',
+      resp2.status === 503, `status=${resp2.status}`);
+    await resp2.text();
+    const status = await rawUpgrade(inst.port, { 'Sec-WebSocket-Protocol': SUBPROTOCOL });
+    check('S3c', '第二客户端 WS 直连升级 → HTTP 503（③位 Accept 前）', status === 503, `status=${status}`);
+
+    // 唯一客户端断开 → 注册表空 → SIGHUP 进程组（D-13）→ 子进程信号死亡 ExitCode=-1
+    // → exitf(-1) → os.Exit(-1) 被 Unix 截断——进程退出状态按 06-02 Task 1 门裁决值
+    // accept-255 断言（SIGHUP 致子进程信号死亡的进程级投影，OQ1 裁决）
+    const exitP = waitExit(inst.child, 10000);
+    a.ws.close(1000);
+    const proc = await exitP;
+    check('S3d', '唯一客户端断开后 wesh 进程退出且退出状态==255（OQ1 accept-255 门裁决值）',
+      proc !== null && proc.code === 255, `code=${proc?.code ?? '（未到）'}`);
+    check('S3e', 'stderr 无异常栈（无 panic）',
+      !inst.stderrText().includes('panic'), `panic缺席=${!inst.stderrText().includes('panic')}`);
+  } finally {
+    inst.kill();
+  }
+}
+
+// ---------- S4：--exit-when-empty 立即形态（SESS-02：裸 flag + 启动守候 + 断开退出） ----------
+async function s4ExitWhenEmptyImmediate() {
+  console.log('S4: --exit-when-empty 立即形态（裸 flag IsBoolFlag 实证；启动守候不触发 → attach → close → 退出 255）');
+  // 裸 flag 不带值——IsBoolFlag 形态实证（D-14：裸写 ≡ =true 不消费下一参数 '--'）
+  const inst = await startWesh(['--exit-when-empty', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    // attach 前 400ms 守候窗断言进程无 exit 事件：启动期注册表恒空不触发（检测只挂
+    // 非空→空迁移，RESEARCH Pitfall 2 的协议层显式证据，review 建议吸收）；
+    // 守候窗 ≪ 任何合理误触发时延
+    let exitedEarly = false;
+    inst.child.once('exit', () => { exitedEarly = true; });
+    await sleep(400);
+    check('S4a', 'attach 前 400ms 守候窗进程无 exit 事件（启动期恒空不触发，Pitfall 2）',
+      !exitedEarly, `早退=${exitedEarly}`);
+    if (exitedEarly) {
+      check('S4b', 'attach → close 后进程退出（退出状态 255）', false, '前提失败：进程已早退');
+      return;
+    }
+    const c = await dialHello(inst.port, {});
+    const exitP = waitExit(inst.child, 10000);
+    c.ws.close(1000);
+    const proc = await exitP;
+    check('S4b', 'attach → close 后进程退出（退出状态 255 门裁决值；grace=0 立即形态）',
+      proc !== null && proc.code === 255, `code=${proc?.code ?? '（未到）'}`);
+    // 对照注释：无 flag 实例断开不退出已由 S6 顺带锁定（D-14 默认不开启零漂移）
+  } finally {
+    inst.kill();
+  }
+}
+
+// ---------- S5：--exit-when-empty=1500ms 宽限（取消与到期两子场景，时序容差规格） ----------
+// 时序容差论证（review #6 吸收）：标称宽限 1500ms；取消窗取 400ms ≪ 标称（留 1100ms
+// 调度余量）；到期断言以 5s 护栏轮询吸纳调度抖动——禁精确时点断言；时钟不 mock、
+// 服务端等待不缩短（prohibition：宽限/退避类场景真实等待，超时上限只做护栏）。
+async function s5ExitWhenEmptyGrace() {
+  console.log('S5: --exit-when-empty=1500ms 宽限（① 宽限内再 attach 取消 + echo 存活 + 再断开到期退出；② 无人归到期退出）');
+  // ① 取消子场景
+  const inst = await startWesh(['--writable', '--exit-when-empty=1500ms', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    const c1 = await dialHello(inst.port, {});
+    c1.ws.close(1000);
+    // close 握手完成 ⇒ 服务端 detach 已发生（reader 收关闭帧后收口）——宽限计时起点已过
+    await waitClose(c1.ws, 3000);
+    await sleep(400); // 宽限内 400ms（≪ 标称 1500ms，1100ms 调度余量）
+    // 再 attach 成功 = 宽限取消的协议层证据（D-14：计时内任一端 attach 成功则取消退出）
+    const c2 = await dialHello(inst.port, {});
+    check('S5a', '宽限内 400ms 后再 attach 成功（宽限取消——进程未退出且接受新连接）',
+      c2.ws.readyState === WebSocket.OPEN, 'attach 成功');
+    // 会话存活以 INPUT 唯一标记回读 OUTPUT 含标记验证（echo 形态显式化）
+    const MARK = 'UAT_S5_ALIVE_m3k7qx';
+    const base = c2.frames.length;
+    c2.ws.send(concat(new Uint8Array([INPUT]), enc.encode(`echo ${MARK}\r`)));
+    const t0 = Date.now();
+    let alive = false;
+    while (Date.now() - t0 < 5000 && !alive) {
+      alive = outputText(c2.frames, base).includes(MARK);
+      if (!alive) await sleep(50);
+    }
+    check('S5b', '宽限取消后会话存活（INPUT 唯一标记回读 OUTPUT 含标记）', alive, `存活=${alive}`);
+    // 再断开 → 新宽限计时 → 到期退出（5s 护栏轮询，非精确时点断言）
+    const exitP = waitExit(inst.child, 5000);
+    c2.ws.close(1000);
+    const proc = await exitP;
+    check('S5c', '再次断开后宽限到期进程退出（5s 护栏内，退出状态 255）',
+      proc !== null && proc.code === 255, `code=${proc?.code ?? '（未到）'}`);
+  } finally {
+    inst.kill();
+  }
+  // ② 到期子场景（独立实例：attach → close → 无人归 → 到期退出）
+  const inst2 = await startWesh(['--exit-when-empty=1500ms', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    const c = await dialHello(inst2.port, {});
+    const exitP = waitExit(inst2.child, 5000); // 到期 ≈1500ms，5s 护栏吸纳调度余量
+    c.ws.close(1000);
+    const proc = await exitP;
+    check('S5d', '无人归宽限到期进程退出（独立实例，5s 护栏内 ≈1500ms 到期，退出状态 255）',
+      proc !== null && proc.code === 255, `code=${proc?.code ?? '（未到）'}`);
+  } finally {
+    inst2.kill();
+  }
+}
+
+// ---------- S6：断连重接同一 PTY（CORE-05 协议层等价物：PID 主证据 + 变量佐证） ----------
+async function s6ReconnectSamePty() {
+  console.log('S6: 断连重接同一 PTY（echo S6PID=$$ 进程 ID 相等 = 同一进程强证据 + shell 变量跨断连存活佐证）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    const c1 = await dialHello(inst.port, {});
+    // shell 变量落账并回读确认（次级佐证材料：'X=weshmark42\r' 后 'echo $X\r' 回读）
+    c1.ws.send(concat(new Uint8Array([INPUT]), enc.encode('X=weshmark42\r')));
+    const base0 = c1.frames.length;
+    c1.ws.send(concat(new Uint8Array([INPUT]), enc.encode('echo $X\r')));
+    const t0 = Date.now();
+    let marked = false;
+    while (Date.now() - t0 < 5000 && !marked) {
+      marked = outputText(c1.frames, base0).includes('weshmark42');
+      if (!marked) await sleep(50);
+    }
+    // 进程 ID 主证据（review #4 吸收）：echo S6PID=$$ 经 /S6PID=(\d+)/ 正则数字锚定
+    // 解析——终端回显含键入命令原文 'echo S6PID=$$'（无数字不命中），正则只命中结果行
+    const readPid = async (frames, ws) => {
+      const base = frames.length;
+      ws.send(concat(new Uint8Array([INPUT]), enc.encode('echo S6PID=$$\r')));
+      const t1 = Date.now();
+      while (Date.now() - t1 < 5000) {
+        const m = /S6PID=(\d+)/.exec(outputText(frames, base));
+        if (m) return Number(m[1]);
+        await sleep(50);
+      }
+      return null;
+    };
+    const pidPre = await readPid(c1.frames, c1.ws);
+    check('S6a', '前置：shell 变量落账回读（weshmark42）+ pidPre 解析成功',
+      marked && pidPre !== null, `标记=${marked} pidPre解析=${pidPre !== null}`);
+
+    // 断开（分工登记：abrupt/正常断开在服务端同归 reader 终结 → detach；1006 触发面
+    // 由 phase06-dom.mjs 合成事件覆盖——本场景证共享进程模型下新 attach 接回原 PTY）
+    c1.ws.close();
+    await waitClose(c1.ws, 3000);
+    // 首连接全程未收 EXIT 帧（子进程未退出无终结帧——EXIT 类型字节缺席断言）
+    const noExitFrame = !c1.frames.some((f) => f[0] === EXIT);
+    await sleep(500); // 断开窗口
+
+    // 新 attach——dialHello 成功即服务端存活（默认不开启断开退出的顺带锁定，D-14
+    // 默认值零漂移）且共享进程模型下接回原 PTY 的结构性证据
+    const c2 = await dialHello(inst.port, {});
+    check('S6b', '断开 500ms 后新 attach 成功（断开期间服务端存活——默认不开启顺带锁定）',
+      c2.ws.readyState === WebSocket.OPEN, '新 Welcome 正常到达');
+    const pidPost = await readPid(c2.frames, c2.ws);
+    // 进程 ID 相等 = 接回同一 PTY 进程的强证据——新 bash 进程必持不同 pid（review #4）
+    check('S6c', 'pidPost==pidPre（进程 ID 相等 = 接回同一 PTY 进程强证据）',
+      pidPost !== null && pidPost === pidPre, `pid相等=${pidPost === pidPre}`);
+    // shell 变量跨断连存活（次级佐证；共享进程模型下重连 = 新 attach 同一 sess，无会话 ID 协商）
+    const base2 = c2.frames.length;
+    c2.ws.send(concat(new Uint8Array([INPUT]), enc.encode('echo $X\r')));
+    const t2 = Date.now();
+    let survived = false;
+    while (Date.now() - t2 < 5000 && !survived) {
+      survived = outputText(c2.frames, base2).includes('weshmark42');
+      if (!survived) await sleep(50);
+    }
+    check('S6d', 'shell 变量跨断连存活（echo $X 含 weshmark42，次级佐证）且首连接全程无 EXIT 帧',
+      survived && noExitFrame, `变量存活=${survived} EXIT缺席=${noExitFrame}`);
+    c2.ws.close();
+    await waitClose(c2.ws, 3000);
+  } finally {
+    inst.kill();
+  }
+}
+
+// ---------- S7：真实断网栈/浏览器原生事件序列（headless 豁免，人工清单指针） ----------
+function s7RealNetworkStackExempt() {
+  skip('S7', '真实断网栈/浏览器原生断网恢复事件序列与 tmux/herdr 屏幕重绘观感',
+    'headless 硬约束——真实断网栈任何自动化（含 playwright）均不可测（CODEBUDDY.md 平台原生行为豁免条款）；协议层等价物 = S6（真实 TCP 断连重接同一 PTY）；人工清单见 .planning/phases/06-session-lifecycle/06-UAT.md（06-07 产出）');
+}
+
+// 输出自净断言（review #7 吸收——红线由注释纪律升级为运行时自证）：遍历全部已发
+// detail，断言不含 UAT_CREDENTIAL 值与任一 share token 值（含 '/s/' 链接形态串）；
+// 命中即 FAIL（防未来回归静默破线，phase04.mjs:6-9 红线的可执行形态）。
+// 命中时不回显冒犯内容（只打布尔/计数——红线自保）。
+function assertOutputClean() {
+  const leaked = emittedDetails.some((d) =>
+    d.includes(UAT_CREDENTIAL) || d.includes('/s/') || sensitiveTokens.some((t) => t !== null && d.includes(t)));
+  check('SEC', "输出自净：全部 detail 零凭据/token 值零 '/s/' 链接形态串（红线运行时自证）",
+    !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
+}
+
+const scenarios = [s1ExitDualBroadcast, s2ExitSignalDeath, s3OnceFullChain, s4ExitWhenEmptyImmediate, s5ExitWhenEmptyGrace, s6ReconnectSamePty, s7RealNetworkStackExempt];
 let failed = 0;
 for (const s of scenarios) {
   try {
@@ -269,6 +488,7 @@ for (const s of scenarios) {
   }
   await sleep(300);
 }
+assertOutputClean();
 const skipped = results.filter((r) => r.ok === null).length;
 const passedN = results.filter((r) => r.ok === true).length;
 const failedN = results.filter((r) => r.ok === false).length;
