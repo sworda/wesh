@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 6
 current_phase_name: 会话生命周期与重连
 status: "Phase 05 shipped — PR #6"
-stopped_at: Phase 6 context gathered
-last_updated: "2026-08-22T18:27:40.362Z"
-last_activity: 2026-08-22
+stopped_at: Phase 6 UI-SPEC approved
+last_updated: "2026-08-23T00:39:52.255Z"
+last_activity: 2026-08-23
+last_activity_desc: Phase 06 planning complete
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 37
+  total_plans: 44
   completed_plans: 37
-last_activity_desc: Phase 05 execution started
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-08-19)
 Phase: 6 — 会话生命周期与重连
 Plan: Not started
 Status: Phase 05 shipped — PR #6
-Last activity: 2026-08-22
+Last activity: 2026-08-23 — Phase 06 planning complete
 
 Progress: [██████████] 100%
 
@@ -207,6 +207,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-22T18:27:40.341Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-session-lifecycle/06-CONTEXT.md
+Last session: 2026-08-22T23:16:14.605Z
+Stopped at: Phase 6 UI-SPEC approved
+Resume file: .planning/phases/06-session-lifecycle/06-UI-SPEC.md
