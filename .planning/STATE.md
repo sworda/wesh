@@ -1,36 +1,37 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-current_phase: 06
-current_phase_name: session-lifecycle
-status: verifying
-stopped_at: Completed 06-07-PLAN.md (Phase 6 收口：README/UAT/VALIDATION + 全量回归)
-last_updated: "2026-08-23T09:03:03.278Z"
-last_activity: 2026-08-23
-last_activity_desc: Phase 06 planning complete
+current_phase: 7
+current_phase_name: 部署与配置
+status: planning
+stopped_at: Phase 06 complete, ready to plan Phase 7
+last_updated: "2026-08-24T13:51:19.803Z"
+last_activity: 2026-08-24
+last_activity_desc: Phase 06 complete, transitioned to Phase 7
+state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 progress:
-  total_phases: 6
+  total_phases: 9
   completed_phases: 6
   total_plans: 44
   completed_plans: 44
+milestone_name: milestone
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-19)
+See: .planning/PROJECT.md (updated 2026-08-24)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 06 — session-lifecycle
+**Current focus:** Phase 07 — 部署与配置
 
 ## Current Position
 
-Phase: 06 (session-lifecycle) — EXECUTING
-Plan: 7 of 7
-Status: Phase complete — ready for verification
-Last activity: 2026-08-23 — Phase 06 execution started
+Phase: 7 — 部署与配置
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
 Progress: [██████████] 100%
 
@@ -38,7 +39,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 37
+- Total plans completed: 44
 - Average duration: -
 - Total execution time: -
 
@@ -51,6 +52,7 @@ Progress: [██████████] 100%
 | 03 | 7 | - | - |
 | 04 | 6 | - | - |
 | 05 | 13 | - | - |
+| 06 | 7 | - | - |
 
 **Recent Trend:**
 
@@ -221,6 +223,7 @@ None yet.
 
 - [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
 - [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5
+- [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9
 
 ## Deferred Items
 
@@ -230,6 +233,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-23T09:03:03.255Z
-Stopped at: Completed 06-07-PLAN.md (Phase 6 收口：README/UAT/VALIDATION + 全量回归)
+Last session: 2026-08-24T13:51:19Z
+Stopped at: Phase 06 complete, ready to plan Phase 7
 Resume file: None

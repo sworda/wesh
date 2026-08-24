@@ -33,11 +33,15 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ 背压控制与每客户端限速（全局信用门 + 每客户端输入速率限制）— Phase 5（RES-02/RES-04；TestInputRateLimit/TestGlobalCredit -race 绿）
 - ✓ 最大并发客户端数限制（满员 503 + 客户端计数不变量）— Phase 5（RES-03；TestMaxClients503/TestClientCountInvariant + S5）
 - ✓ 多客户端 resize 仲裁（单端 last-wins / ≥2 端 min-rect / 2→1 恢复）与 ro/rw 一次性分享链接即打即用 — Phase 5（MULTI-04/05；TestArbitrate/TestResizeArbitration + TestShareToken + S2-S4 全链）
+- ✓ WS 异常断开后前端自动重连并接回同一 PTY 进程（共享进程模型；无滚动回放，屏幕内容靠程序重绘或 tmux/herdr 恢复）— Phase 6（CORE-05；仅 1006 触发 + 退避 1s×2 封顶 30s；phase06-dom D1/D8 + Playwright 实测断网 30s 恢复同 pid 接回）
+- ✓ --once 模式：只接受一个客户端，其断开后服务端退出 — Phase 6（SESS-01；--once ≡ --max-clients=1 --exit-when-empty=0；S3 双点位 503 + 进程退出 255 + Playwright T5 全链）
+- ✓ 可配置"所有客户端断开后退出"模式 — Phase 6（SESS-02；--exit-when-empty[=duration] 立即/宽限取消/宽限到期三形态，S4/S5 锁定）
+- ✓ 子进程退出后客户端收到明确提示（类型化错误帧，含退出码），而非静默断开 — Phase 6（SESS-03；EXIT 帧三形态文案 + EXIT→1000 广播序列；S1/S2 + Playwright T4 双形态逐字 + 双端一致广播）
 
 ### Active
 
 **核心终端（对标 ttyd）**
-- [ ] 断线自动重连接回同一进程（共享进程模型；历史现场恢复依赖 tmux/herdr）
+（Phase 1-6 已全部闭合，见 Validated）
 
 **安全（改进 ttyd 限制 #3 + 源码核实的新发现）**
 （Phase 3 已全部闭合，见 Validated）
@@ -130,6 +134,10 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 | --client-option 校验错误记录式上报（clientOptErr + Parse 后统一返回） | flag 包 failf 会将回调错误包装为 `invalid value %q` 并把原始 key=value 串打到 stderr，必然违反启动面"值内容不外泄"红线；记录式两通道干净且 exit 2 语义不变 | ✓ Phase 4 落地，client-option 负场景 UAT 全过 |
 | js-base64 等 overrides 落 web/pnpm-workspace.yaml 而非 package.json | pnpm 11 不再读 package.json 的 pnpm 字段（CI 钉 11.21.0 同版），overrides 官方新家即 pnpm-workspace.yaml | ✓ Phase 4 落地，lockfile 三处解析均 3.9.2 |
 | 前端 Terminal 构造必须 `allowProposedApi: true` | xterm 6.0 的 unicode API 仍标 EXPERIMENTAL，缺省 false 时 loadAddon(Unicode11Addon) 模块顶层同步抛错 → connect() 永不执行、终端黑屏（UAT 自动化抓到的 P0） | ✓ Phase 4 修复并重建 dist，jsdom 套件即回归测试 |
+| EXIT 广播写序安全形态：lifecycle 组帧一次共享只读 + 每客户端 goroutine 同步 Write(EXIT,2s ctx)→Close(1000) | stall 客户端不得拖延全局终结；禁 outbox 异步入队；2s 为 RESEARCH OQ3 定值拒绝可配化 | ✓ Phase 6 落地，TestExitFrameBroadcast + S1/S2 + Playwright T4 锁定；2s 标定挂账 Phase 9 |
+| OQ1 裁决 accept-255：--once/--exit-when-empty 收口路径退出状态 255 | 子进程被 SIGHUP 终结，exitf 以 -1 收口、Unix 进程退出状态截断为 255；lifecycle 零分支改动，与 EXIT exit_code=-1 同源 | ✓ 用户 2026-08-23 裁决；Go 测试断言 -1 / 进程级 255 / README 文案三消费点单点落地 |
+| 重连触发面收窄为仅 1006 + 无限重试（退避 1s×2 封顶 30s） | 1002/1013/1008 带码关闭语义确定不自动重连（防再踢循环/协议错误放大）；「标签页放着回来已接回」主场景 30s 一次流量可忽略 | ✓ Phase 6 落地（shouldReconnect/backoffMs）；Playwright T1 30s 退避观测实证 attempts 1→5 |
+| --once ≡ --max-clients=1 --exit-when-empty=0 语法糖分层 | fs.Visit 显式设置位先行，展开只填未显式位，矛盾组合留 validateStartup fail-fast 拒绝（不静默改写用户输入） | ✓ Phase 6 落地，TestStartupMatrix/TestParseArgs 锁定 |
 
 ## Evolution
 
@@ -149,4 +157,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-22 after Phase 5（多客户端共享闭合，含 WR-01/WR-02 缝合面修复复验通过）*
+*Last updated: 2026-08-24 after Phase 6（会话生命周期闭合：EXIT 帧/自动重连/--once/--exit-when-empty；UAT Playwright 实测 46/46 全绿 + SECURITY 24/24 closed）*

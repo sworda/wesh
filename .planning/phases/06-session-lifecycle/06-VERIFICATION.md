@@ -1,26 +1,32 @@
 ---
 phase: 06-session-lifecycle
 verified: 2026-08-23T10:58:00Z
-status: human_needed
+status: passed
 score: 3/3 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 human_verification:
+
   - test: "断网 30s 恢复自动重连观感（06-UAT.md Test 1）：浏览器打开会话 → 断网（飞行模式/拔线）→ 观察 Reconnecting 面板倒计时 → 恢复网络 → 预期 5s 内自动接回原会话（echo $$ 同进程判据）"
     expected: "Reconnecting 面板出现并倒计时；恢复后自动接回同一 PTY 进程（pid 相等）"
     why_human: "真实 OS 断网栈与浏览器原生 online/offline 事件时序——headless 硬约束（CODEBUDDY.md 平台原生行为豁免条款），任何自动化结构性不可测；自动化等价面已覆盖：phase06.mjs S6（真实 TCP 断连重接同一 PTY，pidPre==pidPost）+ phase06-dom.mjs D1/D4/D8（合成事件驱动同一状态机）"
+
   - test: "重连成功清屏与程序重绘观感（06-UAT.md Test 2）：重连后观察终端画面"
     expected: "重连成功清屏后全屏程序秒级重绘干净画面；行内 shell 历史由 tmux/herdr 覆盖"
     why_human: "像素视觉观感——headless 豁免；自动化等价面：phase06-dom.mjs D1h（term.clear() 可观测——断开前写入文本重连后从 DOM 消失）"
+
   - test: "Reconnect now 手动跳过（06-UAT.md Test 3）：Reconnecting 面板等待期点击 hint 链接"
     expected: "倒计时未完即发起新连接，循环不终止直至接回"
     why_human: "真实浏览器点击 UX——headless 豁免；自动化等价面：phase06-dom.mjs D5（800ms 容差窗内构造 +1）"
+
   - test: "Session ended 面板退出码与信号人话（06-UAT.md Test 4）：双端（ro/rw）观察子进程 exit N 与 kill -HUP 两形态"
     expected: "面板正文逐字 'The process exited with code {N}.' / 'The process was killed by signal SIGHUP.'"
     why_human: "真实浏览器渲染观感——headless 豁免；自动化等价面：phase06-dom.mjs D7（正文逐字 'The process exited with code 7.'）+ phase06.mjs S1/S2（协议层帧内容与帧序）"
+
   - test: "--once 第二客户端 503 页（06-UAT.md Test 5）：--once 实例下第二浏览器访问"
     expected: "第二客户端见 503 专版页；唯一客户端断开后服务端退出（退出状态 255）"
     why_human: "真实浏览器页面——headless 豁免；自动化等价面：phase06.mjs S3（双点位 503 + 进程退出 255 协议层全证）"
+
   - test: "owner 断线重连 [ro] 前缀（06-UAT.md Test 6）：owner 模式会话中断线重连"
     expected: "重连后标题出现 [ro] 前缀，写权限不恢复（按新 attach 走递补语义）"
     why_human: "真实浏览器 UI 状态——headless 豁免；自动化等价面：phase06-dom.mjs D10c（标题 [ro] 前缀断言的判别力已由负面对照实证）+ P5 递补语义既有套件（phase05 系列）"
