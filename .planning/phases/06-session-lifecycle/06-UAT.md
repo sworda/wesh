@@ -4,7 +4,7 @@ phase: 06-session-lifecycle
 created: 2026-08-23
 source: [06-VERIFICATION.md, 06-07-PLAN.md, 06-05-SUMMARY.md, 06-06-SUMMARY.md]
 started: 2026-08-23T10:05:00Z
-updated: 2026-08-23T10:05:00Z
+updated: 2026-08-23T20:41:00Z
 ---
 
 ## Current Test
@@ -19,7 +19,9 @@ awaiting: user response
 
 ## 自动化执行说明（2026-08-23）
 
-Phase 6 行为在 headless 硬约束下已按分层策略自动化覆盖：**协议层**由 `web/uat/phase06.mjs` 覆盖（23/23 pass + 1 skipped——EXIT 双端逐字节一致广播、信号死亡 exit_code=-1+大写 SIGHUP、--once 双点位 503 + 进程退出状态 255、--exit-when-empty 立即/宽限取消/宽限到期三形态、断连重接同一 PTY 进程 ID 相等主证据）；**DOM 逻辑层**由 `web/uat/phase06-dom.mjs` 覆盖（30/30 pass + 1 skipped——1006 重连全链、1002/1013/1008 不触发边界、双触发幂等、Reconnect now 手动入口、代际守卫、EXIT 帧端到端逐字文案、online 快路径）。
+Phase 6 行为在 headless 硬约束下已按分层策略自动化覆盖：**协议层**由 `web/uat/phase06.mjs` 覆盖（23/23 pass + 1 skipped——EXIT 双端逐字节一致广播、信号死亡 exit_code=-1+大写 SIGHUP、--once 双点位 503 + 进程退出状态 255、--exit-when-empty 立即/宽限取消/宽限到期三形态、断连重接同一 PTY 进程 ID 相等主证据）；**DOM 逻辑层**由 `web/uat/phase06-dom.mjs` 覆盖（33/33 pass + 1 skipped——1006 重连全链、1002/1013/1008 不触发边界、双触发幂等、Reconnect now 手动入口、代际守卫、EXIT 帧端到端逐字文案、online 快路径、CR-01 双在飞守卫）。
+
+2026-08-23 复跑确认（verify-work 会话内，全量重建 `web/dist` 20:25:25 → 二进制 `/tmp/wesh-uat/wesh` 20:25:37）：phase06.mjs 23/23、phase06-dom.mjs 33/33、phase05.mjs 28/28（Test 2/5/6 依赖的 S8/S9 等价面回归）、phase05-dom.mjs 19/19（D2/D3 等价面回归）——全绿，各 1 项平台豁免 skipped。
 
 下列六项为**残余人工验证项**——真实 OS 断网栈与浏览器原生 online/offline 事件序列、断网/恢复观感、像素级重绘观感、真实浏览器点击入口，任何自动化（含 playwright）结构性不可测，按 CODEBUDDY.md 平台原生行为豁免条款风险接受。每项注明已落盘的自动化等价面。
 
@@ -43,6 +45,7 @@ result: pending
 source: manual
 steps: "1. 启动 `./wesh --writable --credential user:pass --insecure-http -- bash`（或 loopback + SSH 转发形态，见前置节），浏览器打开会话，确认可输入；2. 在终端执行 `echo $$` 记录 shell 进程号，再执行 `echo before-disconnect` 留下可辨识现场；3. 断网（飞行模式/拔网线/禁用网卡）；4. 观察页面：数秒内应出现「Reconnecting」面板，正文显示 attempt N 与下次重试倒计时；5. 保持断网约 30s——attempt 计数应递增、倒计时周期按 1s×2 封顶 30s 变长；6. 恢复网络；7. 预期：5s 内自动接回原会话——面板消失、终端清屏后重绘，`echo $$` 与断网前相同（同一进程）"
 note: "自动化等价面：phase06-dom.mjs D1（合成 1006 → Reconnecting 面板三件套逐字要点 → 退避自动重连 → 面板隐藏 → 清屏可观测）+ D8（online 事件快路径）；phase06.mjs S6（真实 TCP 断连 → 重接同一 PTY，pidPre==pidPost 进程 ID 主证据）。真实断网栈与浏览器原生事件时序属平台豁免（两脚本各以 skipped+reason 登记）"
+progress: "2026-08-23 用户以 Chrome DevTools offline 法实测：断 30s 恢复后接回原会话（echo $$ 进程号不变）——核心判定通过；服务端日志 401 auth_failed（Basic 挑战正常一跳，auth.go:109）+ 1006 pong_timeout（pong 超时活性收口设计行为，server.go:952）。面板/倒计时观感因 DevTools offline 不向 JS 派发 close 事件未观测到——已指导改用真实断网/net-internals flush sockets 复测观感子项"
 
 ### 2. 重连成功清屏与程序重绘观感（CORE-05 首屏恢复）
 
@@ -81,7 +84,7 @@ note: "自动化等价面：phase06.mjs S3（第二客户端 /api/attach 早闸 
 expected: owner 客户端断线重连后按新 attach 走递补语义——不恢复写权限：重连回来的端显示 `[ro] ` 标题前缀、键盘禁用（写权限已由递补队列前位的端接管）
 result: pending
 source: manual
-steps: "1. 启动 `./wesh --writable --credential user:pass --insecure-http -- bash`（默认 owner 写策略）；2. 窗口 A 打开 rw 分享链接——成为 owner，可输入；窗口 B 打开同一 rw 链接——降级旁观（`[ro] ` 前缀、键盘禁用）；3. 窗口 A 断网（或 DevTools → Network 断开其 WS），等「Reconnecting」面板出现后恢复网络；4. A 自动重连成功后观察两端；5. 预期：A 重连后标题带 `[ro] ` 前缀、键盘禁用（不恢复写权限）；B 已升格为 owner（前缀消失、键盘激活）——写权限按 attach 顺序递补，重连不构成豁免"
+steps: "1. 启动 `./wesh --writable --credential user:pass --insecure-http -- bash`（默认 owner 写策略）；2. 窗口 A 打开 rw 分享链接——成为 owner，可输入；窗口 B 打开同一 rw 链接——降级旁观（`[ro] ` 前缀、键盘禁用）；3. 只断 A：A 用独立浏览器后在 chrome://net-internals/#sockets flush socket pools（或 A 用独立机器真实断网）——不可用 DevTools offline（不派发 close 事件）也不可整机断网（会波及 B），等「Reconnecting」面板出现后恢复网络；4. A 自动重连成功后观察两端；5. 预期：A 重连后标题带 `[ro] ` 前缀、键盘禁用（不恢复写权限）；B 已升格为 owner（前缀消失、键盘激活）——写权限按 attach 顺序递补，重连不构成豁免"
 note: "自动化等价面：phase05-dom.mjs D2（rw 第二端降级旁观 → owner 断开 → 升格全链逐字断言）+ phase05.mjs S9（递补升格协议层全链）——重连 attach 与新 attach 走同一升档序列（服务端无重连概念），D-06 语义由该同构性覆盖；重连触发面由 phase06-dom.mjs D1 覆盖"
 
 ## Summary
