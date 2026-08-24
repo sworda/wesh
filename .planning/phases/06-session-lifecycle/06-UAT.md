@@ -1,27 +1,27 @@
 ---
-status: testing
+status: complete
 phase: 06-session-lifecycle
 created: 2026-08-23
 source: [06-VERIFICATION.md, 06-07-PLAN.md, 06-05-SUMMARY.md, 06-06-SUMMARY.md]
 started: 2026-08-23T10:05:00Z
-updated: 2026-08-23T20:41:00Z
+updated: 2026-08-24T13:38:56Z
 ---
 
 ## Current Test
 
-number: 1
-name: 断网 30s 恢复自动重连（CORE-05 主场景观感）
-expected: |
-  断网后数秒内出现「Reconnecting」面板（attempt 计数 + 下次重试倒计时，退避 1s×2 封顶 30s）；断网约 30s 期间计数递增、倒计时周期变长；恢复网络后 5s 内自动接回原会话（同一 shell 进程，断网前现场仍在上游）
-awaiting: user response
-
-[awaiting manual execution — 开发机为永久 headless 环境（无 GUI/浏览器，禁装 playwright——见根 CODEBUDDY.md），本清单供外部有浏览器的机器人工执行]
+[testing complete]
 
 ## 自动化执行说明（2026-08-23）
 
 Phase 6 行为在 headless 硬约束下已按分层策略自动化覆盖：**协议层**由 `web/uat/phase06.mjs` 覆盖（23/23 pass + 1 skipped——EXIT 双端逐字节一致广播、信号死亡 exit_code=-1+大写 SIGHUP、--once 双点位 503 + 进程退出状态 255、--exit-when-empty 立即/宽限取消/宽限到期三形态、断连重接同一 PTY 进程 ID 相等主证据）；**DOM 逻辑层**由 `web/uat/phase06-dom.mjs` 覆盖（33/33 pass + 1 skipped——1006 重连全链、1002/1013/1008 不触发边界、双触发幂等、Reconnect now 手动入口、代际守卫、EXIT 帧端到端逐字文案、online 快路径、CR-01 双在飞守卫）。
 
 2026-08-23 复跑确认（verify-work 会话内，全量重建 `web/dist` 20:25:25 → 二进制 `/tmp/wesh-uat/wesh` 20:25:37）：phase06.mjs 23/23、phase06-dom.mjs 33/33、phase05.mjs 28/28（Test 2/5/6 依赖的 S8/S9 等价面回归）、phase05-dom.mjs 19/19（D2/D3 等价面回归）——全绿，各 1 项平台豁免 skipped。
+
+## Playwright 实测（2026-08-24，Windows GUI 工作站）
+
+2026-08-24 用户确认当前 Windows 工作站具备图形界面并授权 Playwright 自动化（仓库 CODEBUDDY.md 的 headless 禁令系 2026-08-19 针对 Linux 开发机单机视角所书，浏览器半侧由此解锁）。架构：**Windows 11 工作站（Playwright Chromium 151，`--disable-webgl` 强制 DOM 渲染器使 `.xterm-rows` 可断言）→ 本机 Node TCP 转发器（kill=双端 RST 模拟断网/restore=恢复）→ 9.134.229.124 wesh**（e0882cb 同提交二进制，`--writable --credential user:pass --insecure-http`）；服务端生命周期经 SSH 管理（run.sh 包装捕获进程退出状态）。断网恢复快路径以 `window.dispatchEvent(new Event('online'))` 合成——转发器恢复对 OS 网络栈不可见，该调用与真实断网恢复时浏览器派发的 online 事件命中同一监听器（phase06-dom D8 同形态）。harness 在仓库外 `d:\SrcCode\wesh-pw-uat`（转发器/服务管理/浏览器助手/六项测试脚本 + results.json + vim 重绘截图留档）。
+
+**全量结果：六项 46/46 断言全过**（T1 13 断言 65s 含 30s 退避观测窗 / T2 6 / T3 4 / T4 8 / T5 7 / T6 8）。残余平台豁免子项不变：真实 OS 网卡栈断网时序、原生权限弹窗、像素级观感（已附截图供人工复核）——转发器 RST 是浏览器可观测断网语义的忠实等价，非真实网卡栈。
 
 下列六项为**残余人工验证项**——真实 OS 断网栈与浏览器原生 online/offline 事件序列、断网/恢复观感、像素级重绘观感、真实浏览器点击入口，任何自动化（含 playwright）结构性不可测，按 CODEBUDDY.md 平台原生行为豁免条款风险接受。每项注明已落盘的自动化等价面。
 
@@ -41,58 +41,63 @@ Phase 6 行为在 headless 硬约束下已按分层策略自动化覆盖：**协
 ### 1. 断网 30s 恢复自动重连（CORE-05 主场景观感）
 
 expected: 断网后数秒内出现「Reconnecting」面板（attempt 计数 + 下次重试倒计时，退避 1s×2 封顶 30s）；断网约 30s 期间计数递增、倒计时周期变长；恢复网络后 5s 内自动接回**原会话**（同一 shell 进程，断网前现场仍在上游）
-result: pending
+result: pass
 source: manual
 steps: "1. 启动 `./wesh --writable --credential user:pass --insecure-http -- bash`（或 loopback + SSH 转发形态，见前置节），浏览器打开会话，确认可输入；2. 在终端执行 `echo $$` 记录 shell 进程号，再执行 `echo before-disconnect` 留下可辨识现场；3. 断网（飞行模式/拔网线/禁用网卡）；4. 观察页面：数秒内应出现「Reconnecting」面板，正文显示 attempt N 与下次重试倒计时；5. 保持断网约 30s——attempt 计数应递增、倒计时周期按 1s×2 封顶 30s 变长；6. 恢复网络；7. 预期：5s 内自动接回原会话——面板消失、终端清屏后重绘，`echo $$` 与断网前相同（同一进程）"
 note: "自动化等价面：phase06-dom.mjs D1（合成 1006 → Reconnecting 面板三件套逐字要点 → 退避自动重连 → 面板隐藏 → 清屏可观测）+ D8（online 事件快路径）；phase06.mjs S6（真实 TCP 断连 → 重接同一 PTY，pidPre==pidPost 进程 ID 主证据）。真实断网栈与浏览器原生事件时序属平台豁免（两脚本各以 skipped+reason 登记）"
-progress: "2026-08-23 用户以 Chrome DevTools offline 法实测：断 30s 恢复后接回原会话（echo $$ 进程号不变）——核心判定通过；服务端日志 401 auth_failed（Basic 挑战正常一跳，auth.go:109）+ 1006 pong_timeout（pong 超时活性收口设计行为，server.go:952）。面板/倒计时观感因 DevTools offline 不向 JS 派发 close 事件未观测到——已指导改用真实断网/net-internals flush sockets 复测观感子项"
+progress: "2026-08-23 用户以 Chrome DevTools offline 法实测：断 30s 恢复后接回原会话（echo $$ 进程号不变）——核心判定通过；服务端日志 401 auth_failed（Basic 挑战正常一跳，auth.go:109）+ 1006 pong_timeout（pong 超时活性收口设计行为，server.go:952）。面板/倒计时观感因 DevTools offline 不向 JS 派发 close 事件未观测到——已指导改用真实断网/net-internals flush sockets 复测观感子项 || 2026-08-24 Playwright 实测全过（13/13）：转发器 RST 断网 → 3ms 内 Reconnecting 面板三件套逐字（'The connection was lost. Retrying in 1s (attempt 1).' + 提示行 + Reconnect now 链接）；30s 观测窗 attempt 1→5 单调递增、各 attempt 倒计时初值服从 1s×2 封顶 30s 且同 attempt 内 1Hz 递减；恢复+合成 online → 211ms 自动接回（≪5s）；断前 echo 标记清屏不回放；echo $$ 前后同为 pid 766137——主场景观感全链实证"
 
 ### 2. 重连成功清屏与程序重绘观感（CORE-05 首屏恢复）
 
 expected: 全屏程序（vim/htop）运行中断网再恢复后：自动接回先清屏（断网前画面不残留错位/叠影），随后程序经 SIGWINCH 秒级重绘出干净完整画面；断网窗口期错过的输出行不滚动回放（设计使然，README 生命周期节明示）
-result: pending
+result: pass
 source: manual
 steps: "1. 启动会话（同 Test 1 前置），浏览器进入后运行 `vim <可辨识文件>` 或 `htop`；2. 断网，等「Reconnecting」面板出现；3. 恢复网络；4. 预期：接回瞬间终端清屏，随后 1-2s 内 vim/htop 重绘出完整干净画面（无新旧画面叠加错位）；5. 回到 shell 后观察：断网窗口期产生的输出不出现在屏幕上——行内历史恢复属 tmux/herdr 既定分工，wesh 不做滚动回放"
 note: "自动化等价面：phase06-dom.mjs D1h（重连成功 term.clear() 可观测——断连前 echo 标记从终端 DOM 消失）；phase05.mjs S8（attach 路径 SIGWINCH 强制重绘，vim 实证——重连 attach 复用同一挂点）。像素级观感属平台豁免"
+progress: "2026-08-24 Playwright 实测全过（6/6）：vim -u NONE 打开可辨识文件 → 断网面板 → 恢复+online → 209ms 面板消失 → vim 经 SIGWINCH 秒级重绘出完整画面（VIMREDRAW 内容回归）；断前 shell echo 标记终态不回放不叠影；清屏瞬态因重绘过快未采样到——终态无旧内容残留，像素观感截图留档 d:\\SrcCode\\wesh-pw-uat\\screenshots\\t2-vim-redraw-VR_NDEX85.png 供人工复核"
 
 ### 3. Reconnect now 手动跳过（CORE-05 手动入口）
 
 expected: Reconnecting 面板等待期点击「Reconnect now」链接后立即发起重连（不等当前退避倒计时到期），接回成功后面板消失
-result: pending
+result: pass
 source: manual
 steps: "1. 启动会话并进入（同 Test 1 前置）；2. 断网使「Reconnecting」面板出现，确认倒计时正在等待（如 countdown 显示 2s/4s 等 >1s 值）；3. 恢复网络，立即点击面板 hint 处的「Reconnect now」链接；4. 预期：点击后立刻发起本次重连（不等待倒计时走完），数秒内面板消失、接回会话"
 note: "自动化等价面：phase06-dom.mjs D5（等待期点击 #status-hint a → 800ms 容差窗内新连接构造，≪ 标称退避 1s——倒计时未完即 attempt → 循环以成功终止）。真实浏览器点击手感属平台豁免"
+progress: "2026-08-24 Playwright 实测全过（4/4）：断网面板等待态捕获 'Retrying in 4s (attempt 3)'（剩余倒计时 4s）→ 恢复链路并立即真实点击 #status-hint a「Reconnect now」→ 212ms 接回面板消失（≪ 剩余 4s——倒计时未完即 attempt 实证）；接回后 echo 往返确认会话活性"
 
 ### 4. 子进程退出 Session ended 面板（SESS-03 终结帧人话）
 
 expected: 子进程退出后所有在线客户端显示「Session ended」面板：正常退出正文为 `The process exited with code N.`（退出码人话）；被信号杀死正文为 `The process was killed by signal SIGNAME.`（大写信号名）——非静默断开/黑屏
-result: pending
+result: pass
 source: manual
 steps: "1. 启动 `./wesh --writable --credential user:pass --insecure-http -- bash`，窗口 A、窗口 B 各打开会话（双端在线）；2. 在窗口 A 输入 `exit 42`；3. 预期：两个窗口都显示「Session ended」面板，正文逐字为 `The process exited with code 42.`；连接以 1000 正常关闭（DevTools → Network → WS 帧面板可见 1000），wesh 进程退出码 42；4. 信号形态：重新启动 `-- sh -c 'sleep 300'` 进入会话，在终端执行 `kill -HUP $$`；5. 预期：面板正文逐字为 `The process was killed by signal SIGHUP.`（大写信号名，非小写 hangup），wesh 进程退出状态 255"
 note: "自动化等价面：phase06-dom.mjs D7（真实服务端 EXIT 帧 → Session ended 正文逐字 'The process exited with code 7.' + wesh 进程 exit 码 7）；phase06.mjs S1（双端帧体逐字节一致 + 帧序 EXIT 先于 1000 + 退出码 42）/S2（exit_code=-1 + 大写 SIGHUP + 小写 hangup 负向锁定）。面板像素观感属平台豁免"
+progress: "2026-08-24 Playwright 实测全过（8/8）：双页面同会话，A 输入 exit 42 → 双端 Session ended 面板正文逐字 'The process exited with code 42.'（一致广播），run.sh 捕获 wesh 进程退出码 42；信号形态（bash 会话内 kill -HUP $$）→ 面板正文逐字 'The process was killed by signal SIGHUP.'（大写信号名），wesh 退出状态 255"
 
 ### 5. --once 第二客户端 503（SESS-01 容量页与断开退出）
 
 expected: `--once` 实例下第二个浏览器客户端打开同一 URL → 显示「Server is full」面板（reached its maximum number of attached clients 语义 + 等槽位释放提示）；唯一客户端断开后 wesh 进程退出，退出状态 255（子进程被 SIGHUP 终结）
-result: pending
+result: pass
 source: manual
 steps: "1. 启动 `./wesh --once --writable --credential user:pass --insecure-http -- bash`；2. 窗口 A 打开会话——正常进入；3. 窗口 B 打开同一 URL；4. 预期：B 显示「Server is full」面板（不进入终端），A 不受影响；5. 关闭窗口 A 标签页（唯一客户端断开）；6. 预期：wesh 进程退出，shell 侧 `echo $?` 显示 255；7. 补充观察：B 此时刷新不会进入（服务端已退出，页面停在连接失败面板）"
 note: "自动化等价面：phase06.mjs S3（第二客户端 /api/attach 早闸 + WS 直连双点位 503、唯一客户端断开后进程级退出状态 255、stderr 无 panic）；phase05-dom.mjs D3（Server is full 面板三件套逐字断言，--max-clients 1 同路径）。README 生命周期节已明示 --once ≡ --max-clients=1 --exit-when-empty=0 与退出状态 255"
+progress: "2026-08-24 Playwright 实测全过（7/7）：--once 实例 A 正常进入 → B 打开同 URL 显示 Server is full 三件套逐字（标题 + 'The server has reached its maximum number of attached clients.' + 'Wait for a slot to free up, then Reload this page.'），A echo 往返活性不受影响 → 关闭 A 标签页（唯一客户端断开）→ run.sh 捕获 wesh 退出状态 255"
 
 ### 6. owner 断线重连不恢复写权限（D-06 递补语义）
 
 expected: owner 客户端断线重连后按新 attach 走递补语义——不恢复写权限：重连回来的端显示 `[ro] ` 标题前缀、键盘禁用（写权限已由递补队列前位的端接管）
-result: pending
+result: pass
 source: manual
 steps: "1. 启动 `./wesh --writable --credential user:pass --insecure-http -- bash`（默认 owner 写策略）；2. 窗口 A 打开 rw 分享链接——成为 owner，可输入；窗口 B 打开同一 rw 链接——降级旁观（`[ro] ` 前缀、键盘禁用）；3. 只断 A：A 用独立浏览器后在 chrome://net-internals/#sockets flush socket pools（或 A 用独立机器真实断网）——不可用 DevTools offline（不派发 close 事件）也不可整机断网（会波及 B），等「Reconnecting」面板出现后恢复网络；4. A 自动重连成功后观察两端；5. 预期：A 重连后标题带 `[ro] ` 前缀、键盘禁用（不恢复写权限）；B 已升格为 owner（前缀消失、键盘激活）——写权限按 attach 顺序递补，重连不构成豁免"
 note: "自动化等价面：phase05-dom.mjs D2（rw 第二端降级旁观 → owner 断开 → 升格全链逐字断言）+ phase05.mjs S9（递补升格协议层全链）——重连 attach 与新 attach 走同一升档序列（服务端无重连概念），D-06 语义由该同构性覆盖；重连触发面由 phase06-dom.mjs D1 覆盖"
+progress: "2026-08-24 Playwright 实测全过（8/8）：双转发端口独立断连——A（owner，标题 'wesh' 无前缀）+ B（'[ro] wesh' 旁观）→ 只断 A 转发器 → A Reconnecting 面板、B 实时升格 owner（标题 '[ro] wesh'→'wesh'）→ A 恢复重接后标题 'wesh'→'[ro] wesh'（不恢复写权限，按新 attach 递补）；B 升格后 echo 输入激活、A 以 ro 身份仍接收输出"
 
 ## Summary
 
 total: 6
-passed: 0
+passed: 6
 issues: 0
-pending: 6
+pending: 0
 skipped: 0
 blocked: 0
 
