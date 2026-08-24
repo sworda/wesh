@@ -10,3 +10,6 @@ web/dist/*.gz
 /.opencodereview/
 /.planning/debug/
 /.planning/research/.cache/
+
+# local agent workspace (codebuddy worktrees / guides)
+/.codebuddy/
