@@ -274,7 +274,38 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 反代子路径挂载（`/wesh/` base-path）下页面与 WS 升级均正常（尾斜杠规范化）；反代注入的可信用户头作为环境变量出现在子进程中
   3. 子进程以指定 cwd/TERM 启动，停止信号发给进程组（可配 TERM→KILL 宽限）；可以指定 uid/gid 降权运行；可选启动后自动打开浏览器
 
-**Plans**: TBD
+**Plans**: 8 plans
+**Wave 1**
+
+- [ ] 07-01-PLAN.md — base-path tracer（OPS-02，D-13/D-14）：--base-path 严格校验 + mux 前缀装配（StripPrefix 仅静态伺服 + 307 免费）+ 前端相对 URL 三改含 share 升级前缀 + dist（OPS-02）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 07-02-PLAN.md — UNIX socket（OPS-01，D-08..D-12）：--socket/--socket-mode/--socket-owner + listen 前 Remove + listen 后 Chmod/Chown + validateStartup 互斥与跳过 + unix:// 打印与分享链接退化（OPS-01）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 07-03-PLAN.md — auth-header/XFF（SEC-07，D-15..D-20）：proxy.go sanitize/extract + logEvent remote_user 第四字段 + XFF 信任闸换 logEvent/throttle 键 + D-16 暴露面警告（SEC-07）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 07-04-PLAN.md — 子进程管理+降权（OPS-04/05，D-21/D-22/D-24/D-25）：StartOptions Dir/Term + SignalGroup + stop-signal/stop-timeout 序列 + uid/gid Credential + whitelistEnv 身份改写（OPS-04/OPS-05）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 07-05-PLAN.md — 1001 优雅下线 + --open（D-23 + OPS-11，D-26/D-27）：Server.Shutdown 1001 广播 + SIGTERM/INT 捕获 + proto 1001 启用 + 前端关停面板 + --open headless 跳过（OPS-11）
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 07-06-PLAN.md — TOML 配置文件（OPS-09，D-01..D-07）：go-toml 严格模式 + 26 键两阶段合并 + flag>env>config>default 优先级 + D-07 权限警告 + 值剥离红线（OPS-09）
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 07-07-PLAN.md — phase07.mjs 协议层 UAT：配置合并/unix socket relay/base-path 交叉/auth-header/XFF/stop-signal/降权/1001/--open 八场景 + 自净红线（全需求）
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 07-08-PLAN.md — 收口：README 部署与配置节（含 ttyd -H 模型差异）+ SEC-07 需求文本 D-15 修订 + 07-UAT.md 人工清单 + 全量六段式与十脚本回归（全需求）
 
 ### Phase 8: 可观测性
 
