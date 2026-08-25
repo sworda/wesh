@@ -742,24 +742,26 @@ defer stop() // stop 注销信号行为恢复默认 + 释放资源（文档明�
 | A4 | --open 与 --socket 组合时无 TCP URL 可开——按配置矛盾 fail-fast 处理（CONTEXT 未显式覆盖该组合） | Open Questions 1 | 若裁决为「跳过+警告」则校验矩阵行语义不同，一行改动 |
 | A5 | socket chmod 与 listen 之间的 umask 窗口风险可接受（Chmod 在 listening 打印前完成，窗口内无客户端被指引） | Pattern 1 | 极端竞争下窗口期连接获较宽权限——本地同机攻击者模型内，风险极低 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **--open 与 --socket 组合的语义？**
+> 全部 4 问已在 plan 期采纳落地（07-PLAN 2026-08-25）：去向逐问标注于下。
+
+1. **--open 与 --socket 组合的语义？** —— **RESOLVED → 07-05 Task 2**：采纳 fail-fast 组合校验，validateStartup 新增 --socket×--open 冲突拒绝行（exit 2，文案含双 flag 名）。
    - What we know: unix socket 形态下无 host:port 可拼（D-12 分享链接退化为提示行）；--open 需要 http(s) URL
    - What's unclear: 配置矛盾 fail-fast（--socket×--open 进 validateStartup 拒绝）还是 headless-skip 同款「跳过+警告」
    - Recommendation: fail-fast 组合校验（与 --socket-owner 单给、--uid 单给同档——「显式哲学」一贯性：给了无法兑现的 flag 组合 = 配置错误）；planner 落 validateStartup 一行
 
-2. **--stop-timeout 的 KILL 补发后 wesh 进程退出码？**
+2. **--stop-timeout 的 KILL 补发后 wesh 进程退出码？** —— **RESOLVED → 07-08 Task 1**：采纳 accept-255 同源语义；README 优雅下线小节落退出码 255 运维注记（systemd SuccessExitStatus= 部署侧自决）。
    - What we know: 子进程被 SIGKILL 收 → ExitCode -1 → exitf(-1) → Unix 进程退出状态 255（P6 OQ1 accept-255 同语义，已裁决形态）
    - What's unclear: systemd 视角 SIGTERM 关停的理想退出码是 0/143；255 是否可接受
    - Recommendation: 沿用 accept-255 同源语义（CONTEXT discretion 已暗示「与 P6 OQ1 accept-255 同源」）；README 运维节明示；systemd SuccessExitStatus= 由部署侧自决
 
-3. **1001 广播是否复用 EXIT 帧的 2s 写超时定值？**
+3. **1001 广播是否复用 EXIT 帧的 2s 写超时定值？** —— **RESOLVED → 07-05 Task 1**：采纳「不再盒」——Shutdown 用 conn.Close(1001) 直接带关闭帧，Close 内建 5s+5s 上界足够；stall 端最坏 10s 不阻塞进程退出（exitf 由 lifecycle 子进程路径收口）。
    - What we know: P6 EXIT 广播 = 每客户端 goroutine 同步 Write 带 2s ctx（server.go:1111-1113，RESEARCH OQ3 定值拒绝可配化）；1001 路径用 conn.Close 直接带关闭帧，Close 内建 5s+5s 上界（close.go:87-89）
    - What's unclear: Close 的上界是否需要在 Shutdown 内再盒一层
    - Recommendation: 不再盒——Close 内建上界足够；stall 端最坏 10s 不阻塞进程退出（exitf 由 lifecycle 子进程路径收口，与 Shutdown goroutine 并发）
 
-4. **配置文件里 exit-when-empty 的取值形态？**
+4. **配置文件里 exit-when-empty 的取值形态？** —— **RESOLVED → 07-06 Task 2**：采纳字符串单形态，配置键经 exitEmptyValue.Set 解析（"true"/"0"/"30s" 全通，单一解析路径零双写）；bool 形态由 go-toml 类型不符自然拒绝。
    - What we know: flag 三形态（不写/裸写/=duration）由 exitEmptyValue.Set 承载（"true"→立即）
    - What's unclear: TOML 里写 `exit-when-empty = true`（bool）还是 `exit-when-empty = "30s"`（串）
    - Recommendation: 字符串单形态，复用 exitEmptyValue.Set 解析（"true"/"0"/"30s" 全通）——单一解析路径零双写；bool 形态由 go-toml 类型不符自然拒绝
