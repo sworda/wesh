@@ -43,7 +43,16 @@ func startShareServer(t *testing.T, opts Options) string {
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	// 本包（server 内部包）无法复用 server_test 包的 killServer——内联同款清理
+	//（子进程 Kill 触发 lifecycle 风收；sess.Close 幂等兜底；泄漏危害见
+	// e2e_test.go killServer 注释）。
+	t.Cleanup(func() {
+		ln.Close()
+		if sess.Cmd != nil && sess.Cmd.Process != nil {
+			_ = sess.Cmd.Process.Kill()
+		}
+		_ = sess.Close()
+	})
 	go http.Serve(ln, srv.Handler())
 	return "http://" + ln.Addr().String()
 }

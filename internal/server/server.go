@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -118,6 +119,20 @@ type Server struct {
 	// acquire/release 恰好一次不变量见 halfOpenCounter 类型注释。
 	halfOpen halfOpenCounter
 
+	// Phase 6 断开退出装配（06-02，SESS-01/02）：exitWhenEmpty/exitWhenEmptyGrace
+	// 为 New 装配期固化、运行期只读（D-14 set/grace 分离——grace=0 是合法显式值
+	//「最后一个客户端断开立即退出」，set 位由 bool 承载，禁止 <=0 零值兜底吞掉
+	// 显式 0）；exitEmptyTimer 为宽限计时器（hubMu 保护——启停全在 hubMu 内：
+	// detach/kick 两移除点启动、registerLocked 成功后取消、置 nil 恰好一次，
+	// resize.go initArbiter 计时器先例；回调自有 goroutine，入内先取 hubMu 复查
+	//『仍空且未 exiting』）；exiting 为 lifecycle 终结广播门（hubMu 保护——
+	// lifecycle 注册表快照前置位：广播 Close 引发的 detach 致空属正常终结序列，
+	// 空触发检查该位抑制，不得再生 SIGHUP/计时器）。
+	exitWhenEmpty      bool
+	exitWhenEmptyGrace time.Duration
+	exitEmptyTimer     *time.Timer
+	exiting            bool
+
 	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
 }
 
@@ -148,28 +163,36 @@ type Server struct {
 // 05-06 新增：ShareTokenRO/ShareTokenRW 为生产直传字段（main 经
 // GenerateShareToken 启动生成两明文原样透传，server 只存 SHA-256 预哈希——
 // D-01 第三认证通道；任一空串 = 通道关闭，本 phase main 恒生成）。
+// 06-02 新增：ExitWhenEmpty/ExitWhenEmptyGrace 为测试可覆写字段（SESS-01/02，
+// D-14）：ExitWhenEmpty 为 set 位（所有客户端断开后退出——默认 false = 现状
+// 保持，无客户端时子进程继续运行，P5『断开不退出』产品承诺）；ExitWhenEmptyGrace
+// 为断开退出宽限（0 是合法显式值 = 最后一个客户端断开立即退出——set/grace
+// 分离，禁止 <=0 零值兜底吞掉显式 0，PATTERNS §3 注意项；仅在 ExitWhenEmpty
+// 为 true 时有意义；负值无语义，New 防御性钳 0）。
 type Options struct {
-	Writable         bool
-	WritePolicy      string
-	PingInterval     time.Duration
-	HelloTimeout     time.Duration
-	MaxHalfOpenPerIP int
-	PongTimeout      time.Duration
-	Credentials      []Credential
-	Origins          []string
-	TLS              bool
-	TicketTTL        time.Duration
-	ThrottleBase     time.Duration
-	ThrottleCap      time.Duration
-	ClientPrefsRO    json.RawMessage
-	ClientPrefsRW    json.RawMessage
-	OutboxBytes      int
-	MaxClients       int
-	InputRate        int
-	InputBurst       int
-	ResizeDebounce   time.Duration
-	ShareTokenRO     string
-	ShareTokenRW     string
+	Writable           bool
+	WritePolicy        string
+	PingInterval       time.Duration
+	HelloTimeout       time.Duration
+	MaxHalfOpenPerIP   int
+	PongTimeout        time.Duration
+	Credentials        []Credential
+	Origins            []string
+	TLS                bool
+	TicketTTL          time.Duration
+	ThrottleBase       time.Duration
+	ThrottleCap        time.Duration
+	ClientPrefsRO      json.RawMessage
+	ClientPrefsRW      json.RawMessage
+	OutboxBytes        int
+	MaxClients         int
+	InputRate          int
+	InputBurst         int
+	ResizeDebounce     time.Duration
+	ShareTokenRO       string
+	ShareTokenRW       string
+	ExitWhenEmpty      bool
+	ExitWhenEmptyGrace time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -224,6 +247,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.WritePolicy == "" {
 		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
 	}
+	// D-14 set/grace 分离：grace=0 是合法显式值（最后一个客户端断开立即退出），
+	// 禁止 <=0 零值兜底吞掉显式 0（PATTERNS §3 注意项）；负值无语义，防御性钳 0。
+	if opts.ExitWhenEmptyGrace < 0 {
+		opts.ExitWhenEmptyGrace = 0
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
@@ -246,6 +274,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		tlsOn:            opts.TLS,
 		clientPrefsRO:    opts.ClientPrefsRO,
 		clientPrefsRW:    opts.ClientPrefsRW,
+		// New 装配直传（06-02，D-14；set/grace 分离，grace 负值已在上方钳 0）。
+		exitWhenEmpty:      opts.ExitWhenEmpty,
+		exitWhenEmptyGrace: opts.ExitWhenEmptyGrace,
 	}
 	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
 	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
@@ -732,6 +763,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		if becomeOwner {
 			s.registry.owner = cl // D-06：首个 rw attach 立 owner
 		}
+		// 宽限取消点（06-02，D-14）：attach 登记成功即取消断开退出宽限计时——
+		// 宽限内任一端 attach 成功则退出取消、会话继续；恰好一次（Stop + 置 nil
+		// 防重复，实现见 clients.go cancelExitEmptyTimerLocked）。plan 字面
+		//「registerLocked 尾部」的调和：registerLocked 是 registry 方法无 Server
+		// 视角，取消点落同一 hubMu 持有内的登记之后。
+		s.cancelExitEmptyTimerLocked(cl.remote)
 		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
 		s.hubCond.Broadcast()
@@ -952,9 +989,79 @@ func (s *Server) logIfMessageTooBig(remote string, err error) {
 	}
 }
 
+// signalName 返回信号的约定大写名（"SIGHUP" 形态）供 exitMessage 消费
+// （06-01 review 吸收——映射表抽为独立 helper，exitmsg_test.go 白盒逐行锁定）。
+// RESEARCH Pitfall 3：Signal.String() 产出小写描述词（"hangup"——GOROOT
+// zerrors 表），禁止裸用——显式映射是唯一合法形态（D-09 服务端组文案唯一
+// 写口）。未在映射表的信号返回 ("", false)，调用方回退数字形态。
+func signalName(sig syscall.Signal) (string, bool) {
+	switch sig {
+	case syscall.SIGHUP:
+		return "SIGHUP", true
+	case syscall.SIGINT:
+		return "SIGINT", true
+	case syscall.SIGQUIT:
+		return "SIGQUIT", true
+	case syscall.SIGILL:
+		return "SIGILL", true
+	case syscall.SIGABRT:
+		return "SIGABRT", true
+	case syscall.SIGKILL:
+		return "SIGKILL", true
+	case syscall.SIGSEGV:
+		return "SIGSEGV", true
+	case syscall.SIGPIPE:
+		return "SIGPIPE", true
+	case syscall.SIGALRM:
+		return "SIGALRM", true
+	case syscall.SIGTERM:
+		return "SIGTERM", true
+	case syscall.SIGUSR1:
+		return "SIGUSR1", true
+	case syscall.SIGUSR2:
+		return "SIGUSR2", true
+	case syscall.SIGCHLD:
+		return "SIGCHLD", true
+	}
+	return "", false
+}
+
+// exitMessage 组装 EXIT 帧 message（D-09 三形态，文案与 06-UI-SPEC §Session
+// Ended Contract 文案表逐字一致；服务端组文案唯一写口——前端不自维护信号文案
+// 表、textContent 直显）：
+//  1. err==nil（正常退出含 exit 0）→ "The process exited with code 0."
+//  2. ExitError 且 code>=0 → "The process exited with code N."
+//  3. ExitError 且 code<0（信号死亡，ExitCode()=-1——GOROOT exec_posix.go 语义）
+//     → signalName 命中组大写名形态 "…killed by signal SIGNAME."；未命中/
+//     WaitStatus 断言失败回退数字形态（断言失败为防御性兜底——unix 上
+//     ExitError.Sys() 恒为 WaitStatus，真实进程不可达）
+//  4. 非 ExitError（Wait 返回其他错误）→ 兜底 terminated 文案
+func exitMessage(err error, code int) string {
+	if err == nil {
+		return "The process exited with code 0."
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return "The process terminated."
+	}
+	if code >= 0 {
+		return fmt.Sprintf("The process exited with code %d.", code)
+	}
+	// 信号死亡分支：WaitStatus 提取信号号（Signaled 守卫）。断言失败时 sig 保持
+	// 占位值 code（恒 -1）——回退数字形态产出 "signal -1"，语义即「信号号未知」。
+	sig := code
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		sig = int(ws.Signal())
+	}
+	if name, ok := signalName(syscall.Signal(sig)); ok {
+		return fmt.Sprintf("The process was killed by signal %s.", name)
+	}
+	return fmt.Sprintf("The process was killed by signal %d.", sig)
+}
+
 // lifecycle 是 D-10 唯一终结路径触发源（多客户端形态）：子进程退出 → 带时限
-// drain（Pitfall 4）→ 广播 1000 关闭全部已注册客户端 → exitf（退出码 = 子进程
-// 退出码，退出码传递语义不变）。
+// drain（Pitfall 4）→ 广播 EXIT 帧 + 1000 关闭全部已注册客户端（D-10 序列，
+// Phase 6 SESS-03）→ exitf（退出码 = 子进程退出码，退出码传递语义不变）。
 func (s *Server) lifecycle() {
 	err := s.sess.Wait()
 	code := 0
@@ -967,11 +1074,26 @@ func (s *Server) lifecycle() {
 	// master fd，在途 Master.Write 经 runtime poller 解除阻塞返回错误（与 Read
 	// 同机制，D-12 语义）；close(inputDone) 使 select 等待中的 inputWriter 退出。
 	close(s.inputDone)
-	// 广播 1000：hubMu 下取注册表快照后并行 Close 全部客户端（Close 自带 5s+5s
-	// 上界——close.go:87-89，并行等待自然有界）。广播期间新 attach 或断开的路径
-	// 均经 detach/reader 收口，不影响本快照的关闭语义；被关闭客户端的读循环随
-	// CloseError 终结走 detach——detach 不进 exitf，终结由本路径独占（D-10）。
+	// EXIT 帧组帧一次（D-09 载荷：exit_code + 服务端组文案 message）——全客户端
+	// 共享只读引用（P5-1 纪律）；ro/rw 全员同帧（终结无权限语义）。
+	exitFrame := proto.ExitFrame(code, exitMessage(err, code))
+	// 广播 EXIT 帧 + 1000（D-10 序列）：hubMu 下取注册表快照后，每客户端
+	// goroutine 内【先同步 Write(EXIT) 再 Close(1000)】——写序论证（RESEARCH
+	// Pattern 2 / Pitfall 1）：库帧级写串行化保同 goroutine 先写先发，wire 序恒
+	// EXIT 在 1000 前；禁止经 outbox.trySend 异步入队（writer drain 与 Close
+	// 关闭帧竞态，关闭帧超车则客户端收 1000 却无退出码）。Write 失败不补救直接
+	// Close——进程已退出场景无需保帧（CONTEXT discretion 授权）。Close 自带
+	// 5s+5s 上界（close.go:87-89，并行等待自然有界）。广播期间新 attach 或断开
+	// 的路径均经 detach/reader 收口，不影响本快照的关闭语义；被关闭客户端的读
+	// 循环随 CloseError 终结走 detach——detach 不进 exitf，终结由本路径独占
+	//（D-10）。
 	s.hubMu.Lock()
+	// exiting 门（06-02，D-13 防线；review #5 吸收——置位必须先于注册表快照）：
+	// 广播 Close(1000) 引发的 detach 致空属正常终结序列，空触发
+	//（clients.go maybeExitWhenEmptyLocked）检查该位抑制，不得再生 SIGHUP/宽限
+	// 计时器（事件流可信度与信号竞态防线；无此门则自然退出 exit 42 路径有
+	// SIGHUP 翻码竞态）。
+	s.exiting = true
 	clients := make([]*client, 0, len(s.registry.set))
 	for c := range s.registry.set {
 		clients = append(clients, c)
@@ -982,6 +1104,13 @@ func (s *Server) lifecycle() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// 2s Write 超时（RESEARCH OQ3 定值，Phase 9 标定挂账；拒绝可配化——
+			// P2 D-10 常量纪律）：stall/慢链路 2s 未写完 ~100B EXIT 帧即放弃
+			// 直写，该端退化为 1000 + 前端硬编码回退文案（R2 回退路径既有，
+			// 非致命）；2s ≪ Close 内建 5s+5s 上界。
+			wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = c.conn.Write(wctx, websocket.MessageBinary, exitFrame)
+			cancel()
 			_ = c.conn.Close(websocket.StatusNormalClosure, "")
 		}()
 	}

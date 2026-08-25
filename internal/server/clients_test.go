@@ -81,7 +81,7 @@ func TestClientCountInvariant(t *testing.T) {
 
 // TestWriterMergeControlFramesOnly（WR-02 回归锁）：writer 批内合并仅限 OUTPUT
 // 数据帧——控制帧（W/E）载荷是独立 JSON 文档，同类型相邻合并的拼接产物
-//（W{...}{...}）前端 JSON.parse 抛错整帧丢弃（main.ts "discard malformed
+// （W{...}{...}）前端 JSON.parse 抛错整帧丢弃（main.ts "discard malformed
 // WELCOME"）。attach Welcome 与升格 Welcome 相邻同批的可达时序（server.go 升档
 // 入队 → go writer 启动间隙 promoteNextLocked 再入队同一 outbox）见 05-REVIEW
 // WR-02；合并将使被升格端丢失该 Welcome 的全部应用（prefs 不应用、welcomeDone

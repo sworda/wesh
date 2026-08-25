@@ -1,36 +1,37 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-current_phase: 6
-current_phase_name: 会话生命周期与重连
-status: "Phase 05 shipped — PR #6"
-stopped_at: Completed 05-13-PLAN.md
-last_updated: "2026-08-22T15:43:38.628Z"
-last_activity: 2026-08-22
+current_phase: 7
+current_phase_name: 部署与配置
+status: planning
+stopped_at: Phase 06 complete, ready to plan Phase 7
+last_updated: "2026-08-24T13:51:19.803Z"
+last_activity: 2026-08-24
+last_activity_desc: Phase 06 complete, transitioned to Phase 7
+state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 37
-  completed_plans: 37
-last_activity_desc: Phase 05 execution started
+  total_phases: 9
+  completed_phases: 6
+  total_plans: 44
+  completed_plans: 44
+milestone_name: milestone
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-19)
+See: .planning/PROJECT.md (updated 2026-08-24)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 05 — multi-client
+**Current focus:** Phase 07 — 部署与配置
 
 ## Current Position
 
-Phase: 6 — 会话生命周期与重连
+Phase: 7 — 部署与配置
 Plan: Not started
-Status: Phase 05 shipped — PR #6
-Last activity: 2026-08-22
+Status: Ready to plan
+Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
 Progress: [██████████] 100%
 
@@ -38,7 +39,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 37
+- Total plans completed: 44
 - Average duration: -
 - Total execution time: -
 
@@ -51,6 +52,7 @@ Progress: [██████████] 100%
 | 03 | 7 | - | - |
 | 04 | 6 | - | - |
 | 05 | 13 | - | - |
+| 06 | 7 | - | - |
 
 **Recent Trend:**
 
@@ -98,6 +100,13 @@ Progress: [██████████] 100%
 | Phase 05 P11 | 22min | 2 tasks | 2 files |
 | Phase 05 P12 | 32min | 3 tasks | 8 files |
 | Phase 05 P13 | 22min | 2 tasks | 4 files |
+| Phase 06-session-lifecycle P01 | 14min | 3 tasks | 7 files |
+| Phase 06-session-lifecycle P02 | 41min | 3 tasks | 6 files |
+| Phase 06-session-lifecycle P03 | 31min | 2 tasks | 4 files |
+| Phase 06 P04 | 12min | 2 tasks | 2 files |
+| Phase 06-session-lifecycle P05 | 21min | 2 tasks | 1 files |
+| Phase 06-session-lifecycle P06 | 23min | 2 tasks | 1 files |
+| Phase 06-session-lifecycle P07 | 26min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -189,6 +198,22 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-12]: S10c 取最后一帧 WELCOME 解码容忍升格+recalcNow 推送同值双帧；probe10.mjs 探针从未入库，按 plan 机制描述重建为 phase05-dims.mjs 并登记血缘
 - [Phase ?]: [Phase 05-13]: WR-01 修复取复检中止形态（05-REVIEW 逐字补丁）——推送循环内踢出经 removeMember→嵌套 recalcNow 推进 arbiter.last 后，外层复检 last != target 即中止 stale 扇出；踢出不改仲裁或信用路径 last==target 零代价继续；安全性注释改写覆盖真实可达的 removeMember 路径
 - [Phase ?]: [Phase 05-13]: WR-02 修复取 option (a)（用户 2026-08-22 裁决）——afterDrain 清位后、Broadcast 前补发当前 sessionDimsLocked() 的 Welcome（prefs 按 c.mode 选档 D-13 不漂移）；补发有序性归因 = afterDrain 全程持有 hubMu + outbox FIFO（非门仍闭合，plan-check 修订措辞）；「触发帧不丢」承诺收窄为首帧暂存 + afterDrain 补发收敛
+- [Phase ?]: [Phase 06-01]: D-08/D-09 确认门 as-locked（用户 2026-08-23 裁决）——EXIT 帧 = 'X'(0x58) + {"exit_code":N,"message":M} 三形态文案 + EXIT→1000 广播序列，与 06-CONTEXT D-08/D-09/D-10 逐字一致
+- [Phase ?]: [Phase 06-01]: EXIT 广播写序安全形态落地——lifecycle 组帧一次共享只读 + 每客户端 goroutine 同步 Write(EXIT,2s ctx)→Close(1000)（Pitfall 1：禁止 outbox 异步入队）；2s 为 RESEARCH OQ3 定值，拒绝可配化（P2 D-10），Phase 9 标定挂账
+- [Phase ?]: [Phase 06-02]: OQ1 确认门用户裁决 accept-255（2026-08-23）——--once/--exit-when-empty 收口路径子进程被 SIGHUP 终结，exitf 以 -1 收口、wesh 进程退出状态 255（lifecycle 零分支改动，与 D-09 exit_code=-1 同源）；下游三消费点（06-02 测试断言 -1 / 06-06 S3-S5 进程级 255 / 06-07 README 文案）按裁决值单点落地
+- [Phase ?]: [Phase 06-02]: stall 夹具断言序戒律再生效——踢出触发前绝不 Read：KickTrigger 翻转为先 waitExit(-1)（结构性证据）再读 1013 取证（05-07 登记戒律的回归形态，实测竞态 ~50% 翻 1000）
+- [Phase ?]: [Phase 06-03]: fetch catch 补 welcomeDone 代际标记守卫（Rule 2）——D-04 既定形态引入双在飞 connect，较慢者迟到失败不得用 'Unable to connect' 覆盖已建立会话（Pitfall 6 同族，fetch 通道无 sock 可守卫）
+- [Phase ?]: [Phase 06-03]: scheduleAttempt 入口清双 timer 保恰好一次（Rule 2）——双在飞 attempt 先后失败重入不叠加定时器，Pitfall 5 恰好一次纪律落到定时器机械层
+- [Phase ?]: [Phase 06-03]: 404 探测直连分支不设 stopReconnect——无认证模式重连链路继续走 WS，循环终止唯一挂点 = WELCOME 到达（成功判定恒为 WELCOME 的 prohibition 直接推论）
+- [Phase ?]: [Phase 06-04]: D-12/D-14 确认门 as-locked（用户 2026-08-23 裁决）——--once BoolVar（≡ --max-clients=1 --exit-when-empty=0，help 单行标明等价关系，第二客户端拒绝走既有 503 计数路径）+ --exit-when-empty[=duration]（exitEmptyValue 实现 flag.Value + IsBoolFlag 惯例：裸写=立即退出、=duration=重连宽限、不写=不开启；空格分隔形态不传值）——与 06-CONTEXT.md D-12/D-14 逐字一致
+- [Phase ?]: [Phase 06-04]: 语法糖分层纪律落地——fs.Visit 显式设置位判定（maxClientsSet/exitEmptySet）→ parse 期展开只填未显式位 → validateStartup 锚定显式设置位判组合矛盾（review #3：不依赖展开不变量，自证性更强）；IsBoolFlag 逐字引文作 func 行尾注释以满足验收 grep ==1
+- [Phase ?]: [Phase 06-05]: D1 清屏对照文本改 typeText echo 链路（Rule 3）——plan『spawn printf 先行』形态在 D-12 drain 语义下结构性不可观测（attach 前输出被丢弃无回放）；typeText InputEvent 链是 phase04-dom 已验证先例，恰为 must_have『终端经 echo 写入可观测文本』字面形态
+- [Phase ?]: [Phase 06-05]: RESEARCH A2 兑现——jsdom 25 CloseEvent 构造器探针先证可用，synthClose 置 null 抑制真实 close 混入断言面 + _savedClose 副本供 D6 代际场景二次驱动（staleClose）；assertOutputClean 运行时红线自证形态落地（review #7）
+- [Phase ?]: [Phase 06-06]: S5① 宽限计时起点锚定服务端 detach——c1 close 后先 waitClose（握手完成⇒detach 已发生）再 sleep 400ms，取消窗 1100ms 余量论证严格成立
+- [Phase ?]: [Phase 06-06]: OQ1 accept-255 协议层兑现——phase06.mjs S3/S4/S5 进程级退出状态 255 断言全绿（Go 层 exitf 桩收 -1，os.Exit(-1) Unix 截断只在真实二进制出现，06-02 下游消费点闭合）
+- [Phase ?]: [Phase 06-06]: 断连重接同一 PTY 协议层证据形态——echo S6PID=$$ 进程 ID 相等主证据（/S6PID=(\d+)/ 数字锚定防回显误命中）+ weshmark42 变量存活次级佐证 + 首连接无 EXIT 帧 + 服务端存活顺带锁定 D-14 默认
+- [Phase ?]: [Phase 06-07]: -max-clients help 重复标注裁决为修复（06-04 deferred 既定路由）——移除 help 文案自含 (default 32)，flag 包自动追加为单一事实源；纯展示层零语义，one-way 契约面不动
+- [Phase ?]: [Phase 06-07]: 旧 UAT 脚本对 EXIT 帧零适配落锤——phase02 T4a 仅断言 close code、phase03 无子进程退出场景，九脚本首跑全绿；六段式段 1 顺带清零三文件既有 gofmt 漂移（deferred-items 既定路由终点）
 
 ### Pending Todos
 
@@ -198,6 +223,7 @@ None yet.
 
 - [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
 - [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5
+- [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9
 
 ## Deferred Items
 
@@ -207,6 +233,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-22T11:15:00.691Z
-Stopped at: Completed 05-13-PLAN.md
+Last session: 2026-08-24T13:51:19Z
+Stopped at: Phase 06 complete, ready to plan Phase 7
 Resume file: None

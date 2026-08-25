@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: 认证与传输安全** - 一次性 ticket、时序安全比较、失败节流、Origin 白名单、TLS 加固 (completed 2026-08-18)
 - [x] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发 (completed 2026-08-19)
 - [x] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接 (completed 2026-08-22)
-- [ ] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程
+- [x] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程 (completed 2026-08-24)
 - [ ] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传
 - [ ] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志
 - [ ] **Phase 9: 发布与打磨** - 单静态二进制四平台发布、自定义首页、负载/模糊测试回填默认参数
@@ -238,7 +238,29 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 子进程退出后所有在线客户端收到含退出码的类型化终结帧提示（非静默断开），随后以 1000 正常关闭
   3. 断网 30s 恢复后前端自动重连（指数退避 + 上限 + 手动入口）并接回同一 PTY 进程，输入输出一致（无滚动回放，屏幕靠程序重绘或 tmux/herdr 恢复——文档明示）
 
-**Plans**: TBD
+**Plans**: 7/7 plans executed
+**Wave 1**
+
+- [x] 06-01-PLAN.md — SESS-03 EXIT 帧端到端 tracer：proto 'X'/ExitPayload/ExitFrame + lifecycle 写序安全广播（同步 Write→Close 1000）+ exit_test.go 两测 + exitmsg_test.go 白盒测（signalName/exitMessage）+ 前端暂存承接与 dist（含 D-08/D-09 one-way 确认门）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 06-02-PLAN.md — SESS-01/02 服务端：pty.SignalHangup（SIGHUP 进程组复活）+ Options.ExitWhenEmpty（set/grace 分离）+ 注册表空触发与宽限计时器 + exiting 门 + 七测（含 OQ1 退出状态确认门）
+- [x] 06-03-PLAN.md — CORE-05 前端重连状态机：backoffMs 纯函数 + 1006 显式触发 + online/offline 双触发 + Reconnecting 面板（showStatus 参数化）+ 代际守卫 + dist
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 06-04-PLAN.md — SESS-01/02 CLI：--once 语法糖 + --exit-when-empty[=duration]（IsBoolFlag）+ 冲突校验矩阵 + Options 接线（含 D-12/D-14 one-way 确认门）
+- [x] 06-05-PLAN.md — phase06-dom.mjs：jsdom 重连状态机八场景（1006 全链/1002·1013·1008 不触发/双触发幂等/手动入口/代际守卫/EXIT 全链/online 快路径）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 06-06-PLAN.md — phase06.mjs 协议层 UAT：EXIT 双端广播（ro/rw 同帧 + 帧序 + 进程退出码）/信号死亡/--once 全链/--exit-when-empty 立即与宽限/断连重接同一 PTY
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 06-07-PLAN.md — 收口：README 生命周期与重连节 + 06-UAT.md 人工清单 + VALIDATION 同步 + 全量六段式与九 UAT 脚本回归
+
 **UI hint**: yes
 
 ### Phase 7: 部署与配置
@@ -293,7 +315,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
-| 6. 会话生命周期与重连 | TBD | Not started | - |
+| 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
 | 7. 部署与配置 | TBD | Not started | - |
 | 8. 可观测性 | TBD | Not started | - |
 | 9. 发布与打磨 | TBD | Not started | - |

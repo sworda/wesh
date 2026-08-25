@@ -116,6 +116,22 @@ func TestDrainBeforeAttach(t *testing.T) {
 
 // ====== plan 01-03 增量：生命周期 e2e 四测（D-09/D-10/D-11 + 关闭码纪律）======
 
+// killServer 收口测试服务端资源：关 listener + 杀子进程 + 关 PTY master。
+// 子进程 Kill 触发服务端 lifecycle 完整风收（sess.Wait 返回 → Drain 关 master →
+// ReadLoop 退出，D-10）；sess.Close 幂等兜底（Drain 已关则 no-op）。
+// 必须在每个装配函数的 t.Cleanup 调用——泄漏的子进程（尤其 seq 大洪水）在测试
+// 返回后继续输出，服务端 ReadLoop 的 onChunk make+copy 后丢弃是 CPU 密集操作，
+// 在 CPU 受限 CI 上抢占后续测试调度（ubuntu-latest 实测级联减速：TestMaxClients503
+// 子测试3 的 seq 1 50000000 泄漏后，TestSlowConsumerKick 吞吐 9.4MB/s → 140KB/s，
+// 同 run 内 67 倍差距）。
+func killServer(ln net.Listener, sess *pty.Session) {
+	ln.Close()
+	if sess.Cmd != nil && sess.Cmd.Process != nil {
+		_ = sess.Cmd.Process.Kill()
+	}
+	_ = sess.Close()
+}
+
 // startTestServerWith 复用 plan 01-01 的构造模式：sess + New(sess, exitf 捕获桩, opts)
 // + 127.0.0.1:0 监听，返回 exitf 捕获通道与 /ws URL。统一收口各生命周期/握手测试的装配。
 func startTestServerWith(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string) {
@@ -131,7 +147,7 @@ func startTestServerWith(t *testing.T, argv []string, opts server.Options) (exit
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { killServer(ln, sess) })
 	go http.Serve(ln, srv.Handler())
 	return exitCh, "ws://" + ln.Addr().String() + "/ws"
 }
@@ -162,7 +178,7 @@ func startTrackedServerWith(t *testing.T, argv []string, opts server.Options) (e
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { killServer(ln, sess) })
 	var wg sync.WaitGroup
 	h := srv.Handler()
 	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

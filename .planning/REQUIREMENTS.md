@@ -11,7 +11,7 @@
 - [x] **CORE-02**: 前端窗口 resize 时服务端同步调整 PTY 尺寸（TIOCSWINSZ）
 - [x] **CORE-03**: 终端标题变化同步到浏览器标签页标题
 - [x] **CORE-04**: 默认只读模式（丢弃客户端输入），显式开启可写后才接受输入
-- [ ] **CORE-05**: WS 异常断开后前端自动重连并接回同一 PTY 进程（共享进程模型；无滚动回放，屏幕内容靠程序重绘或 tmux/herdr 恢复）
+- [x] **CORE-05**: WS 异常断开后前端自动重连并接回同一 PTY 进程（共享进程模型；无滚动回放，屏幕内容靠程序重绘或 tmux/herdr 恢复）
 - [x] **CORE-06**: WS ping/pong 保活，间隔可配置，防止反代空闲超时断连
 
 ### 前端（FE）
@@ -26,9 +26,9 @@
 
 ### 会话生命周期（SESS）
 
-- [ ] **SESS-01**: --once 模式：只接受一个客户端，其断开后服务端退出
-- [ ] **SESS-02**: 可配置"所有客户端断开后退出"模式
-- [ ] **SESS-03**: 子进程退出后客户端收到明确提示（类型化错误帧，含退出码），而非静默断开
+- [x] **SESS-01**: --once 模式：只接受一个客户端，其断开后服务端退出
+- [x] **SESS-02**: 可配置"所有客户端断开后退出"模式
+- [x] **SESS-03**: 子进程退出后客户端收到明确提示（类型化错误帧，含退出码），而非静默断开
 
 ### 多客户端（MULTI）
 
@@ -114,7 +114,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORE-02 | Phase 1 | Complete |
 | CORE-03 | Phase 4 | Complete |
 | CORE-04 | Phase 2 | Complete |
-| CORE-05 | Phase 6 | Pending |
+| CORE-05 | Phase 6 | Complete |
 | CORE-06 | Phase 2 | Complete |
 | FE-01 | Phase 1 | Complete |
 | FE-02 | Phase 4 | Complete |
@@ -123,9 +123,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FE-05 | Phase 4 | Complete |
 | FE-06 | Phase 4 | Complete |
 | FE-07 | Phase 4 | Complete |
-| SESS-01 | Phase 6 | Pending |
-| SESS-02 | Phase 6 | Pending |
-| SESS-03 | Phase 6 | Pending |
+| SESS-01 | Phase 6 | Complete |
+| SESS-02 | Phase 6 | Complete |
+| SESS-03 | Phase 6 | Complete |
 | MULTI-01 | Phase 5 | Complete |
 | MULTI-02 | Phase 5 | Complete |
 | MULTI-03 | Phase 5 | Complete |

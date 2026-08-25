@@ -24,7 +24,9 @@ import (
 // D-04 --tls-cert/--tls-key 成对装配、D-12 --origin parse 期规范化
 // （小写 host + 剥默认端口）、D-03/D-05 两逃生门默认 false；
 // Phase 4：P4 D-15 --client-option 可重复（计数断言）、P4 D-12 --osc52 默认 false；
-// Phase 5：D-05 --write-policy 默认 owner，显式传 owner/all 原样解析。
+// Phase 5：D-05 --write-policy 默认 owner，显式传 owner/all 原样解析；
+// Phase 6：D-12 --once 语法糖展开（maxClients=1 + exit-when-empty set/grace 0）、
+// D-14 --exit-when-empty 三形态（不写 = 不开启 / 裸写 = 立即退出 / =duration = 宽限）。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
@@ -47,7 +49,14 @@ func TestParseArgs(t *testing.T) {
 		// json.RawMessage，计数即契约）；wantOSC52 直断言布尔。
 		wantClientOptions int  // P4 D-15：--client-option 组数
 		wantOSC52         bool // P4 D-12：--osc52 默认 false
-		wantArgv          []string
+		// P6：D-12/D-14 CLI 契约断言位；零值语义照 wantWritePolicy 先例
+		//（wantMaxClients 零值 = 期望默认 32，wantOnce/wantExitEmptySet 零值 =
+		// 期望 false——defaults 行与全部既有行经此扩展零值断言覆盖）。
+		wantOnce           bool          // D-12：--once 默认 false
+		wantMaxClients     int           // D-08/D-12：零值 = 期望默认 32
+		wantExitEmptySet   bool          // D-14：exitEmpty.set（不写 = 不开启）
+		wantExitEmptyGrace time.Duration // D-14：exitEmpty.grace（裸写/默认 = 0）
+		wantArgv           []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -66,6 +75,14 @@ func TestParseArgs(t *testing.T) {
 		// D-05：--write-policy 显式传值原样解析（默认值由零值语义统一断言 = owner）。
 		{name: "write policy all", args: []string{"--writable", "--write-policy", "all", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantWritable: true, wantPingInterval: 5 * time.Second, wantWritePolicy: "all", wantArgv: []string{"bash"}},
 		{name: "write policy owner explicit", args: []string{"--writable", "--write-policy", "owner", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantWritable: true, wantPingInterval: 5 * time.Second, wantWritePolicy: "owner", wantArgv: []string{"bash"}},
+		// D-12：--once 语法糖展开 ≡ --max-clients=1 --exit-when-empty=0（裸写形态；
+		// grace 零值 0 由共享断言覆盖）。
+		{name: "once sugar expands", args: []string{"--once", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantOnce: true, wantMaxClients: 1, wantExitEmptySet: true, wantArgv: []string{"bash"}},
+		// D-14：裸写 = 最后一个客户端断开立即退出（set, grace 0），max-clients
+		// 默认 32 不受影响（零值断言）。
+		{name: "exit-when-empty bare", args: []string{"--exit-when-empty", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantExitEmptySet: true, wantArgv: []string{"bash"}},
+		// D-14：=duration 形态 = 重连宽限。
+		{name: "exit-when-empty grace", args: []string{"--exit-when-empty=30s", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantExitEmptySet: true, wantExitEmptyGrace: 30 * time.Second, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -117,6 +134,24 @@ func TestParseArgs(t *testing.T) {
 			if cfg.osc52 != tt.wantOSC52 {
 				t.Errorf("osc52 = %v, want %v", cfg.osc52, tt.wantOSC52)
 			}
+			if cfg.once != tt.wantOnce {
+				t.Errorf("once = %v, want %v", cfg.once, tt.wantOnce)
+			}
+			// D-08/D-12：零值 wantMaxClients = 期望默认 32（wantWritePolicy 零值
+			// 语义同款）；--once 行显式给 1 锁语法糖展开。
+			wantMaxClients := tt.wantMaxClients
+			if wantMaxClients == 0 {
+				wantMaxClients = 32
+			}
+			if cfg.maxClients != wantMaxClients {
+				t.Errorf("maxClients = %d, want %d", cfg.maxClients, wantMaxClients)
+			}
+			if cfg.exitEmpty.set != tt.wantExitEmptySet {
+				t.Errorf("exitEmpty.set = %v, want %v", cfg.exitEmpty.set, tt.wantExitEmptySet)
+			}
+			if cfg.exitEmpty.grace != tt.wantExitEmptyGrace {
+				t.Errorf("exitEmpty.grace = %v, want %v", cfg.exitEmpty.grace, tt.wantExitEmptyGrace)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -164,7 +199,9 @@ func TestCredentialFlagEnv(t *testing.T) {
 // （文案含 both 双旗名）；--credential 畸形（fs.Func 回调内 parse 期校验、
 // credErr 记录式于 Parse 返回处统一报错，WR-01）与 --origin 含 glob 字符
 // （回调内即时报错）均为配置错误零窗口暴露；--write-policy 非枚举值在 Parse
-// 返回处报错（D-05，值非敏感直接 return error 形态）。
+// 返回处报错（D-05，值非敏感直接 return error 形态）；--exit-when-empty 非法/
+// 负值 duration 报错（D-14，值非敏感——flag 包 invalid value %q 包装回显
+// duration 值可接受，T-06-04a 论证登记在 main.go Set 注释）。
 // WR-01 红线断言：malformed credential 行的 err 只含错误类别，不含 flag 值
 // 内容（记录式上报杜绝 flag 包 invalid value %q 包装回显——TestClientOptionError
 // forbiddenSub 同款先例；凭据值敏感度高于 prefs 值，同红线更须锁定）。
@@ -181,6 +218,11 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"malformed credential", []string{"--credential", "no-colon-here", "--", "bash"}, "credential must be user:pass", "no-colon-here"},
 		{"origin glob rejected", []string{"--origin", "https://*.example.com", "--", "bash"}, "glob", ""},
 		{"malformed write-policy", []string{"--write-policy", "sometimes", "--", "bash"}, "must be owner or all", ""},
+		// D-14：非法/负值 duration parse 期报错（值非敏感——flag 包装串回显
+		// duration 值可接受，T-06-04a；forbiddenSub 置空）。负值闸依赖 Set 的
+		// d<0 检查（time.ParseDuration("-5s") 解析成功，负 duration 是合法语法）。
+		{"exit-when-empty bad duration", []string{"--exit-when-empty=abc", "--", "bash"}, "exit-when-empty", ""},
+		{"exit-when-empty negative duration", []string{"--exit-when-empty=-5s", "--", "bash"}, "exit-when-empty", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -353,6 +395,10 @@ func TestNoCommandError(t *testing.T) {
 // ③位 503 闸恒触发全员被拒；纯配置有效性与 bind 无关，loopback 行也不豁免）。
 // 既有行基线同步：validateStartup 新增 ≤0 拒绝后，既有行 config 零值 maxClients=0
 // 会被误拒——全部既有行注入 maxClients: 32 基值（wantErr/wantWarn 断言语义不变）。
+// 06-04 新增：--once × 显式矛盾值组合校验（D-12）——显式 --max-clients≠1 或显式
+// --exit-when-empty grace≠0 与 --once 同给即拒（双 flag 名进文案，wantErrSub2
+// 断言位；判定锚定显式设置位而非展开后终值，review #3）；--once + 显式
+// --max-clients=1 / 显式裸 --exit-when-empty 为一致冗余放行两行为其行为锁。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
@@ -389,6 +435,13 @@ func TestStartupMatrix(t *testing.T) {
 		// 127.0.0.1 隔离其他校验维度——纯配置有效性 loopback 也不豁免）。
 		{"max-clients zero refused", config{bind: "127.0.0.1", maxClients: 0}, "--max-clients", "", ""},
 		{"max-clients negative refused", config{bind: "127.0.0.1", maxClients: -1}, "--max-clients", "", ""},
+		// 06-04 D-12 组合校验：--once × 显式矛盾值 → 拒绝（双 flag 名进文案）；
+		// --once × 显式一致值 = 一致冗余放行。bind 127.0.0.1 隔离其他校验维度
+		//（max-clients 拒绝行同款）；放行行注入 maxClients: 32 基值避开 ≤0 维度。
+		{"once with explicit max-clients=2 refused", config{bind: "127.0.0.1", once: true, maxClients: 2, maxClientsSet: true}, "--once", "--max-clients", ""},
+		{"once with explicit exit-when-empty grace refused", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true, grace: 5 * time.Second}}, "--once", "--exit-when-empty", ""},
+		{"once with explicit max-clients=1 allowed", config{bind: "127.0.0.1", once: true, maxClients: 1, maxClientsSet: true}, "", "", ""},
+		{"once with explicit bare exit-when-empty allowed", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true}}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

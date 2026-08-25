@@ -3,8 +3,10 @@ package pty
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -60,4 +62,38 @@ func TestResizeAfterClose(t *testing.T) {
 	// 收割子进程防僵尸（master 已关，cat 收 SIGHUP 消亡；Kill 兜底，错误忽略）
 	_ = sess.Cmd.Process.Kill()
 	_ = sess.Wait()
+}
+
+// TestSignalHangup（06-02，SESS-01/02 触发源送达语义锁定）：SignalHangup 向子进程
+// 进程组发 SIGHUP——Start 成功返回即子进程已完成 exec（forkExec 管道握手），信号
+// 送达即致死；sess.Wait 返回 *exec.ExitError，WaitStatus 断言 Signaled()==true 且
+// Signal()==syscall.SIGHUP。10s 护栏（既有测试统一超时纪律）。
+func TestSignalHangup(t *testing.T) {
+	sess, err := Start([]string{"sleep", "600"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sess.SignalHangup()
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- sess.Wait() }()
+	select {
+	case werr := <-waitCh:
+		var ee *exec.ExitError
+		if !errors.As(werr, &ee) {
+			t.Fatalf("Wait err = %v, want *exec.ExitError（SIGHUP 致死）", werr)
+		}
+		ws, ok := ee.Sys().(syscall.WaitStatus)
+		if !ok {
+			t.Fatalf("ExitError.Sys() = %T, want syscall.WaitStatus", ee.Sys())
+		}
+		if !ws.Signaled() {
+			t.Fatal("WaitStatus.Signaled() = false, want true（信号致死）")
+		}
+		if ws.Signal() != syscall.SIGHUP {
+			t.Fatalf("WaitStatus.Signal() = %v, want SIGHUP（SignalHangup 送达语义）", ws.Signal())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Wait did not return within 10s — SignalHangup not delivered")
+	}
 }
