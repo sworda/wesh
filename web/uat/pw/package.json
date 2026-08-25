@@ -1,0 +1,12 @@
+{
+  "name": "wesh-uat-pw",
+  "private": true,
+  "type": "module",
+  "comment": "浏览器实测层 UAT 独立包——Playwright 驱动真实 Chromium，与 web/uat 零依赖/jsdom 套件隔离。仅在具备 GUI 的机器（Windows 工作站）运行；服务端在 Linux 侧经 SSH 管理（双机模型见 README.md 与根 CODEBUDDY.md）。",
+  "scripts": {
+    "uat:06": "node phase06-pw.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}

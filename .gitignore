@@ -11,5 +11,9 @@ web/dist/*.gz
 /.planning/debug/
 /.planning/research/.cache/
 
+# UAT 浏览器实测层运行产物（截图/结构化结果）
+/web/uat/pw/screenshots/
+/web/uat/pw/results.json
+
 # local agent workspace (codebuddy worktrees / guides)
 /.codebuddy/
