@@ -50,8 +50,14 @@ func awaitSession(t *testing.T, sess *Session, buf *bytes.Buffer) (string, error
 
 // TestExecArrayNoShell（VALIDATION 1-01-01，CORE-01，D-02/D-15）：argv 以 exec 数组
 // 原样传递——`$(id)` 若经 shell 展开会变成 uid/gid 串（测试即红），字面量输出才合格。
+//
+// darwin 适配（XNU PTY slave-close 竞态）：XNU 在 slave 末次关闭时丢弃 output queue
+// 未读数据（Linux 先 drain 再 EIO）——`/bin/echo -n` 输出 5 字节立即退出，ReadLoop
+// 尚未读到 slave 已关闭，输出整段丢失（macOS CI 实测 out==""）。改以 sh 驻留 0.2s
+// 给 ReadLoop 读取窗口；`$(id)` 作为 argv 字面量传 sh 的 $0——若 Start 擅自经 shell
+// join，外层 shell 会展开 $(id) 为 uid 串，对抗检测语义不变。
 func TestExecArrayNoShell(t *testing.T) {
-	sess, err := Start([]string{"/bin/echo", "-n", "$(id)"})
+	sess, err := Start([]string{"/bin/sh", "-c", `printf %s "$0"; sleep 0.2`, "$(id)"})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -59,7 +65,7 @@ func TestExecArrayNoShell(t *testing.T) {
 	if werr != nil {
 		t.Fatalf("echo 退出异常: %v", werr)
 	}
-	// echo -n 无换行，PTY ONLCR 不介入，输出须恰为字面量
+	// printf 无换行，PTY ONLCR 不介入，输出须恰为字面量
 	if out != "$(id)" {
 		t.Fatalf("输出 = %q，want 字面量 %q——argv 疑似经 shell 展开", out, "$(id)")
 	}
