@@ -939,6 +939,15 @@ func TestMaxClients503(t *testing.T) {
 	})
 
 	t.Run("kick 路径槽位释放", func(t *testing.T) {
+		// darwin 跳过（macOS CI flake 实测）：kickOrCreditLocked 分工表
+		//（clients.go:400-419）踢 B 的前提是「剔除 B 后仍存在未 blocked 可写端
+		// A」；darwin loopback TCP buffer 仅 ~190KB（见下方 12MiB 等待跳过注释），
+		// A 也易触 creditBlocked，前提不成立时 B 转为持信用闭门而非被踢，
+		// assertKicked1013(B) 10s 超时。等价覆盖：Linux leg 同测试通过 +
+		// TestSlowConsumerKick 单独锁定 1013 踢出全链（darwin 通过）。
+		if runtime.GOOS == "darwin" {
+			t.Skip("darwin: A also prone to creditBlocked under small TCP buffers, B may hold gate instead of being kicked")
+		}
 		// MaxClients=2：A 正常读取 + B stall（OutboxBytes 覆写小值 + seq 输出
 		// 洪水——slowclient_test.go 夹具形态）→ B 被 1013 踢出（removeLocked -1，
 		// 第二移除路径）→ 第三人 attach 成功（踢出路径计数对称的行为化，
