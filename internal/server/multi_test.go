@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -695,12 +696,20 @@ func TestInputRateLimit(t *testing.T) {
 		for i := 0; i < frames; i++ {
 			sendInput(t, ctx, c, frame)
 		}
-		// 全量送达精确断言：'x' 计数 == 发送量（128 帧 × 1022）；证明限速子测的
-		// 丢弃确由限速器而非 inputQ/其他路径（队列 256KiB ≫ 64KiB 洪水上限）。
+		// 全量送达断言（对照组：证明限速子测的丢弃确由限速器而非 inputQ/其他
+		// 路径，队列 256KiB ≫ 64KiB 洪水上限）。
+		// darwin 放宽为 ≥95%：XNU PTY input queue 高水位直接丢弃字节（TTYHOG；
+		// Linux 是 master write 阻塞不丢）——macOS CI 实测 64KiB 洪水丢 ~2.6KB
+		// （128133/130816 ≈ 98%）。5% 容差不动摇对照语义：限速子测丢弃 ≥75%，
+		// 与 PTY 层 ~2% 丢失差两个数量级，归因判别力不变。
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			got := bytes.Count(snap(), []byte{'x'})
 			if got == sentX {
+				break // 全量送达（Linux 常态）
+			}
+			if runtime.GOOS == "darwin" && got >= sentX*95/100 {
+				t.Logf("darwin PTY input 高水位丢弃容忍：'x' = %d/%d (%.1f%%)", got, sentX, float64(got)/float64(sentX)*100)
 				break
 			}
 			if time.Now().After(deadline) {
@@ -972,12 +981,21 @@ func TestMaxClients503(t *testing.T) {
 		// 踢出触发前绝不 Read——等 A 累积超 12MiB，此时 B 管道（最坏 ~10MiB）
 		// 必然已满、outbox 已写满、1013 踢出已触发；提前读 B 会排空管道使踢出
 		// 永不成立（assertKicked1013 的 readUntilError 即读者，调用时点纪律）。
-		deadline := time.Now().Add(15 * time.Second)
-		for aBytes.Load() < 12*1024*1024 {
-			if time.Now().After(deadline) {
-				t.Fatalf("A received %d bytes in 15s, want >= 12MiB（洪水未推进，stall 夹具失效）", aBytes.Load())
+		//
+		// darwin 跳过 12MiB 等待（macOS CI 实测 A 15s 仅收 ~190KB）：darwin
+		// loopback/PTY 管道 ~128KiB ≪ Linux ~10MiB，小 buffer 下 A 也易触
+		// creditBlocked → 信用门反复开关，吞吐崩塌使「A 收 12MiB」不可达。
+		// 但 B stall→outbox 满→1013 踢出是确定行为（macOS CI 日志实测
+		// code=1013 slow_consumer），直接 assertKicked1013(B) 即可取踢出证据；
+		// fan-out 持续推进断言由 TestSlowConsumerKick 同款形态覆盖（darwin 通过）。
+		if runtime.GOOS != "darwin" {
+			deadline := time.Now().Add(15 * time.Second)
+			for aBytes.Load() < 12*1024*1024 {
+				if time.Now().After(deadline) {
+					t.Fatalf("A received %d bytes in 15s, want >= 12MiB（洪水未推进，stall 夹具失效）", aBytes.Load())
+				}
+				time.Sleep(50 * time.Millisecond)
 			}
-			time.Sleep(50 * time.Millisecond)
 		}
 		// B 此刻首次 Read：消耗管道积存 OUTPUT 后必见 CloseError 1013
 		// slow_consumer。先取踢出证据再继续——关闭帧写出带 5s 超时

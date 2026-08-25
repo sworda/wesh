@@ -15,6 +15,7 @@ package server_test
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -26,6 +27,26 @@ import (
 	"github.com/sworda/wesh/internal/proto"
 	"github.com/sworda/wesh/internal/server"
 )
+
+// seqFlood 返回 TestGlobalCredit 洪水生成器 argv 与末位序号（平台分支）。
+//
+// darwin 末位 999999（~6.9MB）：BSD seq 默认 %g 格式仅 6 位有效数字，≥1e6
+// 输出科学计数法 "1e+06"（macOS CI 实测：field 907381 = "1e+06" 破坏字节连续
+// 性断言），<1e6 则输出完整整数——末位压在 6 位上界规避格式分叉，同时
+// ~6.9MB 已足量压过 darwin stall 吸收极限（管道 ~320KiB/端 ≪ Linux ~10MiB，
+// 门闭合时子进程仍写阻塞），且 darwin 实测吞吐下 15s 收齐窗口可达。
+// 注：不可用 seq -f %.0f 统一——GNU seq 浮点格式化路径慢 ~30x（本机实测
+// 0.043s→1.3s/4M 行），子进程产出超 waitExit 5s 窗口。
+//
+// Linux 末位 4000000（~30.9MB）：GNU seq 默认对整数序列输出完整整数（无 %g
+// 截断），> 双 stalled 连接最坏吸收 ~20MiB + 2×64KiB outbox + 64KiB PTY 内核
+// 缓冲。
+func seqFlood() (argv []string, last int) {
+	if runtime.GOOS == "darwin" {
+		return []string{"seq", "1", "999999"}, 999999
+	}
+	return []string{"seq", "1", "4000000"}, 4000000
+}
 
 // readUntilError 在 goroutine 中持续读 conn 直到出错，返回途中累积的 OUTPUT 载荷
 // 与终结错误（Pitfall 2 竞速形态的安全封装——调用方以 select time.After 收口）。
@@ -58,7 +79,7 @@ func readUntilError(c *websocket.Conn) <-chan readResult {
 //
 //  1. CloseError{Code:1013, Reason:"slow_consumer"}——close frame 完整到达
 //     （本机常态路径）。
-//  2. frame 边界/中切面 EOF 且 r.acc 已累积 ≥1MiB OUTPUT——CI 慢速环境合法
+//  2. frame 边界/中切面 EOF 且 r.acc 已累积 ≥accThreshold OUTPUT——CI 慢速环境合法
 //     变体：writer 用 context.Background() 永远阻塞持 writeFrameMu
 //     （clients.go:636），Close 的 writeClose 5s 超时无法获得锁，close frame
 //     未发出；close() 关 TCP 时 c1 正在读流，按 FIN 到达时读位分两种切面：
@@ -70,6 +91,8 @@ func readUntilError(c *websocket.Conn) <-chan readResult {
 //     r.acc 阈值证据：stall 期间 c1 recv buffer 满 ≈ 6MiB（本机 /proc 实测），
 //     CI 慢速路径下 c1 至少消化 1MiB 后才遇 EOF（ubuntu-latest 实测 2.5MiB）；
 //     远低此值的早夭 EOF 是另一类 bug（连接在 c1 启动 Read 前已死），不容忍。
+//     darwin 阈值降至 100KiB：darwin loopback 管道仅 ~190KB 量级（macOS CI
+//     实测），6MiB 级阈值永不满足；100KiB 仍 ≫ 早夭 EOF 的 ~0 累积，甄别力不变。
 //
 // 库设计约束（coder/websocket）：写超时/取消一律经 setupWriteTimeout AfterFunc
 // 触发 close()，writer 阻塞时无路径可中断 Write 而不关 TCP——close frame 在
@@ -91,16 +114,21 @@ func assertKicked1013(t *testing.T, c *websocket.Conn, timeout time.Duration, wh
 		}
 		// CI 慢速合法变体（见函数 doc 形态 2）：payload 中切面 / header 边界两
 		// 种 EOF 切面同根同证据，统一经 "failed to read frame" + EOF 尾部判定。
+		// acc 阈值平台分支：Linux 管道 ~6MiB 取 1MiB；darwin 管道 ~190KB 取 100KiB。
+		accThreshold := 1024 * 1024
+		if runtime.GOOS == "darwin" {
+			accThreshold = 100 * 1024
+		}
 		errStr := r.err.Error()
 		isFrameCutEOF := strings.Contains(errStr, "failed to read frame") &&
 			(strings.HasSuffix(errStr, ": EOF") || strings.HasSuffix(errStr, ": unexpected EOF"))
-		if isFrameCutEOF && len(r.acc) >= 1024*1024 {
+		if isFrameCutEOF && len(r.acc) >= accThreshold {
 			t.Logf("%s kicked (close frame unsent, CI slow-path): %v after %d OUTPUT bytes",
 				who, r.err, len(r.acc))
 			return
 		}
-		t.Fatalf("%s read terminated with %v (acc=%d bytes), want CloseError 1013 or frame-cut EOF after ≥1MiB OUTPUT",
-			who, r.err, len(r.acc))
+		t.Fatalf("%s read terminated with %v (acc=%d bytes), want CloseError 1013 or frame-cut EOF after ≥%d OUTPUT",
+			who, r.err, len(r.acc), accThreshold)
 	case <-time.After(timeout):
 		t.Fatalf("%s not kicked within %v", who, timeout)
 	}
@@ -214,14 +242,16 @@ func TestSlowConsumerKick(t *testing.T) {
 // 后仍存在未 blocked 可写端（c2）→ c1 被 1013 踢出；c2 随后独自写满 → 全体可写
 // 端均满 → 不踢，持信用闭门。c1 = 被踢者、c2 = 信用持有者，两子场景共用此前提。
 func TestGlobalCredit(t *testing.T) {
-	// seq 1 4000000 ≈ 30.9MB 洪水：> 双 stalled 连接最坏吸收 ~20MiB + 2×64KiB
-	// outbox + 64KiB PTY 内核缓冲——门闭合时子进程必然仍有未竟输出（写阻塞）。
+	// 洪水量论证（Linux 30.9MB / darwin 6.9MB 平台分支，见 seqFlood 注释）：
+	// > 双 stalled 连接最坏吸收 + 2×64KiB outbox + 64KiB PTY 内核缓冲——门闭合
+	// 时子进程必然仍有未竟输出（写阻塞）。
+	floodArgv, floodLast := seqFlood()
 	setup := func(t *testing.T) (exitCh chan int, c1, c2 *websocket.Conn) {
 		t.Helper()
 		// 05-03 适配：显式 WritePolicy=all——两 rw 全部 stall 的语义前提（05-02
 		// Task 3 已登记本适配点；owner 默认策略下第二客户端降级 ro，满即被踢，
 		// 信用门永不闭合）。
-		e, wsURL := startTestServerWith(t, []string{"seq", "1", "4000000"}, server.Options{
+		e, wsURL := startTestServerWith(t, floodArgv, server.Options{
 			Writable:    true,
 			WritePolicy: "all",
 			OutboxBytes: 64 * 1024,
@@ -298,9 +328,9 @@ func TestGlobalCredit(t *testing.T) {
 				}
 				prev = n
 			}
-			if prev != 4000000 {
-				t.Fatalf("c2 final seq field = %d, want 4000000 (full flood received after gate reopen)", prev)
-			}
+		if prev != floodLast {
+			t.Fatalf("c2 final seq field = %d, want %d (full flood received after gate reopen)", prev, floodLast)
+		}
 		case <-time.After(15 * time.Second):
 			t.Fatal("c2 stream did not complete within 15s — gate failed to reopen (deadlock)")
 		}
