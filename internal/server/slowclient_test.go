@@ -58,14 +58,18 @@ func readUntilError(c *websocket.Conn) <-chan readResult {
 //
 //  1. CloseError{Code:1013, Reason:"slow_consumer"}——close frame 完整到达
 //     （本机常态路径）。
-//  2. "failed to read frame payload: unexpected EOF" 且 r.acc 已累积 ≥1MiB
-//     OUTPUT——CI 慢速环境合法变体：writer 用 context.Background() 永远阻塞持
-//     writeFrameMu（clients.go:636），Close 的 writeClose 5s 超时无法获得锁，
-//     close frame 未发出；close() 关 TCP 时 c1 正在读 OUTPUT frame payload，
-//     readFramePayload 报 EOF。r.acc 阈值证据：stall 期间 c1 recv buffer 满
-//     ≈ 6MiB（本机 /proc 实测），CI 慢速路径下 c1 至少消化 1MiB 后才在 frame
-//     中切面遇 EOF；远低此值的早夭 EOF 是另一类 bug（连接在 c1 启动 Read 前
-//     已死），不容忍。
+//  2. frame 边界/中切面 EOF 且 r.acc 已累积 ≥1MiB OUTPUT——CI 慢速环境合法
+//     变体：writer 用 context.Background() 永远阻塞持 writeFrameMu
+//     （clients.go:636），Close 的 writeClose 5s 超时无法获得锁，close frame
+//     未发出；close() 关 TCP 时 c1 正在读流，按 FIN 到达时读位分两种切面：
+//       - payload 中切面："failed to read frame payload: unexpected EOF"
+//         （frame header 已读、payload 未齐时 FIN）
+//       - header 边界："failed to read frame header: EOF[/unexpected EOF]"
+//         （recv buffer 完整 frame 全部消化尽、读下一 header 时 FIN；
+//         writer bufio 残余字节随 close() 丢失故消化总量 < 6MiB 管道值）
+//     r.acc 阈值证据：stall 期间 c1 recv buffer 满 ≈ 6MiB（本机 /proc 实测），
+//     CI 慢速路径下 c1 至少消化 1MiB 后才遇 EOF（ubuntu-latest 实测 2.5MiB）；
+//     远低此值的早夭 EOF 是另一类 bug（连接在 c1 启动 Read 前已死），不容忍。
 //
 // 库设计约束（coder/websocket）：写超时/取消一律经 setupWriteTimeout AfterFunc
 // 触发 close()，writer 阻塞时无路径可中断 Write 而不关 TCP——close frame 在
@@ -85,14 +89,17 @@ func assertKicked1013(t *testing.T, c *websocket.Conn, timeout time.Duration, wh
 			}
 			return
 		}
-		// CI 慢速合法变体（见函数 doc 形态 2）。
-		if strings.Contains(r.err.Error(), "failed to read frame payload: unexpected EOF") &&
-			len(r.acc) >= 1024*1024 {
-			t.Logf("%s kicked (close frame truncated, CI slow-path): %v after %d OUTPUT bytes",
+		// CI 慢速合法变体（见函数 doc 形态 2）：payload 中切面 / header 边界两
+		// 种 EOF 切面同根同证据，统一经 "failed to read frame" + EOF 尾部判定。
+		errStr := r.err.Error()
+		isFrameCutEOF := strings.Contains(errStr, "failed to read frame") &&
+			(strings.HasSuffix(errStr, ": EOF") || strings.HasSuffix(errStr, ": unexpected EOF"))
+		if isFrameCutEOF && len(r.acc) >= 1024*1024 {
+			t.Logf("%s kicked (close frame unsent, CI slow-path): %v after %d OUTPUT bytes",
 				who, r.err, len(r.acc))
 			return
 		}
-		t.Fatalf("%s read terminated with %v (acc=%d bytes), want CloseError 1013 or payload-EOF after ≥1MiB OUTPUT",
+		t.Fatalf("%s read terminated with %v (acc=%d bytes), want CloseError 1013 or frame-cut EOF after ≥1MiB OUTPUT",
 			who, r.err, len(r.acc))
 	case <-time.After(timeout):
 		t.Fatalf("%s not kicked within %v", who, timeout)
