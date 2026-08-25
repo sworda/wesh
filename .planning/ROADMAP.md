@@ -297,7 +297,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 07-06-PLAN.md — TOML 配置文件（OPS-09，D-01..D-07）：go-toml 严格模式 + 26 键两阶段合并 + flag>env>config>default 优先级 + D-07 权限警告 + 值剥离红线（OPS-09）
+- [ ] 07-06-PLAN.md — TOML 配置文件（OPS-09，D-01..D-07）：go-toml 严格模式 + 27 键（26 flag 同名 + command）两阶段合并 + flag>env>config>default 优先级 + D-07 权限警告 + 值剥离红线（OPS-09）
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
