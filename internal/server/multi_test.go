@@ -693,9 +693,13 @@ func TestInputRateLimit(t *testing.T) {
 		defer c.CloseNow()
 		snap := accum(c)
 
-		for i := 0; i < frames; i++ {
-			sendInput(t, ctx, c, frame)
-		}
+	// 帧间 2ms 节流：压平 64KiB 瞬时突发——无节流灌入远超 tty input queue
+	// 消化速率，macos-latest CI 实测 XNU TTYHOG 丢弃 85.5%（18885/130816），
+	// cat 慢时 write 阻塞路径同样受益。发送窗口 ~256ms ≪ 10s deadline。
+	for i := 0; i < frames; i++ {
+		sendInput(t, ctx, c, frame)
+		time.Sleep(2 * time.Millisecond)
+	}
 	// 全量送达断言（对照组：证明限速子测的丢弃确由限速器而非 inputQ/其他
 	// 路径，队列 256KiB ≫ 64KiB 洪水上限）。
 	// 全平台放宽为 ≥95%：PTY 输入方向 line discipline input queue 高水位
