@@ -2,7 +2,7 @@
   "name": "wesh-uat",
   "private": true,
   "type": "module",
-  "comment": "UAT 驱动独立包——与 web/ 应用依赖树隔离（phaseNN.mjs 零依赖传统之外的例外：jsdom/headless 套件需要依赖）。jsdom 纯 JS 无原生依赖，headless 环境可跑；禁装 playwright/浏览器（见根 CODEBUDDY.md）。",
+  "comment": "UAT 驱动独立包——与 web/ 应用依赖树隔离（phaseNN.mjs 零依赖传统之外的例外：jsdom/headless 套件需要依赖）。jsdom 纯 JS 无原生依赖，Linux headless 侧可跑；浏览器实测层在独立子包 pw/（Windows GUI 侧 Playwright，见根 CODEBUDDY.md 双机拓扑）。",
   "dependencies": {
     "@xterm/addon-unicode11": "0.9.0",
     "@xterm/headless": "6.0.0",
