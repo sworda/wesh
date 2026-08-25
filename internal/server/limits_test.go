@@ -59,7 +59,7 @@ func startRawCatServer(t *testing.T) (exitCh chan int, wsURL string) {
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { killServer(ln, sess) })
 	go http.Serve(ln, srv.Handler())
 	return exitCh, "ws://" + ln.Addr().String() + "/ws"
 }
