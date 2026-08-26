@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 19
+open_count: 21
 waived_count: 0
 fixed_count: 1
-total_count: 20
-last_updated: 2026-08-26T00:47:54.121Z
+total_count: 22
+last_updated: 2026-08-26T06:30:42.875Z
 ---
 
 # Broken Windows Ledger
@@ -35,6 +35,8 @@ last_updated: 2026-08-26T00:47:54.121Z
 | 18 | 06 | unrun-verify | web/uat/phase06.mjs |  | S7 真实断网栈/浏览器原生事件序列 skipped（headless 硬约束豁免）——人工清单见 .planning/phases/06-session-lifecycle/06-UAT.md（06-07 产出）；协议层等价物 S6 已覆盖 | open |  | 2026-08-23T08:24:59.916Z |  |
 | 19 | 07 | deviation | internal/server/server.go |  | 07-01 Rule 1 调和：无认证分支 bp 形态补注册 attach path-only 405 fallback（bp=="" 根挂载保持 embed 404 零漂移，差异注释锚定，23d72c8） | open |  | 2026-08-26T00:47:53.956Z |  |
 | 20 | 07 | deviation | web/dist/index.html |  | 07-01 Rule 3 验收闸适配：dist 升级前缀 grep 改引号无关心形态（esbuild 反引号模板字面量发射，字面量未重命名，断言面守恒，4f1fc8e） | open |  | 2026-08-26T00:47:54.121Z |  |
+| 21 | 07 | deviation | web/uat/phase07.mjs |  | 07-07: S4c NEL 探针改线形等价物构造（undici latin1 编码实证——朴素 'ali\\u0085ce' 上线单字节 0x85 复现不了剥离路径，'ali\\u00C2\\u0085ce' 双码点 = UTF-8 NEL 等价线形） | open |  | 2026-08-26T06:30:22.013Z |  |
+| 22 | 07 | unrun-verify | web/uat/phase07.mjs |  | S8c 真实弹浏览器拉起与标签页观感 skipped（headless 硬约束豁免——真实 GUI 属 Windows 工作站人工层，CODEBUDDY.md 平台原生行为豁免条款）；协议层等价物 S8a（headless 跳过）+ S8b（fake xdg-open argv 全等）已覆盖，人工复核项见 07-08 plan | open |  | 2026-08-26T06:30:42.875Z |  |
 
 ````json
 [
@@ -276,6 +278,30 @@ last_updated: 2026-08-26T00:47:54.121Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-26T00:47:54.121Z",
+    "resolved_at": null
+  },
+  {
+    "id": 21,
+    "kind": "deviation",
+    "phase": "07",
+    "file": "web/uat/phase07.mjs",
+    "line": null,
+    "description": "07-07: S4c NEL 探针改线形等价物构造（undici latin1 编码实证——朴素 'ali\\u0085ce' 上线单字节 0x85 复现不了剥离路径，'ali\\u00C2\\u0085ce' 双码点 = UTF-8 NEL 等价线形）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-26T06:30:22.013Z",
+    "resolved_at": null
+  },
+  {
+    "id": 22,
+    "kind": "unrun-verify",
+    "phase": "07",
+    "file": "web/uat/phase07.mjs",
+    "line": null,
+    "description": "S8c 真实弹浏览器拉起与标签页观感 skipped（headless 硬约束豁免——真实 GUI 属 Windows 工作站人工层，CODEBUDDY.md 平台原生行为豁免条款）；协议层等价物 S8a（headless 跳过）+ S8b（fake xdg-open argv 全等）已覆盖，人工复核项见 07-08 plan",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-26T06:30:42.875Z",
     "resolved_at": null
   }
 ]

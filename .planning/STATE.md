@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
 status: executing
-stopped_at: Completed 07-06-PLAN.md（TOML 配置文件两阶段合并）
-last_updated: "2026-08-26T05:48:43.486Z"
+stopped_at: Completed 07-07-PLAN.md（phase07.mjs 协议层 UAT 八场景）
+last_updated: "2026-08-26T06:35:52.449Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 52
-  completed_plans: 50
+  completed_plans: 51
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 ## Current Position
 
 Phase: 7 — 部署与配置
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Ready to execute
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [██████████] 96%
+Progress: [██████████] 98%
 
 ## Performance Metrics
 
@@ -113,6 +113,7 @@ Progress: [██████████] 96%
 | Phase 07-deployment P04 | 1h 20m | 3 tasks | 17 files |
 | Phase 07-deployment P05 | 39min | 3 tasks tasks | 8 files files |
 | Phase 07-deployment P06 | 47min | 2 tasks tasks | 5 files files |
+| Phase 07-deployment P07 | 29min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -236,6 +237,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-05]: 测试装配 startShutdownServerWith 本地变体（plan 字面 startTrackedServerWith 按意图修正——srv 句柄不暴露，Shutdown 直接调用面结构性需要）；parseArgs 头注释 28→29 补 --open 行（07-02 先例第二次沿用）
 - [Phase ?]: [Phase 07-06]: 配置 exit-when-empty 在 --once 展开之前应用（配置不算显式，展开覆盖配置值——flag > 配置推论）；cfgCredErr 上报点落合并段末尾，env/CLI 遮蔽的配置列表不解析不校验（D-02/D-05 不应用语义字面落地）
 - [Phase ?]: [Phase 07-06]: 默认值替换机制承载 D-05 优先级链——配置标量键换算 flag 注册默认值，flag > 配置 > 默认两档零新判定代码；配置键存在即「已给定」置显式位（socket 族/write-policy 矩阵配置同档）
+- [Phase ?]: [Phase 07-07]: S4c 控制字符探针取 UTF-8 线形等价物构造（本机三探针实证）——undici 头值 latin1 编码使朴素 JS 'ali\u0085ce' 上线为单字节 0x85（Go 侧 U+FFFD 复现不了剥离路径），'ali\u00C2\u0085ce' 双码点上线 0xC2 0x85 = UTF-8 客户端等价线形，Go 解码得 NEL 按 D-19 剥离
+- [Phase ?]: [Phase 07-07]: S4 事件行触发形态 = --exit-when-empty 的 exit_when_empty logEvent——attach+close 链路唯一确定性即时事件（携 Attach 入口提取的 c.remote/c.remote_user），进程随后 HUP 收口 255 顺带锁定；S5a 加 900ms 时序下界证宽限真实经过；S1 排序即解零 pacing（401 负面对照排最后）
 
 ### Pending Todos
 
@@ -255,6 +258,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T05:48:11.826Z
-Stopped at: Completed 07-06-PLAN.md（TOML 配置文件两阶段合并）
+Last session: 2026-08-26T06:35:52.426Z
+Stopped at: Completed 07-07-PLAN.md（phase07.mjs 协议层 UAT 八场景）
 Resume file: None
