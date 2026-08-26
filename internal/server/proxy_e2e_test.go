@@ -13,6 +13,7 @@ package server_test
 // os.Stderr 的同步边只能由 handler 追踪 WaitGroup 建立）。
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -171,5 +172,179 @@ func TestAuthHeaderNoAuthBypass(t *testing.T) {
 	}
 	if wa := resp.Header.Get("WWW-Authenticate"); wa != `Basic realm="wesh", charset="UTF-8"` {
 		t.Errorf("WWW-Authenticate = %q, want RFC 7617 challenge（挑战形态不因伪造头改变）", wa)
+	}
+}
+
+// TestShareChannelRemoteUser（D-15 双通道同口径 + D-03 红线延伸自净，07-03
+// Task 2）：issueTicketJSON 是两签发通道（Basic 链 attachHandler / token 分支
+// shareAttach）唯一共享签发点——其 max_clients 503 事件在两通道均携 remote_user
+// （Task 1 单点改造的自然覆盖，本测试双通道断言锁定）；token 渠道进入的 WS
+// attach 经同一 Attach 入口提取点（remote/remoteUser 与 Basic 渠道同码同源，
+// server.go Attach 注释登记），以其稳态 message_too_big 事件断言该渠道客户端
+// 的 remote_user 已随 client 装配生效。收尾断言 share token 与一次性 ticket
+// 值不出现在 stderr 任何事件行（D-03 红线随新字段延伸的运行时自净断言，
+// T-07-03c——remote_user 提取源在结构上不可能是 token/ticket）。
+func TestShareChannelRemoteUser(t *testing.T) {
+	restore := captureStderr(t)
+	defer restore() // 失败路径兜底恢复 os.Stderr（幂等）
+
+	cred, err := server.ParseCredential("share-op:share-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	roTok := server.GenerateShareToken()
+	rwTok := server.GenerateShareToken()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	// —— ① 双通道 503：MaxClients=1 满员后，Basic 链与 token 分支各探测一次 ——
+	_, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
+		Credentials:  []server.Credential{cred},
+		AuthHeader:   "X-Remote-User",
+		ShareTokenRO: roTok,
+		ShareTokenRW: rwTok,
+		MaxClients:   1,
+	})
+	// 占位客户端（Basic 渠道正式 attach）占满容量。
+	resp := postAttach(t, attachURL(wsURL), "share-op", "share-pass", nil)
+	var issued struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode placeholder ticket: %v", err)
+	}
+	resp.Body.Close()
+	if issued.Ticket == "" {
+		t.Fatal("placeholder ticket empty")
+	}
+	placeholder, _ := dialHelloTicket(t, ctx, wsURL, issued.Ticket, 80, 24)
+
+	// Basic 通道 503：有效凭据 + 满员 → 503，事件行携 remote_user=bob。
+	resp = postAttach(t, attachURL(wsURL), "share-op", "share-pass", map[string]string{"X-Remote-User": "bob"})
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("Basic 通道满员 status = %d, want %d (503)", resp.StatusCode, http.StatusServiceUnavailable)
+	}
+
+	// token 通道 503：body 携有效 ro token + 满员 → 503，事件行携 remote_user=carol
+	//（shareAttach → issueTicketJSON 同一签发点，token 分支绕过 Basic 是 D-01
+	// 既定 capability 语义）。
+	tokenBody, err := json.Marshal(struct {
+		Token string `json:"token"`
+	}{Token: roTok})
+	if err != nil {
+		t.Fatalf("marshal token body: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, attachURL(wsURL), bytes.NewReader(tokenBody))
+	if err != nil {
+		t.Fatalf("new token POST: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Remote-User", "carol")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("token POST: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("token 通道满员 status = %d, want %d (503)", resp.StatusCode, http.StatusServiceUnavailable)
+	}
+
+	// 收口占位客户端使其 Attach handler 返回——waitHandlers 同步边的前置
+	//（WS attach 是长生命周期 handler，不关闭则 wg.Wait 永不返回）。
+	_ = placeholder.Close(websocket.StatusNormalClosure, "")
+	waitHandlers()
+
+	// —— ② token 渠道 WS attach 提取点（独立实例，默认容量）——
+	// token 渠道签发的 ticket + WS 升级携 X-Remote-User: dave → 该客户端的
+	// remoteUser 来自与 Basic 渠道同一 Attach 入口提取行。
+	_, wsURL2, waitHandlers2 := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
+		Credentials:  []server.Credential{cred},
+		AuthHeader:   "X-Remote-User",
+		ShareTokenRO: roTok,
+		ShareTokenRW: rwTok,
+	})
+	req2, err := http.NewRequest(http.MethodPost, attachURL(wsURL2), bytes.NewReader(tokenBody))
+	if err != nil {
+		t.Fatalf("new token POST #2: %v", err)
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("token POST #2: %v", err)
+	}
+	var issued2 struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issued2); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode token-channel ticket: %v", err)
+	}
+	resp.Body.Close()
+	if issued2.Ticket == "" {
+		t.Fatal("token-channel ticket empty")
+	}
+	c2, _, err := websocket.Dial(ctx, wsURL2, &websocket.DialOptions{
+		Subprotocols: []string{proto.Subprotocol},
+		HTTPHeader:   http.Header{"X-Remote-User": []string{"dave"}},
+	})
+	if err != nil {
+		t.Fatalf("dial token channel: %v", err)
+	}
+	hello, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24, Ticket: issued2.Ticket})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c2.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, hello...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	// Welcome 首帧 = attach 完成证据（token 渠道 ro mode）。
+	_, data, err := c2.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	// 稳态事件触发：超限消息 → 库自动 1009 + message_too_big 行携 remote_user=dave。
+	if err := c2.Write(ctx, websocket.MessageBinary, make([]byte, proto.ReadLimitPostAuth+1)); err != nil {
+		t.Fatalf("write oversize: %v", err)
+	}
+	ce := readCloseErr(t, c2, ctx)
+	if ce.Code != websocket.StatusMessageTooBig {
+		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
+	}
+	waitHandlers2()
+
+	out := restore()
+	// 双通道 503 同口径：两行 max_clients 各携对应通道的 remote_user。
+	if n := strings.Count(out, "reason=max_clients"); n != 2 {
+		t.Fatalf("max_clients rows = %d, want 2（Basic/token 双通道）: %q", n, out)
+	}
+	if !strings.Contains(out, "reason=max_clients remote_user=bob") {
+		t.Errorf("Basic 通道 503 行缺 remote_user=bob: %q", out)
+	}
+	if !strings.Contains(out, "reason=max_clients remote_user=carol") {
+		t.Errorf("token 通道 503 行缺 remote_user=carol: %q", out)
+	}
+	// token 渠道 WS attach 提取点：稳态事件携 dave。
+	if n := strings.Count(out, "reason=message_too_big"); n != 1 {
+		t.Fatalf("message_too_big rows = %d, want 1: %q", n, out)
+	}
+	if !strings.Contains(out, "reason=message_too_big remote_user=dave") {
+		t.Errorf("token 渠道 WS attach 稳态事件缺 remote_user=dave: %q", out)
+	}
+	// D-03 红线延伸运行时自净断言（T-07-03c）：share token 与一次性 ticket
+	// 值不出现在 stderr 任何事件行——remote_user/remote 任何字段在结构上
+	// 不可能携带 token（提取源只能是配置头名对应的 HTTP 头）。
+	if strings.Contains(out, roTok) || strings.Contains(out, rwTok) {
+		t.Errorf("stderr leaks share token（D-03 红线）: %q", out)
+	}
+	if strings.Contains(out, issued.Ticket) || strings.Contains(out, issued2.Ticket) {
+		t.Errorf("stderr leaks ticket（D-03 红线）: %q", out)
 	}
 }
