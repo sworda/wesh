@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
-status: executing
-stopped_at: Completed 07-07-PLAN.md（phase07.mjs 协议层 UAT 八场景）
-last_updated: "2026-08-26T06:35:52.449Z"
+status: verifying
+stopped_at: Completed 07-08-PLAN.md（部署文档收口 + 全量六段式验证 + 十脚本回归全绿；Phase 7 ready for verification）
+last_updated: "2026-08-26T07:09:45.154Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 52
-  completed_plans: 51
+  completed_plans: 52
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -30,10 +30,10 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 
 Phase: 7 — 部署与配置
 Plan: 8 of 8
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [██████████] 98%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -114,6 +114,7 @@ Progress: [██████████] 98%
 | Phase 07-deployment P05 | 39min | 3 tasks tasks | 8 files files |
 | Phase 07-deployment P06 | 47min | 2 tasks tasks | 5 files files |
 | Phase 07-deployment P07 | 29min | 2 tasks | 1 files |
+| Phase 07-deployment P08 | 24min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -239,6 +240,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-06]: 默认值替换机制承载 D-05 优先级链——配置标量键换算 flag 注册默认值，flag > 配置 > 默认两档零新判定代码；配置键存在即「已给定」置显式位（socket 族/write-policy 矩阵配置同档）
 - [Phase ?]: [Phase 07-07]: S4c 控制字符探针取 UTF-8 线形等价物构造（本机三探针实证）——undici 头值 latin1 编码使朴素 JS 'ali\u0085ce' 上线为单字节 0x85（Go 侧 U+FFFD 复现不了剥离路径），'ali\u00C2\u0085ce' 双码点上线 0xC2 0x85 = UTF-8 客户端等价线形，Go 解码得 NEL 按 D-19 剥离
 - [Phase ?]: [Phase 07-07]: S4 事件行触发形态 = --exit-when-empty 的 exit_when_empty logEvent——attach+close 链路唯一确定性即时事件（携 Attach 入口提取的 c.remote/c.remote_user），进程随后 HUP 收口 255 顺带锁定；S5a 加 900ms 时序下界证宽限真实经过；S1 排序即解零 pacing（401 负面对照排最后）
+- [Phase ?]: [Phase 07-08]: RESEARCH A1 复核闭合——本机 nginx 1.14.1 实测 location /wesh/ 不匹配裸 /wesh（裸路径 404），README nginx 配方精确重定向块按实证确凿落文（非防御性建议）
+- [Phase ?]: [Phase 07-08]: SEC-07 D-15 双文件修订落位——REQUIREMENTS.md 与 ROADMAP.md SC2 同步改为服务端审计归因语义（原「子进程环境变量」表述作废），单一口径防文档间漂移；勾选状态与 Traceability 映射不动
 
 ### Pending Todos
 
@@ -258,6 +261,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T06:35:52.426Z
-Stopped at: Completed 07-07-PLAN.md（phase07.mjs 协议层 UAT 八场景）
+Last session: 2026-08-26T07:09:45.128Z
+Stopped at: Completed 07-08-PLAN.md（部署文档收口 + 全量六段式验证 + 十脚本回归全绿；Phase 7 ready for verification）
 Resume file: None
