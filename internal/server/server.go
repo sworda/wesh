@@ -132,6 +132,16 @@ type Server struct {
 	exitEmptyTimer     *time.Timer
 	exiting            bool
 
+	// Phase 7 stop-signal 装配（07-04，OPS-04，D-22）：stopSignal 为 exit-when-empty
+	// 收口路径向子进程进程组所发信号（New 装配期固化、运行期只读；零值经 New
+	// 兜底 SIGHUP——零信号无语义，兜底保持默认 HUP 现状语义）；stopTimeout 为
+	// stop-signal 后补发 SIGKILL 的宽限（零值 = 不补 KILL 纯单信号，合法现状
+	// 语义无兜底；AfterFunc 异步补发不占 hubMu、ESRCH 幂等静默，Pitfall 8）。
+	// 07-05 Shutdown（1001 优雅下线）复用同一字段——退出收口的信号配置必须
+	// 经 Options 单一通道，双写即漂移。
+	stopSignal  syscall.Signal
+	stopTimeout time.Duration
+
 	// Phase 7 部署形态装配（07-01，D-13/D-14）：basePath 为 New 装配期固化、
 	// 运行期只读的反代子路径挂载前缀（空串 = 根挂载）；Handler() 注册点统一
 	// 消费，StripPrefix 仅包静态伺服链。
@@ -212,6 +222,15 @@ type Options struct {
 	// logEvent 不出 remote_user 键，D-20 单一信任闸）。值只做审计归因记录，
 	// 不做任何认证决定（D-17 正交）。
 	AuthHeader string
+	// StopSignal/StopTimeout 为生产直传字段（07-04 D-22，main --stop-signal/
+	// --stop-timeout flag 经 parse 期枚举/负值校验后原样透传）：StopSignal 为
+	// exit-when-empty 收口路径的进程组信号（零值无语义，New 显式兜底 SIGHUP
+	// 保持默认 HUP 现状语义——06-02 注释分档先例：生产直传 + 零值兜底说明）；
+	// StopTimeout 为 stop-signal 后补发 SIGKILL 的宽限（零值 = 不补 KILL 纯单
+	// 信号，合法现状语义，无兜底）。07-05 Shutdown 复用同一字段（Options 单一
+	// 通道，双写即漂移）。
+	StopSignal  syscall.Signal
+	StopTimeout time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -271,6 +290,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.ExitWhenEmptyGrace < 0 {
 		opts.ExitWhenEmptyGrace = 0
 	}
+	// D-22：零信号无语义——显式兜底 SIGHUP 保持默认 HUP 现状语义（WritePolicy
+	// 零值兜底同档先例；StopTimeout 零值 = 不补 KILL 合法，不兜底）。
+	if opts.StopSignal == 0 {
+		opts.StopSignal = syscall.SIGHUP
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
@@ -296,6 +320,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// New 装配直传（06-02，D-14；set/grace 分离，grace 负值已在上方钳 0）。
 		exitWhenEmpty:      opts.ExitWhenEmpty,
 		exitWhenEmptyGrace: opts.ExitWhenEmptyGrace,
+		// New 装配直传（07-04，D-22；StopSignal 零值已在上方兜底 SIGHUP）。
+		stopSignal:  opts.StopSignal,
+		stopTimeout: opts.StopTimeout,
 		// New 装配直传（07-01，D-13；零值 = 根挂载，无兜底改写）。
 		basePath: opts.BasePath,
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键

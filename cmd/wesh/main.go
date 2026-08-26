@@ -16,6 +16,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sworda/wesh/internal/proto"
@@ -67,11 +68,15 @@ type config struct {
 	socketOwnerSet bool        // --socket-owner 是否被显式设置（同上）
 	// Phase 7 反代信任（D-18，one-way 公开契约，P2 D-15 同纪律）：
 	authHeader string // --auth-header 可信反代用户头名（空串 = 不信任——XFF 完全忽略、日志不出 remote_user 键，D-20 单一信任闸；值只做 logEvent 审计归因记录，不做任何认证决定，D-17 正交）
-	// Phase 7 子进程管理（D-21/D-24，one-way 公开契约，P2 D-15 同纪律）：
+	// Phase 7 子进程管理（D-21/D-22/D-24，one-way 公开契约，P2 D-15 同纪律）：
 	cwd  string // --cwd 子进程工作目录（空串 = 继承服务端 cwd 现状；非空时 validateStartup stat 预检 fail-fast，spawn 前零资源占用）
 	term string // --term 子进程 TERM（空串 = xterm-256color 现状语义；--term="" 空串值按未配置处理）
 	uid  int    // --uid 降权目标 uid（默认 -1 = 不降权；与 --gid 成对强制，validateStartup 消费；flag 注册与校验见 07-04 Task 3）
 	gid  int    // --gid 降权目标 gid（同上）
+	// D-22 stop-signal 序列（one-way 公开契约，P2 D-15 同纪律）：
+	stopSignal    string         // --stop-signal 枚举名 HUP|TERM|INT|KILL（默认 HUP 现状语义；parse 期经 pty.StopSignalByName 枚举校验）
+	stopTimeout   time.Duration  // --stop-timeout stop-signal 后补发 SIGKILL 的宽限（默认 0 = 不补 KILL 纯单信号现状；负值 parse 期拒绝）
+	stopSignalSig syscall.Signal // --stop-signal 的 parse 期名→信号解析产物（StopSignalByName 命中；Options.StopSignal 接线源）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -122,7 +127,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 24 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 26 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -137,7 +142,9 @@ func (v *exitEmptyValue) Set(s string) error {
 // 互斥/单给组合矛盾归 validateStartup fail-fast）、
 // --auth-header（07-03 D-18 反代用户头名；裸信任 + D-16 暴露面警告归
 // validateStartup，XFF 同闸采信 D-20）、
-// --cwd/--term（07-04 D-21 子进程工作目录与 TERM，stat 预检归 validateStartup）。
+// --cwd/--term（07-04 D-21 子进程工作目录与 TERM，stat 预检归 validateStartup）、
+// --stop-signal/--stop-timeout（07-04 D-22 停止信号进程组序列，枚举/负值 parse
+// 期校验）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -270,6 +277,14 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 未配置处理（显式空 TERM 会使终端能力丢失）。
 	fs.StringVar(&cfg.cwd, "cwd", "", "working directory for the child process (default: inherit)")
 	fs.StringVar(&cfg.term, "term", "", "TERM for the child process (default: xterm-256color)")
+	// D-22：--stop-signal/--stop-timeout（one-way 公开契约）——exit-when-empty
+	// 收口路径向子进程进程组（负 pid，setsid pgid==pid 既定不变量）所发信号
+	// 与 KILL 补发宽限；默认 HUP + 0 = 现状语义（纯单信号不补 KILL，06-02 D-13
+	// 零漂移）。枚举校验与负值检查在 Parse 返回处（write-policy 同位先例；
+	// --stop-timeout 取 DurationVar 直收形态——负 duration 是合法语法，负值
+	// 检查是唯一闸，exitEmptyValue.Set 负值闸同纪律）。
+	fs.StringVar(&cfg.stopSignal, "stop-signal", "HUP", "signal sent to the child process group on shutdown: HUP|TERM|INT|KILL (default HUP)")
+	fs.DurationVar(&cfg.stopTimeout, "stop-timeout", 0, "grace before SIGKILL after stop-signal (0 = no escalation)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -339,6 +354,22 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 该形态仅用于值含敏感内容的 --client-option）。
 	if cfg.writePolicy != server.WritePolicyOwner && cfg.writePolicy != server.WritePolicyAll {
 		return cfg, nil, fmt.Errorf("invalid --write-policy %q: must be owner or all", cfg.writePolicy)
+	}
+	// D-22：--stop-signal 枚举校验（插入点同 03-04 先例——showVersion 早退之后，
+	// write-policy 枚举校验同位）。名→信号映射在 pty 平台文件集中
+	//（signal_linux.go/signal_darwin.go 同签名同表——parse 期枚举校验的唯一
+	// 事实源；与 server.go signalName 的 signal→name 方向相反，不复用错方向）。
+	// 值非敏感，错误文案可回显并列合法枚举（exitEmptyValue.Set 同纪律，非
+	// SEC-01 面）。解析产物入 cfg.stopSignalSig 供 run() Options 接线。
+	sig, ok := pty.StopSignalByName(cfg.stopSignal)
+	if !ok {
+		return cfg, nil, fmt.Errorf("invalid --stop-signal %q: must be HUP, TERM, INT or KILL", cfg.stopSignal)
+	}
+	cfg.stopSignalSig = sig
+	// D-22：--stop-timeout 负值拒绝（DurationVar 直收下 "-5s" 解析成功，负值
+	// 检查是唯一闸——exitEmptyValue.Set 负值闸同纪律；值非敏感可回显）。
+	if cfg.stopTimeout < 0 {
+		return cfg, nil, fmt.Errorf("invalid --stop-timeout %v: must be a non-negative duration (e.g. 2s)", cfg.stopTimeout)
 	}
 	// D-09：--socket-mode 八进制解析（插入点同 03-04 先例——showVersion 早退
 	// 之后，write-policy 枚举校验同位）。值非敏感可回显（exitEmptyValue.Set
@@ -725,7 +756,7 @@ func run(args []string) int {
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout})
 	if cfg.socket != "" {
 		// D-12：unix 形态启动打印——地址行打 unix:// 前缀 + cfg.socket 原样
 		//（/run/wesh.sock 即得三斜杠形态）；分享链接两行退化为单行提示

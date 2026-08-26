@@ -5,6 +5,8 @@ package pty
 //（--stop-signal parse 期枚举校验的唯一事实源，两平台文件同签名同表）。
 
 import (
+	"errors"
+	"os/exec"
 	"syscall"
 	"testing"
 	"time"
@@ -40,8 +42,10 @@ func TestStopSignalByName(t *testing.T) {
 
 // TestSignalGroup（07-04，D-22）：SignalGroup(sig) 向子进程进程组（负 pid，
 // setsid 使 pgid == 子进程 pid 既定不变量）发指定信号——SIGTERM 终结 sleep
-// 子进程（Wait 收信号死亡错误为送达证据）；已死进程组重复发送静默（ESRCH
-// 幂等——不 panic 不阻塞即证，signal_linux.go 注释纪律）。
+// 子进程，sess.Wait 返回 *exec.ExitError，WaitStatus 断言 Signaled()==true 且
+// Signal()==syscall.SIGTERM（任意信号送达的精确证据，io_test.go
+// TestSignalGroupHangup 同款断言形态）；已死进程组重复发送静默（ESRCH 幂等——
+// 不 panic 不阻塞即证，signal_linux.go 注释纪律）。
 func TestSignalGroup(t *testing.T) {
 	sess, err := Start([]string{"sleep", "600"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
@@ -52,8 +56,19 @@ func TestSignalGroup(t *testing.T) {
 	go func() { waitCh <- sess.Wait() }()
 	select {
 	case werr := <-waitCh:
-		if werr == nil {
-			t.Fatal("sleep 被 SIGTERM 终结后 Wait 应返回信号死亡错误，got nil")
+		var ee *exec.ExitError
+		if !errors.As(werr, &ee) {
+			t.Fatalf("Wait err = %v, want *exec.ExitError（SIGTERM 致死）", werr)
+		}
+		ws, ok := ee.Sys().(syscall.WaitStatus)
+		if !ok {
+			t.Fatalf("ExitError.Sys() = %T, want syscall.WaitStatus", ee.Sys())
+		}
+		if !ws.Signaled() {
+			t.Fatal("WaitStatus.Signaled() = false, want true（信号致死）")
+		}
+		if ws.Signal() != syscall.SIGTERM {
+			t.Fatalf("WaitStatus.Signal() = %v, want SIGTERM（SignalGroup(TERM) 送达语义）", ws.Signal())
 		}
 	case <-time.After(testGuard):
 		t.Fatal("SignalGroup(SIGTERM) 后子进程未在 10s 内死亡（10s 护栏）")
