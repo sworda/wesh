@@ -20,6 +20,10 @@ import { backoffMs } from './lib/reconnect';
 // Error code 含 auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）；
 // EXIT 载荷 {exit_code, message}——子进程退出终结帧（Phase 6 D-08/D-09，proto.go Exit/ExitPayload
 // 同形）；信号死亡 exit_code=-1；message 为服务端组文案唯一写口，前端直显不改写。
+// 关闭码 1001 优雅下线已于 Phase 7 启用（D-23，proto.go 关闭码纪律块互指）：发送路径 =
+// server/server.go Shutdown（库常量 websocket.StatusGoingAway，close reason 机器串
+// server_shutting_down）；前端分派 = 下方 onclose case 1001 'Server shutting down' 终态面板——
+// 1001 不在 CORE-05 重连触发集（仅 1006，P6 D-01）。
 const OUTPUT = 0x30,
   INPUT = 0x30,
   RESIZE = 0x31,
@@ -885,6 +889,17 @@ async function connect(): Promise<void> {
           // R2：正文 = EXIT 帧服务端组文案（退出码/信号人话，D-09/D-10）；未收 EXIT
           //（旧服务端/异常路径）回退既有硬编码文案逐字不变（前向兼容 P2 D-02）
           lastExit?.message ?? 'The process exited and the wesh server has stopped.',
+          'Start wesh again from your shell, then',
+        );
+        break;
+      case 1001: // D-23 优雅下线（Phase 7，proto.go 关闭码纪律块互指——发送路径 server
+        // Shutdown + reason server_shutting_down）。与 1000 的语义边界：进程退出 vs 服务
+        // 关停（子进程由服务端 stop-signal 序列终结）。1001 不在 CORE-05 触发集（仅
+        // 1006——systemd restart 场景看终态面板，而非重连循环打一个正在重启的服务，
+        // D-23 UX 闭环）；不调用 startReconnect（prohibition 回归锁）
+        showStatus(
+          'Server shutting down',
+          'The wesh server is shutting down. The session has ended.',
           'Start wesh again from your shell, then',
         );
         break;
