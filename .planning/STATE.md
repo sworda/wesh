@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 7
-current_phase_name: 部署与配置
-status: verifying
-stopped_at: Phase 7 automated verification passed (46/46 must-haves) — awaiting human UAT
-last_updated: "2026-08-26T07:15:00.000Z"
+current_phase: 07
+current_phase_name: deployment
+status: executing
+stopped_at: Completed 07-10-PLAN.md（G-07-3/G-07-8 闭合；b1b5 7/7 + b6 7/7 + 十脚本全绿）
+last_updated: "2026-08-26T14:27:39.246Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution + automated verification complete, human UAT pending
 progress:
   total_phases: 7
-  completed_phases: 7
-  total_plans: 52
-  completed_plans: 52
+  completed_phases: 6
+  total_plans: 54
+  completed_plans: 53
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -24,16 +24,16 @@ state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 See: .planning/PROJECT.md (updated 2026-08-24)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 07 — 部署与配置
+**Current focus:** Phase 07 — deployment
 
 ## Current Position
 
-Phase: 7 — 部署与配置
-Plan: 8 of 8
-Status: Phase complete — ready for verification
-Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
+Phase: 07 (deployment) — EXECUTING
+Plan: 2 of 10
+Status: Ready to execute
+Last activity: 2026-08-26 — Phase 07 execution started
 
-Progress: [██████████] 100%
+Progress: [██████████] 98%
 
 ## Performance Metrics
 
@@ -115,6 +115,7 @@ Progress: [██████████] 100%
 | Phase 07-deployment P06 | 47min | 2 tasks tasks | 5 files files |
 | Phase 07-deployment P07 | 29min | 2 tasks | 1 files |
 | Phase 07-deployment P08 | 24min | 2 tasks | 4 files |
+| Phase 07 P10 | 20min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -242,6 +243,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-07]: S4 事件行触发形态 = --exit-when-empty 的 exit_when_empty logEvent——attach+close 链路唯一确定性即时事件（携 Attach 入口提取的 c.remote/c.remote_user），进程随后 HUP 收口 255 顺带锁定；S5a 加 900ms 时序下界证宽限真实经过；S1 排序即解零 pacing（401 负面对照排最后）
 - [Phase ?]: [Phase 07-08]: RESEARCH A1 复核闭合——本机 nginx 1.14.1 实测 location /wesh/ 不匹配裸 /wesh（裸路径 404），README nginx 配方精确重定向块按实证确凿落文（非防御性建议）
 - [Phase ?]: [Phase 07-08]: SEC-07 D-15 双文件修订落位——REQUIREMENTS.md 与 ROADMAP.md SC2 同步改为服务端审计归因语义（原「子进程环境变量」表述作废），单一口径防文档间漂移；勾选状态与 Traceability 映射不动
+- [Phase ?]: [Phase 07-10]: G-07-3 闭合——listenSocket 活性探测（net.Dial unix 连通=存活→拒 EADDRINUSE 同形态文案 exit 1；失败=残留→照旧 Remove）；TOCTOU 两向安全降级；「不可服务即残留」边缘假设登记
+- [Phase ?]: [Phase 07-10]: G-07-8 选项 A 裁决落地——openBrowser goroutine Wait 收割防僵尸 + 非零退出补 wesh: warning 警告行（D-27 运行期非零覆盖从实现侧闭合，文档链不动）；警告行不含 URL（Wait err 结构性无 argv + 测试反断言双锁）
+- [Phase ?]: [Phase 07-10]: 长测试名夹具路径纪律——t.TempDir 拼长子测名可超 sun_path 108B（bind EINVAL），unix socket 测试夹具用 os.MkdirTemp 短根路径
 
 ### Pending Todos
 
@@ -261,6 +265,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T07:09:45.128Z
-Stopped at: Completed 07-08-PLAN.md（部署文档收口 + 全量六段式验证 + 十脚本回归全绿；Phase 7 ready for verification）
+Last session: 2026-08-26T14:27:39.219Z
+Stopped at: Completed 07-10-PLAN.md（G-07-3/G-07-8 闭合；b1b5 7/7 + b6 7/7 + 十脚本全绿）
 Resume file: None
