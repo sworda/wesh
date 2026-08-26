@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
 status: executing
-stopped_at: Phase 7 context gathered
-last_updated: "2026-08-25T23:46:44.613Z"
-last_activity: 2026-08-24
-last_activity_desc: Phase 06 complete, transitioned to Phase 7
+stopped_at: Completed 07-01-PLAN.md（base-path 反代子路径挂载）
+last_updated: "2026-08-26T00:51:06.319Z"
+last_activity: 2026-08-26
+last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 52
-  completed_plans: 44
+  completed_plans: 45
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 ## Current Position
 
 Phase: 7 — 部署与配置
-Plan: Not started
+Plan: 2 of 8
 Status: Ready to execute
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [██████████] 100%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -107,6 +107,7 @@ Progress: [██████████] 100%
 | Phase 06-session-lifecycle P05 | 21min | 2 tasks | 1 files |
 | Phase 06-session-lifecycle P06 | 23min | 2 tasks | 1 files |
 | Phase 06-session-lifecycle P07 | 26min | 2 tasks | 7 files |
+| Phase 07-deployment P01 | 35min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -214,6 +215,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-06]: 断连重接同一 PTY 协议层证据形态——echo S6PID=$$ 进程 ID 相等主证据（/S6PID=(\d+)/ 数字锚定防回显误命中）+ weshmark42 变量存活次级佐证 + 首连接无 EXIT 帧 + 服务端存活顺带锁定 D-14 默认
 - [Phase ?]: [Phase 06-07]: -max-clients help 重复标注裁决为修复（06-04 deferred 既定路由）——移除 help 文案自含 (default 32)，flag 包自动追加为单一事实源；纯展示层零语义，one-way 契约面不动
 - [Phase ?]: [Phase 06-07]: 旧 UAT 脚本对 EXIT 帧零适配落锤——phase02 T4a 仅断言 close code、phase03 无子进程退出场景，九脚本首跑全绿；六段式段 1 顺带清零三文件既有 gofmt 漂移（deferred-items 既定路由终点）
+- [Phase ?]: [Phase 07-01]: 无认证分支 bp 形态补注册 attach path-only 405 fallback（Rule 1 调和）——plan behavior 矩阵对无认证+BasePath 实例断言 405，现状无认证根挂载经 embed FS 404；取「bp 形态注册、根挂载不注册保持零漂移」，Pitfall 4 单侧定义防线落到两分支
+- [Phase ?]: [Phase 07-01]: 非法 --base-path 五族断言落 TestTLSKeyPairError 错误表（parse 期拒绝既定归属），TestParseArgs 只收合法/root 三行（wantBasePath 命名字段扩展，03-04 先例既存行零改动）
+- [Phase ?]: [Phase 07-01]: dist 升级前缀验收 grep 适配引号无关心形态——esbuild 以反引号模板字面量发射 '../../'（现状 /api/attach 同形态），字面量未重命名、引号非断言面（05-09 先例断言面守恒）
 
 ### Pending Todos
 
@@ -233,6 +237,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-25T12:03:00.966Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-deployment/07-CONTEXT.md
+Last session: 2026-08-26T00:51:06.294Z
+Stopped at: Completed 07-01-PLAN.md（base-path 反代子路径挂载）
+Resume file: None
