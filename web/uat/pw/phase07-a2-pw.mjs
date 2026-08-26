@@ -4,7 +4,7 @@
 // --base-path /wesh；Windows 侧 Playwright Chromium 直连 LAN IP。ssh -L 隧道方案在
 // 本机环境实测不稳定（转发进程随浏览器活动死亡，已弃用）。
 // 断言：裸 /wesh 308 → /wesh/ 加载、WS 升级终端可用、idle >60s 不断
-// （proxy_read_timeout 3600s > --ping-interval 5s）、无精确块变体裸路径 404。
+// （proxy_read_timeout 3600s > --ping-interval 5s）、无精确块变体裸路径 301（proxy_pass 自动补斜杠）。
 // 红线：凭据值只作构造材料，永不进 detail/控制台输出（只打状态码/布尔/文案常量）。
 import { execSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -38,7 +38,7 @@ const t1 = new Check('A2-T1', '裸 /wesh 308 重定向到 /wesh/（精确块）'
 const t2 = new Check('A2-T2', '经裸路径访问：页面加载 + 终端就绪');
 const t3 = new Check('A2-T3', 'WS 升级成功且终端可用（echo 全链）');
 const t4 = new Check('A2-T4', `idle ${IDLE_MS / 1000}s 连接不断（ping 5s < proxy_read_timeout 3600s）`);
-const t5 = new Check('A2-T5', '无精确块变体：裸 /wesh → 404（精确块必要性复核）');
+const t5 = new Check('A2-T5', '无精确块变体：裸 /wesh → 301（nginx proxy_pass 自动补斜杠）；/wesh/ 仍 200');
 
 mkdirSync('screenshots', { recursive: true });
 let browser;
@@ -77,11 +77,13 @@ try {
   await page.screenshot({ path: 'screenshots/a2-idle.png' });
   await page.close();
 
-  // T5: 无精确块变体 — 裸 /wesh 应 404（C1 语义在线上复证）；/wesh/ 仍 200
+  // T5: 无精确块变体 — 裸 /wesh → 301（nginx proxy_pass 自动补斜杠）；/wesh/ 仍 200
   const v = ctl('variant noexact');
   if (!v.includes('RELOADED_noexact')) throw new Error(`变体切换失败: ${v}`);
-  const resp404 = await ctx.request.get(`${BASE}/wesh`, { maxRedirects: 0, headers: { Authorization: AUTH_HEADER } });
-  t5.ok(resp404.status() === 404, '无精确块裸 /wesh → 404', `got=${resp404.status()}`);
+  const resp301 = await ctx.request.get(`${BASE}/wesh`, { maxRedirects: 0, headers: { Authorization: AUTH_HEADER } });
+  const loc301 = resp301.headers()['location'] ?? '';
+  t5.ok(resp301.status() === 301, '无精确块裸 /wesh → 301', `got=${resp301.status()}`);
+  t5.ok(loc301.endsWith('/wesh/'), 'Location 尾斜杠形态', `形态=${loc301.endsWith('/wesh/')}`);
   const resp200 = await ctx.request.get(`${BASE}/wesh/`, { maxRedirects: 0, headers: { Authorization: AUTH_HEADER } });
   t5.ok(resp200.status() === 200, '前缀块 /wesh/ 仍 200', `got=${resp200.status()}`);
   ctl('variant exact'); // 还原精确块（teardown 会整体清理，双保险）
