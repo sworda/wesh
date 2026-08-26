@@ -298,7 +298,7 @@ ExecStart=/usr/local/bin/wesh --socket /run/wesh/wesh.sock --socket-owner www-da
 
 `--base-path /wesh` 把 wesh 挂到子路径下——值必须 `/` 开头、无尾斜杠（根 `/` 视为未配置；拒绝 `..`/重复斜杠/非 URL path 安全字符，非法值拒绝启动，绝不宽容自动修正）。裸 `/wesh`（无尾斜杠）由服务端 307 规范化到 `/wesh/`——尾斜杠是前端相对 URL 正确解析的硬要求。分享链接打印含 base-path 前缀。
 
-nginx 配方（两块均必需）：
+nginx 配方（前缀块必需；精确块推荐——理据见块内注释）：
 
 ```nginx
 # 把 Connection 头映射为 upgrade/close（WS 升级必需）
@@ -308,14 +308,17 @@ map $http_upgrade $connection_upgrade {
 }
 
 server {
-    # 精确块：nginx 的 location /wesh/ 是前缀匹配，不匹配裸 /wesh（无尾斜杠）——
-    # 裸路径落不到反代块会 404；此块把裸 /wesh 重定向进子树（必需，非可选；
-    # 匹配语义已经 nginx 1.14 实测确认）。
+    # 精确块（推荐）：location /wesh/ 是前缀匹配，不匹配裸 /wesh（无尾斜杠）；本配方
+    # （proxy_pass handler）下 nginx 对裸 /wesh 会自动 301 补斜杠（GET 入口可工作），
+    # 但该自动跳转是 proxy_pass 系 handler 特例——换 return/fastcgi 等形态即不存在。
+    # 此块显式 308 重定向：308 保方法 + 规范化行为与 handler 形态无关，故推荐保留。
     location = /wesh { return 308 /wesh/; }
 
     location /wesh/ {
         proxy_pass http://127.0.0.1:7681;
         proxy_http_version 1.1;
+        # Host 必须原样转发：nginx 默认转发 $proxy_host（127.0.0.1:后端口），与浏览器 Origin 不同源会被 wesh WS 同源校验 403；$host 剥端口在 Origin 含非默认端口时仍不匹配——必须 $http_host（已全链实证）
+        proxy_set_header Host $http_host;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;
