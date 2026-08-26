@@ -1243,15 +1243,24 @@ func run(args []string) int {
 
 // openBrowser 以系统启动器打开分享链接（07-05，OPS-11，D-26/D-27，RESEARCH
 // Pattern 8 配方）：desktop（Linux 有 DISPLAY/WAYLAND_DISPLAY，或 darwin）→
-// exec.Command(tool, url).Start() 不等待——tool = linux "xdg-open" /
+// exec.Command(tool, url) Start——tool = linux "xdg-open" /
 // darwin "open"；headless（linux 且 DISPLAY 与 WAYLAND_DISPLAY 均空）→ stderr
 // 提示后跳过不阻断启动（headless 服务器是常态部署形态，--open 本质是桌面便利
-// 功能，D-27）；启动失败仅 stderr 警告不阻断（xdg-open 存在但返回非零的桌面
-// 异常同属用户预期面）。URL 由 wesh 自构（scheme+host:port+base-path+自生成
-// token，run() 拼串单一事实源），exec.Command argv 分离不经 shell（T-07-05b
-// 注入面结构性排除）。headless 检测只在 linux 分支判定，darwin 直接 open——
-// darwin 分支无本机运行时断言（构建标签差异；CI macOS 跑 TestOpenBrowser
-// 同款测试形态即整体 Skip，真实弹窗列 07-08 人工 UAT 清单）。
+// 功能，D-27）；启动失败仅 stderr 警告不阻断。URL 由 wesh 自构
+// （scheme+host:port+base-path+自生成 token，run() 拼串单一事实源），
+// exec.Command argv 分离不经 shell（T-07-05b 注入面结构性排除——goroutine
+// Wait 改造后该不变量保持）。headless 检测只在 linux 分支判定，darwin 直接
+// open——darwin 分支无本机运行时断言（构建标签差异；CI macOS 跑
+// TestOpenBrowser 同款测试形态即整体 Skip，真实弹窗列 07-08 人工 UAT 清单）。
+//
+// Pattern 8 配方偏差登记（07-10 G-07-8 选项 A）：原配方 fire-and-forget
+// .Start() 不等待——Start 成功后改起 goroutine Wait() 收割 opener 子进程
+// （fire-and-forget 从不 Wait 会让 opener 退出后驻留僵尸至服务终结，每次
+// --open 一个），且非零退出补 stderr 警告行；D-27「xdg-open 存在但返回非零
+// （桌面异常）只警告不阻断」由仅覆盖启动失败延伸覆盖运行期非零退出——
+// 「不阻断」是不变量，「须可见」是补齐（headless 跳过尚有提示行，桌面异常
+// 非零退出不应反而静默）。警告行不含 URL（Wait err 仅 exit status N，结构性
+// 无 argv——share token 红线 P5 D-03）。
 func openBrowser(url string) {
 	if runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
 		fmt.Fprintln(os.Stderr, "wesh: --open: no display detected (headless), skipping browser launch")
@@ -1261,9 +1270,18 @@ func openBrowser(url string) {
 	if runtime.GOOS == "darwin" {
 		tool = "open"
 	}
-	if err := exec.Command(tool, url).Start(); err != nil {
+	cmd := exec.Command(tool, url)
+	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "wesh: --open: failed to launch browser: %v\n", err) // 只警告不阻断（D-27）
+		return
 	}
+	// Start 成功：goroutine Wait 收割（防僵尸）+ 非零退出补警告行（D-27 运行期
+	// 覆盖）；异步执行——不阻断、零退出码影响、启动打印序列不变。
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "wesh: warning: --open: browser launcher exited with error: %v\n", err)
+		}
+	}()
 }
 
 func main() {
