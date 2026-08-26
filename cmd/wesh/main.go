@@ -702,7 +702,9 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 的配置列表不解析不校验——「不应用」语义的字面落地。配置 credential 与
 	// client-option 校验错误走 credErr/clientOptErr 同款记录式（类别 + 键名，
 	// 禁含值——统一上报点在本段末尾、showVersion 早退之后，纯信息路径不被
-	// 阻断）；origin 错误直接返回（值非敏感先例，CLI 回调同款）。
+	// 阻断）；origin 错误同取值剥离形态（07-review IN-01：oerr.Error() 含 %q
+	// 原输入不透传，detail 只含键名——与 credential/client-option 记录式
+	// 形态对齐；CLI --origin 回调通道不经 configErr，其值非敏感回显纪律不变）。
 	var cfgCredErr, cfgClientOptErr error
 	if fc != nil && fc.Credential != nil && len(cfg.credentials) == 0 {
 		for _, s := range fc.Credential {
@@ -718,7 +720,7 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		for _, s := range fc.Origin {
 			n, oerr := server.NormalizeOrigin(s)
 			if oerr != nil {
-				return cfg, nil, configErr(configPath, "invalid origin entry", oerr.Error())
+				return cfg, nil, configErr(configPath, "invalid origin entry", `key "origin"`)
 			}
 			cfg.origins = append(cfg.origins, n)
 		}

@@ -829,13 +829,18 @@ func TestConfigRedLines(t *testing.T) {
 			})
 		}
 	})
-	t.Run("invalid origin in config rejected", func(t *testing.T) {
+	t.Run("invalid origin in config rejected, value stripped", func(t *testing.T) {
+		// 07-review IN-01：origin 校验错误与 credential/client-option 记录式
+		// 形态对齐——类别 + 键名，oerr.Error()（含 %q 原输入）不透传。
 		_, _, err := parseConfigArgs(t, "origin = [\"https://*.example.com\"]\n", nil, "--", "bash")
 		if err == nil {
 			t.Fatal("parseArgs = nil error, want origin 校验拒绝")
 		}
-		if !strings.Contains(err.Error(), "glob") {
-			t.Errorf("err = %q, want NormalizeOrigin 同款拒绝（值非敏感先例）", err)
+		if !strings.Contains(err.Error(), "invalid origin entry") || !strings.Contains(err.Error(), `key "origin"`) {
+			t.Errorf("err = %q, want 类别 invalid origin entry + 键名（记录式同款）", err)
+		}
+		if strings.Contains(err.Error(), "*.example.com") {
+			t.Errorf("err = %q, must not contain origin 值（07-review IN-01 值剥离）", err)
 		}
 	})
 	t.Run("invalid exit-when-empty duration in config, value stripped", func(t *testing.T) {
