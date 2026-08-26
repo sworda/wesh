@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -236,5 +238,103 @@ func TestStartZeroValueParity(t *testing.T) {
 	_, werr := awaitSession(t, sess, startCollect(sess))
 	if werr != nil {
 		t.Fatalf("env 退出异常: %v", werr)
+	}
+}
+
+// TestDropPrivilegesSelf（VALIDATION 07-04，OPS-05，D-24）：Uid/Gid >= 0 时 Start
+// 设 SysProcAttr.Credential（fork 后 exec 前生效）——降权到 self（os.Getuid/
+// Getgid，免 root 纪律；降权到 nobody 需 root 列 07-08 人工/可选场景）：白盒
+// 断言 Credential 字段（creack/pty StartWithSize 只补 Setsid/Setctty 不覆盖）；
+// e2e 以 /usr/bin/id -u 观测子进程真实 uid。
+func TestDropPrivilegesSelf(t *testing.T) {
+	uid, gid := os.Getuid(), os.Getgid()
+	sess, err := Start([]string{"/usr/bin/id", "-u"}, StartOptions{Uid: uid, Gid: gid})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// 白盒：Credential 落 SysProcAttr（fork 后 exec 前生效挂点的直接证据）。
+	if sess.Cmd.SysProcAttr == nil || sess.Cmd.SysProcAttr.Credential == nil {
+		t.Fatal("Uid>=0 时 SysProcAttr.Credential 未设置（D-24 降权挂点缺失）")
+	}
+	if got := sess.Cmd.SysProcAttr.Credential; got.Uid != uint32(uid) || got.Gid != uint32(gid) {
+		t.Fatalf("Credential = %d/%d, want %d/%d", got.Uid, got.Gid, uid, gid)
+	}
+	out, werr := awaitSession(t, sess, startCollect(sess))
+	if werr != nil {
+		t.Fatalf("id -u 退出异常: %v", werr)
+	}
+	if strings.TrimSpace(out) != strconv.Itoa(uid) {
+		t.Fatalf("子进程 id -u = %q，want %d——Credential 降权未生效", strings.TrimSpace(out), uid)
+	}
+}
+
+// TestDropPrivilegesIdentityEnv（VALIDATION 07-04，OPS-05，D-25）：uid >= 0 时
+// whitelistEnv 按目标 uid 的 passwd 条目改写 HOME/USER/LOGNAME 三键（LookupId
+// 成功路径——降权直觉语义 = 连身份环境一起降，RESEARCH Pitfall 6）——三键
+// 不再从服务端 env 继承（宿主注入干扰值不得出现）；每键恰好一行（替换而非追加，
+// SEC-06 替换式注入纪律不变）。
+func TestDropPrivilegesIdentityEnv(t *testing.T) {
+	uid := os.Getuid()
+	u, err := user.LookupId(strconv.Itoa(uid))
+	if err != nil {
+		t.Skipf("LookupId(self) 失败（极简容器无 /etc/passwd？）: %v", err)
+	}
+	// 宿主 env 注入干扰值——降权路径不得继承（替换式改写证据）。
+	t.Setenv("HOME", "/wesh-should-not-inherit")
+	t.Setenv("USER", "wesh-not-inherited")
+	t.Setenv("LOGNAME", "wesh-not-inherited")
+	env := whitelistEnv("", uid)
+	for _, want := range []string{"HOME=" + u.HomeDir, "USER=" + u.Username, "LOGNAME=" + u.Username} {
+		if !slices.Contains(env, want) {
+			t.Errorf("whitelistEnv(uid=self) 缺身份改写行 %q: %v", want, env)
+		}
+	}
+	for _, k := range []string{"HOME=", "USER=", "LOGNAME="} {
+		n := 0
+		for _, kv := range env {
+			if strings.HasPrefix(kv, k) {
+				n++
+				if strings.Contains(kv, "wesh-not-inherited") || strings.Contains(kv, "wesh-should-not-inherit") {
+					t.Errorf("身份键 %s 继承了宿主值（D-25 改写失效）: %q", k, kv)
+				}
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s 行数 = %d, want 1（替换而非追加）", k, n)
+		}
+	}
+}
+
+// TestWhitelistEnvDropUnknownUid（VALIDATION 07-04，OPS-05，D-25 剔除路径）：
+// LookupId 失败（极简容器无 /etc/passwd 条目形态）→ HOME/USER/LOGNAME 三键从
+// 白名单剔除（不 append——shell 自默认），宿主 env 提供的三键同样不得出现；
+// 其余固定/继承键不受影响；uid<0 现状路径（按名继承）不受剔除逻辑影响。
+// 注意：极大 uid 的 Credential 设置本身会 spawn 失败——本用例只测 whitelistEnv
+// 纯函数，不起进程。
+func TestWhitelistEnvDropUnknownUid(t *testing.T) {
+	if _, err := user.LookupId("4999999999"); err == nil {
+		t.Skip("本机 passwd 恰有 uid 4999999999 条目——剔除路径不可达")
+	}
+	// 宿主 env 提供三键——剔除路径下仍不得出现（不继承不追加）。
+	t.Setenv("HOME", "/wesh-host-home")
+	t.Setenv("USER", "wesh-host-user")
+	t.Setenv("LOGNAME", "wesh-host-logname")
+	env := whitelistEnv("", 4999999999)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "USER=") || strings.HasPrefix(kv, "LOGNAME=") {
+			t.Errorf("LookupId 失败路径白名单含身份键（应剔除）: %q", kv)
+		}
+	}
+	// 其余固定键不受影响（剔除只作用于身份三键）。
+	if !slices.Contains(env, "TERM=xterm-256color") {
+		t.Errorf("剔除路径 TERM 行丢失: %v", env)
+	}
+	if !slices.Contains(env, "COLORTERM=truecolor") {
+		t.Errorf("剔除路径 COLORTERM 行丢失: %v", env)
+	}
+	// uid<0 现状路径不受影响——三键按名继承照旧。
+	envNoDrop := whitelistEnv("", -1)
+	if !slices.Contains(envNoDrop, "HOME=/wesh-host-home") {
+		t.Errorf("不降权路径 HOME 按名继承丢失: %v", envNoDrop)
 	}
 }

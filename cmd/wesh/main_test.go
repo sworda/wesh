@@ -99,7 +99,12 @@ func TestParseArgs(t *testing.T) {
 		wantStopSignal    string         // D-22：--stop-signal 枚举名原样入 cfg
 		wantStopSignalSig syscall.Signal // D-22：parse 期名→信号解析产物
 		wantStopTimeout   time.Duration  // D-22：--stop-timeout 原样入 cfg
-		wantArgv          []string
+		// P7：D-24 --uid/--gid 断言位。零值 = 期望 -1 未给哨兵（root uid/gid 0
+		// 是合法值，不在本表零值断言面——0 与 -1 的区分由值域拒绝行
+		//（TestTLSKeyPairError）与成对校验行（TestStartupMatrix）承载）。
+		wantUid  int // D-24：--uid 解析产物（默认 -1 不降权）
+		wantGid  int // D-24：--gid 解析产物（默认 -1 不降权）
+		wantArgv []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -158,6 +163,10 @@ func TestParseArgs(t *testing.T) {
 		{name: "stop-signal INT", args: []string{"--stop-signal", "INT", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "INT", wantStopSignalSig: syscall.SIGINT, wantArgv: []string{"bash"}},
 		{name: "stop-signal KILL", args: []string{"--stop-signal", "KILL", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "KILL", wantStopSignalSig: syscall.SIGKILL, wantArgv: []string{"bash"}},
 		{name: "stop-timeout grace", args: []string{"--stop-timeout", "2s", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopTimeout: 2 * time.Second, wantArgv: []string{"bash"}},
+		// D-24：--uid/--gid 数字直通原样入 cfg（成对强制归 validateStartup
+		// TestStartupMatrix 锁定；值域拒绝在 TestTLSKeyPairError——parse 期
+		// 拒绝既定归属；默认 -1/-1 哨兵由零值语义统一断言覆盖全部既存行）。
+		{name: "uid gid pair", args: []string{"--uid", "1000", "--gid", "1000", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantUid: 1000, wantGid: 1000, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -284,6 +293,22 @@ func TestParseArgs(t *testing.T) {
 			if cfg.stopTimeout != tt.wantStopTimeout {
 				t.Errorf("stopTimeout = %v, want %v", cfg.stopTimeout, tt.wantStopTimeout)
 			}
+			// D-24：零值 wantUid/wantGid = 期望 -1 未给哨兵（root 0 不在本表断言面，
+			// 见字段注释）。
+			wantUid := tt.wantUid
+			if wantUid == 0 {
+				wantUid = -1
+			}
+			if cfg.uid != wantUid {
+				t.Errorf("uid = %d, want %d", cfg.uid, wantUid)
+			}
+			wantGid := tt.wantGid
+			if wantGid == 0 {
+				wantGid = -1
+			}
+			if cfg.gid != wantGid {
+				t.Errorf("gid = %d, want %d", cfg.gid, wantGid)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -384,6 +409,12 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"stop-signal lowercase rejected", []string{"--stop-signal", "term", "--", "bash"}, "invalid --stop-signal", ""},
 		{"stop-signal unknown rejected", []string{"--stop-signal", "USR1", "--", "bash"}, "invalid --stop-signal", ""},
 		{"stop-timeout negative rejected", []string{"--stop-timeout=-5s", "--", "bash"}, "invalid --stop-timeout", ""},
+		// D-24：--uid/--gid 值域拒绝——-1 哨兵之外 < -1 或 > 4294967295 即拒
+		//（uint32 转换安全；值非敏感可回显）。
+		{"uid below range rejected", []string{"--uid", "-2", "--gid", "1000", "--", "bash"}, "invalid --uid", ""},
+		{"uid above range rejected", []string{"--uid", "4294967296", "--gid", "1000", "--", "bash"}, "invalid --uid", ""},
+		{"gid below range rejected", []string{"--uid", "1000", "--gid", "-2", "--", "bash"}, "invalid --gid", ""},
+		{"gid above range rejected", []string{"--uid", "1000", "--gid", "4294967296", "--", "bash"}, "invalid --gid", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -572,6 +603,8 @@ func TestNoCommandError(t *testing.T) {
 // loopback + 凭据 + TLS + auth-header）；socket 形态同 D-11 逻辑跳过本警告。
 // 07-04 新增：D-21 --cwd stat 预检两行——不存在拒绝（fail-fast spawn 前零资源
 // 占用，纯配置有效性 loopback 也不豁免）；真实目录放行（t.TempDir 材料）。
+// 07-04 新增：D-24 --uid/--gid 成对强制三行——单给拒绝（双 flag 名进文案，
+// 纯配置矛盾 loopback 不豁免）；成对给出放行。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
@@ -648,6 +681,13 @@ func TestStartupMatrix(t *testing.T) {
 		// 其他校验维度）。
 		{"cwd nonexistent refused", config{bind: "127.0.0.1", maxClients: 32, cwd: "/nonexistent-wesh-07-04/x"}, "--cwd", "", ""},
 		{"cwd existing allowed", config{bind: "127.0.0.1", maxClients: 32, cwd: cwdOK}, "", "", ""},
+		// 07-04 D-24 成对强制：--uid/--gid 只给一个 = 配置矛盾零窗口暴露（降权
+		// 半配置静默放行 = 子进程以原权运行，T-07-04b；exit 2 而非降级运行），
+		// 双 flag 名进文案；纯配置矛盾 loopback 也不豁免（write-policy 行同位）。
+		// 成对给出放行（bind 127.0.0.1 隔离其他校验维度）。
+		{"uid without gid refused", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: -1}, "--uid", "--gid", ""},
+		{"gid without uid refused", config{bind: "127.0.0.1", maxClients: 32, uid: -1, gid: 1000}, "--uid", "--gid", ""},
+		{"uid gid pair allowed", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: 1000}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
