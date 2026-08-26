@@ -33,7 +33,9 @@ import (
 // Phase 7：D-13 --base-path parse 期规范化（合法原样 / 根 / 归一空串；非法形态
 // 五族拒绝断言在 TestTLSKeyPairError 错误表——parse 期拒绝的既定归属）；
 // D-08/D-09 --socket 三 flag（路径原样 / --socket-mode 默认 0660 与自定义八进制 /
-// --socket-owner parse 期解析为 self 数字对；非法 mode/owner 拒绝断言同在错误表）。
+// --socket-owner parse 期解析为 self 数字对；非法 mode/owner 拒绝断言同在错误表）；
+// D-21 --cwd/--term（原样入 cfg；--term="" 空串值按未配置处理；--cwd stat 预检
+// 归 TestStartupMatrix）。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
@@ -85,7 +87,12 @@ func TestParseArgs(t *testing.T) {
 		// P7：D-18 --auth-header 断言位（零值 = 期望空串未配置——信任闸关闭，
 		// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
 		wantAuthHeader string // D-18：--auth-header 头名原样入 cfg
-		wantArgv       []string
+		// P7：D-21 --cwd/--term 断言位（零值 = 期望空串未配置——cwd 继承服务端、
+		// term 回落 xterm-256color 现状语义，既存行经此扩展零值断言覆盖，命名
+		// 字段扩展纪律 03-04 先例）。
+		wantCwd  string // D-21：--cwd 路径原样入 cfg
+		wantTerm string // D-21：--term 原样入 cfg（空串值按未配置处理）
+		wantArgv []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -130,6 +137,11 @@ func TestParseArgs(t *testing.T) {
 		// HTTP 层 Header.Get 语义自然承载；暴露面组合警告归 validateStartup，
 		// TestStartupMatrix D-16 行锁定）；默认值空串由零值语义统一断言。
 		{name: "auth-header flag", args: []string{"--auth-header", "X-Remote-User", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantAuthHeader: "X-Remote-User", wantArgv: []string{"bash"}},
+		// D-21：--cwd/--term 原样入 cfg（--cwd stat 预检归 validateStartup，
+		// TestStartupMatrix 锁定）；--term="" 空串值按未配置处理（显式空 TERM
+		// 会使终端能力丢失——空 = 默认 xterm-256color 现状语义）。
+		{name: "cwd and term", args: []string{"--cwd", "/tmp", "--term", "vt100", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantCwd: "/tmp", wantTerm: "vt100", wantArgv: []string{"bash"}},
+		{name: "term empty treated as unset", args: []string{"--term=", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -228,6 +240,13 @@ func TestParseArgs(t *testing.T) {
 			// D-18：--auth-header 原样解析（零值 = 空串未配置，既存行零值断言覆盖）。
 			if cfg.authHeader != tt.wantAuthHeader {
 				t.Errorf("authHeader = %q, want %q", cfg.authHeader, tt.wantAuthHeader)
+			}
+			// D-21：--cwd/--term 原样解析（零值 = 空串未配置，既存行零值断言覆盖）。
+			if cfg.cwd != tt.wantCwd {
+				t.Errorf("cwd = %q, want %q", cfg.cwd, tt.wantCwd)
+			}
+			if cfg.term != tt.wantTerm {
+				t.Errorf("term = %q, want %q", cfg.term, tt.wantTerm)
 			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
@@ -509,12 +528,17 @@ func TestNoCommandError(t *testing.T) {
 // + --no-auth + auth-header → 警告含 flag 名，文案不含头值）；D-03 拒绝不削弱
 // （无 --no-auth 时 auth-header 照样拒）；不触发（loopback + auth-header；非
 // loopback + 凭据 + TLS + auth-header）；socket 形态同 D-11 逻辑跳过本警告。
+// 07-04 新增：D-21 --cwd stat 预检两行——不存在拒绝（fail-fast spawn 前零资源
+// 占用，纯配置有效性 loopback 也不豁免）；真实目录放行（t.TempDir 材料）。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
 		t.Fatalf("ParseCredential: %v", err)
 	}
 	creds := []server.Credential{cred}
+	// 07-04 D-21：--cwd 合法放行行的运行时材料（t.TempDir 真实存在目录——stat
+	// 预检放行分支需要一个真实目录路径）。
+	cwdOK := t.TempDir()
 	tests := []struct {
 		name        string
 		cfg         config
@@ -575,6 +599,13 @@ func TestStartupMatrix(t *testing.T) {
 		{"auth-header loopback silent", config{bind: "127.0.0.1", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
 		{"auth-header non-loopback creds TLS silent", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem", authHeader: "X-Remote-User"}, "", "", ""},
 		{"socket skips auth-header warning (D-16/D-11)", config{socket: "/run/wesh.sock", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
+		// 07-04 D-21 预检：--cwd 非空且 stat 失败（不存在）即拒（fail-fast spawn
+		// 前零资源占用——spawn 后才发现 ENOENT 是资源已占用且错误面到客户端；
+		// 值非敏感可回显路径）。纯配置有效性与 bind 安全形态无关，loopback 早退
+		// 之前判定（write-policy 行同位）；合法目录放行（bind 127.0.0.1 隔离
+		// 其他校验维度）。
+		{"cwd nonexistent refused", config{bind: "127.0.0.1", maxClients: 32, cwd: "/nonexistent-wesh-07-04/x"}, "--cwd", "", ""},
+		{"cwd existing allowed", config{bind: "127.0.0.1", maxClients: 32, cwd: cwdOK}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
