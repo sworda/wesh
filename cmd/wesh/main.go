@@ -569,6 +569,41 @@ func validateStartup(cfg config) (warn string, err error) {
 	return "", nil // 非 loopback + 凭据 + TLS：最强形态免警告
 }
 
+// listenSocket 是 --socket 形态的 unix socket listen 序列（D-08/D-09/D-10；
+// run() 上方的纯 helper，isLoopbackBind 同位纪律）：
+// os.Remove → net.Listen("unix") → os.Chmod → uid>=0 时 os.Chown。任一步失败
+// 即 ln.Close() 回滚并返回 error——UnixListener 默认 unlink:true（GOROOT
+// unixsock_posix.go:210-216,230），Close 自动删文件，回滚零残留（T-07-02a/b：
+// Chmod/Chown 失败必须回滚退出而非带病放行）。
+//
+// 顺序敏感依据（07-RESEARCH Pattern 1，全部 GOROOT 实证）：
+//   - D-10：Go 的 listenStream 直接 syscall.Bind，无 bind 前 unlink——残留
+//     socket 必收 EADDRINUSE，os.Remove 是必需而非保险（systemd Restart= 场景
+//     零人工干预）；文件不存在时忽略 Remove 错误。
+//   - D-09：socket 文件 mode 由内核定为 0777&~umask，Go 不做任何 chmod——
+//     0660 确定性必须 listen 后显式 Chmod 达成（文件系统权限即认证边界，
+//     权限不得由 umask 漂移决定）；uid<0（owner 未给，-1 哨兵）跳过 Chown。
+//   - Chmod/Chown 与 listening 打印之间的 umask 窗口风险接受（RESEARCH A5）：
+//     调用方在本函数返回后才打地址行，窗口内无客户端被指引。
+func listenSocket(path string, mode os.FileMode, uid, gid int) (net.Listener, error) {
+	_ = os.Remove(path) // D-10：残留即垃圾；不存在忽略（ENOENT 不阻断）
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		_ = ln.Close() // Close 自动 unlink（unlink:true 默认）——回滚零残留
+		return nil, err
+	}
+	if uid >= 0 {
+		if err := os.Chown(path, uid, gid); err != nil {
+			_ = ln.Close() // 同上——回滚零残留
+			return nil, err
+		}
+	}
+	return ln, nil
+}
+
 func run(args []string) int {
 	cfg, argv, err := parseArgs(args)
 	if err != nil {
@@ -612,9 +647,17 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
-	// JoinHostPort 对 IPv4/主机名输出与 %s:%d 逐字相同，仅对 IPv6 字面量
-	// 加方括号（--bind ::1 拼出 [::1]:7681）——WR-01：IPv6 行为零漂移修复。
-	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.bind, strconv.Itoa(cfg.port)))
+	// D-08：listen 分岔——--socket 给定时走 unix socket（Remove→Listen→Chmod→
+	// Chown 序列见 listenSocket 注释），否则现状 TCP 一行；失败回滚块两分岔
+	// 共用现状形态（sess.Close + 打印 + return 1，net.Listen 失败路径逐字对称）。
+	var ln net.Listener
+	if cfg.socket != "" {
+		ln, err = listenSocket(cfg.socket, cfg.socketMode, cfg.socketUid, cfg.socketGid)
+	} else {
+		// JoinHostPort 对 IPv4/主机名输出与 %s:%d 逐字相同，仅对 IPv6 字面量
+		// 加方括号（--bind ::1 拼出 [::1]:7681）——WR-01：IPv6 行为零漂移修复。
+		ln, err = net.Listen("tcp", net.JoinHostPort(cfg.bind, strconv.Itoa(cfg.port)))
+	}
 	if err != nil {
 		// 启动失败路径回滚已 spawn 资源：Close master 后子进程（setsid 组长）
 		// 收 SIGHUP 退出，不留孤儿进程。
@@ -632,39 +675,51 @@ func run(args []string) int {
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
 	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath})
-	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
-	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
-	scheme := "http"
-	if cfg.tlsCert != "" {
-		scheme = "https"
-	}
-	fmt.Printf("listening on %s://%s\n", scheme, ln.Addr())
-	// MULTI-05 分享链接两行（05-06，D-03/D-04/D-05）：启动打印是产品行为
-	// （MULTI-05 明确授权），token 永不入 logEvent/stderr 事件流（D-03 红线——
-	// 这两处 stdout Printf 与 URL 路径本身是 token 的全部合法输出面）。
-	// host 回填（D-04/R-04）：bind 为全网卡形态（0.0.0.0/::/空串）→ outboundIPv4
-	// 路由感知回填（空则兜底 bind 原样，不阻断启动）；具体 bind 原样使用
-	// （loopback bind 打印 loopback——链接本机自用）；端口取 ln.Addr() 实际值
-	// （--port 0 随机端口形态，D-06）；scheme 随 TLS 分岔（上方既有分支）。
-	// rw 行仅 --writable 时打印（D-05 总闸——不给 --writable 只打印 ro 行）。
-	shareHost := cfg.bind
-	if cfg.bind == "" || cfg.bind == "0.0.0.0" || cfg.bind == "::" {
-		if ip := outboundIPv4(); ip != "" {
-			shareHost = ip
+	if cfg.socket != "" {
+		// D-12：unix 形态启动打印——地址行打 unix:// 前缀 + cfg.socket 原样
+		//（/run/wesh.sock 即得三斜杠形态）；分享链接两行退化为单行提示
+		//（无 host:port 可拼时绝不拼误导性 TCP 链接；反代后链接由反代 URL
+		// 决定）。本分支位于 hs 装配之前——打印时 listenSocket 的 Chmod/Chown
+		// 已完成（umask 窗口内不指引客户端，RESEARCH A5 风险接受）。
+		// ln.Addr().(*net.TCPAddr) 断言防御留在 TCP 分支——unix 形态天然
+		// 不拼 TCP 端口（RESEARCH Pattern 1 关键事实末条）。
+		fmt.Printf("listening on unix://%s\n", cfg.socket)
+		fmt.Println("share links: unavailable on unix socket (front with a reverse proxy to share)")
+	} else {
+		// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
+		// scheme 分支感知（D-04）：TLS 启用时打印 https://。
+		scheme := "http"
+		if cfg.tlsCert != "" {
+			scheme = "https"
 		}
-	}
-	sharePort := cfg.port
-	if ta, ok := ln.Addr().(*net.TCPAddr); ok {
-		sharePort = ta.Port
-	}
-	// D-14：分享链接路径含 base-path 前缀（拼串在 hostport 与 /s/ 之间注入
-	// cfg.basePath——空串时与现状逐字节一致）。shareURLRO/shareURLRW 是本打印点
-	// 与 07-05 --open 消费的单一事实源（拼串唯一出口，两消费点不得各自重拼）。
-	shareURLRO := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRO)
-	shareURLRW := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRW)
-	fmt.Printf("share read-only:  %s\n", shareURLRO)
-	if cfg.writable {
-		fmt.Printf("share read-write: %s\n", shareURLRW)
+		fmt.Printf("listening on %s://%s\n", scheme, ln.Addr())
+		// MULTI-05 分享链接两行（05-06，D-03/D-04/D-05）：启动打印是产品行为
+		// （MULTI-05 明确授权），token 永不入 logEvent/stderr 事件流（D-03 红线——
+		// 这两处 stdout Printf 与 URL 路径本身是 token 的全部合法输出面）。
+		// host 回填（D-04/R-04）：bind 为全网卡形态（0.0.0.0/::/空串）→ outboundIPv4
+		// 路由感知回填（空则兜底 bind 原样，不阻断启动）；具体 bind 原样使用
+		// （loopback bind 打印 loopback——链接本机自用）；端口取 ln.Addr() 实际值
+		// （--port 0 随机端口形态，D-06）；scheme 随 TLS 分岔（上方既有分支）。
+		// rw 行仅 --writable 时打印（D-05 总闸——不给 --writable 只打印 ro 行）。
+		shareHost := cfg.bind
+		if cfg.bind == "" || cfg.bind == "0.0.0.0" || cfg.bind == "::" {
+			if ip := outboundIPv4(); ip != "" {
+				shareHost = ip
+			}
+		}
+		sharePort := cfg.port
+		if ta, ok := ln.Addr().(*net.TCPAddr); ok {
+			sharePort = ta.Port
+		}
+		// D-14：分享链接路径含 base-path 前缀（拼串在 hostport 与 /s/ 之间注入
+		// cfg.basePath——空串时与现状逐字节一致）。shareURLRO/shareURLRW 是本打印点
+		// 与 07-05 --open 消费的单一事实源（拼串唯一出口，两消费点不得各自重拼）。
+		shareURLRO := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRO)
+		shareURLRW := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRW)
+		fmt.Printf("share read-only:  %s\n", shareURLRO)
+		if cfg.writable {
+			fmt.Printf("share read-write: %s\n", shareURLRW)
+		}
 	}
 	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与
 	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
