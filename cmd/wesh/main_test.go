@@ -876,12 +876,17 @@ func TestBadCertPreflight(t *testing.T) {
 	})
 }
 
-// TestListenSocket（07-02，D-08/D-09/D-10 + T-07-02a/b）unix socket listen 序列
-// 五子测：
+// TestListenSocket（07-02，D-08/D-09/D-10 + T-07-02a/b；07-10 G-07-3）unix socket
+// listen 序列六子测：
 //   - 残留 socket 清理+可拨通：路径上预建真实残留 socket 不阻 bind（D-10
 //     listen 前 os.Remove——Go listenStream 直接 syscall.Bind 无 unlink，
 //     GOROOT 实证残留必收 EADDRINUSE，Remove 是必需而非保险）；listen 后
 //     net.Dial("unix") 可建连。
+//   - 存活实例拒绝且零损伤（07-10 G-07-3）：路径上预建真实存活 listener →
+//     listenSocket 拒绝，错误含 "address already in use"（与 net.Listen
+//     EADDRINUSE 形态全等，07-02 OPS-01 设计答案——第二实例 exit 1，无静默
+//     赢者）；存活 socket 文件不被删除、原 listener 仍 accept（net.Dial 仍
+//     连通）。
 //   - 非 socket 文件拒绝且内容保留（07-review CR-01）：普通文件占位 → 拒绝
 //     启动，文件内容零触碰（D-10 意图仅为清理残留 socket 端点——operator
 //     手误指向普通文件不得静默删除，拒绝文案只含路径与类别）。
@@ -917,6 +922,42 @@ func TestListenSocket(t *testing.T) {
 			t.Fatalf("net.Dial unix %s: %v", path, err)
 		}
 		_ = conn.Close()
+	})
+	t.Run("live instance refused EADDRINUSE and unharmed", func(t *testing.T) {
+		// G-07-3：存活实例占用 socket 路径——活性探测（net.Dial 连通 = 存活）
+		// 拒绝启动，第二实例经 run() listen 失败通道 exit 1（07-02 OPS-01 设计
+		// 答案，静默赢者结构性消除）；存活方零损伤——socket 文件仍在、原
+		// listener 仍 accept。
+		// 路径长度纪律：长子测名经 t.TempDir 拼出的路径超 sun_path 上限（Linux
+		// 108B，实测 bind EINVAL），改用 MkdirTemp 短根路径（stale 子测名短
+		// 未触限，本名 46 字节触限）。
+		dir, err := os.MkdirTemp("", "wesh-live-")
+		if err != nil {
+			t.Fatalf("MkdirTemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		path := filepath.Join(dir, "wesh.sock")
+		ln0, err := net.Listen("unix", path) // 默认 unlink:true——defer Close 即清理
+		if err != nil {
+			t.Fatalf("pre-create live listener: %v", err)
+		}
+		defer func() { _ = ln0.Close() }()
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err == nil {
+			_ = ln.Close()
+			t.Fatal("listenSocket over live socket = nil error, want refusal (G-07-3)")
+		}
+		if !strings.Contains(err.Error(), "address already in use") {
+			t.Errorf("err = %v, want containing %q（与 net.Listen EADDRINUSE 形态全等）", err, "address already in use")
+		}
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Errorf("socket file after refusal: stat err = %v, want 仍存在（存活端点零触碰）", statErr)
+		}
+		conn2, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatalf("net.Dial unix after refusal: %v——原 listener 必须仍 accept（存活方零损伤）", err)
+		}
+		_ = conn2.Close()
 	})
 	t.Run("non-socket file refused and preserved", func(t *testing.T) {
 		// 07-review CR-01：普通文件占位 → listenSocket 拒绝且文件内容原样保留
