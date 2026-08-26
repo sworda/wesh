@@ -60,20 +60,40 @@ func startShutdownServerWith(t *testing.T, argv []string, opts server.Options) (
 	return exitCh, "ws://" + ln.Addr().String() + "/ws", srv
 }
 
-// readCloseError 从 conn 读至 CloseError 并返回之（途中数据帧全部跳过——
-// readExitClose 先例的纯关闭断言变体；客户端 Read 带调用方的 10s 统护 ctx，
-// Pitfall 2 纪律的 e2e 既有形态，永不带 per-read deadline）。
-func readCloseError(t *testing.T, ctx context.Context, c *websocket.Conn) websocket.CloseError {
+// readCloseAsync 起客户端读循环 goroutine 读至首个错误（途中数据帧全部跳过）
+// 并经缓冲 channel 上报——Shutdown 的 Close 握手需要客户端在读来应答关闭帧
+// （库 close 回显走读路径：无在读 Read 则服务端 Close 等满内建 5s 上界，
+// close.go:87-89；真实浏览器协议栈透明回显无此窗口）。调用方在 Shutdown 之前
+// 启动本循环（plan behavior「客户端读循环收到 CloseError」字面形态），
+// c.Read 不可并发的纪律不受影响（dialHello 已返回，本 goroutine 是唯一读者）。
+func readCloseAsync(ctx context.Context, c *websocket.Conn) <-chan error {
+	ch := make(chan error, 1)
+	go func() {
+		for {
+			_, _, err := c.Read(ctx)
+			if err != nil {
+				ch <- err
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+// awaitCloseError 收 readCloseAsync 的上报并断言为 CloseError（5s 护栏——
+// 无关闭到达即结构性失败）。
+func awaitCloseError(t *testing.T, errCh <-chan error) websocket.CloseError {
 	t.Helper()
 	var ce websocket.CloseError
-	for {
-		_, _, err := c.Read(ctx)
-		if err != nil {
-			if !errors.As(err, &ce) {
-				t.Fatalf("read terminated without CloseError: %v", err)
-			}
-			return ce
+	select {
+	case err := <-errCh:
+		if !errors.As(err, &ce) {
+			t.Fatalf("read terminated without CloseError: %v", err)
 		}
+		return ce
+	case <-time.After(5 * time.Second):
+		t.Fatal("client did not observe close within 5s")
+		return ce // 不可达（t.Fatal 不返回），编译形态
 	}
 }
 
@@ -90,9 +110,10 @@ func TestShutdown1001(t *testing.T) {
 	defer cancel()
 	c, _ := dialHello(t, ctx, wsURL, 80, 24)
 
+	errCh := readCloseAsync(ctx, c) // 客户端读循环先行——Close 握手应答面（见函数注释）
 	srv.Shutdown()
 
-	ce := readCloseError(t, ctx, c)
+	ce := awaitCloseError(t, errCh)
 	if ce.Code != websocket.StatusGoingAway {
 		t.Fatalf("close code = %d, want %d (1001 Going Away)", ce.Code, websocket.StatusGoingAway)
 	}
@@ -124,10 +145,11 @@ func TestShutdownStopTimeout(t *testing.T) {
 	c, _ := dialHello(t, ctx, wsURL, 80, 24)
 	waitMarker(t, marker) // trap 已安装——Shutdown 的 TERM 不再竞态（07-04 夹具纪律）
 
+	errCh := readCloseAsync(ctx, c) // 客户端读循环先行（同上）
 	srv.Shutdown()
 
 	// 关停广播与信号配置无关——客户端同样收 1001 + server_shutting_down。
-	ce := readCloseError(t, ctx, c)
+	ce := awaitCloseError(t, errCh)
 	if ce.Code != websocket.StatusGoingAway {
 		t.Fatalf("close code = %d, want %d (1001 Going Away)", ce.Code, websocket.StatusGoingAway)
 	}

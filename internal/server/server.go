@@ -1233,3 +1233,54 @@ func (s *Server) terminate(code int) {
 		s.exitf(code)
 	})
 }
+
+// Shutdown 是 D-23 1001 优雅下线的触发源（07-05，P6 deferred 兑现；调用方 =
+// main 的 SIGTERM/SIGINT NotifyContext goroutine）：exiting 门置位 → 注册表
+// 快照 → 每客户端 goroutine 同步 Close(1001 Going Away) → wg.Wait() →
+// stop-signal 序列（07-04 字段复用）→ 返回。纪律要点：
+//
+//   - 无 EXIT 帧前置——进程未退出，终结语义由关闭码承载（EXIT 帧语义 = 子
+//     进程退出，与 1001「服务关停、进程将被信号终结」不同源）；Close 内建
+//     5s+5s 上界（close.go:87-89）不再盒一层（RESEARCH OQ3 裁决——stall 端
+//     最坏 10s 不阻塞进程退出：exitf 由 lifecycle 子进程路径收口，与本
+//     goroutine 并发，T-07-05a）。
+//   - exiting 门复用 lifecycle 先例（上方 lifecycle 注释）：广播 Close(1001)
+//     引发的 detach 致空属正常终结序列，空触发（clients.go
+//     maybeExitWhenEmptyLocked）检查该位抑制——不得再生 stop-signal/宽限
+//     计时器（06-02 D-13 防线同族）。
+//   - Shutdown 不调 exitf（P1 硬约束：触发源非分支）——返回后子进程死亡 →
+//     sess.Wait 返回 → lifecycle 的 EXIT+1000 广播在已空注册表上零循环 →
+//     terminate(code) 单一收口（exitf + sync.Once，零新 exit 分支）。
+//   - 1001×EXIT 竞态论证（RESEARCH Pattern 7，T-07-05d 风险接受登记）：
+//     Shutdown 置 exiting 后子进程才死亡，lifecycle 快照在 Shutdown 之后
+//     注册表已空，零重复关闭；子进程在 1001 广播完成前自然死亡时两端可能
+//     先后收到 1000/1001——coder/websocket Close 幂等（重复 Close 返回错误
+//     静默），前端以先到码分派，两语义都正确（进程死 vs 服务关停）。
+//   - stop-signal 序列复用 07-04 落地的 s.stopSignal/s.stopTimeout（Options
+//     单一通道，双写即漂移）：SignalGroup 负 pid 进程组（setsid pgid==pid
+//     既定不变量）+ ESRCH 幂等静默（已死进程组重复发送无害）；Shutdown 不在
+//     hubMu 内等待（锁序 hubMu > sess.fdMu 不受影响），与 lifecycle 并发
+//     安全——stopTimeout 期间进程若已退出，补发 KILL 到达空 pgid 静默。
+func (s *Server) Shutdown() {
+	s.hubMu.Lock()
+	s.exiting = true
+	clients := make([]*client, 0, len(s.registry.set))
+	for c := range s.registry.set {
+		clients = append(clients, c)
+	}
+	s.hubMu.Unlock()
+	var wg sync.WaitGroup
+	for _, c := range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = c.conn.Close(websocket.StatusGoingAway, "server_shutting_down")
+		}()
+	}
+	wg.Wait()
+	s.sess.SignalGroup(s.stopSignal)
+	if s.stopTimeout > 0 {
+		time.Sleep(s.stopTimeout)
+		s.sess.SignalGroup(syscall.SIGKILL)
+	}
+}

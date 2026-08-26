@@ -10,7 +10,9 @@
 // StatusPolicyViolation/StatusMessageTooBig/StatusInternalError；
 // 1013 背压踢出已于 Phase 5 启用（D-08 占位兑现——发送路径 =
 // server/clients.go kickSlowConsumerLocked，库常量 websocket.StatusTryAgainLater，
-// close reason 机器串 slow_consumer）；1001 优雅下线 Phase 7 启用，本期占位不实现；
+// close reason 机器串 slow_consumer）；1001 优雅下线已于 Phase 7 启用
+// （D-08 占位兑现——发送路径 = server/server.go Shutdown，库常量
+// websocket.StatusGoingAway，close reason 机器串 server_shutting_down）；
 // 1005/1006/1015 永不发送（库层 validWireCloseCode 兜底）；禁止自定义 4000 段私码。
 package proto
 
