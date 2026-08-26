@@ -1,3 +1,12 @@
+---
+status: testing
+phase: 07-deployment
+created: 2026-08-26
+source: [07-VERIFICATION.md, 07-VALIDATION.md, 07-08-PLAN.md]
+started: 2026-08-26T07:10:00Z
+updated: 2026-08-26T07:10:00Z
+---
+
 # Phase 7 人工 UAT 清单（部署与配置）
 
 自动化断言不可达项的人工复核清单：VALIDATION 登记的 manual-only 两项 + 各 plan flagged assumptions 复核项 + root 降权 nobody 可选场景。
