@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +54,17 @@ type config struct {
 	osc52         bool           // P4 D-12：--osc52 OSC52 剪贴板写开关（默认关，只写不读；安全敏感项仅服务端可开启）
 	// Phase 7 部署形态（D-13，one-way 公开契约，P2 D-15 同纪律）：
 	basePath string // --base-path 反代子路径挂载前缀（parse 期 normalizeBasePath 严格校验；空串 = 未配置，根 "/" 归一为未配置）
+	// Phase 7 监听形态（D-08/D-09，one-way 公开契约，P2 D-15 同纪律）：
+	socket         string      // --socket unix socket 监听路径（空串 = TCP 形态现状；与显式 --port/--bind 互斥，validateStartup 消费）
+	socketModeStr  string      // --socket-mode 原始八进制串（默认 "0660"；ParseUint 前形态——八进制语义见 flag 定义注释）
+	socketMode     os.FileMode // --socket-mode 八进制解析产物（默认 0660；D-09：权限位确定性必须 listen 后显式 Chmod，不得由 umask 漂移决定）
+	socketOwner    string      // --socket-owner 原始 user[:group]（仅随 --socket 有意义）
+	socketUid      int         // --socket-owner parse 期解析产物 uid（未给 = -1 哨兵——uid/gid 0 是 root 合法值，零值不可作未给标记；listenSocket 据此跳过 Chown）
+	socketGid      int         // 同上 gid
+	portSet        bool        // --port 是否被显式设置（fs.Visit 填充；D-08 互斥判定锚定显式位而非终值——write-policy/max-clients/exit-empty 三先例同形态）
+	bindSet        bool        // --bind 是否被显式设置（同上）
+	socketModeSet  bool        // --socket-mode 是否被显式设置（D-09 单给矛盾判定）
+	socketOwnerSet bool        // --socket-owner 是否被显式设置（同上）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -103,7 +115,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 17 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 21 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -112,11 +124,17 @@ func (v *exitEmptyValue) Set(s string) error {
 // Phase 5：--write-policy（D-05，owner|all 默认 owner，parse 期枚举校验）、
 // --max-clients（D-08，默认 32，≤0 经 validateStartup 拒绝）；
 // Phase 6：--once（D-12 语法糖 ≡ --max-clients=1 --exit-when-empty=0）、
-// --exit-when-empty[=duration]（D-14 可选值，裸写 = 立即退出，默认不开启）。
+// --exit-when-empty[=duration]（D-14 可选值，裸写 = 立即退出，默认不开启）；
+// Phase 7：--base-path（07-01 D-13 反代子路径，parse 期严格校验）、
+// --socket/--socket-mode/--socket-owner（D-08/D-09 unix socket 监听与权限属主，
+// 互斥/单给组合矛盾归 validateStartup fail-fast）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
 func parseArgs(args []string) (cfg config, argv []string, err error) {
+	// D-09：socket owner 未给哨兵——uid/gid 0 是 root 合法值，零值不可作
+	// 未给标记；listenSocket 以 uid<0 判定跳过 Chown。
+	cfg.socketUid, cfg.socketGid = -1, -1
 	fs := flag.NewFlagSet("wesh", flag.ContinueOnError)
 	fs.IntVar(&cfg.port, "port", 7681, "listen port (0 = random, actual port is printed)")
 	fs.StringVar(&cfg.bind, "bind", "0.0.0.0", "listen address")
@@ -209,6 +227,21 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 根 "/" 归一为未配置、非法值 exit 2；绝不宽容自动修正（输入与生效值分叉
 	// 是配置漂移隐蔽源）。
 	fs.StringVar(&cfg.basePath, "base-path", "", "serve under a sub-path (e.g. /wesh; must start with /, no trailing slash)")
+	// D-08：--socket unix socket 监听（one-way 公开契约）——与显式 --port/--bind
+	// 互斥（组合矛盾归 validateStartup fail-fast，分层纪律：parse = 形状，
+	// validate = 组合矛盾）；空串 = TCP 形态现状。
+	fs.StringVar(&cfg.socket, "socket", "", "listen on a unix socket at the given path (mutually exclusive with --port/--bind)")
+	// D-09：--socket-mode 八进制权限位（one-way 公开契约）——socket 文件 mode
+	// 由内核定为 0777&~umask（Go 不做任何 chmod，07-RESEARCH Pattern 1 GOROOT
+	// 实证），0660 确定性只能 listen 后显式 Chmod 达成（T-07-02b：文件系统
+	// 权限即认证边界，权限不得由 umask 漂移决定）；八进制串形态在 Parse 返回处
+	// ParseUint 解析（非法值 parse 期 exit 2）。仅随 --socket 有意义
+	//（单给 = 配置矛盾，validateStartup 消费 socketModeSet 显式位）。
+	fs.StringVar(&cfg.socketModeStr, "socket-mode", "0660", "unix socket permission bits in octal (default 0660; only with --socket)")
+	// D-09：--socket-owner user[:group]（one-way 公开契约）——parse 期经
+	// os/user.Lookup[/LookupGroup] 解析为 uid/gid 数字对（未知用户/组 parse 期
+	// exit 2）；仅随 --socket 有意义（单给 = 配置矛盾，同上）。
+	fs.StringVar(&cfg.socketOwner, "socket-owner", "", "unix socket owner user[:group] (only with --socket)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -231,6 +264,20 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		}
 		if f.Name == "exit-when-empty" {
 			cfg.exitEmptySet = true
+		}
+		// D-08/D-09：--socket 互斥与单给矛盾判定锚定显式设置位而非终值
+		//（三先例同款形态——--socket 与默认 port/bind 同给不误判冲突）。
+		if f.Name == "port" {
+			cfg.portSet = true
+		}
+		if f.Name == "bind" {
+			cfg.bindSet = true
+		}
+		if f.Name == "socket-mode" {
+			cfg.socketModeSet = true
+		}
+		if f.Name == "socket-owner" {
+			cfg.socketOwnerSet = true
 		}
 	})
 	// D-12：--once 语法糖展开 ≡ --max-clients=1 --exit-when-empty=0——未显式给
@@ -264,6 +311,44 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 该形态仅用于值含敏感内容的 --client-option）。
 	if cfg.writePolicy != server.WritePolicyOwner && cfg.writePolicy != server.WritePolicyAll {
 		return cfg, nil, fmt.Errorf("invalid --write-policy %q: must be owner or all", cfg.writePolicy)
+	}
+	// D-09：--socket-mode 八进制解析（插入点同 03-04 先例——showVersion 早退
+	// 之后，write-policy 枚举校验同位）。值非敏感可回显（exitEmptyValue.Set
+	// 同纪律，非 SEC-01 面）；>0777 含特殊位拒绝（T-07-02b：权限位是认证
+	// 边界，不接纳 setuid/sticky 等漂移面）。
+	mode, err := strconv.ParseUint(cfg.socketModeStr, 8, 32)
+	if err != nil || mode > 0o777 {
+		return cfg, nil, fmt.Errorf("invalid --socket-mode %q: must be octal permission bits (e.g. 0660)", cfg.socketModeStr)
+	}
+	cfg.socketMode = os.FileMode(mode)
+	// D-09：--socket-owner parse 期名字解析（user.Lookup 得 uid/gid，有 group
+	// 分量再 LookupGroup 覆盖 gid——07-RESEARCH Pattern 1 形态）。未知用户/组
+	// 即拒；uid/gid 数字转换失败归并同拒（os/user 双实现下 Uid/Gid 恒为十进制
+	// 串，防御性归并）。错误文案只含错误类别与 flag 名（用户名非敏感可回显，
+	// 但固定类别文案不泄露系统细节之外信息）。
+	if cfg.socketOwner != "" {
+		name, group, hasGroup := strings.Cut(cfg.socketOwner, ":")
+		u, lerr := user.Lookup(name)
+		if lerr != nil {
+			return cfg, nil, errors.New("invalid --socket-owner: unknown user or group")
+		}
+		uid, uerr := strconv.Atoi(u.Uid)
+		gid, gerr := strconv.Atoi(u.Gid)
+		if uerr != nil || gerr != nil {
+			return cfg, nil, errors.New("invalid --socket-owner: unknown user or group")
+		}
+		if hasGroup {
+			g, lerr := user.LookupGroup(group)
+			if lerr != nil {
+				return cfg, nil, errors.New("invalid --socket-owner: unknown user or group")
+			}
+			gid, gerr = strconv.Atoi(g.Gid)
+			if gerr != nil {
+				return cfg, nil, errors.New("invalid --socket-owner: unknown user or group")
+			}
+		}
+		cfg.socketUid = uid
+		cfg.socketGid = gid
 	}
 	// D-13：--base-path parse 期规范化+严格校验（插入点同 03-04 先例——
 	// showVersion 早退之后，write-policy 枚举校验同位）。值非敏感，错误文案
@@ -445,6 +530,26 @@ func validateStartup(cfg config) (warn string, err error) {
 	// 组合校验同款落点）。
 	if cfg.maxClients <= 0 {
 		return "", errors.New("--max-clients must be positive")
+	}
+	// D-08 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
+	// bind 安全形态无关，loopback 早退之前判定）：--socket 与显式 --port/--bind
+	// 同给即拒，双 flag 名进文案。判定锚定显式设置位而非终值（write-policy/
+	// max-clients/exit-empty 三先例同形态）——--socket 与默认 port/bind 同给
+	// 是纯 unix 形态，不误判冲突。
+	if cfg.socket != "" && (cfg.portSet || cfg.bindSet) {
+		return "", errors.New("--socket conflicts with --port/--bind: unix socket listen and TCP listen are mutually exclusive")
+	}
+	// D-09 组合校验（配置矛盾 fail-fast，同位纪律）：--socket-mode/--socket-owner
+	// 仅随 --socket 有意义——单独给出 = 配置矛盾零窗口暴露（给了无法兑现的
+	// flag = 配置错误，「显式」哲学一贯性）。
+	if (cfg.socketModeSet || cfg.socketOwnerSet) && cfg.socket == "" {
+		return "", errors.New("--socket-mode/--socket-owner require --socket: socket permission flags only apply to unix socket listen")
+	}
+	// D-11：unix socket 形态跳过 bind 安全矩阵（isLoopbackBind 早退及其后全部）——
+	// 文件系统权限即认证边界，--socket-mode/--socket-owner 就是访问控制，
+	// loopback 早退同款信任档位；流量不出机，有无凭据/TLS 均放行免警告。
+	if cfg.socket != "" {
+		return "", nil
 	}
 	if isLoopbackBind(cfg.bind) {
 		return "", nil // loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05）
