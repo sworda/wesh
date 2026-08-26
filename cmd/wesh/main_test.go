@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -1054,13 +1055,19 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
-// TestOpenBrowser（07-05，OPS-11，D-26/D-27）两场景：
+// TestOpenBrowser（07-05，OPS-11，D-26/D-27；07-10 G-07-8）三场景：
 //   - headless 跳过：linux 且 DISPLAY/WAYLAND_DISPLAY 均空 → openBrowser 直接
 //     返回且 stderr 捕获提示行（不调用任何启动器——headless 服务器是常态部署
 //     形态，跳过不阻断启动）；
 //   - fake xdg-open：t.TempDir 写可执行脚本记录 argv 到文件 + PATH 前置 +
 //     DISPLAY=:99 → 断言 argv[1] == 预期分享 URL（exec 的真实调用链不打桩，
-//     与 07-VALIDATION「fake xdg-open PATH 前置断言 argv」策略一致）。
+//     与 07-VALIDATION「fake xdg-open PATH 前置断言 argv」策略一致）；
+//   - 非零退出警告（07-10 G-07-8 选项 A）：fake xdg-open exit 1 → goroutine
+//     Wait 收割后 stderr 补警告行（D-27「只警告不阻断」覆盖运行期非零退出）；
+//     警告行不含 URL（share token 红线 P5 D-03——Wait err 仅 exit status N
+//     结构性无 argv，运行时断言占位串零命中）。exit 0 路径无新输出由实现
+//     结构保证（Wait 返回 nil 不打印），不设轮询断言（等待不可得事件必
+//     flake）。
 //
 // darwin 分支不做运行时断言（构建标签差异——openBrowser 的 headless 检测只在
 // linux 分支判定，darwin 直接 open；CI macOS 跑同款测试形态即本测试整体
@@ -1113,6 +1120,82 @@ func TestOpenBrowser(t *testing.T) {
 		lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
 		if len(lines) != 1 || lines[0] != want {
 			t.Errorf("xdg-open argv = %v, want exactly [%q]", lines, want)
+		}
+	})
+	t.Run("non-zero opener warns without blocking", func(t *testing.T) {
+		// G-07-8 选项 A：Start 成功后非零退出 → goroutine Wait 收割并补 stderr
+		// 警告行（D-27「只警告不阻断」覆盖运行期非零退出）；警告行不含 URL
+		//（share token 红线 P5 D-03——Wait err 仅 exit status N 结构性无 argv）。
+		dir := t.TempDir()
+		script := filepath.Join(dir, "xdg-open")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			t.Fatalf("write failing fake xdg-open: %v", err)
+		}
+		t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+		t.Setenv("DISPLAY", ":99")
+		url := "http://127.0.0.1:7681/s/nonzero-opener-placeholder/"
+
+		// 异步警告捕获（05-01 happens-before 纪律）：os.Pipe 换管 os.Stderr +
+		// 读取 goroutine 经 mutex 保护写入 buffer + 2s 轮询（同锁）；观测到
+		// 警告行后先 close(w) 再 restore os.Stderr 并经 done channel 等读取
+		// goroutine 退出——restore 必在观测之后，读写经 mutex 同步（-race 干净）。
+		old := os.Stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		os.Stderr = w
+		var mu sync.Mutex
+		var buf bytes.Buffer
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			tmp := make([]byte, 4096)
+			for {
+				n, rerr := r.Read(tmp)
+				if n > 0 {
+					mu.Lock()
+					_, _ = buf.Write(tmp[:n])
+					mu.Unlock()
+				}
+				if rerr != nil {
+					return
+				}
+			}
+		}()
+
+		openBrowser(url) // Start 成功；非零退出警告由 goroutine Wait 异步落 stderr
+
+		deadline := time.Now().Add(2 * time.Second)
+		var out string
+		for {
+			mu.Lock()
+			out = buf.String()
+			mu.Unlock()
+			if strings.Contains(out, "wesh: warning: --open: browser launcher exited with error") {
+				break
+			}
+			if time.Now().After(deadline) {
+				_ = w.Close()
+				os.Stderr = old
+				<-done
+				t.Fatalf("2s 内未观察到非零退出警告行（D-27 运行期覆盖），buffer = %q", out)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		_ = w.Close()
+		os.Stderr = old
+		<-done
+		_ = r.Close()
+
+		mu.Lock()
+		out = buf.String()
+		mu.Unlock()
+		if !strings.Contains(out, "wesh: warning: --open: browser launcher exited with error") {
+			t.Errorf("stderr = %q, want 非零退出警告行（D-27 运行期覆盖）", out)
+		}
+		if strings.Contains(out, url) {
+			t.Errorf("stderr = %q, must not contain URL %q（share token 红线 P5 D-03）", out, url)
 		}
 	})
 }
