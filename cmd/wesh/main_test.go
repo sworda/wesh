@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
 	"reflect"
 	"strconv"
 	"strings"
@@ -28,11 +29,23 @@ import (
 // Phase 6：D-12 --once 语法糖展开（maxClients=1 + exit-when-empty set/grace 0）、
 // D-14 --exit-when-empty 三形态（不写 = 不开启 / 裸写 = 立即退出 / =duration = 宽限）；
 // Phase 7：D-13 --base-path parse 期规范化（合法原样 / 根 / 归一空串；非法形态
-// 五族拒绝断言在 TestTLSKeyPairError 错误表——parse 期拒绝的既定归属）。
+// 五族拒绝断言在 TestTLSKeyPairError 错误表——parse 期拒绝的既定归属）；
+// D-08/D-09 --socket 三 flag（路径原样 / --socket-mode 默认 0660 与自定义八进制 /
+// --socket-owner parse 期解析为 self 数字对；非法 mode/owner 拒绝断言同在错误表）。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
 	t.Setenv("WESH_CREDENTIAL", "")
+	// D-09 owner 解析断言材料：self 用户名与主组名（免 root；开发/CI 环境
+	// /etc/passwd、/etc/group 完备——osusergo 纯 Go 解析同路径）。
+	me, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current: %v", err)
+	}
+	grp, err := user.LookupGroupId(me.Gid)
+	if err != nil {
+		t.Fatalf("user.LookupGroupId(%s): %v", me.Gid, err)
+	}
 	tests := []struct {
 		name             string
 		args             []string
@@ -61,7 +74,13 @@ func TestParseArgs(t *testing.T) {
 		// P7：D-13 --base-path parse 期规范化断言位（零值 = 期望空串未配置，
 		// 既存行经此扩展零值断言覆盖——命名字段扩展纪律 03-04 先例）。
 		wantBasePath string // D-13：--base-path 规范化后期望值（根 "/" 归一为空串）
-		wantArgv     []string
+		// P7：D-08/D-09 --socket 组断言位（零值语义照 wantBasePath/wantMaxClients
+		// 先例：wantSocket 零值 = 期望空串 TCP 形态；wantSocketMode 零值 = 期望
+		// 默认 0660；wantSocketOwnerSelf=false = 期望 uid/gid 为 -1 未给哨兵）。
+		wantSocket          string      // D-08：--socket 路径原样
+		wantSocketMode      os.FileMode // D-09：--socket-mode 八进制解析产物
+		wantSocketOwnerSelf bool        // D-09：--socket-owner 解析为 self 数字对
+		wantArgv            []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -93,6 +112,15 @@ func TestParseArgs(t *testing.T) {
 		{name: "base-path subpath", args: []string{"--base-path", "/wesh", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantBasePath: "/wesh", wantArgv: []string{"bash"}},
 		{name: "base-path nested", args: []string{"--base-path", "/a/b", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantBasePath: "/a/b", wantArgv: []string{"bash"}},
 		{name: "base-path root normalized", args: []string{"--base-path", "/", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
+		// D-08/D-09：--socket 三 flag——路径原样入 cfg（互斥/单给组合矛盾归
+		// validateStartup，TestStartupMatrix 锁定）；--socket-mode 自定义八进制
+		// 解析（默认 0660 由零值语义统一断言覆盖全部既存行）；--socket-owner
+		// parse 期经 os/user.Lookup[/LookupGroup] 解析为数字对（self 免 root；
+		// user:group 形态 gid 经 LookupGroup 覆盖——self 主组同值，分支仍被走到）。
+		{name: "socket path", args: []string{"--socket", "/run/wesh.sock", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/run/wesh.sock", wantArgv: []string{"bash"}},
+		{name: "socket-mode custom", args: []string{"--socket", "/run/wesh.sock", "--socket-mode", "0600", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/run/wesh.sock", wantSocketMode: 0o600, wantArgv: []string{"bash"}},
+		{name: "socket owner self", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
+		{name: "socket owner self group", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username + ":" + grp.Name, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -166,6 +194,28 @@ func TestParseArgs(t *testing.T) {
 			if cfg.basePath != tt.wantBasePath {
 				t.Errorf("basePath = %q, want %q", cfg.basePath, tt.wantBasePath)
 			}
+			// D-08：零值 wantSocket = 期望空串 TCP 形态（含全部既存行）。
+			if cfg.socket != tt.wantSocket {
+				t.Errorf("socket = %q, want %q", cfg.socket, tt.wantSocket)
+			}
+			// D-09：零值 wantSocketMode = 期望默认 0660（wantMaxClients 零值语义同款）。
+			wantSocketMode := tt.wantSocketMode
+			if wantSocketMode == 0 {
+				wantSocketMode = 0o660
+			}
+			if cfg.socketMode != wantSocketMode {
+				t.Errorf("socketMode = %o, want %o", cfg.socketMode, wantSocketMode)
+			}
+			// D-09：owner 未给 = -1/-1 哨兵（uid/gid 0 是 root 合法值，零值不可作
+			// 未给标记——含全部既存行）；wantSocketOwnerSelf 行断言 parse 期名字
+			// 解析为 self 数字对。
+			if tt.wantSocketOwnerSelf {
+				if cfg.socketUid != os.Getuid() || cfg.socketGid != os.Getgid() {
+					t.Errorf("socketUid/socketGid = %d/%d, want self %d/%d", cfg.socketUid, cfg.socketGid, os.Getuid(), os.Getgid())
+				}
+			} else if cfg.socketUid != -1 || cfg.socketGid != -1 {
+				t.Errorf("socketUid/socketGid = %d/%d, want -1/-1 sentinel (owner unset)", cfg.socketUid, cfg.socketGid)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -218,7 +268,9 @@ func TestCredentialFlagEnv(t *testing.T) {
 // duration 值可接受，T-06-04a 论证登记在 main.go Set 注释）；
 // Phase 7：D-13 --base-path 非法形态五族 parse 期拒绝（严格模式，绝不宽容
 // 自动修正——输入与生效值分叉是配置漂移隐蔽源；值非敏感，错误文案可回显，
-// exitEmptyValue.Set 同纪律）。
+// exitEmptyValue.Set 同纪律）；D-09 --socket-mode 非法值（非八进制数字 / >0777
+// 含特殊位）与 --socket-owner 未知用户/未知组 parse 期拒绝（错误文案只含错误
+// 类别与 flag 名——用户名非敏感可回显，但不泄露系统细节之外信息）。
 // WR-01 红线断言：malformed credential 行的 err 只含错误类别，不含 flag 值
 // 内容（记录式上报杜绝 flag 包 invalid value %q 包装回显——TestClientOptionError
 // forbiddenSub 同款先例；凭据值敏感度高于 prefs 值，同红线更须锁定）。
@@ -251,6 +303,13 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"base-path query char", []string{"--base-path", "/wesh?x", "--", "bash"}, "invalid --base-path", ""},
 		{"base-path fragment char", []string{"--base-path", "/wesh#x", "--", "bash"}, "invalid --base-path", ""},
 		{"base-path percent char", []string{"--base-path", "/wesh%x", "--", "bash"}, "invalid --base-path", ""},
+		// D-09：--socket-mode 非法两族（非八进制数字 / >0777 含特殊位——权限位
+		// 是认证边界，不接纳 setuid/sticky 漂移面，T-07-02b）与 --socket-owner
+		// 未知用户/未知组（拒绝串为固定类别文案，不含系统细节之外信息）。
+		{"socket-mode non-octal", []string{"--socket", "/tmp/x.sock", "--socket-mode", "0888", "--", "bash"}, "invalid --socket-mode", ""},
+		{"socket-mode special bits", []string{"--socket", "/tmp/x.sock", "--socket-mode", "1777", "--", "bash"}, "invalid --socket-mode", ""},
+		{"socket-owner unknown user", []string{"--socket", "/tmp/x.sock", "--socket-owner", "wesh-no-such-user-7f3a", "--", "bash"}, "invalid --socket-owner", ""},
+		{"socket-owner unknown group", []string{"--socket", "/tmp/x.sock", "--socket-owner", "root:wesh-no-such-group-7f3a", "--", "bash"}, "invalid --socket-owner", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -427,6 +486,12 @@ func TestNoCommandError(t *testing.T) {
 // --exit-when-empty grace≠0 与 --once 同给即拒（双 flag 名进文案，wantErrSub2
 // 断言位；判定锚定显式设置位而非展开后终值，review #3）；--once + 显式
 // --max-clients=1 / 显式裸 --exit-when-empty 为一致冗余放行两行为其行为锁。
+// 07-02 新增：D-08/D-09/D-11 --socket 三行——互斥（--socket × 显式 --port/--bind
+// 同给即拒，双 flag 名进文案；判定锚定显式设置位而非终值，--socket + 默认
+// port/bind 不误判冲突）、单给矛盾（--socket-mode/--socket-owner 无 --socket
+// 即拒）、D-11 跳过（unix 形态 bind 安全矩阵不可达——config 零值 bind 按非
+// loopback 保守判定、无凭据本应收 D-03 拒绝，socket 给定时不拒不警告；文件
+// 系统权限即认证边界，loopback 早退同款信任档位）。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
@@ -470,6 +535,18 @@ func TestStartupMatrix(t *testing.T) {
 		{"once with explicit exit-when-empty grace refused", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true, grace: 5 * time.Second}}, "--once", "--exit-when-empty", ""},
 		{"once with explicit max-clients=1 allowed", config{bind: "127.0.0.1", once: true, maxClients: 1, maxClientsSet: true}, "", "", ""},
 		{"once with explicit bare exit-when-empty allowed", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true}}, "", "", ""},
+		// 07-02 D-08 互斥：--socket × 显式 --port/--bind 同给即拒（双 flag 名进
+		// 文案；显式位锚定——下方 D-11 跳过行的 socket + 默认 port/bind 不误判
+		// 即其行为锁）。
+		{"socket with explicit port refused", config{socket: "/run/wesh.sock", maxClients: 32, port: 7682, portSet: true}, "--socket", "--port", ""},
+		{"socket with explicit bind refused", config{socket: "/run/wesh.sock", maxClients: 32, bind: "127.0.0.1", bindSet: true}, "--socket", "--bind", ""},
+		// 07-02 D-09 单给矛盾：--socket-mode/--socket-owner 仅随 --socket 有意义，
+		// 单独给出 = 配置矛盾（bind 127.0.0.1 隔离其他校验维度）。
+		{"socket-mode without socket refused", config{bind: "127.0.0.1", maxClients: 32, socketModeSet: true}, "--socket-mode", "--socket", ""},
+		{"socket-owner without socket refused", config{bind: "127.0.0.1", maxClients: 32, socketOwnerSet: true}, "--socket-owner", "--socket", ""},
+		// 07-02 D-11 跳过：unix 形态下 bind 安全矩阵不可达——config 零值 bind ""
+		// 按非 loopback 保守判定，无凭据本应收 D-03 拒绝；socket 给定时不拒不警告。
+		{"socket skips bind matrix (D-11)", config{socket: "/run/wesh.sock", maxClients: 32}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -515,15 +592,44 @@ func TestStartupMatrix(t *testing.T) {
 // 凭据时 run 必须先于 pty.Start/net.Listen 返回非零 + stderr 含拒绝文案——正常
 // 快速返回即证明未 spawn 未 listen（误启动监听会 hang 或经 lifecycle os.Exit，
 // TestNoCommandError 同构纪律）。t.Setenv 隔离宿主 WESH_CREDENTIAL 兜底干扰。
+// 07-02 同款纪律覆盖 D-08/D-09 新拒绝路径：--socket × 显式 --port 组合矛盾与
+// --socket-mode 单给矛盾均 validateStartup exit 2（零 listen 零 spawn——socket
+// 路径指向不存在目录，误 listen 会 exit 1 而非 2，退出码档位区分即证据）。
 func TestStartupRefusalNoResource(t *testing.T) {
 	t.Setenv("WESH_CREDENTIAL", "")
-	code, out := captureFd(t, &os.Stderr, func() int { return run([]string{"--", "true"}) })
-	if code == 0 {
-		t.Error("run(-- true) = 0, want non-zero (startup refusal)")
-	}
-	if !strings.Contains(out, "refusing to listen on non-loopback address without credentials") {
-		t.Errorf("run(-- true) stderr = %q, want D-03 refusal text", out)
-	}
+	t.Run("non-loopback no creds", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int { return run([]string{"--", "true"}) })
+		if code == 0 {
+			t.Error("run(-- true) = 0, want non-zero (startup refusal)")
+		}
+		if !strings.Contains(out, "refusing to listen on non-loopback address without credentials") {
+			t.Errorf("run(-- true) stderr = %q, want D-03 refusal text", out)
+		}
+	})
+	// D-08：--socket × 显式 --port 组合矛盾 exit 2（双 flag 名进文案）。
+	t.Run("socket with explicit port", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int {
+			return run([]string{"--socket", "/nonexistent-dir-7f3a/wesh.sock", "--port", "7682", "--", "true"})
+		})
+		if code != 2 {
+			t.Errorf("run(--socket ... --port 7682) = %d, want 2 (validateStartup refusal, zero listen/spawn)", code)
+		}
+		if !strings.Contains(out, "--socket") || !strings.Contains(out, "--port") {
+			t.Errorf("stderr = %q, want containing both --socket and --port", out)
+		}
+	})
+	// D-09：--socket-mode 单给（无 --socket）配置矛盾 exit 2（双 flag 名进文案）。
+	t.Run("socket-mode without socket", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int {
+			return run([]string{"--bind", "127.0.0.1", "--socket-mode", "0660", "--", "true"})
+		})
+		if code != 2 {
+			t.Errorf("run(--socket-mode 0660) = %d, want 2 (validateStartup refusal, zero listen/spawn)", code)
+		}
+		if !strings.Contains(out, "--socket-mode") || !strings.Contains(out, "--socket") {
+			t.Errorf("stderr = %q, want containing both --socket-mode and --socket", out)
+		}
+	})
 }
 
 // TestBadCertPreflight（G-03-5 根因①回归锁）：坏 --tls-cert/--tls-key 路径时
