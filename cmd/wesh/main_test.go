@@ -82,7 +82,10 @@ func TestParseArgs(t *testing.T) {
 		wantSocket          string      // D-08：--socket 路径原样
 		wantSocketMode      os.FileMode // D-09：--socket-mode 八进制解析产物
 		wantSocketOwnerSelf bool        // D-09：--socket-owner 解析为 self 数字对
-		wantArgv            []string
+		// P7：D-18 --auth-header 断言位（零值 = 期望空串未配置——信任闸关闭，
+		// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
+		wantAuthHeader string // D-18：--auth-header 头名原样入 cfg
+		wantArgv       []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -123,6 +126,10 @@ func TestParseArgs(t *testing.T) {
 		{name: "socket-mode custom", args: []string{"--socket", "/run/wesh.sock", "--socket-mode", "0600", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/run/wesh.sock", wantSocketMode: 0o600, wantArgv: []string{"bash"}},
 		{name: "socket owner self", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
 		{name: "socket owner self group", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username + ":" + grp.Name, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
+		// D-18：--auth-header 头名原样入 cfg（无 parse 期校验——头名合法性由
+		// HTTP 层 Header.Get 语义自然承载；暴露面组合警告归 validateStartup，
+		// TestStartupMatrix D-16 行锁定）；默认值空串由零值语义统一断言。
+		{name: "auth-header flag", args: []string{"--auth-header", "X-Remote-User", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantAuthHeader: "X-Remote-User", wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -217,6 +224,10 @@ func TestParseArgs(t *testing.T) {
 				}
 			} else if cfg.socketUid != -1 || cfg.socketGid != -1 {
 				t.Errorf("socketUid/socketGid = %d/%d, want -1/-1 sentinel (owner unset)", cfg.socketUid, cfg.socketGid)
+			}
+			// D-18：--auth-header 原样解析（零值 = 空串未配置，既存行零值断言覆盖）。
+			if cfg.authHeader != tt.wantAuthHeader {
+				t.Errorf("authHeader = %q, want %q", cfg.authHeader, tt.wantAuthHeader)
 			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
@@ -494,6 +505,10 @@ func TestNoCommandError(t *testing.T) {
 // 即拒）、D-11 跳过（unix 形态 bind 安全矩阵不可达——config 零值 bind 按非
 // loopback 保守判定、无凭据本应收 D-03 拒绝，socket 给定时不拒不警告；文件
 // 系统权限即认证边界，loopback 早退同款信任档位）。
+// 07-03 新增：D-16 --auth-header 暴露面警告四行——触发（非 loopback + 无凭据
+// + --no-auth + auth-header → 警告含 flag 名，文案不含头值）；D-03 拒绝不削弱
+//（无 --no-auth 时 auth-header 照样拒）；不触发（loopback + auth-header；非
+// loopback + 凭据 + TLS + auth-header）；socket 形态同 D-11 逻辑跳过本警告。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
@@ -549,6 +564,17 @@ func TestStartupMatrix(t *testing.T) {
 		// 07-02 D-11 跳过：unix 形态下 bind 安全矩阵不可达——config 零值 bind ""
 		// 按非 loopback 保守判定，无凭据本应收 D-03 拒绝；socket 给定时不拒不警告。
 		{"socket skips bind matrix (D-11)", config{socket: "/run/wesh.sock", maxClients: 32}, "", "", ""},
+		// 07-03 D-16 暴露面警告：--auth-header 非空 + bind 非 loopback + 无凭据
+		//（--no-auth 放行形态）→ wesh: warning: 前缀警告含 --auth-header flag 名
+		//（文案不含任何头值）；无 --no-auth 时 D-03 拒绝照旧（auth-header 不削弱
+		// 拒绝语义）；loopback + auth-header 与 非 loopback + 凭据 + TLS +
+		// auth-header 不触发（矩阵其余行语义不变）；socket 形态 bind 矩阵已跳过，
+		// 同行跳过本警告（unix socket 信任边界同 D-11 逻辑）。
+		{"auth-header non-loopback no creds warns (D-16)", config{bind: "0.0.0.0", maxClients: 32, noAuth: true, authHeader: "X-Remote-User"}, "", "", "--auth-header"},
+		{"auth-header does not bypass D-03 refusal", config{bind: "0.0.0.0", maxClients: 32, authHeader: "X-Remote-User"}, "refusing to listen on non-loopback address without credentials", "", ""},
+		{"auth-header loopback silent", config{bind: "127.0.0.1", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
+		{"auth-header non-loopback creds TLS silent", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem", authHeader: "X-Remote-User"}, "", "", ""},
+		{"socket skips auth-header warning (D-16/D-11)", config{socket: "/run/wesh.sock", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
