@@ -27,7 +27,8 @@ import (
 // 可再 attach echo（多客户端推论：P1 D-11 单次语义终结，断开 = 注册表移除）。
 // 02-02 起建连经 dialHello 过 wesh.v1 握手（writable 装配保持 echo 语义）。
 func TestEchoPTY(t *testing.T) {
-	sess, err := pty.Start([]string{"/bin/cat"})
+	// 零值等价形态（07-04 选项化适配）：Dir/Term 空 = 继承/xterm-256color 现状，Uid/Gid -1 = 不降权。
+	sess, err := pty.Start([]string{"/bin/cat"}, pty.StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestEchoPTY(t *testing.T) {
 // 内核缓冲的命令必须照常退出——若 ReadLoop 未自 New 启动 drain，子进程写满内核缓冲后
 // 阻塞、永不退出，本测试超时即暴露接线缺失。
 func TestDrainBeforeAttach(t *testing.T) {
-	sess, err := pty.Start([]string{"seq", "1", "200000"}) // 约 1.3MB 输出
+	sess, err := pty.Start([]string{"seq", "1", "200000"}, pty.StartOptions{Uid: -1, Gid: -1}) // 约 1.3MB 输出
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}
@@ -134,9 +135,11 @@ func killServer(ln net.Listener, sess *pty.Session) {
 
 // startTestServerWith 复用 plan 01-01 的构造模式：sess + New(sess, exitf 捕获桩, opts)
 // + 127.0.0.1:0 监听，返回 exitf 捕获通道与 /ws URL。统一收口各生命周期/握手测试的装配。
+// pty.Start 传零值等价形态（07-04 选项化适配：Dir/Term 空 = 继承/xterm-256color
+// 现状，Uid/Gid -1 = 不降权——本 helper 全部消费方不断言 spawn 可配面）。
 func startTestServerWith(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string) {
 	t.Helper()
-	sess, err := pty.Start(argv)
+	sess, err := pty.Start(argv, pty.StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}
@@ -167,7 +170,8 @@ func startTestServer(t *testing.T, argv []string) (exitCh chan int, wsURL string
 // 同步形态）。
 func startTrackedServerWith(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string, waitHandlers func()) {
 	t.Helper()
-	sess, err := pty.Start(argv)
+	// 零值等价形态（07-04 选项化适配，startTestServerWith 同款注释纪律）。
+	sess, err := pty.Start(argv, pty.StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}

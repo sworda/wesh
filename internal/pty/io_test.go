@@ -16,7 +16,7 @@ import (
 // （RESEARCH 行 571 本机原型实测 [24 80 50 132]）。
 func TestResize(t *testing.T) {
 	// /bin/sh -c 仅作测试编排夹具（产品 spawn 路径绝不经 shell，D-02/D-15 纪律不变）
-	sess, err := Start([]string{"/bin/sh", "-c", "stty size; sleep 1; stty size"})
+	sess, err := Start([]string{"/bin/sh", "-c", "stty size; sleep 1; stty size"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestResize(t *testing.T) {
 // os.ErrClosed，重复 Close 幂等返回 nil。并发面（Resize↔Close）由 -race 下的
 // e2e 套件覆盖（02-02 握手 Resize 调用点暴露的原缺陷形态）。
 func TestResizeAfterClose(t *testing.T) {
-	sess, err := Start([]string{"/bin/cat"})
+	sess, err := Start([]string{"/bin/cat"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestResizeAfterClose(t *testing.T) {
 // 送达即致死；sess.Wait 返回 *exec.ExitError，WaitStatus 断言 Signaled()==true 且
 // Signal()==syscall.SIGHUP。10s 护栏（既有测试统一超时纪律）。
 func TestSignalHangup(t *testing.T) {
-	sess, err := Start([]string{"sleep", "600"})
+	sess, err := Start([]string{"sleep", "600"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

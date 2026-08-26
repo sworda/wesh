@@ -67,6 +67,11 @@ type config struct {
 	socketOwnerSet bool        // --socket-owner 是否被显式设置（同上）
 	// Phase 7 反代信任（D-18，one-way 公开契约，P2 D-15 同纪律）：
 	authHeader string // --auth-header 可信反代用户头名（空串 = 不信任——XFF 完全忽略、日志不出 remote_user 键，D-20 单一信任闸；值只做 logEvent 审计归因记录，不做任何认证决定，D-17 正交）
+	// Phase 7 子进程管理（D-21/D-24，one-way 公开契约，P2 D-15 同纪律）：
+	cwd  string // --cwd 子进程工作目录（空串 = 继承服务端 cwd 现状；非空时 validateStartup stat 预检 fail-fast，spawn 前零资源占用）
+	term string // --term 子进程 TERM（空串 = xterm-256color 现状语义；--term="" 空串值按未配置处理）
+	uid  int    // --uid 降权目标 uid（默认 -1 = 不降权；与 --gid 成对强制，validateStartup 消费；flag 注册与校验见 07-04 Task 3）
+	gid  int    // --gid 降权目标 gid（同上）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -117,7 +122,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 22 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 24 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -131,7 +136,8 @@ func (v *exitEmptyValue) Set(s string) error {
 // --socket/--socket-mode/--socket-owner（D-08/D-09 unix socket 监听与权限属主，
 // 互斥/单给组合矛盾归 validateStartup fail-fast）、
 // --auth-header（07-03 D-18 反代用户头名；裸信任 + D-16 暴露面警告归
-// validateStartup，XFF 同闸采信 D-20）。
+// validateStartup，XFF 同闸采信 D-20）、
+// --cwd/--term（07-04 D-21 子进程工作目录与 TERM，stat 预检归 validateStartup）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -139,6 +145,9 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// D-09：socket owner 未给哨兵——uid/gid 0 是 root 合法值，零值不可作
 	// 未给标记；listenSocket 以 uid<0 判定跳过 Chown。
 	cfg.socketUid, cfg.socketGid = -1, -1
+	// D-24：降权未给哨兵同形态——uid/gid 0 是 root 合法值，-1 = 不降权
+	//（pty.StartOptions Uid/Gid 消费；成对强制校验见 validateStartup）。
+	cfg.uid, cfg.gid = -1, -1
 	fs := flag.NewFlagSet("wesh", flag.ContinueOnError)
 	fs.IntVar(&cfg.port, "port", 7681, "listen port (0 = random, actual port is printed)")
 	fs.StringVar(&cfg.bind, "bind", "0.0.0.0", "listen address")
@@ -253,6 +262,14 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// X-Forwarded-For 同闸采信换 per-IP 键（D-20 单一信任闸，未配置时完全
 	// 忽略）。无 parse 期校验——头名合法性由 HTTP 层 Header.Get 语义自然承载。
 	fs.StringVar(&cfg.authHeader, "auth-header", "", "trusted reverse-proxy user header name (e.g. X-Remote-User); logged as remote_user, no auth effect")
+	// D-21：--cwd/--term 子进程工作目录与 TERM（one-way 公开契约）——落
+	// pty.StartOptions 的 Dir/Term（spawn.go 注释预留位 07-04 兑现）；空串 =
+	// 继承服务端 cwd / xterm-256color 现状语义。--cwd 非空时 validateStartup
+	// stat 预检 fail-fast（spawn 前零资源占用——spawn 后才发现 ENOENT 则资源
+	// 已占用且错误面到客户端，RESEARCH Anti-Patterns）；--term="" 空串值按
+	// 未配置处理（显式空 TERM 会使终端能力丢失）。
+	fs.StringVar(&cfg.cwd, "cwd", "", "working directory for the child process (default: inherit)")
+	fs.StringVar(&cfg.term, "term", "", "TERM for the child process (default: xterm-256color)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -509,8 +526,9 @@ func outboundIPv4() string {
 }
 
 // validateStartup 是 D-03/D-05 启动校验矩阵（RESEARCH Pattern 7 八行）的纯函数
-// 落地——无任何副作用（禁止 listen/spawn/写文件），必须先于 pty.Start/net.Listen
-// 执行：拒绝路径零资源占用，测试不挂死（main_test.go captureFd 纪律）。
+// 落地——无副作用：禁止 listen/spawn/写文件；os.Stat 只读探测允许（07-04 D-21
+// --cwd 预检），必须先于 pty.Start/net.Listen 执行：拒绝路径零资源占用，测试
+// 不挂死（main_test.go captureFd 纪律）。
 // 返回 warn（放行但需 stderr 醒目警告的逃生门/明文场景）或 err（拒绝启动）。
 // cert/key 成对校验在 parseArgs 已落 parse 期（D-04 分层，此处不重复）。
 // 红线：warn/err 文案不得含凭据值（SEC-01 日志红线延伸到启动面）。
@@ -541,6 +559,17 @@ func validateStartup(cfg config) (warn string, err error) {
 	// 组合校验同款落点）。
 	if cfg.maxClients <= 0 {
 		return "", errors.New("--max-clients must be positive")
+	}
+	// D-21 预检（配置错误 fail-fast，write-policy 行同位——纯配置有效性与
+	// bind 安全形态无关，loopback 早退之前判定）：--cwd 非空时 os.Stat 只读
+	// 探测（纯函数纪律允许只读探测，见函数头注释）；不存在或非目录即拒
+	//（spawn 前零资源占用——spawn 后才发现 ENOENT 则资源已占用且错误面到
+	// 客户端，RESEARCH Anti-Patterns）。值非敏感，错误文案可回显路径
+	//（exitEmptyValue.Set 同纪律，非 SEC-01 面）。
+	if cfg.cwd != "" {
+		if fi, serr := os.Stat(cfg.cwd); serr != nil || !fi.IsDir() {
+			return "", fmt.Errorf("invalid --cwd %q: not an existing directory", cfg.cwd)
+		}
 	}
 	// D-08 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
 	// bind 安全形态无关，loopback 早退之前判定）：--socket 与显式 --port/--bind
@@ -662,7 +691,9 @@ func run(args []string) int {
 			return 1
 		}
 	}
-	sess, err := pty.Start(argv)
+	// D-21/D-24 接线（07-04）：--cwd/--term 落 StartOptions Dir/Term；--uid/--gid
+	// 落 Uid/Gid（-1 哨兵 = 不降权，Task 3 完成 flag 注册与成对校验）。
+	sess, err := pty.Start(argv, pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
