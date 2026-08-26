@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
 status: executing
-stopped_at: Completed 07-05-PLAN.md（1001 优雅下线与 --open）
-last_updated: "2026-08-26T04:52:58.874Z"
+stopped_at: Completed 07-06-PLAN.md（TOML 配置文件两阶段合并）
+last_updated: "2026-08-26T05:48:43.486Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 52
-  completed_plans: 49
+  completed_plans: 50
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 ## Current Position
 
 Phase: 7 — 部署与配置
-Plan: 6 of 8
+Plan: 7 of 8
 Status: Ready to execute
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [█████████░] 94%
+Progress: [██████████] 96%
 
 ## Performance Metrics
 
@@ -112,6 +112,7 @@ Progress: [█████████░] 94%
 | Phase 07-deployment P03 | 30min | 2 tasks | 8 files |
 | Phase 07-deployment P04 | 1h 20m | 3 tasks | 17 files |
 | Phase 07-deployment P05 | 39min | 3 tasks tasks | 8 files files |
+| Phase 07-deployment P06 | 47min | 2 tasks tasks | 5 files files |
 
 ## Accumulated Context
 
@@ -233,6 +234,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-05]: Shutdown 的 stop-signal 序列取同步 sleep 形态（plan behavior 逐字）——stopChildLocked AfterFunc 异步补 KILL 服务 hubMu 持有方（exit-when-empty），Shutdown 不持 hubMu 同步 sleep 更直白且 KILL 测序确定；字段复用（Options 单一通道）是硬约束，函数复用非约束
 - [Phase ?]: [Phase 07-05]: WS Close 握手测试夹具 readCloseAsync——库 close 回显走读路径，测试客户端无在读 Read 时服务端主动 Close 等满内建 5s 上界；Shutdown 前启动客户端读循环 goroutine（plan behavior「客户端读循环」字面形态），真实浏览器协议栈透明回显无此窗口
 - [Phase ?]: [Phase 07-05]: 测试装配 startShutdownServerWith 本地变体（plan 字面 startTrackedServerWith 按意图修正——srv 句柄不暴露，Shutdown 直接调用面结构性需要）；parseArgs 头注释 28→29 补 --open 行（07-02 先例第二次沿用）
+- [Phase ?]: [Phase 07-06]: 配置 exit-when-empty 在 --once 展开之前应用（配置不算显式，展开覆盖配置值——flag > 配置推论）；cfgCredErr 上报点落合并段末尾，env/CLI 遮蔽的配置列表不解析不校验（D-02/D-05 不应用语义字面落地）
+- [Phase ?]: [Phase 07-06]: 默认值替换机制承载 D-05 优先级链——配置标量键换算 flag 注册默认值，flag > 配置 > 默认两档零新判定代码；配置键存在即「已给定」置显式位（socket 族/write-policy 矩阵配置同档）
 
 ### Pending Todos
 
@@ -252,6 +255,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T04:52:58.849Z
-Stopped at: Completed 07-05-PLAN.md（1001 优雅下线与 --open）
+Last session: 2026-08-26T05:48:11.826Z
+Stopped at: Completed 07-06-PLAN.md（TOML 配置文件两阶段合并）
 Resume file: None

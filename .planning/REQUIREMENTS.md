@@ -66,7 +66,7 @@
 - [ ] **OPS-06**: /healthz 健康检查端点
 - [ ] **OPS-07**: /metrics 监控端点（连接数、会话数、收发字节数）
 - [ ] **OPS-08**: 结构化日志（JSON），含审计事件（认证失败、连接建立/断开、会话生命周期）
-- [ ] **OPS-09**: 配置文件支持，CLI 参数覆盖配置文件
+- [x] **OPS-09**: 配置文件支持，CLI 参数覆盖配置文件
 - [ ] **OPS-10**: 单静态二进制发布（linux/darwin × amd64/arm64），前端 embed 内嵌为单 HTML
 - [x] **OPS-11**: 可选启动后自动打开浏览器
 
@@ -151,7 +151,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-06 | Phase 8 | Pending |
 | OPS-07 | Phase 8 | Pending |
 | OPS-08 | Phase 8 | Pending |
-| OPS-09 | Phase 7 | Pending |
+| OPS-09 | Phase 7 | Complete |
 | OPS-10 | Phase 9 | Pending |
 | OPS-11 | Phase 7 | Complete |
 
