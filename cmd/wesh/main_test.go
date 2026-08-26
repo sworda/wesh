@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -104,6 +105,9 @@ func TestParseArgs(t *testing.T) {
 		//（TestTLSKeyPairError）与成对校验行（TestStartupMatrix）承载）。
 		wantUid  int // D-24：--uid 解析产物（默认 -1 不降权）
 		wantGid  int // D-24：--gid 解析产物（默认 -1 不降权）
+		// P7：D-26 --open 断言位（零值 = 期望 false 默认不开——既存行经此扩展
+		// 零值断言覆盖，命名字段扩展纪律 03-04 先例）。
+		wantOpen bool // D-26：--open 默认 false
 		wantArgv []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
@@ -167,6 +171,9 @@ func TestParseArgs(t *testing.T) {
 		// TestStartupMatrix 锁定；值域拒绝在 TestTLSKeyPairError——parse 期
 		// 拒绝既定归属；默认 -1/-1 哨兵由零值语义统一断言覆盖全部既存行）。
 		{name: "uid gid pair", args: []string{"--uid", "1000", "--gid", "1000", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantUid: 1000, wantGid: 1000, wantArgv: []string{"bash"}},
+		// D-26：--open 布尔 flag 原样入 cfg（--socket×--open 组合矛盾归
+		// validateStartup，TestStartupMatrix 锁定）；默认 false 由零值语义统一断言。
+		{name: "open flag", args: []string{"--open", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantOpen: true, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -308,6 +315,10 @@ func TestParseArgs(t *testing.T) {
 			}
 			if cfg.gid != wantGid {
 				t.Errorf("gid = %d, want %d", cfg.gid, wantGid)
+			}
+			// D-26：--open 原样解析（零值 = false 默认不开，既存行零值断言覆盖）。
+			if cfg.open != tt.wantOpen {
+				t.Errorf("open = %v, want %v", cfg.open, tt.wantOpen)
 			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
@@ -688,6 +699,13 @@ func TestStartupMatrix(t *testing.T) {
 		{"uid without gid refused", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: -1}, "--uid", "--gid", ""},
 		{"gid without uid refused", config{bind: "127.0.0.1", maxClients: 32, uid: -1, gid: 1000}, "--uid", "--gid", ""},
 		{"uid gid pair allowed", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: 1000}, "", "", ""},
+		// 07-05 D-26/OQ1 组合校验：--socket × --open 同给即拒（unix socket 无
+		// host:port 可拼——D-12 分享链接已退化为提示行，--open 需要 http(s) URL；
+		// 给了无法兑现的 flag 组合 = 配置错误，「显式」哲学一贯性，双 flag 名进
+		// 文案；纯配置矛盾在 D-11 socket 早退之前判定，socket 形态不豁免）。
+		// --open 单独给（TCP 形态）放行（bind 127.0.0.1 隔离其他校验维度）。
+		{"socket with open refused", config{socket: "/run/wesh.sock", maxClients: 32, open: true}, "--open", "--socket", ""},
+		{"open without socket allowed", config{bind: "127.0.0.1", maxClients: 32, open: true}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -934,4 +952,67 @@ func TestVersionFlag(t *testing.T) {
 	if !strings.Contains(out, "wesh") || !strings.Contains(out, version) {
 		t.Errorf("run(--version) stdout = %q, want containing %q and version %q", out, "wesh", version)
 	}
+}
+
+// TestOpenBrowser（07-05，OPS-11，D-26/D-27）两场景：
+//   - headless 跳过：linux 且 DISPLAY/WAYLAND_DISPLAY 均空 → openBrowser 直接
+//     返回且 stderr 捕获提示行（不调用任何启动器——headless 服务器是常态部署
+//     形态，跳过不阻断启动）；
+//   - fake xdg-open：t.TempDir 写可执行脚本记录 argv 到文件 + PATH 前置 +
+//     DISPLAY=:99 → 断言 argv[1] == 预期分享 URL（exec 的真实调用链不打桩，
+//     与 07-VALIDATION「fake xdg-open PATH 前置断言 argv」策略一致）。
+//
+// darwin 分支不做运行时断言（构建标签差异——openBrowser 的 headless 检测只在
+// linux 分支判定，darwin 直接 open；CI macOS 跑同款测试形态即本测试整体
+// Skip，main.go openBrowser 注释登记）。URL 用占位 host:port 串——只作 argv
+// 断言材料，不发起任何网络连接。
+func TestOpenBrowser(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fake xdg-open 场景仅 linux 形态（darwin 分支不做运行时断言，见函数头注释）")
+	}
+	t.Run("headless skips browser launch", func(t *testing.T) {
+		t.Setenv("DISPLAY", "")
+		t.Setenv("WAYLAND_DISPLAY", "")
+		_, out := captureFd(t, &os.Stderr, func() int {
+			openBrowser("http://127.0.0.1:7681/s/headless-placeholder/")
+			return 0
+		})
+		if !strings.Contains(out, "wesh: --open: no display detected (headless), skipping browser launch") {
+			t.Errorf("stderr = %q, want headless skip line（D-27 提示行逐字）", out)
+		}
+	})
+	t.Run("fake xdg-open receives share url", func(t *testing.T) {
+		dir := t.TempDir()
+		argvLog := filepath.Join(dir, "argv.log")
+		script := filepath.Join(dir, "xdg-open")
+		// 记录全部参数（每行一个）——断言材料；分享 URL 作 argv[1]（exec.Command
+		// argv 分离不经 shell，T-07-05b）。
+		content := "#!/bin/sh\nprintf '%s\n' \"$@\" > " + argvLog + "\n"
+		if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+			t.Fatalf("write fake xdg-open: %v", err)
+		}
+		t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+		t.Setenv("DISPLAY", ":99")
+		want := "http://127.0.0.1:7681/s/fake-xdg-open-placeholder/"
+		openBrowser(want)
+		// exec.Command(...).Start() 不等待（D-27 goroutine 调用形态）——fake 脚本
+		// 落盘极快但仍需小窗轮询同步。
+		deadline := time.Now().Add(2 * time.Second)
+		var got []byte
+		for {
+			b, err := os.ReadFile(argvLog)
+			if err == nil {
+				got = b
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("fake xdg-open argv.log 2s 内未出现: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+		if len(lines) != 1 || lines[0] != want {
+			t.Errorf("xdg-open argv = %v, want exactly [%q]", lines, want)
+		}
+	})
 }
