@@ -1007,6 +1007,12 @@ func validateStartup(cfg config) (warn string, err error) {
 //     有权限删除）即静默丢数据，超出决策面；Lstat 不跟随符号链接，symlink
 //     同按非 socket 拒绝（保守方向：不理解的类型一律不删）。错误文案只含
 //     路径与类别（--cwd 预检同纪律，路径非敏感可回显）。
+//   - D-10 收窄链第二环（07-10 G-07-3）：类型闸之后按活性再分——存活 socket
+//     与残留 socket 在文件类型上不可区分，以能否建连区分（net.Dial unix：
+//     连通 = 存活实例占用 → 拒绝启动，07-02 OPS-01 设计答案；ECONNREFUSED =
+//     残留 → 照旧清理）。CR-01 前的无条件 Remove 会把存活实例孤儿化（进程
+//     在跑但端点被夺走，第二实例 unlink 后 listen 成功成静默赢者）——
+//     「存活实例被孤儿化」正是本 gap 修复对象。
 //   - D-09：socket 文件 mode 由内核定为 0777&~umask，Go 不做任何 chmod——
 //     0660 确定性必须 listen 后显式 Chmod 达成（文件系统权限即认证边界，
 //     权限不得由 umask 漂移决定）；uid<0（owner 未给，-1 哨兵）跳过 Chown。
@@ -1019,6 +1025,20 @@ func listenSocket(path string, mode os.FileMode, uid, gid int) (net.Listener, er
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
 			return nil, fmt.Errorf("%s exists and is not a socket", path)
+		}
+		// G-07-3 活性探测（D-10 收窄链第二环）：Dial 连通 = 存活实例占用 →
+		// 拒绝启动，错误文案与 net.Listen EADDRINUSE 逐字全等（经 run() listen
+		// 失败通道落地 exit 1，07-02 OPS-01 设计答案，静默赢者结构性消除）。
+		// Dial 失败全形态按残留处理落 Remove：ECONNREFUSED = 无进程监听；
+		// EACCES 等按「不可服务即残留」（跨用户活体误删由目录写权限/sticky 位
+		// 结构性抑制；D-10 systemd Restart= 零人工干预优先——07-10
+		// flagged_assumptions 登记）。TOCTOU 窗口两向安全降级：探测后实例
+		// 死亡 → 本次拒绝、下次启动清理；清理后对手抢绑 → 下方 net.Listen
+		// 真 EADDRINUSE 兜底——两向均无静默赢者。
+		conn, derr := net.Dial("unix", path)
+		if derr == nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("listen unix %s: bind: address already in use", path)
 		}
 		_ = os.Remove(path) // D-10：残留 socket 即垃圾；Remove 失败由下方 Listen 报错承载
 	}
