@@ -57,11 +57,12 @@ func TestSanitizeRemoteUser(t *testing.T) {
 	}
 }
 
-// TestProxyClientIP（D-15/D-17/D-20）：proxyInfo 三提取方法逐值锁定。
-// 信任闸单一开关 = trust（--auth-header 给定；D-20 零双轨——XFF 与 user 头
-// 共用同一闸，未配置时 XFF 完全忽略、user 头不提取，与现状逐字节一致）；
-// XFF 取链首 IP（strings.Cut(",") 首段 + TrimSpace，空则回退 TCP 对端现状
-// 取值——SplitHostPort host 部分，失败回退整串）；remote 在 trust 时换
+// TestProxyClientIP（D-15/D-17/D-20 + 07-review CR-02）：proxyInfo 三提取
+// 方法逐值锁定。信任闸单一开关 = trust（--auth-header 给定；D-20 零双轨——
+// XFF 与 user 头共用同一闸，未配置时 XFF 完全忽略、user 头不提取，与现状
+// 逐字节一致）；XFF 取链首 IP（strings.Cut(",") 首段 + TrimSpace + ParseIP
+// 校验——空串/非法值/控制字符注入均回退 TCP 对端现状取值，CR-02 日志注入
+// 防线；SplitHostPort host 部分，失败回退整串）；remote 在 trust 时换
 // clientIP（logEvent remote 字段换键），非 trust 时 r.RemoteAddr 原样
 // （host:port 现状形态）；remoteUser 仅在 trust 且头存在时出 sanitize 值。
 func TestProxyClientIP(t *testing.T) {
@@ -95,6 +96,16 @@ func TestProxyClientIP(t *testing.T) {
 		{"trust on XFF absent falls back", trust, "10.1.2.3:5555", nil, "10.1.2.3", "10.1.2.3", ""},
 		{"trust on XFF empty falls back", trust, "10.1.2.3:5555", map[string]string{"X-Forwarded-For": ""}, "10.1.2.3", "10.1.2.3", ""},
 		{"fallback unparseable RemoteAddr whole string", trust, "unix-addr-no-port", nil, "unix-addr-no-port", "unix-addr-no-port", ""},
+		// —— trust on：XFF 链首非法值回退（07-review CR-02：ParseIP 校验闸——
+		// 未校验首段原样进 logEvent remote 字段可注入 C1/CSI 伪造日志行）——
+		{"trust on XFF valid ipv6 kept", trust, "10.1.2.3:5555", map[string]string{"X-Forwarded-For": "2001:db8::1"}, "2001:db8::1", "2001:db8::1", ""},
+		{"trust on XFF garbage falls back", trust, "10.1.2.3:5555", map[string]string{"X-Forwarded-For": "not-an-ip"}, "10.1.2.3", "10.1.2.3", ""},
+		{"trust on XFF unknown token falls back", trust, "10.1.2.3:5555", map[string]string{"X-Forwarded-For": "unknown"}, "10.1.2.3", "10.1.2.3", ""},
+		{"trust on XFF trailing junk falls back", trust, "10.1.2.3:5555", map[string]string{"X-Forwarded-For": "203.0.113.7 evil"}, "10.1.2.3", "10.1.2.3", ""},
+		// 日志注入防线主证据：C1 CSI（U+009B）拼在合法 IP 尾 → ParseIP 拒 →
+		// remote 字段回退 TCP 对端形态，转义序列无从进入 stderr 单行日志。
+		{"trust on XFF csi injection falls back", trust, "10.1.2.3:5555", map[string]string{"X-Forwarded-For": "1.2.3.4\u009b"}, "10.1.2.3", "10.1.2.3", ""},
+		{"trust on XFF ipv6 zone rejected falls back", trust, "10.1.2.3:5555", map[string]string{"X-Forwarded-For": "fe80::1%eth0"}, "10.1.2.3", "10.1.2.3", ""},
 		// —— trust on：user 头提取经 sanitize；缺席/空值/全控制字符 → 空串不出键 ——
 		{"trust on user header", trust, "10.1.2.3:5555", map[string]string{"X-Remote-User": "alice"}, "10.1.2.3", "10.1.2.3", "alice"},
 		{"trust on user header sanitized", trust, "10.1.2.3:5555", map[string]string{"X-Remote-User": "al\x01ce"}, "10.1.2.3", "10.1.2.3", "alce"},

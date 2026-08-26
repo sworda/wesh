@@ -23,7 +23,9 @@ package server
 //     「信任反代」总开关，零双轨）；XFF 取链首 IP；消费范围 = logEvent
 //     remote 字段与 throttle/halfOpen per-IP 键同换（反代后 per-IP 计数
 //     聚合回代理 IP 的旧限制解除；攻击者轮换 XFF 获独立节流配额的风险
-//     D-20 已裁决接受，T-07-03d）。
+//     D-20 已裁决接受，T-07-03d——07-review CR-02 起链首经 net.ParseIP
+//     校验，垃圾值不再获独立配额而是回退共享 TCP 对端键，该风险面随之
+//     进一步收敛）。
 //
 // 红线（D-03 随新字段延伸，SEC-01）：token/ticket/凭据任何形态（含 base64）
 // 永不作为 remote_user 或任何 logEvent 字段出现——结构性保证：remoteUser
@@ -73,14 +75,20 @@ type proxyInfo struct {
 
 // clientIP 取 per-IP 计数键（throttle/halfOpen 共用）：trust 且 XFF 头非空 →
 // 链首 IP（strings.Cut(",") 首段——链首最接近真实客户端，链尾恒为反代自己
-// 无信息，RESEARCH Anti-Pattern 表；TrimSpace 清洗，空则落回退）；否则回退
-// TCP 对端现状取值（net.SplitHostPort host 部分——含端口直接当键会使每连接
-// 一个"新 IP"、上限形同虚设，Pitfall 6；失败回退 RemoteAddr 整串）。
+// 无信息，RESEARCH Anti-Pattern 表；TrimSpace 清洗）；链首经 net.ParseIP
+// 校验——非法值（空串/"unknown"/垃圾值/控制字符注入）一律与缺席同档回退
+// TCP 对端现状取值（07-review CR-02：XFF 首段恒为客户端可控——标准追加式
+// 反代 $proxy_add_x_forwarded_for 语义，未校验首段原样进 logEvent remote
+// 字段可注入 C1/CSI 伪造日志行甚至终端转义序列；ParseIP 通过值字符集恒为
+// [0-9a-fA-F:.]，结构性排除注入，D-19 sanitizeRemoteUser 同一威胁类在
+// remote 路径的等价闸；同时收敛节流键卫生——垃圾键不再各自独占节流配额）。
+// 回退形态：net.SplitHostPort host 部分（含端口直接当键会使每连接一个
+// "新 IP"、上限形同虚设，Pitfall 6；失败回退 RemoteAddr 整串）。
 func (p proxyInfo) clientIP(r *http.Request) string {
 	if p.trust {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			first, _, _ := strings.Cut(xff, ",")
-			if ip := strings.TrimSpace(first); ip != "" {
+			if ip := strings.TrimSpace(first); ip != "" && net.ParseIP(ip) != nil {
 				return ip
 			}
 		}
