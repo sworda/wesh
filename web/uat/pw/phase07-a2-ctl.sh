@@ -32,7 +32,7 @@ EOF
     location /wesh/ {
       proxy_pass http://127.0.0.1:WESH_PORT_PH;
       proxy_http_version 1.1;
-      proxy_set_header Host $host;
+      proxy_set_header Host $http_host;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
       proxy_read_timeout 3600s;
