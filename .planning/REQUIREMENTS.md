@@ -46,7 +46,8 @@
 - [x] **SEC-04**: WS 握手 Origin 允许列表校验，不在列表内拒绝
 - [x] **SEC-05**: TLS 最低 1.2（默认 1.3），合理 cipher 套件，安全响应头（HSTS/X-Content-Type-Options 等）
 - [x] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
-- [x] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名作为子进程环境变量
+- [x] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名记录进服务端审计日志（remote_user 审计归因）
+  - *D-15 修订注记*：原「作为子进程环境变量」语义在 GoTTY 共享进程模型下结构性不成立（PTY 随服务端启动、spawn 时无 HTTP 请求；多客户端共享一个 shell，env 是一次性快照），收窄为服务端审计归因——头值经清洗后只进日志，不做任何认证决定（2026-08-25 Phase 7 CONTEXT D-15 裁决）
 - [x] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
 
 ### 资源控制（RES）

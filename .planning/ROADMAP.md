@@ -271,7 +271,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Success Criteria** (what must be TRUE):
 
   1. 端口（0=随机并打印实际端口）/绑定地址/UNIX socket（含属主）可配置；TOML 配置文件支持，CLI 参数覆盖配置文件
-  2. 反代子路径挂载（`/wesh/` base-path）下页面与 WS 升级均正常（尾斜杠规范化）；反代注入的可信用户头作为环境变量出现在子进程中
+  2. 反代子路径挂载（`/wesh/` base-path）下页面与 WS 升级均正常（尾斜杠规范化）；反代注入的可信用户头记录进服务端审计日志（remote_user 审计归因——D-15 修订：原「作为环境变量出现在子进程中」语义在 GoTTY 共享进程模型下结构性不成立）
   3. 子进程以指定 cwd/TERM 启动，停止信号发给进程组（可配 TERM→KILL 宽限）；可以指定 uid/gid 降权运行；可选启动后自动打开浏览器
 
 **Plans**: 7/8 plans executed
