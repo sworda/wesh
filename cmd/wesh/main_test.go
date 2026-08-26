@@ -26,7 +26,9 @@ import (
 // Phase 4：P4 D-15 --client-option 可重复（计数断言）、P4 D-12 --osc52 默认 false；
 // Phase 5：D-05 --write-policy 默认 owner，显式传 owner/all 原样解析；
 // Phase 6：D-12 --once 语法糖展开（maxClients=1 + exit-when-empty set/grace 0）、
-// D-14 --exit-when-empty 三形态（不写 = 不开启 / 裸写 = 立即退出 / =duration = 宽限）。
+// D-14 --exit-when-empty 三形态（不写 = 不开启 / 裸写 = 立即退出 / =duration = 宽限）；
+// Phase 7：D-13 --base-path parse 期规范化（合法原样 / 根 / 归一空串；非法形态
+// 五族拒绝断言在 TestTLSKeyPairError 错误表——parse 期拒绝的既定归属）。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
@@ -56,7 +58,10 @@ func TestParseArgs(t *testing.T) {
 		wantMaxClients     int           // D-08/D-12：零值 = 期望默认 32
 		wantExitEmptySet   bool          // D-14：exitEmpty.set（不写 = 不开启）
 		wantExitEmptyGrace time.Duration // D-14：exitEmpty.grace（裸写/默认 = 0）
-		wantArgv           []string
+		// P7：D-13 --base-path parse 期规范化断言位（零值 = 期望空串未配置，
+		// 既存行经此扩展零值断言覆盖——命名字段扩展纪律 03-04 先例）。
+		wantBasePath string // D-13：--base-path 规范化后期望值（根 "/" 归一为空串）
+		wantArgv     []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -83,6 +88,11 @@ func TestParseArgs(t *testing.T) {
 		{name: "exit-when-empty bare", args: []string{"--exit-when-empty", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantExitEmptySet: true, wantArgv: []string{"bash"}},
 		// D-14：=duration 形态 = 重连宽限。
 		{name: "exit-when-empty grace", args: []string{"--exit-when-empty=30s", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantExitEmptySet: true, wantExitEmptyGrace: 30 * time.Second, wantArgv: []string{"bash"}},
+		// D-13：--base-path 合法值原样接收（单级与多级形态）；根 "/" 归一为
+		// 未配置（空串——「根视为未配置」是 D-13 显式裁决，非默认值兜底）。
+		{name: "base-path subpath", args: []string{"--base-path", "/wesh", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantBasePath: "/wesh", wantArgv: []string{"bash"}},
+		{name: "base-path nested", args: []string{"--base-path", "/a/b", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantBasePath: "/a/b", wantArgv: []string{"bash"}},
+		{name: "base-path root normalized", args: []string{"--base-path", "/", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -152,6 +162,10 @@ func TestParseArgs(t *testing.T) {
 			if cfg.exitEmpty.grace != tt.wantExitEmptyGrace {
 				t.Errorf("exitEmpty.grace = %v, want %v", cfg.exitEmpty.grace, tt.wantExitEmptyGrace)
 			}
+			// D-13：零值 wantBasePath = 期望空串未配置（含全部既存行）。
+			if cfg.basePath != tt.wantBasePath {
+				t.Errorf("basePath = %q, want %q", cfg.basePath, tt.wantBasePath)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -201,7 +215,10 @@ func TestCredentialFlagEnv(t *testing.T) {
 // （回调内即时报错）均为配置错误零窗口暴露；--write-policy 非枚举值在 Parse
 // 返回处报错（D-05，值非敏感直接 return error 形态）；--exit-when-empty 非法/
 // 负值 duration 报错（D-14，值非敏感——flag 包 invalid value %q 包装回显
-// duration 值可接受，T-06-04a 论证登记在 main.go Set 注释）。
+// duration 值可接受，T-06-04a 论证登记在 main.go Set 注释）；
+// Phase 7：D-13 --base-path 非法形态五族 parse 期拒绝（严格模式，绝不宽容
+// 自动修正——输入与生效值分叉是配置漂移隐蔽源；值非敏感，错误文案可回显，
+// exitEmptyValue.Set 同纪律）。
 // WR-01 红线断言：malformed credential 行的 err 只含错误类别，不含 flag 值
 // 内容（记录式上报杜绝 flag 包 invalid value %q 包装回显——TestClientOptionError
 // forbiddenSub 同款先例；凭据值敏感度高于 prefs 值，同红线更须锁定）。
@@ -223,6 +240,17 @@ func TestTLSKeyPairError(t *testing.T) {
 		// d<0 检查（time.ParseDuration("-5s") 解析成功，负 duration 是合法语法）。
 		{"exit-when-empty bad duration", []string{"--exit-when-empty=abc", "--", "bash"}, "exit-when-empty", ""},
 		{"exit-when-empty negative duration", []string{"--exit-when-empty=-5s", "--", "bash"}, "exit-when-empty", ""},
+		// D-13：--base-path 非法五族——无前导斜杠 / 尾斜杠 / 重复斜杠（头与
+		// 中间两形态）/ ".." / 非 path 安全字符（空格/?/#/% 抽样）。
+		{"base-path no leading slash", []string{"--base-path", "wesh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path trailing slash", []string{"--base-path", "/wesh/", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path repeated slash head", []string{"--base-path", "//wesh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path repeated slash inner", []string{"--base-path", "/w//esh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path dotdot", []string{"--base-path", "/wesh/../x", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path space char", []string{"--base-path", "/we sh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path query char", []string{"--base-path", "/wesh?x", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path fragment char", []string{"--base-path", "/wesh#x", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path percent char", []string{"--base-path", "/wesh%x", "--", "bash"}, "invalid --base-path", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
