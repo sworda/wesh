@@ -1,8 +1,9 @@
 // Phase 7 协议层自动化 UAT（零依赖，Node >= 22 原生 WebSocket/fetch）。
 // 覆盖 07-01..07-06 六 plan 服务端机制对真实二进制的全链断言（OPS-01/02/04/05/09/11、
 // SEC-07、D-23）：S1 配置文件合并与优先级（TOML 铺底 401/503 生效、CLI 覆盖、未知键/
-// 不存在文件 exit 2、权限警告不含值）、S2 unix socket 全链（启动行/socket 0660/残留
-// 清理/TCP↔unix relay 转发后 WS echo）、S3 base-path 页面+WS 升级+share 交叉（307/
+// 不存在文件 exit 2、权限警告不含值）、S2 unix socket 全链（启动行/socket 0660/真实
+// 残留 socket 清理（07-review CR-01 收窄：仅 socket 端点可清理）/普通文件占位拒绝
+// 启动且内容保留/TCP↔unix relay 转发后 WS echo）、S3 base-path 页面+WS 升级+share 交叉（307/
 // 404/WS 双路径/share token×base-path 全链）、S4 auth-header 记录与 sanitize + XFF
 // 换键（事件行 remote=XFF 链首 + remote_user=sanitize 值 + 未配置对照现状）、
 // S5 stop-signal 宽限补 KILL（trap 忽略 TERM + 1s 后 KILL 退出 255；对照 TERM 即终结）、
@@ -407,19 +408,25 @@ async function s1ConfigMergeAndPrecedence() {
   }
 }
 
-// ---------- S2：unix socket 全链（OPS-01：启动行/0660/残留清理 + relay 转发 WS echo） ----------
+// ---------- S2：unix socket 全链（OPS-01：启动行/0660/真实残留 socket 清理 + 普通文件拒绝 + relay 转发 WS echo） ----------
 async function s2UnixSocketRelay() {
-  console.log('S2: unix socket（预建垃圾文件残留清理 → 启动行 unix:// + socket 0660 + relay 转发 dialHello echo 全链 + 分享链接退化单行无 http://）');
+  console.log('S2: unix socket（真实残留 socket 清理（CR-01 收窄）→ 启动行 unix:// + socket 0660 + relay 转发 dialHello echo 全链 + 分享链接退化单行无 http://；普通文件占位拒绝启动且内容保留）');
   const tmp = mkTmp('wesh-p7-s2-');
   const sockPath = join(tmp, 'wesh.sock');
   let relay = null;
   try {
-    // D-10 残留清理：listen 前 os.Remove——预建垃圾文件于 socket 路径，spawn 成功即证据
-    writeFileSync(sockPath, 'stale-garbage-not-a-socket');
+    // D-10 残留清理收窄（07-review CR-01）：仅残留 socket 端点可清理——预建真实
+    // 残留 socket：wesh 实例 listening 后 SIGKILL（UnixListener.Close 不运行 →
+    // 文件遗留，systemd Restart= 同款现场；Node net.Server close 会 unlink 造
+    // 不出残留，探针实证）；普通文件占位新语义 = 拒绝启动（S2f 锁定）。
+    const stale = await startWesh(['--socket', sockPath, '--', 'bash', '--norc', '--noprofile'],
+      { defaultListen: false, unix: true });
+    stale.kill(); // SIGKILL：socket 文件遗留 = 真实残留
+    await waitExit(stale.child, 3000);
     const inst = await startWesh(['--socket', sockPath, '--writable', '--', 'bash', '--norc', '--noprofile'],
       { defaultListen: false, unix: true });
     try {
-      check('S2a', '残留垃圾文件预置下 spawn 成功且启动行含 unix://（D-10 清理 + D-12 打印）',
+      check('S2a', '真实残留 socket 预置下 spawn 成功且启动行含 unix://（D-10 清理 + D-12 打印）',
         inst.unixPath !== null && inst.unixPath.startsWith('unix://'),
         `启动行=${inst.unixPath !== null}`);
       const st = statSync(sockPath);
@@ -446,6 +453,17 @@ async function s2UnixSocketRelay() {
     } finally {
       inst.kill();
     }
+
+    // 07-review CR-01：普通文件占位 → 拒绝启动（exit 1 listen 失败 tier——
+    // net.Listen 失败同档运行时错误）且文件内容零触碰（D-10 意图仅为清理
+    // 残留 socket 端点，operator 手误指向普通文件不得静默删除）。
+    const regPath = join(tmp, 'regular-file.sock');
+    writeFileSync(regPath, 'precious-operator-data');
+    const refused = await spawnExpectExit(['--socket', regPath, '--', 'bash', '--norc', '--noprofile']);
+    const preserved = readFileSync(regPath, 'utf8') === 'precious-operator-data';
+    check('S2f', '普通文件占位 → 启动拒绝（exit 1 + not a socket 类别）且文件内容保留（CR-01）',
+      refused.code === 1 && refused.stderr.includes('not a socket') && preserved,
+      `code=${refused.code} 类别=${refused.stderr.includes('not a socket')} 内容保留=${preserved}`);
   } finally {
     if (relay !== null) relay.close(); // relay 纪律：不关闭则脚本悬挂
     rmTmp(tmp);
