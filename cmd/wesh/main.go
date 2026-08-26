@@ -520,6 +520,30 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 			cfg.writePolicySet = true
 		}
 	}
+	// 配置内部矛盾检测（07-review WR-02，D-06 严格模式哲学）：fc.Once 为真时
+	// 同文件内 max-clients 显式值 ≠1、或 exit-when-empty 解析 grace ≠0 即
+	// configErr 拒绝——CLI 同组合（--once × 显式矛盾值）经 validateStartup
+	// exit 2 拒绝，同一配置文件内的自相矛盾不得逃过 fail-fast 被 --once 展开
+	// 静默改写。只锚定 fc 字段（文件内矛盾）：CLI --once × 配置值的既定覆盖
+	// 语义（flag > 配置——配置 max-clients/exit-when-empty 不算显式，展开覆盖）
+	// 不受影响（fc.Once 未给时本块不触发）。exit-when-empty 经
+	// exitEmptyValue.Set 单一解析路径换算 grace（"true"/"0" = grace 0 与 once
+	// 一致冗余放行，CLI --once + 显式裸 --exit-when-empty 放行同档）；值剥离
+	// 红线：detail 只含键名，禁含配置值（credential/client-option 记录式同款）。
+	if fc != nil && fc.Once != nil && *fc.Once {
+		if fc.MaxClients != nil && *fc.MaxClients != 1 {
+			return cfg, nil, configErr(configPath, "conflicting keys", `key "once" conflicts with key "max-clients"`)
+		}
+		if fc.ExitWhenEmpty != nil {
+			var ev exitEmptyValue
+			if serr := ev.Set(*fc.ExitWhenEmpty); serr != nil {
+				return cfg, nil, configErr(configPath, "invalid duration", `key "exit-when-empty"`)
+			}
+			if ev.grace != 0 {
+				return cfg, nil, configErr(configPath, "conflicting keys", `key "once" conflicts with key "exit-when-empty"`)
+			}
+		}
+	}
 	// D-14 配置 exit-when-empty（07-06，OQ4 字符串单形态）：CLI 未显式给且
 	// 配置键非 nil → exitEmptyValue.Set 单一解析路径复用（"true"/"0"/"30s"
 	// 全通零双写；bool 形态已被 go-toml 类型不符在加载层拒绝）。必须在下方

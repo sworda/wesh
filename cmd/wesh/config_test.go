@@ -600,6 +600,40 @@ func TestConfigMerge(t *testing.T) {
 			t.Errorf("exitEmpty = %v/%v, want true/0 (--once 展开覆盖配置)", cfg.exitEmpty.set, cfg.exitEmpty.grace)
 		}
 	})
+	t.Run("once with conflicting max-clients in config refused", func(t *testing.T) {
+		// 07-review WR-02：配置内部矛盾合并期 configErr 拒绝——CLI 同组合
+		//（--once × 显式 --max-clients≠1）经 validateStartup exit 2，同文件
+		// 自相矛盾不得被展开静默改写。detail 只含键名不含值（值剥离红线——
+		// 断言精确 detail 子串即锁值零出现）。
+		_, _, err := parseConfigArgs(t, "once = true\nmax-clients = 5\n", nil, "--", "bash")
+		if err == nil {
+			t.Fatal("parseArgs = nil error, want 配置内部矛盾拒绝（WR-02）")
+		}
+		if !strings.Contains(err.Error(), "conflicting keys") || !strings.Contains(err.Error(), `key "once" conflicts with key "max-clients"`) {
+			t.Errorf("err = %q, want 类别 + 双键名（不含值）", err)
+		}
+	})
+	t.Run("once with conflicting exit-when-empty in config refused", func(t *testing.T) {
+		_, _, err := parseConfigArgs(t, "once = true\nexit-when-empty = \"30s\"\n", nil, "--", "bash")
+		if err == nil {
+			t.Fatal("parseArgs = nil error, want 配置内部矛盾拒绝（WR-02）")
+		}
+		if !strings.Contains(err.Error(), "conflicting keys") || !strings.Contains(err.Error(), `key "once" conflicts with key "exit-when-empty"`) {
+			t.Errorf("err = %q, want 类别 + 双键名（不含值）", err)
+		}
+	})
+	t.Run("once with consistent values in config allowed", func(t *testing.T) {
+		// 一致冗余放行（CLI --once + 显式 --max-clients=1 / 显式裸
+		// --exit-when-empty 放行同档）：once=true + max-clients=1 +
+		// exit-when-empty="true"（grace 0）非矛盾，合并正常展开。
+		cfg, _, err := parseConfigArgs(t, "once = true\nmax-clients = 1\nexit-when-empty = \"true\"\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v（一致冗余应放行）", err)
+		}
+		if !cfg.once || cfg.maxClients != 1 || !cfg.exitEmpty.set || cfg.exitEmpty.grace != 0 {
+			t.Errorf("once/maxClients/exitEmpty = %v/%d/%v/%v, want true/1/true/0", cfg.once, cfg.maxClients, cfg.exitEmpty.set, cfg.exitEmpty.grace)
+		}
+	})
 	t.Run("write-policy config-driven combo refusal", func(t *testing.T) {
 		// 配置 write-policy 键非 nil 即「已给定」（writePolicySet 置位）——配置驱动
 		// 的组合矛盾与 CLI 同档：write-policy × 无 writable → 拒绝且文案同 CLI 形态。
