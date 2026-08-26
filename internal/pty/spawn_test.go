@@ -259,6 +259,12 @@ func TestDropPrivilegesSelf(t *testing.T) {
 	if got := sess.Cmd.SysProcAttr.Credential; got.Uid != uint32(uid) || got.Gid != uint32(gid) {
 		t.Fatalf("Credential = %d/%d, want %d/%d", got.Uid, got.Gid, uid, gid)
 	}
+	// supplementary groups 策略锁定（spawn.go Credential 分支注释）：root 清空
+	// 附加组（最小权限），非 root 跳过 setgroups（无 CAP_SETGID 必 EPERM；降回
+	// 自身保留自身附加组零提权面）。
+	if got := sess.Cmd.SysProcAttr.Credential.NoSetGroups; got != (os.Geteuid() != 0) {
+		t.Fatalf("Credential.NoSetGroups = %v, want %v（euid=%d 策略）", got, os.Geteuid() != 0, os.Geteuid())
+	}
 	out, werr := awaitSession(t, sess, startCollect(sess))
 	if werr != nil {
 		t.Fatalf("id -u 退出异常: %v", werr)

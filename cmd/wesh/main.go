@@ -127,7 +127,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 26 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 28 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -144,7 +144,8 @@ func (v *exitEmptyValue) Set(s string) error {
 // validateStartup，XFF 同闸采信 D-20）、
 // --cwd/--term（07-04 D-21 子进程工作目录与 TERM，stat 预检归 validateStartup）、
 // --stop-signal/--stop-timeout（07-04 D-22 停止信号进程组序列，枚举/负值 parse
-// 期校验）。
+// 期校验）、--uid/--gid（07-04 D-24 数字直通降权，值域 parse 期校验，成对强制
+// 归 validateStartup）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -285,6 +286,15 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 检查是唯一闸，exitEmptyValue.Set 负值闸同纪律）。
 	fs.StringVar(&cfg.stopSignal, "stop-signal", "HUP", "signal sent to the child process group on shutdown: HUP|TERM|INT|KILL (default HUP)")
 	fs.DurationVar(&cfg.stopTimeout, "stop-timeout", 0, "grace before SIGKILL after stop-signal (0 = no escalation)")
+	// D-24：--uid/--gid 数字直通降权（one-way 公开契约）——落 pty.StartOptions
+	// Uid/Gid → SysProcAttr.Credential（fork 后 exec 前生效，spawn.go 注释登记
+	// GOROOT forkExec 顺序）；数字直通不做名字解析（极简容器无 /etc/passwd 的
+	// NSS 解析差异规避——名字解析场景运维先 id -u/id -g 查好）。成对强制
+	//（只给一个 = 配置矛盾零窗口暴露，validateStartup——降权半配置静默放行 =
+	// 子进程以原权运行，T-07-04b；exit 2 而非降级运行）；值域（-1 哨兵之外
+	// < -1 或 > 4294967295）parse 期拒绝（uint32 转换安全）。
+	fs.IntVar(&cfg.uid, "uid", -1, "numeric uid to drop privileges to (must give both --uid and --gid; resolve names with id -u first)")
+	fs.IntVar(&cfg.gid, "gid", -1, "numeric gid to drop privileges to (must give both --uid and --gid; resolve names with id -g first)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -370,6 +380,16 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 检查是唯一闸——exitEmptyValue.Set 负值闸同纪律；值非敏感可回显）。
 	if cfg.stopTimeout < 0 {
 		return cfg, nil, fmt.Errorf("invalid --stop-timeout %v: must be a non-negative duration (e.g. 2s)", cfg.stopTimeout)
+	}
+	// D-24：--uid/--gid 值域校验（插入点同 03-04 先例——showVersion 早退之后，
+	// write-policy 枚举校验同位）：-1 哨兵之外 < -1 或 > 4294967295 即拒
+	//（uint32 转换安全——越界值 uint32 截断会降权到非预期账号，T-07-04b；
+	// 值非敏感可回显）。
+	if cfg.uid < -1 || cfg.uid > 4294967295 {
+		return cfg, nil, fmt.Errorf("invalid --uid %d: must be -1 (unset) or 0..4294967295", cfg.uid)
+	}
+	if cfg.gid < -1 || cfg.gid > 4294967295 {
+		return cfg, nil, fmt.Errorf("invalid --gid %d: must be -1 (unset) or 0..4294967295", cfg.gid)
 	}
 	// D-09：--socket-mode 八进制解析（插入点同 03-04 先例——showVersion 早退
 	// 之后，write-policy 枚举校验同位）。值非敏感可回显（exitEmptyValue.Set
@@ -601,6 +621,13 @@ func validateStartup(cfg config) (warn string, err error) {
 		if fi, serr := os.Stat(cfg.cwd); serr != nil || !fi.IsDir() {
 			return "", fmt.Errorf("invalid --cwd %q: not an existing directory", cfg.cwd)
 		}
+	}
+	// D-24 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
+	// bind 安全形态无关，loopback 早退之前判定）：--uid/--gid 成对强制——只给
+	// 一个 = 配置矛盾零窗口暴露（降权半配置静默放行 = 子进程以原权运行，
+	// T-07-04b Elevation of Privilege；exit 2 而非降级运行），双 flag 名进文案。
+	if (cfg.uid == -1) != (cfg.gid == -1) {
+		return "", errors.New("--uid and --gid must be given together")
 	}
 	// D-08 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
 	// bind 安全形态无关，loopback 早退之前判定）：--socket 与显式 --port/--bind
