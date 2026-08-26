@@ -7,9 +7,11 @@ import (
 	"net"
 	"os"
 	"os/user"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -688,6 +690,97 @@ func TestBadCertPreflight(t *testing.T) {
 		}
 		if strings.Contains(stderr, "already in use") {
 			t.Errorf("stderr = %q, must not contain %q (preflight must precede net.Listen)", stderr, "already in use")
+		}
+	})
+}
+
+// TestListenSocket（07-02，D-08/D-09/D-10 + T-07-02a/b）unix socket listen 序列
+// 四子测：
+//   - 残留清理+可拨通：路径上预建垃圾文件不阻 bind（D-10 listen 前 os.Remove——
+//     Go listenStream 直接 syscall.Bind 无 unlink，GOROOT 实证残留必收
+//     EADDRINUSE，Remove 是必需而非保险）；listen 后 net.Dial("unix") 可建连。
+//   - 权限位恰为 0660：stat mode.Perm() 断言（D-09 显式 Chmod 达成确定性，
+//     不靠 umask 漂移——文件系统权限即认证边界，T-07-02b）。
+//   - owner=self 属主正确：uid/gid 数字对经 Chown 落到 stat（self 免 root）。
+//   - 失败回滚零残留：Listen 失败注入（父目录不存在，mode 合法）→ error 且
+//     路径无残留；Chown 失败注入（非 root 限定——chown 他人 uid EPERM）→
+//     error 且已建 socket 文件被 Close 自动 unlink 删除（UnixListener 默认
+//     unlink:true，GOROOT unixsock_posix.go:210-216,230；T-07-02a 回滚纪律：
+//     Chmod/Chown 失败必须回滚退出而非带病放行）。
+func TestListenSocket(t *testing.T) {
+	t.Run("stale file removed and dialable", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "wesh.sock")
+		if err := os.WriteFile(path, []byte("stale-garbage"), 0o600); err != nil {
+			t.Fatalf("pre-create stale file: %v", err)
+		}
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err != nil {
+			t.Fatalf("listenSocket over stale file: %v (D-10 os.Remove must clear residue)", err)
+		}
+		defer func() { _ = ln.Close() }()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatalf("net.Dial unix %s: %v", path, err)
+		}
+		_ = conn.Close()
+	})
+	t.Run("mode exactly 0660", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "wesh.sock")
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err != nil {
+			t.Fatalf("listenSocket: %v", err)
+		}
+		defer func() { _ = ln.Close() }()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("os.Stat: %v", err)
+		}
+		if info.Mode().Perm() != 0o660 {
+			t.Errorf("socket mode = %o, want 660 (explicit Chmod, not umask drift)", info.Mode().Perm())
+		}
+	})
+	t.Run("owner self applied", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "wesh.sock")
+		ln, err := listenSocket(path, 0o660, os.Getuid(), os.Getgid())
+		if err != nil {
+			t.Fatalf("listenSocket with self owner: %v", err)
+		}
+		defer func() { _ = ln.Close() }()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("os.Stat: %v", err)
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatalf("Stat Sys() is %T, want *syscall.Stat_t", info.Sys())
+		}
+		if int(st.Uid) != os.Getuid() || int(st.Gid) != os.Getgid() {
+			t.Errorf("socket owner = %d/%d, want self %d/%d", st.Uid, st.Gid, os.Getuid(), os.Getgid())
+		}
+	})
+	t.Run("failure rollback leaves no residue", func(t *testing.T) {
+		// Listen 失败注入：父目录不存在（mode 合法）——error 且零残留。
+		path := filepath.Join(t.TempDir(), "nonexistent", "wesh.sock")
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err == nil {
+			_ = ln.Close()
+			t.Fatal("listenSocket with nonexistent parent dir = nil error, want error")
+		}
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Errorf("after failed listenSocket, stat err = %v, want NotExist (zero residue)", statErr)
+		}
+		// Chown 失败注入（非 root 限定）：chown 他人 uid EPERM——序列已建 socket
+		// 文件，失败回滚必须经 Close 自动 unlink 删除（T-07-02a 零残留纪律）。
+		if os.Getuid() != 0 {
+			p2 := filepath.Join(t.TempDir(), "wesh.sock")
+			ln2, err2 := listenSocket(p2, 0o660, 1, 1)
+			if err2 == nil {
+				_ = ln2.Close()
+				t.Fatal("listenSocket chown to uid 1 as non-root = nil error, want EPERM")
+			}
+			if _, statErr := os.Stat(p2); !os.IsNotExist(statErr) {
+				t.Errorf("rollback residue: stat err = %v, want NotExist (Close auto-unlink)", statErr)
+			}
 		}
 	})
 }
