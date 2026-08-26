@@ -133,7 +133,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 29 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 30 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -152,7 +152,22 @@ func (v *exitEmptyValue) Set(s string) error {
 // --stop-signal/--stop-timeout（07-04 D-22 停止信号进程组序列，枚举/负值 parse
 // 期校验）、--uid/--gid（07-04 D-24 数字直通降权，值域 parse 期校验，成对强制
 // 归 validateStartup）、--open（07-05 D-26 启动后自动开浏览器，headless 跳过
-// 不阻断，--socket×--open 组合矛盾归 validateStartup）。
+// 不阻断，--socket×--open 组合矛盾归 validateStartup）、
+// --config（07-06 OPS-09 D-01 显式指定 TOML 配置文件——仅预扫显式路径，
+// 零隐式默认路径搜索，裸启动行为零漂移）。
+// 配置文件两阶段合并（07-06 OPS-09，D-01..D-07，07-RESEARCH Pattern 4）：
+// prescanConfigPath 预扫 --config 路径 → loadFileConfig 严格加载铺底（文件级
+// 错误 exit 2 现状通道，D-06；D-07 权限警告加载期 stderr 打印）→ fileConfig
+// 标量键换算为 flag 注册默认值（CLI 未给自然落配置值、CLI 给则覆盖；内置
+// 默认仅在配置键缺席时出现——flag > 配置 > 默认两档由默认值替换机制天然
+// 成立）→ fs.Parse → fs.Visit 显式位 → 配置键存在即「已给定」补置
+// portSet/bindSet/socketModeSet/socketOwnerSet/writePolicySet（socket 族
+// 互斥/单给与 write-policy×writable 矩阵对配置来源值同档生效）→ 配置
+// exit-when-empty（exitEmptyValue.Set 单一解析路径，OQ4；在 --once 展开之前
+// 应用——配置不算显式，展开覆盖配置值）→ 列表合并（credential/origin/
+// client-option：CLI 给出则替换整个列表，D-02；CLI 未给则 env 夹层先行、
+// 配置列表逐项经各自 parse 期校验函数应用——flag > env > 配置，D-05）→
+// argv：fs.Args() 非空为 CLI argv，空且 command 键非空为配置 command（D-04）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -163,23 +178,147 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// D-24：降权未给哨兵同形态——uid/gid 0 是 root 合法值，-1 = 不降权
 	//（pty.StartOptions Uid/Gid 消费；成对强制校验见 validateStartup）。
 	cfg.uid, cfg.gid = -1, -1
+	// D-01：--config 预扫（两阶段合并第一环——flag 注册前需路径加载 TOML
+	// 铺底；仅显式指定零隐式默认路径搜索，未给时 fc=nil 全部行为与无
+	// 配置文件时逐字节一致，裸启动零漂移）。
+	configPath := prescanConfigPath(args)
+	var fc *fileConfig
+	if configPath != "" {
+		var warn string
+		fc, warn, err = loadFileConfig(configPath)
+		if err != nil {
+			// D-06 fail-fast：文件不存在/解析失败/未知键经现状错误通道
+			// exit 2（错误文案只含类别+键名+行号，config.go 值剥离红线）。
+			return cfg, nil, err
+		}
+		if warn != "" {
+			// D-07 加载期警告（parseArgs 打印为最小签名扰动——fs.Usage
+			// 打印先例同文件）；警告串不含凭据值。
+			fmt.Fprintln(os.Stderr, warn)
+		}
+	}
+	// 注册默认值铺底（D-05 优先级链 flag > 配置 > 内置默认的承载机制）：
+	// fileConfig 标量键换算为 flag 注册默认值——CLI 未给自然落配置值，
+	// CLI 给则覆盖（flag 包语义）；内置默认仅在配置键缺席时出现。指针
+	// 标量区分「键缺席」与「显式零值」（fc.X != nil 即采用 *fc.X——
+	// port = 0 等显式零值不被吞成内置默认）。duration 串配置键此处解析，
+	// 解析失败经 configErr 类别报错（键名不含值；duration 非敏感本可含值
+	// ——exitEmptyValue.Set 既定纪律——本实现取不含值的更严形态）。
+	portDefault := 7681
+	bindDefault := "0.0.0.0"
+	writableDefault := false
+	pingIntervalDefault := 5 * time.Second
+	writePolicyDefault := server.WritePolicyOwner
+	maxClientsDefault := 32
+	onceDefault := false
+	osc52Default := false
+	tlsCertDefault := ""
+	tlsKeyDefault := ""
+	socketDefault := ""
+	socketModeDefault := "0660"
+	socketOwnerDefault := ""
+	basePathDefault := ""
+	authHeaderDefault := ""
+	cwdDefault := ""
+	termDefault := ""
+	stopSignalDefault := "HUP"
+	stopTimeoutDefault := time.Duration(0)
+	uidDefault := -1
+	gidDefault := -1
+	openDefault := false
+	if fc != nil {
+		if fc.Port != nil {
+			portDefault = *fc.Port
+		}
+		if fc.Bind != nil {
+			bindDefault = *fc.Bind
+		}
+		if fc.Writable != nil {
+			writableDefault = *fc.Writable
+		}
+		if fc.PingInterval != nil {
+			d, perr := time.ParseDuration(*fc.PingInterval)
+			if perr != nil {
+				return cfg, nil, configErr(configPath, "invalid duration", `key "ping-interval"`)
+			}
+			pingIntervalDefault = d
+		}
+		if fc.WritePolicy != nil {
+			writePolicyDefault = *fc.WritePolicy
+		}
+		if fc.MaxClients != nil {
+			maxClientsDefault = *fc.MaxClients
+		}
+		if fc.Once != nil {
+			onceDefault = *fc.Once
+		}
+		if fc.Osc52 != nil {
+			osc52Default = *fc.Osc52
+		}
+		if fc.TLSCert != nil {
+			tlsCertDefault = *fc.TLSCert
+		}
+		if fc.TLSKey != nil {
+			tlsKeyDefault = *fc.TLSKey
+		}
+		if fc.Socket != nil {
+			socketDefault = *fc.Socket
+		}
+		if fc.SocketMode != nil {
+			socketModeDefault = *fc.SocketMode
+		}
+		if fc.SocketOwner != nil {
+			socketOwnerDefault = *fc.SocketOwner
+		}
+		if fc.BasePath != nil {
+			basePathDefault = *fc.BasePath
+		}
+		if fc.AuthHeader != nil {
+			authHeaderDefault = *fc.AuthHeader
+		}
+		if fc.Cwd != nil {
+			cwdDefault = *fc.Cwd
+		}
+		if fc.Term != nil {
+			termDefault = *fc.Term
+		}
+		if fc.StopSignal != nil {
+			stopSignalDefault = *fc.StopSignal
+		}
+		if fc.StopTimeout != nil {
+			d, perr := time.ParseDuration(*fc.StopTimeout)
+			if perr != nil {
+				return cfg, nil, configErr(configPath, "invalid duration", `key "stop-timeout"`)
+			}
+			stopTimeoutDefault = d
+		}
+		if fc.Uid != nil {
+			uidDefault = *fc.Uid
+		}
+		if fc.Gid != nil {
+			gidDefault = *fc.Gid
+		}
+		if fc.Open != nil {
+			openDefault = *fc.Open
+		}
+	}
 	fs := flag.NewFlagSet("wesh", flag.ContinueOnError)
-	fs.IntVar(&cfg.port, "port", 7681, "listen port (0 = random, actual port is printed)")
-	fs.StringVar(&cfg.bind, "bind", "0.0.0.0", "listen address")
+	fs.IntVar(&cfg.port, "port", portDefault, "listen port (0 = random, actual port is printed)")
+	fs.StringVar(&cfg.bind, "bind", bindDefault, "listen address")
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version and exit")
-	fs.BoolVar(&cfg.writable, "writable", false, "allow client input (default read-only)")
-	fs.DurationVar(&cfg.pingInterval, "ping-interval", 5*time.Second, "WS ping interval (0 = disable)")
+	fs.BoolVar(&cfg.writable, "writable", writableDefault, "allow client input (default read-only)")
+	fs.DurationVar(&cfg.pingInterval, "ping-interval", pingIntervalDefault, "WS ping interval (0 = disable)")
 	// D-05：写权限策略（one-way 公开契约）。--writable 保持总闸（不给 = 全员只读，
 	// 现状语义零漂移）；write-policy 仅在总闸开启时有意义（组合校验见
 	// validateStartup）。parse 期枚举校验在 Parse 返回处（值非敏感，直接 return
 	// error 即可——client-option 的记录式上报仅用于值含敏感内容的场景）。
-	fs.StringVar(&cfg.writePolicy, "write-policy", server.WritePolicyOwner, "write policy when --writable is on: owner|all (default owner)")
+	fs.StringVar(&cfg.writePolicy, "write-policy", writePolicyDefault, "write policy when --writable is on: owner|all (default owner)")
 	// D-08：最大并发客户端数（one-way 公开契约——容量策略是部署关切开 flag，
 	// 与 P2 D-10 攻击面上限常量不同类）。默认 32（ARCHITECTURE §6『10–100 连接
 	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小），Phase 9 负载
 	// 标定回填。满员行为：/ws Accept 前 HTTP 503（守卫区③位）+ /api/attach
 	// 503 早闸（OQ2）；≤0 经 validateStartup 拒绝（exit 2 配置校验矩阵形态）。
-	fs.IntVar(&cfg.maxClients, "max-clients", 32, "maximum simultaneous attached clients")
+	fs.IntVar(&cfg.maxClients, "max-clients", maxClientsDefault, "maximum simultaneous attached clients")
 	// D-01：可重复凭据 flag，fs.Func 回调内 parse 期校验（畸形值即时报错——
 	// systemd 配置错误零窗口暴露）。Pitfall 8：help 必须提示 ps 可见性。
 	// 红线（SEC-01 启动面延伸，WR-01）：校验错误记入 credErr 而非直接
@@ -198,8 +337,8 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		cfg.credentials = append(cfg.credentials, c)
 		return nil
 	})
-	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "TLS certificate file (must give both --tls-cert and --tls-key to enable TLS)")
-	fs.StringVar(&cfg.tlsKey, "tls-key", "", "TLS private key file (must give both --tls-cert and --tls-key)")
+	fs.StringVar(&cfg.tlsCert, "tls-cert", tlsCertDefault, "TLS certificate file (must give both --tls-cert and --tls-key to enable TLS)")
+	fs.StringVar(&cfg.tlsKey, "tls-key", tlsKeyDefault, "TLS private key file (must give both --tls-cert and --tls-key)")
 	fs.BoolVar(&cfg.noAuth, "no-auth", false, "allow listening on non-loopback address without credentials (explicit escape hatch)")
 	fs.BoolVar(&cfg.insecureHTTP, "insecure-http", false, "allow serving credentials over plaintext HTTP on non-loopback address (explicit escape hatch; typical behind a TLS-terminating reverse proxy)")
 	// D-12：可重复 origin flag，回调内经 NormalizeOrigin parse 期规范化
@@ -240,11 +379,11 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	})
 	// P4 D-12：OSC52 剪贴板写开关（write-only，默认关）——安全敏感项只能经本
 	// flag 由服务端开启，结构性排除出 --client-option 白名单与 URL query。
-	fs.BoolVar(&cfg.osc52, "osc52", false, "enable OSC52 clipboard write (write-only; default off)")
+	fs.BoolVar(&cfg.osc52, "osc52", osc52Default, "enable OSC52 clipboard write (write-only; default off)")
 	// D-12：--once 语法糖（one-way 公开契约）≡ --max-clients=1
 	// --exit-when-empty=0——help 文案单行标明等价关系；展开见下方 fs.Visit 之后。
 	// 第二客户端拒绝走既有 503 计数路径（D-12：409 单客户端门不复活）。
-	fs.BoolVar(&cfg.once, "once", false, "accept only one client and exit when it disconnects (equivalent to --max-clients=1 --exit-when-empty=0)")
+	fs.BoolVar(&cfg.once, "once", onceDefault, "accept only one client and exit when it disconnects (equivalent to --max-clients=1 --exit-when-empty=0)")
 	// D-14：--exit-when-empty[=duration] 可选值 flag（one-way 公开契约）——
 	// 三形态：不写 = 不开启（现状保持：无客户端时子进程继续运行）；裸写 =
 	// 立即退出；=duration = 重连宽限。空格分隔形态不传值（可选值惯例，见类型
@@ -254,45 +393,45 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// Parse 返回处经 normalizeBasePath（NormalizeOrigin 先例形态）：合法值原样、
 	// 根 "/" 归一为未配置、非法值 exit 2；绝不宽容自动修正（输入与生效值分叉
 	// 是配置漂移隐蔽源）。
-	fs.StringVar(&cfg.basePath, "base-path", "", "serve under a sub-path (e.g. /wesh; must start with /, no trailing slash)")
+	fs.StringVar(&cfg.basePath, "base-path", basePathDefault, "serve under a sub-path (e.g. /wesh; must start with /, no trailing slash)")
 	// D-08：--socket unix socket 监听（one-way 公开契约）——与显式 --port/--bind
 	// 互斥（组合矛盾归 validateStartup fail-fast，分层纪律：parse = 形状，
 	// validate = 组合矛盾）；空串 = TCP 形态现状。
-	fs.StringVar(&cfg.socket, "socket", "", "listen on a unix socket at the given path (mutually exclusive with --port/--bind)")
+	fs.StringVar(&cfg.socket, "socket", socketDefault, "listen on a unix socket at the given path (mutually exclusive with --port/--bind)")
 	// D-09：--socket-mode 八进制权限位（one-way 公开契约）——socket 文件 mode
 	// 由内核定为 0777&~umask（Go 不做任何 chmod，07-RESEARCH Pattern 1 GOROOT
 	// 实证），0660 确定性只能 listen 后显式 Chmod 达成（T-07-02b：文件系统
 	// 权限即认证边界，权限不得由 umask 漂移决定）；八进制串形态在 Parse 返回处
 	// ParseUint 解析（非法值 parse 期 exit 2）。仅随 --socket 有意义
 	//（单给 = 配置矛盾，validateStartup 消费 socketModeSet 显式位）。
-	fs.StringVar(&cfg.socketModeStr, "socket-mode", "0660", "unix socket permission bits in octal (default 0660; only with --socket)")
+	fs.StringVar(&cfg.socketModeStr, "socket-mode", socketModeDefault, "unix socket permission bits in octal (default 0660; only with --socket)")
 	// D-09：--socket-owner user[:group]（one-way 公开契约）——parse 期经
 	// os/user.Lookup[/LookupGroup] 解析为 uid/gid 数字对（未知用户/组 parse 期
 	// exit 2）；仅随 --socket 有意义（单给 = 配置矛盾，同上）。
-	fs.StringVar(&cfg.socketOwner, "socket-owner", "", "unix socket owner user[:group] (only with --socket)")
+	fs.StringVar(&cfg.socketOwner, "socket-owner", socketOwnerDefault, "unix socket owner user[:group] (only with --socket)")
 	// D-18：--auth-header 可配反代用户头名（one-way 公开契约）——配置即信任
 	// 该头（裸信任，ttyd -H 同款；D-16 暴露面启动警告见 validateStartup）。
 	// 值经 sanitize 后只做 logEvent remote_user 审计归因记录，不做任何认证
 	// 决定（D-17 正交——伪造头不能绕过 Basic/ticket/share token 任一检查）；
 	// X-Forwarded-For 同闸采信换 per-IP 键（D-20 单一信任闸，未配置时完全
 	// 忽略）。无 parse 期校验——头名合法性由 HTTP 层 Header.Get 语义自然承载。
-	fs.StringVar(&cfg.authHeader, "auth-header", "", "trusted reverse-proxy user header name (e.g. X-Remote-User); logged as remote_user, no auth effect")
+	fs.StringVar(&cfg.authHeader, "auth-header", authHeaderDefault, "trusted reverse-proxy user header name (e.g. X-Remote-User); logged as remote_user, no auth effect")
 	// D-21：--cwd/--term 子进程工作目录与 TERM（one-way 公开契约）——落
 	// pty.StartOptions 的 Dir/Term（spawn.go 注释预留位 07-04 兑现）；空串 =
 	// 继承服务端 cwd / xterm-256color 现状语义。--cwd 非空时 validateStartup
 	// stat 预检 fail-fast（spawn 前零资源占用——spawn 后才发现 ENOENT 则资源
 	// 已占用且错误面到客户端，RESEARCH Anti-Patterns）；--term="" 空串值按
 	// 未配置处理（显式空 TERM 会使终端能力丢失）。
-	fs.StringVar(&cfg.cwd, "cwd", "", "working directory for the child process (default: inherit)")
-	fs.StringVar(&cfg.term, "term", "", "TERM for the child process (default: xterm-256color)")
+	fs.StringVar(&cfg.cwd, "cwd", cwdDefault, "working directory for the child process (default: inherit)")
+	fs.StringVar(&cfg.term, "term", termDefault, "TERM for the child process (default: xterm-256color)")
 	// D-22：--stop-signal/--stop-timeout（one-way 公开契约）——exit-when-empty
 	// 收口路径向子进程进程组（负 pid，setsid pgid==pid 既定不变量）所发信号
 	// 与 KILL 补发宽限；默认 HUP + 0 = 现状语义（纯单信号不补 KILL，06-02 D-13
 	// 零漂移）。枚举校验与负值检查在 Parse 返回处（write-policy 同位先例；
 	// --stop-timeout 取 DurationVar 直收形态——负 duration 是合法语法，负值
 	// 检查是唯一闸，exitEmptyValue.Set 负值闸同纪律）。
-	fs.StringVar(&cfg.stopSignal, "stop-signal", "HUP", "signal sent to the child process group on shutdown: HUP|TERM|INT|KILL (default HUP)")
-	fs.DurationVar(&cfg.stopTimeout, "stop-timeout", 0, "grace before SIGKILL after stop-signal (0 = no escalation)")
+	fs.StringVar(&cfg.stopSignal, "stop-signal", stopSignalDefault, "signal sent to the child process group on shutdown: HUP|TERM|INT|KILL (default HUP)")
+	fs.DurationVar(&cfg.stopTimeout, "stop-timeout", stopTimeoutDefault, "grace before SIGKILL after stop-signal (0 = no escalation)")
 	// D-24：--uid/--gid 数字直通降权（one-way 公开契约）——落 pty.StartOptions
 	// Uid/Gid → SysProcAttr.Credential（fork 后 exec 前生效，spawn.go 注释登记
 	// GOROOT forkExec 顺序）；数字直通不做名字解析（极简容器无 /etc/passwd 的
@@ -300,8 +439,8 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	//（只给一个 = 配置矛盾零窗口暴露，validateStartup——降权半配置静默放行 =
 	// 子进程以原权运行，T-07-04b；exit 2 而非降级运行）；值域（-1 哨兵之外
 	// < -1 或 > 4294967295）parse 期拒绝（uint32 转换安全）。
-	fs.IntVar(&cfg.uid, "uid", -1, "numeric uid to drop privileges to (must give both --uid and --gid; resolve names with id -u first)")
-	fs.IntVar(&cfg.gid, "gid", -1, "numeric gid to drop privileges to (must give both --uid and --gid; resolve names with id -g first)")
+	fs.IntVar(&cfg.uid, "uid", uidDefault, "numeric uid to drop privileges to (must give both --uid and --gid; resolve names with id -u first)")
+	fs.IntVar(&cfg.gid, "gid", gidDefault, "numeric gid to drop privileges to (must give both --uid and --gid; resolve names with id -g first)")
 	// D-26：--open 自动开浏览器（one-way 公开契约）——operator 视角入口：
 	// --writable 时开 rw 分享链接，否则开 ro 链接（含 token 免交互即打即用，
 	// token 通道绕过 Basic 是 P5 D-01 既定语义；与启动打印消费同一拼串
@@ -310,7 +449,13 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 提示后跳过不阻断启动（headless 服务器是常态部署形态——--open 本质是
 	// 桌面便利功能）；Windows 不做（PROJECT Out of Scope）。--socket×--open
 	// 组合矛盾归 validateStartup（unix socket 无 http URL 可开，OQ1）。
-	fs.BoolVar(&cfg.open, "open", false, "open the share link in a browser after startup (rw link when --writable, otherwise ro)")
+	fs.BoolVar(&cfg.open, "open", openDefault, "open the share link in a browser after startup (rw link when --writable, otherwise ro)")
+	// D-01：--config TOML 配置文件（07-06 OPS-09，one-way 公开契约）——仅显式
+	// 指定路径，零隐式默认路径搜索（裸启动行为零漂移）；函数首部
+	// prescanConfigPath 已消费其值加载铺底，此处正式注册保持 help 可见与
+	// flag 解析一致性（预扫与正式 Parse 双通道同值；值不再二次消费）。
+	var configFileFlag string
+	fs.StringVar(&configFileFlag, "config", "", "load TOML config file (CLI flags override config values)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -349,6 +494,40 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 			cfg.socketOwnerSet = true
 		}
 	})
+	// D-08/D-09 + write-policy 配置来源显式位（07-06 合并收尾第一档）：配置键
+	// 存在即「已给定」——fc.Port/fc.Bind/fc.SocketMode/fc.SocketOwner/
+	// fc.WritePolicy 非 nil 即置对应显式位，07-02 落地的互斥/单给校验矩阵与
+	// write-policy×writable 组合校验对配置驱动与 CLI 驱动同档生效（不置位
+	// 则配置同时写 socket+port 或单写 socket-mode 会静默绕过 D-08/D-09
+	// fail-fast；write-policy 扩展同款模式）。
+	if fc != nil {
+		if fc.Port != nil {
+			cfg.portSet = true
+		}
+		if fc.Bind != nil {
+			cfg.bindSet = true
+		}
+		if fc.SocketMode != nil {
+			cfg.socketModeSet = true
+		}
+		if fc.SocketOwner != nil {
+			cfg.socketOwnerSet = true
+		}
+		if fc.WritePolicy != nil {
+			cfg.writePolicySet = true
+		}
+	}
+	// D-14 配置 exit-when-empty（07-06，OQ4 字符串单形态）：CLI 未显式给且
+	// 配置键非 nil → exitEmptyValue.Set 单一解析路径复用（"true"/"0"/"30s"
+	// 全通零双写；bool 形态已被 go-toml 类型不符在加载层拒绝）。必须在下方
+	// --once 展开之前应用——配置不算显式（exitEmptySet 不置位），--once 展开
+	// 随后覆盖配置值（flag > 配置优先级直接推论）；CLI 显式给定时
+	// exitEmptySet 为真，配置与展开双双让位。
+	if fc != nil && fc.ExitWhenEmpty != nil && !cfg.exitEmptySet {
+		if serr := cfg.exitEmpty.Set(*fc.ExitWhenEmpty); serr != nil {
+			return cfg, nil, configErr(configPath, "invalid duration", `key "exit-when-empty"`)
+		}
+	}
 	// D-12：--once 语法糖展开 ≡ --max-clients=1 --exit-when-empty=0——未显式给
 	// --max-clients 则置 1、未显式给 --exit-when-empty 则置 set+grace 0；显式给定
 	// 时不覆盖（用户值保持，矛盾检测归 validateStartup——分层纪律：parse = 形状
@@ -469,7 +648,70 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 			cfg.credentials = append(cfg.credentials, c)
 		}
 	}
+	// D-02/D-05 配置列表合并（07-06；env 块之后——执行序：flag 列表 → env →
+	// 配置列表，flag > env > 配置成立）：CLI 回调填充非空 = 显式给出 → 整个
+	// 列表替换（配置不应用，D-02）；CLI 未给且配置键非 nil → 配置列表逐项经
+	// 各自 parse 期校验函数应用（ParseCredential/NormalizeOrigin/client-option
+	// 白名单+JSON——同一校验函数复用零双写）。len==0 守卫同时承载 env 夹层：
+	// env 非空则配置 credential 不应用（D-05）。被替换/遮蔽（CLI 或 env 给出）
+	// 的配置列表不解析不校验——「不应用」语义的字面落地。配置 credential 与
+	// client-option 校验错误走 credErr/clientOptErr 同款记录式（类别 + 键名，
+	// 禁含值——统一上报点在本段末尾、showVersion 早退之后，纯信息路径不被
+	// 阻断）；origin 错误直接返回（值非敏感先例，CLI 回调同款）。
+	var cfgCredErr, cfgClientOptErr error
+	if fc != nil && fc.Credential != nil && len(cfg.credentials) == 0 {
+		for _, s := range fc.Credential {
+			c, cerr := server.ParseCredential(s)
+			if cerr != nil {
+				cfgCredErr = configErr(configPath, "credential must be user:pass", `key "credential"`)
+				break
+			}
+			cfg.credentials = append(cfg.credentials, c)
+		}
+	}
+	if fc != nil && fc.Origin != nil && len(cfg.origins) == 0 {
+		for _, s := range fc.Origin {
+			n, oerr := server.NormalizeOrigin(s)
+			if oerr != nil {
+				return cfg, nil, configErr(configPath, "invalid origin entry", oerr.Error())
+			}
+			cfg.origins = append(cfg.origins, n)
+		}
+	}
+	if fc != nil && fc.ClientOption != nil && len(cfg.clientOptions) == 0 {
+		for _, s := range fc.ClientOption {
+			key, value, found := strings.Cut(s, "=")
+			if !found {
+				cfgClientOptErr = configErr(configPath, "invalid client-option entry: must be key=value", `key "client-option"`)
+				break
+			}
+			if !proto.ValidClientOptionKey(key) {
+				cfgClientOptErr = configErr(configPath, fmt.Sprintf("invalid client-option key %q", key), `key "client-option"`)
+				break
+			}
+			var v json.RawMessage
+			if uerr := json.Unmarshal([]byte(value), &v); uerr != nil {
+				cfgClientOptErr = configErr(configPath, fmt.Sprintf("invalid client-option value for %q: not valid JSON", key), `key "client-option"`)
+				break
+			}
+			cfg.clientOptions = append(cfg.clientOptions, clientOption{key: key, value: v})
+		}
+	}
+	// 配置列表校验错误统一上报点（credErr/clientOptErr 同款记录式——值剥离
+	// 红线：类别 + 键名，禁含值）。
+	if cfgCredErr != nil {
+		return cfg, nil, cfgCredErr
+	}
+	if cfgClientOptErr != nil {
+		return cfg, nil, cfgClientOptErr
+	}
 	argv = fs.Args()
+	// D-04：CLI `--` 后 argv 非空则覆盖配置 command；空且 command 键非空
+	//（空数组按缺席语义——plan flagged_assumptions，与 CLI `--` 空 argv
+	// 同档）→ 配置 command。
+	if len(argv) == 0 && fc != nil && len(fc.Command) > 0 {
+		argv = fc.Command
+	}
 	if len(argv) == 0 {
 		return cfg, nil, errors.New("missing command")
 	}
