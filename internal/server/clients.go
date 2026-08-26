@@ -69,7 +69,15 @@ const (
 // 唯一 WS 写端（pinger 的控制帧经库 writeFrameMu 与数据写串行化，既有 02-04 纪律）。
 type client struct {
 	conn   *websocket.Conn
-	remote string // logEvent 三要素之对端（Attach 入口保存的 RemoteAddr）
+	remote string // logEvent 三要素之对端（Attach 入口保存的 RemoteAddr；07-03 trust 开启时为 XFF 链首，proxy.go）
+	// remoteUser 为 logEvent 可选第四字段 remote_user 的值（07-03，SEC-07 D-15
+	// 审计归因）：Attach 入口经 s.proxy.remoteUser(r) 提取一次（sanitize 已在
+	// 提取点完成），此后只读——并发读写面与 remote 字段既有形态相同（写一次
+	// 发生在 client 构造、registerLocked 之前，全部读者在其后启动的
+	// writer/pinger/读循环 goroutine 内，happens-before 由 goroutine 启动建立；
+	// plain 字段无锁安全，-race 全量回归锁）。空串 = 未配置/头缺席（logEvent
+	// 不出键）。share token 渠道进入的客户端同经 Attach 入口提取点赋值。
+	remoteUser string
 	// mode 生效模式（proto.ModeRO/ModeRW 字符串，atomic.Value 承载）：升档时由
 	// 判定矩阵写入初始值，运行期唯一写者是 promoteNextLocked 的 ro→rw 升格翻转
 	//（hubMu 内）。Attach 读循环的 INPUT 门每击键无锁 Load（热路径不得取 hubMu），
@@ -494,7 +502,7 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	}
 	close(c.done)
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
-	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer")
+	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer", c.remoteUser)
 	// arbiter 参与集移除 + 即时重算（05-04，D-09）：all 模式被踢的 rw 端是参与集
 	// 成员——滞留 sizes 则其陈旧尺寸永久拖累 min-rect（幽灵成员把 PTY 压在离群者
 	// 小窗口）；owner 模式被踢者为 ro 旁观者（非成员，removeMember 幂等 no-op）。
@@ -735,14 +743,16 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 	}
 	if s.exitWhenEmptyGrace == 0 {
 		// 立即形态：无计时器，迁移点直接发 SIGHUP。
-		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty")
+		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)
 		s.sess.SignalHangup()
 		return
 	}
 	if s.exitEmptyTimer != nil {
 		s.exitEmptyTimer.Stop() // 幂等重启——再次断开重新计时（取消点置 nil 后的防御兜底）
 	}
-	remote := c.remote // 回调捕获最后离开者对端——回调触发时 c 已随 detach 消亡
+	// 回调捕获最后离开者对端与 remote_user——回调触发时 c 已随 detach 消亡
+	//（remoteUser 与 remote 同为 Attach 入口写一次的只读字段，捕获同值）。
+	remote, remoteUser := c.remote, c.remoteUser
 	s.exitEmptyTimer = time.AfterFunc(s.exitWhenEmptyGrace, func() {
 		s.hubMu.Lock()
 		defer s.hubMu.Unlock()
@@ -752,22 +762,23 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 		if s.exiting || len(s.registry.set) != 0 {
 			return
 		}
-		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty")
+		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
 		s.sess.SignalHangup()
 	})
-	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait")
+	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait", c.remoteUser)
 }
 
 // cancelExitEmptyTimerLocked 是宽限取消点（06-02，D-14）：宽限内任一端 attach
 // 成功（registerLocked 登记后由 Attach 升档序列在同一 hubMu 持有内调用）即取消
 // 退出——恰好一次：置 nil 防重复 Stop 与重复 exit_when_empty_cancel 事件。
 // 调用方必须已持 hubMu。code 恒 1000 收口桶（reason 区分语义，D-12② 延伸）；
-// SEC-01 红线保持——token/ticket/凭据值永不入参。
-func (s *Server) cancelExitEmptyTimerLocked(remote string) {
+// SEC-01 红线保持——token/ticket/凭据值永不入参。07-03：remoteUser 为新 attach
+// 端的提取值（与 remote 同源传入），携 remote_user 第四字段同口径（D-15）。
+func (s *Server) cancelExitEmptyTimerLocked(remote, remoteUser string) {
 	if s.exitEmptyTimer == nil {
 		return
 	}
 	s.exitEmptyTimer.Stop()
 	s.exitEmptyTimer = nil
-	logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty_cancel")
+	logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty_cancel", remoteUser)
 }

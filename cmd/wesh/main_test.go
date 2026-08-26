@@ -507,7 +507,7 @@ func TestNoCommandError(t *testing.T) {
 // 系统权限即认证边界，loopback 早退同款信任档位）。
 // 07-03 新增：D-16 --auth-header 暴露面警告四行——触发（非 loopback + 无凭据
 // + --no-auth + auth-header → 警告含 flag 名，文案不含头值）；D-03 拒绝不削弱
-//（无 --no-auth 时 auth-header 照样拒）；不触发（loopback + auth-header；非
+// （无 --no-auth 时 auth-header 照样拒）；不触发（loopback + auth-header；非
 // loopback + 凭据 + TLS + auth-header）；socket 形态同 D-11 逻辑跳过本警告。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")

@@ -65,6 +65,8 @@ type config struct {
 	bindSet        bool        // --bind 是否被显式设置（同上）
 	socketModeSet  bool        // --socket-mode 是否被显式设置（D-09 单给矛盾判定）
 	socketOwnerSet bool        // --socket-owner 是否被显式设置（同上）
+	// Phase 7 反代信任（D-18，one-way 公开契约，P2 D-15 同纪律）：
+	authHeader string // --auth-header 可信反代用户头名（空串 = 不信任——XFF 完全忽略、日志不出 remote_user 键，D-20 单一信任闸；值只做 logEvent 审计归因记录，不做任何认证决定，D-17 正交）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -115,7 +117,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 21 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 22 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -127,7 +129,9 @@ func (v *exitEmptyValue) Set(s string) error {
 // --exit-when-empty[=duration]（D-14 可选值，裸写 = 立即退出，默认不开启）；
 // Phase 7：--base-path（07-01 D-13 反代子路径，parse 期严格校验）、
 // --socket/--socket-mode/--socket-owner（D-08/D-09 unix socket 监听与权限属主，
-// 互斥/单给组合矛盾归 validateStartup fail-fast）。
+// 互斥/单给组合矛盾归 validateStartup fail-fast）、
+// --auth-header（07-03 D-18 反代用户头名；裸信任 + D-16 暴露面警告归
+// validateStartup，XFF 同闸采信 D-20）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -242,6 +246,13 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// os/user.Lookup[/LookupGroup] 解析为 uid/gid 数字对（未知用户/组 parse 期
 	// exit 2）；仅随 --socket 有意义（单给 = 配置矛盾，同上）。
 	fs.StringVar(&cfg.socketOwner, "socket-owner", "", "unix socket owner user[:group] (only with --socket)")
+	// D-18：--auth-header 可配反代用户头名（one-way 公开契约）——配置即信任
+	// 该头（裸信任，ttyd -H 同款；D-16 暴露面启动警告见 validateStartup）。
+	// 值经 sanitize 后只做 logEvent remote_user 审计归因记录，不做任何认证
+	// 决定（D-17 正交——伪造头不能绕过 Basic/ticket/share token 任一检查）；
+	// X-Forwarded-For 同闸采信换 per-IP 键（D-20 单一信任闸，未配置时完全
+	// 忽略）。无 parse 期校验——头名合法性由 HTTP 层 Header.Get 语义自然承载。
+	fs.StringVar(&cfg.authHeader, "auth-header", "", "trusted reverse-proxy user header name (e.g. X-Remote-User); logged as remote_user, no auth effect")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -558,6 +569,15 @@ func validateStartup(cfg config) (warn string, err error) {
 		if !cfg.noAuth {
 			return "", errors.New("refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication") // D-03
 		}
+		// D-16 暴露面警告（07-03）：--auth-header 非空 + bind 非 loopback + 无凭据
+		// ——配置即裸信任该头，直连客户端可自设伪造（审计归因失真；D-17 正交下
+		// 伪造头不能越权，但日志归因会被污染）。警告文案含 --auth-header flag 名、
+		// 不含任何头值（启动面红线同 TestStartupMatrix 纪律）；socket 形态 bind
+		// 矩阵已跳过（上方 D-11 早退），同行跳过本警告——unix socket 信任边界
+		// 同 D-11 逻辑。无凭据裸奔语义（--no-auth）随同行保持不丢。
+		if cfg.authHeader != "" {
+			return "wesh: warning: listening on non-loopback address with NO authentication (--no-auth) and --auth-header enabled; anyone who can reach this port gets a terminal, and directly connecting clients can forge the auth header — ensure wesh is not directly exposed (front it with a reverse proxy that sets the header)", nil
+		}
 		return "wesh: warning: listening on non-loopback address with NO authentication (--no-auth); anyone who can reach this port gets a terminal", nil
 	}
 	if cfg.tlsCert == "" {
@@ -674,7 +694,7 @@ func run(args []string) int {
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader})
 	if cfg.socket != "" {
 		// D-12：unix 形态启动打印——地址行打 unix:// 前缀 + cfg.socket 原样
 		//（/run/wesh.sock 即得三斜杠形态）；分享链接两行退化为单行提示

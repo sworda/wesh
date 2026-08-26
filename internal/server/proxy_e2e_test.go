@@ -76,7 +76,7 @@ func TestRemoteUserLogging(t *testing.T) {
 
 	dialBadTicket(http.Header{"X-Remote-User": []string{"alice"}})
 	dialBadTicket(http.Header{"X-Remote-User": []string{"c\u0085arol"}}) // C1 NEL 剥离 → carol
-	dialBadTicket(nil)                                                  // 不携头：不出 remote_user 键
+	dialBadTicket(nil)                                                   // 不携头：不出 remote_user 键
 
 	// 同步边：等全部 Attach handler 返回——logEvent 在 handler 内先于返回执行，
 	// WaitGroup happens-before 使 restore() 的 os.Stderr 写与该读同步（05-01 纪律）。

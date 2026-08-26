@@ -63,7 +63,7 @@ func TestSanitizeRemoteUser(t *testing.T) {
 // XFF 取链首 IP（strings.Cut(",") 首段 + TrimSpace，空则回退 TCP 对端现状
 // 取值——SplitHostPort host 部分，失败回退整串）；remote 在 trust 时换
 // clientIP（logEvent remote 字段换键），非 trust 时 r.RemoteAddr 原样
-//（host:port 现状形态）；remoteUser 仅在 trust 且头存在时出 sanitize 值。
+// （host:port 现状形态）；remoteUser 仅在 trust 且头存在时出 sanitize 值。
 func TestProxyClientIP(t *testing.T) {
 	newReq := func(remoteAddr string, headers map[string]string) *http.Request {
 		r := &http.Request{RemoteAddr: remoteAddr, Header: http.Header{}}

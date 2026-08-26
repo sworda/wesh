@@ -91,22 +91,29 @@ If you opened a share link and were prompted to log in, the link is invalid or h
 // （websocket.StatusCode 底层 int，三要素结构不变，PATTERNS Shared Patterns 裁决）。
 // Hello 侧节流闸仍用 allow（无 Retry-After 需求），两处闸共享同一 store（D-08）。
 // 401/403/429 body 恒为通用文案——不回显用户名、Origin 值或任何请求细节。
-func basicAuth(next http.Handler, creds []Credential, th *throttleStore) http.Handler {
+//
+// 07-03（SEC-07，D-15/D-17/D-20）：p 为反代信任配置——ip 节流键走 p.clientIP
+// （trust 开启时换 XFF 链首，与 Attach halfOpen/checkTicket 键同源），401/429
+// logEvent 的 remote 走 p.remote 并携 p.remoteUser 第四字段（审计归因）。
+// D-17 正交红线：auth-header 值只做记录——绝不进入本函数的认证/授权判定
+// （matchCredential/throttle 判定与 p 零数据流），伪造头不能绕过 Basic 检查
+// （TestAuthHeaderNoAuthBypass 回归锁）。
+func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxyInfo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
+		ip := p.clientIP(r)
 		if wait, throttled := th.retryAfter(ip, time.Now()); throttled {
 			// ceil 秒整数向上取整；窗口内 wait>0 故商恒 ≥1。
 			retry := int64((wait + time.Second - 1) / time.Second)
 			w.Header().Set("Retry-After", strconv.FormatInt(retry, 10))
-			logEvent(r.RemoteAddr, websocket.StatusCode(http.StatusTooManyRequests), "throttled")
+			logEvent(p.remote(r), websocket.StatusCode(http.StatusTooManyRequests), "throttled", p.remoteUser(r))
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
-		u, p, ok := r.BasicAuth()
-		if !ok || !matchCredential(creds, u, p) {
+		u, pass, ok := r.BasicAuth()
+		if !ok || !matchCredential(creds, u, pass) {
 			th.recordFail(ip, time.Now())
 			w.Header().Set("WWW-Authenticate", `Basic realm="wesh", charset="UTF-8"`) // RFC 7617
-			logEvent(r.RemoteAddr, websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed)
+			logEvent(p.remote(r), websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed, p.remoteUser(r))
 			http.Error(w, authRequiredBody, http.StatusUnauthorized)
 			return
 		}
