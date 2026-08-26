@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
 status: executing
-stopped_at: Completed 07-03-PLAN.md（auth-header 透传与 XFF 信任闸）
-last_updated: "2026-08-26T02:25:04.063Z"
+stopped_at: Completed 07-04-PLAN.md（子进程管理与降权六 flag）
+last_updated: "2026-08-26T03:59:41.098Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 52
-  completed_plans: 47
+  completed_plans: 48
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 ## Current Position
 
 Phase: 7 — 部署与配置
-Plan: 4 of 8
+Plan: 5 of 8
 Status: Ready to execute
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -110,6 +110,7 @@ Progress: [█████████░] 90%
 | Phase 07-deployment P01 | 35min | 2 tasks | 7 files |
 | Phase 07-deployment P02 | 32min | 2 tasks | 2 files |
 | Phase 07-deployment P03 | 30min | 2 tasks | 8 files |
+| Phase 07-deployment P04 | 1h 20m | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -224,6 +225,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-02]: TestListenSocket 失败回滚子测补 Chown EPERM 注入（Rule 2 覆盖强化）——plan 给定的 Listen 失败注入零残留断言平凡成立；非 root chown uid 1 EPERM 是 T-07-02a Close 自动 unlink mitigation 的真实可达证据（root 环境自动跳过）
 - [Phase ?]: [Phase 07-03]: proxy 测试分文件（白盒 proxy_test.go / 黑盒 proxy_e2e_test.go）——Go 单文件单 package 约束使 plan 单文件四测试组字面不可达，05-04 resize 先例第二次沿用；remote_user 载体范围 = attach 链路事件行全覆盖 + 注册客户端会话事件（kick/pong_timeout/exit_when_empty 家族），未配置时 variadic 空值与现状逐字节一致
 - [Phase ?]: [Phase 07-03]: D-16 警告取合并形态（--auth-header 暴露面警告为主 + --no-auth 裸奔语义同行不丢）；Task 2 字面验收 grep 'clientIP(' 与 Task 1 验收结构性自相矛盾，按意图修正执行（旧自由函数零残留调用，修正版 grep==0）
+- [Phase ?]: [Phase 07-04]: supplementary groups 环境感知策略——root 清空附加组（NoSetGroups=false 最小权限既定语义）；非 root NoSetGroups=true 跳过（非 root 无 CAP_SETGID 清空必 EPERM 实测命中，GOROOT exec_linux.go:496-499 无条件调用；降回自身保留自身附加组零提权面）——plan flagged_assumptions 与免 root 测试要求的矛盾修正，07-08 人工 UAT 复核联动
+- [Phase ?]: [Phase 07-04]: D-22 stop-signal 序列统一出口 stopChildLocked（SignalGroup(stopSignal) + stopTimeout>0 时 AfterFunc 异步补 SIGKILL 不占 hubMu、ESRCH 幂等）——exit-when-empty 两触发点与 07-05 Shutdown 共用同一函数同一对字段，Options 单一通道双写即漂移
+- [Phase ?]: [Phase 07-04]: 信号类行为测试夹具纪律——trap 安装与 detach 信号竞态经落盘标记文件同步（01-03 先例）；trap "" 忽略型经 SIG_IGN 跨 exec 持久整组免疫（初版 setsid 探针受 fish 作业控制干扰误判，真实二进制冒烟修正）；捕获型 trap 特异退出码作证送达（exit 43）
+- [Phase ?]: [Phase 07-04]: SignalHangup 泛化删除的 grep==0 语义边界——方法删除 + 两调用点换 SignalGroup + 测试机械换名 TestSignalGroupHangup + 注释字面同清（05-08 纪律：验收 grep 是源码级机械检查，注释提及旧名同样计数）
 
 ### Pending Todos
 
@@ -243,6 +248,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T02:25:04.038Z
-Stopped at: Completed 07-03-PLAN.md（auth-header 透传与 XFF 信任闸）
+Last session: 2026-08-26T03:59:41.074Z
+Stopped at: Completed 07-04-PLAN.md（子进程管理与降权六 flag）
 Resume file: None

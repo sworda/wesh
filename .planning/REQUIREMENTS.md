@@ -61,8 +61,8 @@
 - [x] **OPS-01**: 监听配置：端口（0=随机并打印实际端口）/绑定地址/UNIX socket（含属主设置）
 - [x] **OPS-02**: 反代子路径挂载（base-path）
 - [ ] **OPS-03**: 自定义首页 HTML
-- [ ] **OPS-04**: 子进程 cwd/TERM/关闭信号可配置（信号发给进程组）
-- [ ] **OPS-05**: 降权运行（setuid/setgid）
+- [x] **OPS-04**: 子进程 cwd/TERM/关闭信号可配置（信号发给进程组）
+- [x] **OPS-05**: 降权运行（setuid/setgid）
 - [ ] **OPS-06**: /healthz 健康检查端点
 - [ ] **OPS-07**: /metrics 监控端点（连接数、会话数、收发字节数）
 - [ ] **OPS-08**: 结构化日志（JSON），含审计事件（认证失败、连接建立/断开、会话生命周期）
@@ -146,8 +146,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-01 | Phase 7 | Complete |
 | OPS-02 | Phase 7 | Complete |
 | OPS-03 | Phase 9 | Pending |
-| OPS-04 | Phase 7 | Pending |
-| OPS-05 | Phase 7 | Pending |
+| OPS-04 | Phase 7 | Complete |
+| OPS-05 | Phase 7 | Complete |
 | OPS-06 | Phase 8 | Pending |
 | OPS-07 | Phase 8 | Pending |
 | OPS-08 | Phase 8 | Pending |
