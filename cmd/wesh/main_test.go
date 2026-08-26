@@ -92,7 +92,14 @@ func TestParseArgs(t *testing.T) {
 		// 字段扩展纪律 03-04 先例）。
 		wantCwd  string // D-21：--cwd 路径原样入 cfg
 		wantTerm string // D-21：--term 原样入 cfg（空串值按未配置处理）
-		wantArgv []string
+		// P7：D-22 --stop-signal/--stop-timeout 断言位（零值语义照 wantWritePolicy/
+		// wantSocketMode 先例：wantStopSignal 零值 = 期望默认 "HUP"；
+		// wantStopSignalSig 零值 = 期望 SIGHUP；wantStopTimeout 零值 = 期望 0
+		// 不补 KILL 纯单信号现状）。
+		wantStopSignal    string         // D-22：--stop-signal 枚举名原样入 cfg
+		wantStopSignalSig syscall.Signal // D-22：parse 期名→信号解析产物
+		wantStopTimeout   time.Duration  // D-22：--stop-timeout 原样入 cfg
+		wantArgv          []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -142,6 +149,15 @@ func TestParseArgs(t *testing.T) {
 		// 会使终端能力丢失——空 = 默认 xterm-256color 现状语义）。
 		{name: "cwd and term", args: []string{"--cwd", "/tmp", "--term", "vt100", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantCwd: "/tmp", wantTerm: "vt100", wantArgv: []string{"bash"}},
 		{name: "term empty treated as unset", args: []string{"--term=", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
+		// D-22：--stop-signal 四枚举逐一断言名→信号解析产物（默认 HUP+SIGHUP 由
+		// 零值语义统一断言覆盖全部既存行）；--stop-timeout 正值原样解析（非法
+		// 枚举名与负值 duration 的 parse 期拒绝在 TestTLSKeyPairError 错误表——
+		// parse 期拒绝既定归属）。
+		{name: "stop-signal HUP explicit", args: []string{"--stop-signal", "HUP", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "HUP", wantStopSignalSig: syscall.SIGHUP, wantArgv: []string{"bash"}},
+		{name: "stop-signal TERM", args: []string{"--stop-signal", "TERM", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "TERM", wantStopSignalSig: syscall.SIGTERM, wantArgv: []string{"bash"}},
+		{name: "stop-signal INT", args: []string{"--stop-signal", "INT", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "INT", wantStopSignalSig: syscall.SIGINT, wantArgv: []string{"bash"}},
+		{name: "stop-signal KILL", args: []string{"--stop-signal", "KILL", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "KILL", wantStopSignalSig: syscall.SIGKILL, wantArgv: []string{"bash"}},
+		{name: "stop-timeout grace", args: []string{"--stop-timeout", "2s", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopTimeout: 2 * time.Second, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -248,6 +264,26 @@ func TestParseArgs(t *testing.T) {
 			if cfg.term != tt.wantTerm {
 				t.Errorf("term = %q, want %q", cfg.term, tt.wantTerm)
 			}
+			// D-22：零值 wantStopSignal = 期望默认 "HUP"、零值 wantStopSignalSig =
+			// 期望 SIGHUP（wantWritePolicy/wantSocketMode 零值语义同款）；
+			// wantStopTimeout 零值 = 期望 0（不补 KILL 纯单信号现状）。
+			wantStopSignal := tt.wantStopSignal
+			if wantStopSignal == "" {
+				wantStopSignal = "HUP"
+			}
+			if cfg.stopSignal != wantStopSignal {
+				t.Errorf("stopSignal = %q, want %q", cfg.stopSignal, wantStopSignal)
+			}
+			wantStopSignalSig := tt.wantStopSignalSig
+			if wantStopSignalSig == 0 {
+				wantStopSignalSig = syscall.SIGHUP
+			}
+			if cfg.stopSignalSig != wantStopSignalSig {
+				t.Errorf("stopSignalSig = %v, want %v", cfg.stopSignalSig, wantStopSignalSig)
+			}
+			if cfg.stopTimeout != tt.wantStopTimeout {
+				t.Errorf("stopTimeout = %v, want %v", cfg.stopTimeout, tt.wantStopTimeout)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -342,6 +378,12 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"socket-mode special bits", []string{"--socket", "/tmp/x.sock", "--socket-mode", "1777", "--", "bash"}, "invalid --socket-mode", ""},
 		{"socket-owner unknown user", []string{"--socket", "/tmp/x.sock", "--socket-owner", "wesh-no-such-user-7f3a", "--", "bash"}, "invalid --socket-owner", ""},
 		{"socket-owner unknown group", []string{"--socket", "/tmp/x.sock", "--socket-owner", "root:wesh-no-such-group-7f3a", "--", "bash"}, "invalid --socket-owner", ""},
+		// D-22：--stop-signal 非法枚举名两族（小写/未知名——文案列合法枚举）与
+		// --stop-timeout 负值（DurationVar 直收下 "-5s" 解析成功，负值检查是
+		// 唯一闸，exitEmptyValue.Set 负值闸同纪律；值非敏感可回显）。
+		{"stop-signal lowercase rejected", []string{"--stop-signal", "term", "--", "bash"}, "invalid --stop-signal", ""},
+		{"stop-signal unknown rejected", []string{"--stop-signal", "USR1", "--", "bash"}, "invalid --stop-signal", ""},
+		{"stop-timeout negative rejected", []string{"--stop-timeout=-5s", "--", "bash"}, "invalid --stop-timeout", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
