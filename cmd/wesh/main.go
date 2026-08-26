@@ -1143,13 +1143,19 @@ func run(args []string) int {
 	// D-23：SIGTERM/SIGINT 捕获 → srv.Shutdown()（1001 优雅下线广播 + stop-signal
 	// 序列，server.go Shutdown 注释）。不调 exitf：Shutdown 是触发源不是 exitf
 	// 分支——进程终结仍由 lifecycle 子进程死亡路径收口（P1 硬约束，零新 exit
-	// 分支）；goroutine 内先等 Done 再 Shutdown，stopSignals 经 defer 注销恢复
-	// 默认（NotifyContext 官方形态，RESEARCH Pattern 7）。挂点在 hs 装配后、
-	// Serve 前——监听已就绪，信号随时到达均走同一关停序列。
+	// 分支）；goroutine 内先等 Done → stopSignals 恢复默认处置 → Shutdown
+	//（NotifyContext 官方推荐形态——07-review WR-01：首次信号后若不恢复默认，
+	// Shutdown 全程（Close 内建最长 10s + stopTimeout）后续 SIGTERM/SIGINT 被
+	// 转发进无人读取的 channel 丢弃，operator 双击 Ctrl+C 强杀失效只能 kill -9；
+	// stopSignals 后第二次信号即按默认动作立即终结进程）。defer 的 stopSignals
+	// 与 goroutine 内调用幂等共存（signal_stop map 删除 + cancel 均可重入，
+	// 正常返回路径双调用无害）。挂点在 hs 装配后、Serve 前——监听已就绪，
+	// 信号随时到达均走同一关停序列。
 	sigCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stopSignals()
 	go func() {
 		<-sigCtx.Done()
+		stopSignals() // WR-01：恢复默认处置——关停期间第二次 SIGTERM/SIGINT 立即强杀
 		srv.Shutdown()
 	}()
 	// D-26：--open 在启动打印完成之后、Serve 之前 goroutine 拉起浏览器（不阻塞
