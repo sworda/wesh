@@ -945,22 +945,36 @@ func validateStartup(cfg config) (warn string, err error) {
 
 // listenSocket 是 --socket 形态的 unix socket listen 序列（D-08/D-09/D-10；
 // run() 上方的纯 helper，isLoopbackBind 同位纪律）：
-// os.Remove → net.Listen("unix") → os.Chmod → uid>=0 时 os.Chown。任一步失败
-// 即 ln.Close() 回滚并返回 error——UnixListener 默认 unlink:true（GOROOT
-// unixsock_posix.go:210-216,230），Close 自动删文件，回滚零残留（T-07-02a/b：
-// Chmod/Chown 失败必须回滚退出而非带病放行）。
+// Lstat 类型闸 → os.Remove → net.Listen("unix") → os.Chmod → uid>=0 时
+// os.Chown。任一步失败即 ln.Close() 回滚并返回 error——UnixListener 默认
+// unlink:true（GOROOT unixsock_posix.go:210-216,230），Close 自动删文件，
+// 回滚零残留（T-07-02a/b：Chmod/Chown 失败必须回滚退出而非带病放行）。
 //
 // 顺序敏感依据（07-RESEARCH Pattern 1，全部 GOROOT 实证）：
 //   - D-10：Go 的 listenStream 直接 syscall.Bind，无 bind 前 unlink——残留
 //     socket 必收 EADDRINUSE，os.Remove 是必需而非保险（systemd Restart= 场景
 //     零人工干预）；文件不存在时忽略 Remove 错误。
+//   - D-10 边界收窄（07-review CR-01）：Remove 前 Lstat 判定类型——存在且
+//     非 socket（普通文件/目录/FIFO/symlink 等）拒绝启动而非删除：D-10 意图
+//     仅为清理残留 IPC 端点，operator 手误指向普通文件（root/systemd 部署下
+//     有权限删除）即静默丢数据，超出决策面；Lstat 不跟随符号链接，symlink
+//     同按非 socket 拒绝（保守方向：不理解的类型一律不删）。错误文案只含
+//     路径与类别（--cwd 预检同纪律，路径非敏感可回显）。
 //   - D-09：socket 文件 mode 由内核定为 0777&~umask，Go 不做任何 chmod——
 //     0660 确定性必须 listen 后显式 Chmod 达成（文件系统权限即认证边界，
 //     权限不得由 umask 漂移决定）；uid<0（owner 未给，-1 哨兵）跳过 Chown。
 //   - Chmod/Chown 与 listening 打印之间的 umask 窗口风险接受（RESEARCH A5）：
 //     调用方在本函数返回后才打地址行，窗口内无客户端被指引。
 func listenSocket(path string, mode os.FileMode, uid, gid int) (net.Listener, error) {
-	_ = os.Remove(path) // D-10：残留即垃圾；不存在忽略（ENOENT 不阻断）
+	// D-10 类型闸（07-review CR-01）：仅残留 socket 端点可 Remove；其他现存
+	// 类型拒绝启动——拒绝经 run() listen 失败通道落地（net.Listen 失败同档，
+	// exit 1 运行时错误 tier），文件内容零触碰。
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("%s exists and is not a socket", path)
+		}
+		_ = os.Remove(path) // D-10：残留 socket 即垃圾；Remove 失败由下方 Listen 报错承载
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, err

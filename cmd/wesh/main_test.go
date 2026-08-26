@@ -852,10 +852,14 @@ func TestBadCertPreflight(t *testing.T) {
 }
 
 // TestListenSocket（07-02，D-08/D-09/D-10 + T-07-02a/b）unix socket listen 序列
-// 四子测：
-//   - 残留清理+可拨通：路径上预建垃圾文件不阻 bind（D-10 listen 前 os.Remove——
-//     Go listenStream 直接 syscall.Bind 无 unlink，GOROOT 实证残留必收
-//     EADDRINUSE，Remove 是必需而非保险）；listen 后 net.Dial("unix") 可建连。
+// 五子测：
+//   - 残留 socket 清理+可拨通：路径上预建真实残留 socket 不阻 bind（D-10
+//     listen 前 os.Remove——Go listenStream 直接 syscall.Bind 无 unlink，
+//     GOROOT 实证残留必收 EADDRINUSE，Remove 是必需而非保险）；listen 后
+//     net.Dial("unix") 可建连。
+//   - 非 socket 文件拒绝且内容保留（07-review CR-01）：普通文件占位 → 拒绝
+//     启动，文件内容零触碰（D-10 意图仅为清理残留 socket 端点——operator
+//     手误指向普通文件不得静默删除，拒绝文案只含路径与类别）。
 //   - 权限位恰为 0660：stat mode.Perm() 断言（D-09 显式 Chmod 达成确定性，
 //     不靠 umask 漂移——文件系统权限即认证边界，T-07-02b）。
 //   - owner=self 属主正确：uid/gid 数字对经 Chown 落到 stat（self 免 root）。
@@ -865,14 +869,22 @@ func TestBadCertPreflight(t *testing.T) {
 //     unlink:true，GOROOT unixsock_posix.go:210-216,230；T-07-02a 回滚纪律：
 //     Chmod/Chown 失败必须回滚退出而非带病放行）。
 func TestListenSocket(t *testing.T) {
-	t.Run("stale file removed and dialable", func(t *testing.T) {
+	t.Run("stale socket removed and dialable", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wesh.sock")
-		if err := os.WriteFile(path, []byte("stale-garbage"), 0o600); err != nil {
-			t.Fatalf("pre-create stale file: %v", err)
+		// 制造真实残留 socket 端点：listen 后 SetUnlinkOnClose(false) 再 Close——
+		// 文件遗留但无进程监听（systemd Restart= 场景 D-10 的清理对象；普通文件
+		// 不再是合法残留——CR-01 起非 socket 类型一律拒绝，见下方子测）。
+		ln0, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatalf("pre-create stale socket: %v", err)
+		}
+		ln0.(*net.UnixListener).SetUnlinkOnClose(false)
+		if err := ln0.Close(); err != nil {
+			t.Fatalf("close stale listener: %v", err)
 		}
 		ln, err := listenSocket(path, 0o660, -1, -1)
 		if err != nil {
-			t.Fatalf("listenSocket over stale file: %v (D-10 os.Remove must clear residue)", err)
+			t.Fatalf("listenSocket over stale socket: %v (D-10 os.Remove must clear residue)", err)
 		}
 		defer func() { _ = ln.Close() }()
 		conn, err := net.Dial("unix", path)
@@ -880,6 +892,28 @@ func TestListenSocket(t *testing.T) {
 			t.Fatalf("net.Dial unix %s: %v", path, err)
 		}
 		_ = conn.Close()
+	})
+	t.Run("non-socket file refused and preserved", func(t *testing.T) {
+		// 07-review CR-01：普通文件占位 → listenSocket 拒绝且文件内容原样保留
+		//（拒绝经 run() listen 失败通道 exit 1——net.Listen 失败同档运行时
+		// 错误 tier；文案只含路径与 "not a socket" 类别）。
+		path := filepath.Join(t.TempDir(), "wesh.sock")
+		content := []byte("precious-operator-data")
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("pre-create regular file: %v", err)
+		}
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err == nil {
+			_ = ln.Close()
+			t.Fatal("listenSocket over regular file = nil error, want refusal (CR-01)")
+		}
+		if !strings.Contains(err.Error(), "not a socket") {
+			t.Errorf("err = %v, want containing %q", err, "not a socket")
+		}
+		got, rerr := os.ReadFile(path)
+		if rerr != nil || !bytes.Equal(got, content) {
+			t.Errorf("file after refusal = %q/%v, want 内容原样保留（未被删除）", got, rerr)
+		}
 	})
 	t.Run("mode exactly 0660", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "wesh.sock")
