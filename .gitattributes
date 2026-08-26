@@ -1,0 +1,2 @@
+# Shell 脚本强制 LF（Windows 侧 checkout 后 scp 到 Linux 执行的场景，CRLF 会破 bash）
+*.sh text eol=lf
