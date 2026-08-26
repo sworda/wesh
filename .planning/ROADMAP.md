@@ -274,7 +274,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 反代子路径挂载（`/wesh/` base-path）下页面与 WS 升级均正常（尾斜杠规范化）；反代注入的可信用户头作为环境变量出现在子进程中
   3. 子进程以指定 cwd/TERM 启动，停止信号发给进程组（可配 TERM→KILL 宽限）；可以指定 uid/gid 降权运行；可选启动后自动打开浏览器
 
-**Plans**: 4/8 plans executed
+**Plans**: 5/8 plans executed
 **Wave 1**
 
 - [x] 07-01-PLAN.md — base-path tracer（OPS-02，D-13/D-14）：--base-path 严格校验 + mux 前缀装配（StripPrefix 仅静态伺服 + 307 免费）+ 前端相对 URL 三改含 share 升级前缀 + dist（OPS-02）
@@ -293,7 +293,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 07-05-PLAN.md — 1001 优雅下线 + --open（D-23 + OPS-11，D-26/D-27）：Server.Shutdown 1001 广播 + SIGTERM/INT 捕获 + proto 1001 启用 + 前端关停面板 + --open headless 跳过（OPS-11）
+- [x] 07-05-PLAN.md — 1001 优雅下线 + --open（D-23 + OPS-11，D-26/D-27）：Server.Shutdown 1001 广播 + SIGTERM/INT 捕获 + proto 1001 启用 + 前端关停面板 + --open headless 跳过（OPS-11）
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
@@ -347,6 +347,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
 | 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
-| 7. 部署与配置 | 4/8 | In Progress|  |
+| 7. 部署与配置 | 5/8 | In Progress|  |
 | 8. 可观测性 | TBD | Not started | - |
 | 9. 发布与打磨 | TBD | Not started | - |

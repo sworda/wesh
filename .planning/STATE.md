@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
 status: executing
-stopped_at: Completed 07-04-PLAN.md（子进程管理与降权六 flag）
-last_updated: "2026-08-26T03:59:41.098Z"
+stopped_at: Completed 07-05-PLAN.md（1001 优雅下线与 --open）
+last_updated: "2026-08-26T04:52:58.874Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 52
-  completed_plans: 48
+  completed_plans: 49
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 ## Current Position
 
 Phase: 7 — 部署与配置
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [█████████░] 92%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -111,6 +111,7 @@ Progress: [█████████░] 92%
 | Phase 07-deployment P02 | 32min | 2 tasks | 2 files |
 | Phase 07-deployment P03 | 30min | 2 tasks | 8 files |
 | Phase 07-deployment P04 | 1h 20m | 3 tasks | 17 files |
+| Phase 07-deployment P05 | 39min | 3 tasks tasks | 8 files files |
 
 ## Accumulated Context
 
@@ -229,6 +230,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-04]: D-22 stop-signal 序列统一出口 stopChildLocked（SignalGroup(stopSignal) + stopTimeout>0 时 AfterFunc 异步补 SIGKILL 不占 hubMu、ESRCH 幂等）——exit-when-empty 两触发点与 07-05 Shutdown 共用同一函数同一对字段，Options 单一通道双写即漂移
 - [Phase ?]: [Phase 07-04]: 信号类行为测试夹具纪律——trap 安装与 detach 信号竞态经落盘标记文件同步（01-03 先例）；trap "" 忽略型经 SIG_IGN 跨 exec 持久整组免疫（初版 setsid 探针受 fish 作业控制干扰误判，真实二进制冒烟修正）；捕获型 trap 特异退出码作证送达（exit 43）
 - [Phase ?]: [Phase 07-04]: SignalHangup 泛化删除的 grep==0 语义边界——方法删除 + 两调用点换 SignalGroup + 测试机械换名 TestSignalGroupHangup + 注释字面同清（05-08 纪律：验收 grep 是源码级机械检查，注释提及旧名同样计数）
+- [Phase ?]: [Phase 07-05]: Shutdown 的 stop-signal 序列取同步 sleep 形态（plan behavior 逐字）——stopChildLocked AfterFunc 异步补 KILL 服务 hubMu 持有方（exit-when-empty），Shutdown 不持 hubMu 同步 sleep 更直白且 KILL 测序确定；字段复用（Options 单一通道）是硬约束，函数复用非约束
+- [Phase ?]: [Phase 07-05]: WS Close 握手测试夹具 readCloseAsync——库 close 回显走读路径，测试客户端无在读 Read 时服务端主动 Close 等满内建 5s 上界；Shutdown 前启动客户端读循环 goroutine（plan behavior「客户端读循环」字面形态），真实浏览器协议栈透明回显无此窗口
+- [Phase ?]: [Phase 07-05]: 测试装配 startShutdownServerWith 本地变体（plan 字面 startTrackedServerWith 按意图修正——srv 句柄不暴露，Shutdown 直接调用面结构性需要）；parseArgs 头注释 28→29 补 --open 行（07-02 先例第二次沿用）
 
 ### Pending Todos
 
@@ -248,6 +252,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T03:59:41.074Z
-Stopped at: Completed 07-04-PLAN.md（子进程管理与降权六 flag）
+Last session: 2026-08-26T04:52:58.849Z
+Stopped at: Completed 07-05-PLAN.md（1001 优雅下线与 --open）
 Resume file: None
