@@ -54,6 +54,10 @@ PORT=""
 for i in $(seq 1 50); do PORT=$(sed -n 's/.*listening on http:\/\/[^ ]*:\([0-9]*\).*/\1/p' "$D/b.log" | head -1); [ -n "$PORT" ] && break; sleep 0.1; done
 [ -n "$PORT" ]
 ok "B6e opener 非零时服务仍启动(listening 行在)" "$?" "0"
+# B6f 轮询化（07-10）：listening 行出现与 goroutine 警告行落盘之间存在到达
+# 竞态——opener 非零退出经 goroutine Wait 异步告警，即时 grep 可能早于落盘。
+# 50×0.1s 轮询与 B1 setup/B6a 既定形态一致；断言面（B6f 语义）不变。
+for i in $(seq 1 50); do grep -qi "warn" "$D/b.log" && break; sleep 0.1; done
 grep -qi "warn" "$D/b.log"
 ok "B6f stderr 警告行存在(D-27 不阻断)" "$?" "0"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/" 2>/dev/null)
