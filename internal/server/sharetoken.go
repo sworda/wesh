@@ -96,12 +96,14 @@ func (s *Server) sharePage(page, root http.Handler) http.HandlerFunc {
 }
 
 // registerShareRoutes 装配分享链接两条路由（凭据与无认证模式均注册——OQ1 token
-// 通道与认证模式正交；page 为 embed handler（有效 token 委托目标），root 为 /
-// 已注册的处理链（无效 token 委托目标））：
-//   - GET /s/{token}/ 页面门禁（r.PathValue("token") 取值）；
+// 通道与认证模式正交；bp 为 base-path 前缀，空串 = 根挂载，07-01 D-13/D-14；
+// page 为 embed handler（有效 token 委托目标），root 为 / 已注册的处理链
+// （无效 token 委托目标））：
+//   - GET {bp}/s/{token}/ 页面门禁（r.PathValue("token") 取值）；
 //   - path-only 405 fallback（Allow: GET）——方法模式内建 405 仅在没有任何其它
 //     模式匹配时触发，会被 "/" 子树吞掉（P3 /api/attach 同款纪律，GOROOT
-//     server.go:2699-2710 n==nil 分支），故显式注册同文 fallback 补齐守卫链。
+//     server.go:2699-2710 n==nil 分支），故显式注册同文 fallback 补齐守卫链；
+//     bp 形态同理（内建 405 会被 bp+"/" 子树吞掉），两注册同带前缀。
 //
 // GOROOT 1.22+ 通配语义三坑登记（RESEARCH Pattern 6，go1.26.3 源码核实）：
 //  1. 尾斜杠 = 匿名多段通配——/s/abc/任意/深度 也命中本模式（token 段取值不受
@@ -113,9 +115,13 @@ func (s *Server) sharePage(page, root http.Handler) http.HandlerFunc {
 //     的暴露面；
 //  3. 单段通配天然限长（22 字符 base64url），路径解析零自写代码
 //     （Don't Hand-Roll 表：正则/手拆路径禁止）。
-func (s *Server) registerShareRoutes(mux *http.ServeMux, page, root http.Handler) {
-	mux.Handle("GET /s/{token}/", s.sharePage(page, root))
-	mux.HandleFunc("/s/{token}/", func(w http.ResponseWriter, _ *http.Request) {
+//
+// bp 形态补登记（07-01）：裸 {bp} 与裸 {bp}/s/{token} 均由同一 matchOrRedirect
+// 机制 307 补斜杠（GOROOT server.go:2687,2721-2745 既有登记同机制——注册
+// bp+"/" 子树与 bp 前缀 share 模式即免费获得，D-14 尾斜杠规范化零自写代码）。
+func (s *Server) registerShareRoutes(mux *http.ServeMux, bp string, page, root http.Handler) {
+	mux.Handle("GET "+bp+"/s/{token}/", s.sharePage(page, root))
+	mux.HandleFunc(bp+"/s/{token}/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	})

@@ -133,6 +133,11 @@ type Server struct {
 	exitEmptyTimer     *time.Timer
 	exiting            bool
 
+	// Phase 7 部署形态装配（07-01，D-13/D-14）：basePath 为 New 装配期固化、
+	// 运行期只读的反代子路径挂载前缀（空串 = 根挂载）；Handler() 注册点统一
+	// 消费，StripPrefix 仅包静态伺服链。
+	basePath string
+
 	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
 }
 
@@ -193,6 +198,10 @@ type Options struct {
 	ShareTokenRW       string
 	ExitWhenEmpty      bool
 	ExitWhenEmptyGrace time.Duration
+	// BasePath 为生产直传字段（07-01 D-13，main --base-path flag 经 parse 期
+	// normalizeBasePath 严格校验后原样透传；零值 = 无前缀根挂载，New 不做任何
+	// 兜底改写——Handler() 按零值装配与现状逐字节一致的注册形态）。
+	BasePath string
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -277,6 +286,8 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// New 装配直传（06-02，D-14；set/grace 分离，grace 负值已在上方钳 0）。
 		exitWhenEmpty:      opts.ExitWhenEmpty,
 		exitWhenEmptyGrace: opts.ExitWhenEmptyGrace,
+		// New 装配直传（07-01，D-13；零值 = 根挂载，无兜底改写）。
+		basePath: opts.BasePath,
 	}
 	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
 	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
@@ -329,6 +340,14 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 // 演示场景兑现）；G-05-7（2026-08-22 裁决）起携错 token 返 401（前端 C-3 承接）。
 // /s/ 两路由凭据与无认证模式均注册（同 OQ1）。
 // 最外层 securityHeaders 包裹全部路由（含 /ws，D-06）。
+// 07-01 base-path 前缀装配（D-13/D-14，RESEARCH Pattern 2）：bp 为 parse 期已
+// 校验值（/wesh 形态，空串 = 根挂载）。StripPrefix 仅包静态伺服链（wh 或
+// basicAuth(wh)——全部 handler 中唯一路径敏感者）；sharePage 自改写
+// r.URL.Path="/"（sharetoken.go:87-96）与 Attach/attachHandler/issueTicketJSON
+// 均路径无关，注册模式串直接带 bp 前缀。注册 bp+"/" 子树后裸 {bp} 由 mux
+// matchOrRedirect 307 补斜杠（GOROOT server.go:2687,2721-2745——D-14 尾斜杠
+// 规范化零自写代码；StripPrefix 404 分支结构性不可达，T-07-01b）；bp==""
+// 时注册形态与现状逐字节一致（零漂移兜底由 TestBasePathEmptyUnchanged 锁定）。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	wh, err := web.Handler()
@@ -338,10 +357,15 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "embedded assets unavailable", http.StatusInternalServerError)
 		})
 	}
+	bp := s.basePath
 	if len(s.credentials) > 0 {
 		root := basicAuth(wh, s.credentials, s.throttle)
-		mux.Handle("/", root)
-		s.registerShareRoutes(mux, wh, root)
+		if bp != "" {
+			mux.Handle(bp+"/", http.StripPrefix(bp, root))
+		} else {
+			mux.Handle("/", root)
+		}
+		s.registerShareRoutes(mux, bp, wh, root)
 		// 分享 token 分支包装（05-06 D-01）：先做 token peek——命中按绑定 mode
 		// 签发（有效 token 优先于 throttle 直接放行，capability 语义：避免 NAT
 		// 出口 IP 误伤持票旁观者，R-03）；未携/错 token 委托原链（401 同文同码
@@ -350,7 +374,7 @@ func (s *Server) Handler() http.Handler {
 		// 对 ticket 核销后的 WS 握手依然生效（纵深不变），跨站表单无从获知
 		// 128bit token，本面无 CSRF 增量。
 		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle), s.origins)
-		mux.Handle("POST /api/attach", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("POST "+bp+"/api/attach", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if s.shareAttach(w, r) == shareHandled {
 				return
 			}
@@ -360,14 +384,20 @@ func (s *Server) Handler() http.Handler {
 		// 没有任何其它模式匹配时触发（GOROOT server.go:2699-2710 的 n==nil 分支）——
 		// 会被 "/" 子树匹配吞掉，故显式注册同文 fallback 补齐守卫链第一闸；
 		// "POST /api/attach" 比 "/api/attach" 更具体，POST 仍走上方完整链。
-		mux.HandleFunc("/api/attach", func(w http.ResponseWriter, _ *http.Request) {
+		//（bp 形态同理——内建 405 会被 bp+"/" 子树吞掉，fallback 同带前缀注册，
+		// RESEARCH Pitfall 4 单侧定义防线。）
+		mux.HandleFunc(bp+"/api/attach", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Allow", http.MethodPost)
 			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		})
 	} else {
-		mux.Handle("/", wh)
-		s.registerShareRoutes(mux, wh, wh) // 无认证模式 page/root 同为 wh——给页无门
-		mux.HandleFunc("POST /api/attach", func(w http.ResponseWriter, r *http.Request) {
+		if bp != "" {
+			mux.Handle(bp+"/", http.StripPrefix(bp, wh))
+		} else {
+			mux.Handle("/", wh)
+		}
+		s.registerShareRoutes(mux, bp, wh, wh) // 无认证模式 page/root 同为 wh——给页无门
+		mux.HandleFunc("POST "+bp+"/api/attach", func(w http.ResponseWriter, r *http.Request) {
 			// OQ1 正交（用户 2026-08-19 裁决）：body 携有效 token → 按绑定 mode
 			// 签发 ticket（ro/rw mode 绑定在无密码演示场景兑现）；未携 token →
 			// 404 探测信号不变（前端直连 WS 既有形态）。
@@ -386,8 +416,20 @@ func (s *Server) Handler() http.Handler {
 				http.NotFound(w, r) // 无认证模式探测信号（404 → 前端跳过 fetch 直连）
 			}
 		})
+		// bp 形态单侧定义防线（07-01，RESEARCH Pitfall 4）：非 POST 打
+		// {bp}/api/attach → 405 + Allow: POST——path-only fallback 显式注册，
+		// 否则落入 bp+"/" 子树经 StripPrefix 漏进 embed FS 的 404（与凭据分支
+		// 守卫链第一闸同文同码）。根挂载（bp==""）不注册本 fallback——无认证
+		// 模式现状 404（embed FS）逐字节保持（零漂移红线），两形态差异由此
+		// 注释锚定。
+		if bp != "" {
+			mux.HandleFunc(bp+"/api/attach", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Allow", http.MethodPost)
+				http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			})
+		}
 	}
-	mux.HandleFunc("/ws", s.Attach)
+	mux.HandleFunc(bp+"/ws", s.Attach)
 	return securityHeaders(mux, s.tlsOn)
 }
 

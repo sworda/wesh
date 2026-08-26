@@ -51,6 +51,8 @@ type config struct {
 	// Phase 4 客户端偏好下发（one-way 公开契约，P2 D-15 同纪律）：
 	clientOptions []clientOption // P4 D-15：--client-option key=value 逐组收集（白名单 + JSON parse 期校验）
 	osc52         bool           // P4 D-12：--osc52 OSC52 剪贴板写开关（默认关，只写不读；安全敏感项仅服务端可开启）
+	// Phase 7 部署形态（D-13，one-way 公开契约，P2 D-15 同纪律）：
+	basePath string // --base-path 反代子路径挂载前缀（parse 期 normalizeBasePath 严格校验；空串 = 未配置，根 "/" 归一为未配置）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -202,6 +204,11 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 立即退出；=duration = 重连宽限。空格分隔形态不传值（可选值惯例，见类型
 	// 注释），help 用法行明示 = 号形态。
 	fs.Var(&cfg.exitEmpty, "exit-when-empty", "exit after all clients disconnect (optional grace: --exit-when-empty=30s; bare = exit immediately)")
+	// D-13：--base-path 反代子路径挂载（one-way 公开契约）——严格模式校验在
+	// Parse 返回处经 normalizeBasePath（NormalizeOrigin 先例形态）：合法值原样、
+	// 根 "/" 归一为未配置、非法值 exit 2；绝不宽容自动修正（输入与生效值分叉
+	// 是配置漂移隐蔽源）。
+	fs.StringVar(&cfg.basePath, "base-path", "", "serve under a sub-path (e.g. /wesh; must start with /, no trailing slash)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -258,6 +265,14 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	if cfg.writePolicy != server.WritePolicyOwner && cfg.writePolicy != server.WritePolicyAll {
 		return cfg, nil, fmt.Errorf("invalid --write-policy %q: must be owner or all", cfg.writePolicy)
 	}
+	// D-13：--base-path parse 期规范化+严格校验（插入点同 03-04 先例——
+	// showVersion 早退之后，write-policy 枚举校验同位）。值非敏感，错误文案
+	// 可回显（exitEmptyValue.Set 同纪律，非 SEC-01 面）。
+	bp, err := normalizeBasePath(cfg.basePath)
+	if err != nil {
+		return cfg, nil, err
+	}
+	cfg.basePath = bp
 	// D-04：cert/key 必须成对——只给其一 parse 期报错（分层纪律：此处报配置
 	// 形态错误，validateStartup 不重复此项）。
 	if (cfg.tlsCert == "") != (cfg.tlsKey == "") {
@@ -302,6 +317,44 @@ func aggregateClientPrefs(opts []clientOption, osc52 bool) (ro, rw json.RawMessa
 	}
 	rwBlob, _ := json.Marshal(m) // rw 档：按全局 --osc52 下发
 	return roBlob, rwBlob
+}
+
+// normalizeBasePath 是 --base-path 的 parse 期规范化+严格校验（D-13，one-way
+// 公开契约；isLoopbackBind 同位纯函数，NormalizeOrigin 先例形态）：空串 → 空串
+// （未配置）；"/" → 空串（根视为未配置，D-13 显式裁决）；合法值原样返回。
+// 拒绝形态（exit 2，绝不宽容自动修正——输入与生效值分叉是配置漂移隐蔽源）：
+//   - 不以 / 开头（wesh）；
+//   - 以 / 结尾（/wesh/——尾斜杠规范化由 mux 307 承担，配置侧不接受）；
+//   - 含 ".."（/wesh/../x）；
+//   - 含连续 "//"（//wesh、/w//esh）；
+//   - 含 [A-Za-z0-9\-._~/] 之外字符（空格/?/#/% 等——% 拒绝使转义序列无从进入，
+//     StripPrefix 精确前缀匹配语义保持）。
+//
+// 错误文案含原输入（值非敏感可回显，exitEmptyValue.Set 同纪律）：parse 期报错
+// 面向部署者，需可定位是哪条值出问题。
+func normalizeBasePath(s string) (string, error) {
+	if s == "" || s == "/" {
+		return "", nil // 未配置 / 根视为未配置（D-13）
+	}
+	if !strings.HasPrefix(s, "/") {
+		return "", fmt.Errorf("invalid --base-path %q: must start with /", s)
+	}
+	if strings.HasSuffix(s, "/") {
+		return "", fmt.Errorf("invalid --base-path %q: must not end with / (root / alone means unset)", s)
+	}
+	if strings.Contains(s, "..") {
+		return "", fmt.Errorf("invalid --base-path %q: must not contain ..", s)
+	}
+	if strings.Contains(s, "//") {
+		return "", fmt.Errorf("invalid --base-path %q: must not contain repeated slashes", s)
+	}
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '_' || r == '~' || r == '/' {
+			continue
+		}
+		return "", fmt.Errorf("invalid --base-path %q: character %q outside URL path safe set [A-Za-z0-9-._~/]", s, r)
+	}
+	return s, nil
 }
 
 // isLoopbackBind 判定 bind 地址是否仅本机可达（RESEARCH Pattern 7 裁决）：
@@ -473,7 +526,7 @@ func run(args []string) int {
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath})
 	// D-07：启动仅打印单行（无 banner/emoji）；port 0 时 Addr 已是实际端口（D-06）。
 	// scheme 分支感知（D-04）：TLS 启用时打印 https://。
 	scheme := "http"
@@ -499,9 +552,14 @@ func run(args []string) int {
 	if ta, ok := ln.Addr().(*net.TCPAddr); ok {
 		sharePort = ta.Port
 	}
-	fmt.Printf("share read-only:  %s://%s/s/%s/\n", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), shareRO)
+	// D-14：分享链接路径含 base-path 前缀（拼串在 hostport 与 /s/ 之间注入
+	// cfg.basePath——空串时与现状逐字节一致）。shareURLRO/shareURLRW 是本打印点
+	// 与 07-05 --open 消费的单一事实源（拼串唯一出口，两消费点不得各自重拼）。
+	shareURLRO := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRO)
+	shareURLRW := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRW)
+	fmt.Printf("share read-only:  %s\n", shareURLRO)
 	if cfg.writable {
-		fmt.Printf("share read-write: %s://%s/s/%s/\n", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), shareRW)
+		fmt.Printf("share read-write: %s\n", shareURLRW)
 	}
 	// 显式 http.Server：ReadHeaderTimeout=5s 盒住预认证 HTTP 层慢 loris（与
 	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
