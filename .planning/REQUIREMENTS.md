@@ -46,7 +46,7 @@
 - [x] **SEC-04**: WS 握手 Origin 允许列表校验，不在列表内拒绝
 - [x] **SEC-05**: TLS 最低 1.2（默认 1.3），合理 cipher 套件，安全响应头（HSTS/X-Content-Type-Options 等）
 - [x] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
-- [ ] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名作为子进程环境变量
+- [x] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名作为子进程环境变量
 - [x] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
 
 ### 资源控制（RES）
@@ -137,7 +137,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEC-04 | Phase 3 | Complete |
 | SEC-05 | Phase 3 | Complete |
 | SEC-06 | Phase 1 | Complete |
-| SEC-07 | Phase 7 | Pending |
+| SEC-07 | Phase 7 | Complete |
 | SEC-08 | Phase 2 | Complete |
 | RES-01 | Phase 2 | Complete |
 | RES-02 | Phase 5 | Complete |

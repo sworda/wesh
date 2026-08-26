@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
 status: executing
-stopped_at: Completed 07-02-PLAN.md（UNIX socket 监听形态）
-last_updated: "2026-08-26T01:32:10.461Z"
+stopped_at: Completed 07-03-PLAN.md（auth-header 透传与 XFF 信任闸）
+last_updated: "2026-08-26T02:25:04.063Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 52
-  completed_plans: 46
+  completed_plans: 47
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 ## Current Position
 
 Phase: 7 — 部署与配置
-Plan: 3 of 8
+Plan: 4 of 8
 Status: Ready to execute
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -109,6 +109,7 @@ Progress: [█████████░] 88%
 | Phase 06-session-lifecycle P07 | 26min | 2 tasks | 7 files |
 | Phase 07-deployment P01 | 35min | 2 tasks | 7 files |
 | Phase 07-deployment P02 | 32min | 2 tasks | 2 files |
+| Phase 07-deployment P03 | 30min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -221,6 +222,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-01]: dist 升级前缀验收 grep 适配引号无关心形态——esbuild 以反引号模板字面量发射 '../../'（现状 /api/attach 同形态），字面量未重命名、引号非断言面（05-09 先例断言面守恒）
 - [Phase ?]: [Phase 07-02]: parseArgs 头注释 flag 计数 17→21 并补 Phase 7 行（Rule 1 文档漂移修复）——07-01 加 --base-path 后计数已陈旧，本 plan 再加三 flag 使漂移扩大；同区域主题直接相关一次修正
 - [Phase ?]: [Phase 07-02]: TestListenSocket 失败回滚子测补 Chown EPERM 注入（Rule 2 覆盖强化）——plan 给定的 Listen 失败注入零残留断言平凡成立；非 root chown uid 1 EPERM 是 T-07-02a Close 自动 unlink mitigation 的真实可达证据（root 环境自动跳过）
+- [Phase ?]: [Phase 07-03]: proxy 测试分文件（白盒 proxy_test.go / 黑盒 proxy_e2e_test.go）——Go 单文件单 package 约束使 plan 单文件四测试组字面不可达，05-04 resize 先例第二次沿用；remote_user 载体范围 = attach 链路事件行全覆盖 + 注册客户端会话事件（kick/pong_timeout/exit_when_empty 家族），未配置时 variadic 空值与现状逐字节一致
+- [Phase ?]: [Phase 07-03]: D-16 警告取合并形态（--auth-header 暴露面警告为主 + --no-auth 裸奔语义同行不丢）；Task 2 字面验收 grep 'clientIP(' 与 Task 1 验收结构性自相矛盾，按意图修正执行（旧自由函数零残留调用，修正版 grep==0）
 
 ### Pending Todos
 
@@ -240,6 +243,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T01:32:10.436Z
-Stopped at: Completed 07-02-PLAN.md（UNIX socket 监听形态）
+Last session: 2026-08-26T02:25:04.038Z
+Stopped at: Completed 07-03-PLAN.md（auth-header 透传与 XFF 信任闸）
 Resume file: None
