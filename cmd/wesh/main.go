@@ -414,8 +414,11 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 值经 sanitize 后只做 logEvent remote_user 审计归因记录，不做任何认证
 	// 决定（D-17 正交——伪造头不能绕过 Basic/ticket/share token 任一检查）；
 	// X-Forwarded-For 同闸采信换 per-IP 键（D-20 单一信任闸，未配置时完全
-	// 忽略）。无 parse 期校验——头名合法性由 HTTP 层 Header.Get 语义自然承载。
-	fs.StringVar(&cfg.authHeader, "auth-header", authHeaderDefault, "trusted reverse-proxy user header name (e.g. X-Remote-User); logged as remote_user, no auth effect")
+	// 忽略）。parse 期校验（07-review CR-03）：凭据载体头名拒绝——配置即信任
+	// 该头值逐事件进 logEvent，指向 Authorization/Cookie 等会把凭据（含
+	// base64）写进 stderr 落 journald，直接击穿 D-03 红线（见 Parse 返回处
+	// 校验段；头名合法性其余面由 HTTP 层 Header.Get 语义自然承载）。
+	fs.StringVar(&cfg.authHeader, "auth-header", authHeaderDefault, "trusted reverse-proxy user header name (e.g. X-Remote-User); logged as remote_user, no auth effect; credential-carrying headers rejected")
 	// D-21：--cwd/--term 子进程工作目录与 TERM（one-way 公开契约）——落
 	// pty.StartOptions 的 Dir/Term（spawn.go 注释预留位 07-04 兑现）；空串 =
 	// 继承服务端 cwd / xterm-256color 现状语义。--cwd 非空时 validateStartup
@@ -559,6 +562,24 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 该形态仅用于值含敏感内容的 --client-option）。
 	if cfg.writePolicy != server.WritePolicyOwner && cfg.writePolicy != server.WritePolicyAll {
 		return cfg, nil, fmt.Errorf("invalid --write-policy %q: must be owner or all", cfg.writePolicy)
+	}
+	// D-18 安全闸（07-review CR-03，SEC-01 值剥离红线族）：--auth-header
+	// 凭据载体头名拒绝——配置即裸信任该头（D-16），其值逐 attach 事件进
+	// logEvent remote_user；指向 Authorization/Proxy-Authorization/Cookie/
+	// Set-Cookie 会把 Basic 凭据（base64）或会话 Cookie 随每个认证事件写进
+	// stderr 落 journald 持久化，直接击穿 D-03「凭据绝不出现在 logEvent」
+	// 红线（proxy.go 注释的「结构性保证」只论证了 token/ticket 进不来，未
+	// 覆盖凭据头名配置——本闸封闭该结构性缺口）。http.CanonicalHeaderKey
+	// 归一后比较（HTTP 头名大小写不敏感，aUtHoRiZaTiOn 同拒）。项目内无
+	// ticket 头可列——ticket 走 Hello 帧、share token 走 /s/ 路径段，结构
+	// 上不经 HTTP 头。拒绝文案只含 flag 名与类别枚举（公开协议常量），不
+	// 回显用户所给值（credErr/clientOptErr 记录式同纪律）。CLI 与配置文件
+	// 来源同闸（配置值经默认值替换机制落 cfg.authHeader 同一终值）。
+	if cfg.authHeader != "" {
+		switch http.CanonicalHeaderKey(cfg.authHeader) {
+		case "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie":
+			return cfg, nil, errors.New("invalid --auth-header: credential-carrying header names are not allowed (Authorization, Proxy-Authorization, Cookie, Set-Cookie)")
+		}
 	}
 	// D-22：--stop-signal 枚举校验（插入点同 03-04 先例——showVersion 早退之后，
 	// write-policy 枚举校验同位）。名→信号映射在 pty 平台文件集中

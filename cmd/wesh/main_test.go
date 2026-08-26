@@ -149,9 +149,11 @@ func TestParseArgs(t *testing.T) {
 		{name: "socket-mode custom", args: []string{"--socket", "/run/wesh.sock", "--socket-mode", "0600", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/run/wesh.sock", wantSocketMode: 0o600, wantArgv: []string{"bash"}},
 		{name: "socket owner self", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
 		{name: "socket owner self group", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username + ":" + grp.Name, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
-		// D-18：--auth-header 头名原样入 cfg（无 parse 期校验——头名合法性由
-		// HTTP 层 Header.Get 语义自然承载；暴露面组合警告归 validateStartup，
-		// TestStartupMatrix D-16 行锁定）；默认值空串由零值语义统一断言。
+		// D-18：--auth-header 头名原样入 cfg（parse 期校验仅凭据载体头名拒绝
+		// 一族——07-review CR-03，拒绝断言在 TestTLSKeyPairError 错误表；头名
+		// 合法性其余面由 HTTP 层 Header.Get 语义自然承载，暴露面组合警告归
+		// validateStartup，TestStartupMatrix D-16 行锁定）；默认值空串由零值
+		// 语义统一断言。
 		{name: "auth-header flag", args: []string{"--auth-header", "X-Remote-User", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantAuthHeader: "X-Remote-User", wantArgv: []string{"bash"}},
 		// D-21：--cwd/--term 原样入 cfg（--cwd stat 预检归 validateStartup，
 		// TestStartupMatrix 锁定）；--term="" 空串值按未配置处理（显式空 TERM
@@ -426,6 +428,15 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"uid above range rejected", []string{"--uid", "4294967296", "--gid", "1000", "--", "bash"}, "invalid --uid", ""},
 		{"gid below range rejected", []string{"--uid", "1000", "--gid", "-2", "--", "bash"}, "invalid --gid", ""},
 		{"gid above range rejected", []string{"--uid", "1000", "--gid", "4294967296", "--", "bash"}, "invalid --gid", ""},
+		// D-18 安全闸（07-review CR-03）：--auth-header 凭据载体头名拒绝——
+		// 配置即信任头值逐事件进 logEvent，指向凭据头即击穿 D-03 红线。
+		// CanonicalHeaderKey 归一大小写不敏感（混合大小写同拒）；拒绝文案
+		// 只含 flag 名与类别枚举（公开协议常量），不回显用户所给值——
+		// forbiddenSub 锁混合大小写原样串零出现。
+		{"auth-header authorization mixed case rejected", []string{"--auth-header", "aUtHoRiZaTiOn", "--", "bash"}, "invalid --auth-header", "aUtHoRiZaTiOn"},
+		{"auth-header proxy-authorization rejected", []string{"--auth-header", "Proxy-Authorization", "--", "bash"}, "invalid --auth-header", ""},
+		{"auth-header cookie rejected", []string{"--auth-header", "Cookie", "--", "bash"}, "invalid --auth-header", ""},
+		{"auth-header set-cookie rejected", []string{"--auth-header", "Set-Cookie", "--", "bash"}, "invalid --auth-header", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -787,6 +798,20 @@ func TestStartupRefusalNoResource(t *testing.T) {
 		}
 		if !strings.Contains(out, "--socket-mode") || !strings.Contains(out, "--socket") {
 			t.Errorf("stderr = %q, want containing both --socket-mode and --socket", out)
+		}
+	})
+	// D-18 安全闸（07-review CR-03）：--auth-header Authorization 凭据载体头名
+	// parse 期拒绝 exit 2（零 listen 零 spawn——parse 期拒绝先于一切资源占用，
+	// 即时返回即证据，TestNoCommandError 同构纪律）。
+	t.Run("auth-header authorization refused", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int {
+			return run([]string{"--auth-header", "Authorization", "--", "true"})
+		})
+		if code != 2 {
+			t.Errorf("run(--auth-header Authorization) = %d, want 2 (parse 期凭据头名拒绝)", code)
+		}
+		if !strings.Contains(out, "invalid --auth-header") {
+			t.Errorf("stderr = %q, want containing %q", out, "invalid --auth-header")
 		}
 	})
 }

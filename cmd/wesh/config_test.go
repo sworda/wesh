@@ -855,6 +855,9 @@ func TestConfigRedLines(t *testing.T) {
 			{"write-policy enum", "write-policy = \"sometimes\"\n", "must be owner or all"},
 			{"base-path strict", "base-path = \"wesh\"\n", "invalid --base-path"},
 			{"tls pair", "tls-cert = \"/tmp/c.pem\"\n", "both --tls-cert and --tls-key"},
+			// 07-review CR-03：配置来源的凭据载体头名与 CLI 同闸拒绝（配置即
+			// 破线的结构性缺口——审查发现场景正是配置文件通道）。
+			{"auth-header credential header", "auth-header = \"Authorization\"\n", "invalid --auth-header"},
 		} {
 			t.Run(row.name, func(t *testing.T) {
 				_, _, err := parseConfigArgs(t, row.toml, nil, "--", "bash")

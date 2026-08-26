@@ -30,7 +30,9 @@ package server
 // 红线（D-03 随新字段延伸，SEC-01）：token/ticket/凭据任何形态（含 base64）
 // 永不作为 remote_user 或任何 logEvent 字段出现——结构性保证：remoteUser
 // 的提取源只能是配置头名对应的 HTTP 头，share token（/s/ 路径段）与 Hello
-// ticket 在结构上不可能进入本提取路径（T-07-03c）。
+// ticket 在结构上不可能进入本提取路径（T-07-03c）；配置头名本身经 parse 期
+// 凭据载体头名拒绝闸（Authorization/Proxy-Authorization/Cookie/Set-Cookie，
+// cmd/wesh/main.go，07-review CR-03）——配置即破线的结构性缺口已封闭。
 //
 // X-Forwarded-For 与配置头名均为不可信输入（信任边界：reverse-proxy → wesh）
 // ——只有 operator 配置 --auth-header 且部署保证 wesh 不直连暴露时才可采信
