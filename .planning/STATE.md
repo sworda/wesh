@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: 部署与配置
 status: executing
-stopped_at: Completed 07-01-PLAN.md（base-path 反代子路径挂载）
-last_updated: "2026-08-26T00:51:06.319Z"
+stopped_at: Completed 07-02-PLAN.md（UNIX socket 监听形态）
+last_updated: "2026-08-26T01:32:10.461Z"
 last_activity: 2026-08-26
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 52
-  completed_plans: 45
+  completed_plans: 46
 state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-24)
 ## Current Position
 
 Phase: 7 — 部署与配置
-Plan: 2 of 8
+Plan: 3 of 8
 Status: Ready to execute
 Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [█████████░] 87%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -108,6 +108,7 @@ Progress: [█████████░] 87%
 | Phase 06-session-lifecycle P06 | 23min | 2 tasks | 1 files |
 | Phase 06-session-lifecycle P07 | 26min | 2 tasks | 7 files |
 | Phase 07-deployment P01 | 35min | 2 tasks | 7 files |
+| Phase 07-deployment P02 | 32min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -218,6 +219,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-01]: 无认证分支 bp 形态补注册 attach path-only 405 fallback（Rule 1 调和）——plan behavior 矩阵对无认证+BasePath 实例断言 405，现状无认证根挂载经 embed FS 404；取「bp 形态注册、根挂载不注册保持零漂移」，Pitfall 4 单侧定义防线落到两分支
 - [Phase ?]: [Phase 07-01]: 非法 --base-path 五族断言落 TestTLSKeyPairError 错误表（parse 期拒绝既定归属），TestParseArgs 只收合法/root 三行（wantBasePath 命名字段扩展，03-04 先例既存行零改动）
 - [Phase ?]: [Phase 07-01]: dist 升级前缀验收 grep 适配引号无关心形态——esbuild 以反引号模板字面量发射 '../../'（现状 /api/attach 同形态），字面量未重命名、引号非断言面（05-09 先例断言面守恒）
+- [Phase ?]: [Phase 07-02]: parseArgs 头注释 flag 计数 17→21 并补 Phase 7 行（Rule 1 文档漂移修复）——07-01 加 --base-path 后计数已陈旧，本 plan 再加三 flag 使漂移扩大；同区域主题直接相关一次修正
+- [Phase ?]: [Phase 07-02]: TestListenSocket 失败回滚子测补 Chown EPERM 注入（Rule 2 覆盖强化）——plan 给定的 Listen 失败注入零残留断言平凡成立；非 root chown uid 1 EPERM 是 T-07-02a Close 自动 unlink mitigation 的真实可达证据（root 环境自动跳过）
 
 ### Pending Todos
 
@@ -237,6 +240,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T00:51:06.294Z
-Stopped at: Completed 07-01-PLAN.md（base-path 反代子路径挂载）
+Last session: 2026-08-26T01:32:10.436Z
+Stopped at: Completed 07-02-PLAN.md（UNIX socket 监听形态）
 Resume file: None

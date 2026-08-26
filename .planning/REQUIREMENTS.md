@@ -58,7 +58,7 @@
 
 ### 部署运维（OPS）
 
-- [ ] **OPS-01**: 监听配置：端口（0=随机并打印实际端口）/绑定地址/UNIX socket（含属主设置）
+- [x] **OPS-01**: 监听配置：端口（0=随机并打印实际端口）/绑定地址/UNIX socket（含属主设置）
 - [x] **OPS-02**: 反代子路径挂载（base-path）
 - [ ] **OPS-03**: 自定义首页 HTML
 - [ ] **OPS-04**: 子进程 cwd/TERM/关闭信号可配置（信号发给进程组）
@@ -143,7 +143,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RES-02 | Phase 5 | Complete |
 | RES-03 | Phase 5 | Complete |
 | RES-04 | Phase 5 | Complete |
-| OPS-01 | Phase 7 | Pending |
+| OPS-01 | Phase 7 | Complete |
 | OPS-02 | Phase 7 | Complete |
 | OPS-03 | Phase 9 | Pending |
 | OPS-04 | Phase 7 | Pending |
