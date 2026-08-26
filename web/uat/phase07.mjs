@@ -27,7 +27,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { mkdtempSync, writeFileSync, chmodSync, statSync, existsSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
@@ -584,6 +584,156 @@ async function s4AuthHeaderXff() {
   }
 }
 
+// ---------- S5：stop-signal 宽限补 KILL（OPS-04 D-22：trap 忽略 TERM + 1s 后 KILL；对照 TERM 即终结） ----------
+async function s5StopSignalGrace() {
+  console.log('S5: stop-signal 宽限（trap "" TERM 忽略 → 1s 宽限补 KILL 退出 255；对照 --stop-signal TERM 无 timeout 即终结 255；计时 <10s 护栏）');
+  // ① 宽限补 KILL：trap "" TERM 整组免疫（SIG_IGN 跨 exec 持久，07-04 实证），
+  // stop-timeout 1s 后 AfterFunc 补 SIGKILL；时序下界 900ms 证宽限真实经过
+  //（TERM 若未被忽略会立即使子进程死亡，elapsed 远小于 900ms），上界 10s 宽松护栏
+  //（plan 字面规格——宽限/退避类场景真实等待，超时上限只做护栏）。
+  const inst = await startWesh(['--stop-signal', 'TERM', '--stop-timeout', '1s', '--exit-when-empty',
+    '--', 'sh', '-c', 'trap "" TERM; sleep 100']);
+  try {
+    const c = await dialHello(inst.port, {});
+    c.ws.close();
+    // close 握手完成 ⇒ 服务端 detach 已发生（reader 收关闭帧后收口）——stop-signal
+    // 序列计时起点已过（phase06.mjs S5① 同款锚定纪律）
+    await waitClose(c.ws, 3000);
+    const t0 = Date.now();
+    const proc = await waitExit(inst.child, 10000);
+    const elapsed = proc === null ? -1 : Date.now() - t0;
+    check('S5a', '宽限补 KILL：wesh 在 900ms..10s 窗口退出且退出状态 255（TERM 忽略 → 1s 后 KILL → accept-255）',
+      proc !== null && proc.code === 255 && elapsed >= 900 && elapsed < 10000,
+      `code=${proc?.code ?? '（未到）'} elapsed=${elapsed}ms`);
+  } finally {
+    inst.kill();
+  }
+  // ② 对照子测：--stop-signal TERM（无 timeout，子进程不 trap）→ TERM 即终结退出 255
+  const inst2 = await startWesh(['--stop-signal', 'TERM', '--exit-when-empty', '--', 'sh', '-c', 'sleep 100']);
+  try {
+    const c = await dialHello(inst2.port, {});
+    c.ws.close();
+    await waitClose(c.ws, 3000);
+    const t0 = Date.now();
+    const proc = await waitExit(inst2.child, 10000);
+    const elapsed = proc === null ? -1 : Date.now() - t0;
+    check('S5b', '对照：TERM 即终结退出 255（无 timeout 纯单信号；<10s 护栏）',
+      proc !== null && proc.code === 255 && elapsed >= 0 && elapsed < 10000,
+      `code=${proc?.code ?? '（未到）'} elapsed=${elapsed}ms`);
+  } finally {
+    inst2.kill();
+  }
+}
+
+// ---------- S6：降权 self（OPS-05 D-24/D-25：id -u == self + HOME/USER 身份环境一致，免 root） ----------
+async function s6DropPrivilegesSelf() {
+  console.log('S6: 降权 self（--uid/--gid 取 process.getuid/getgid → id -u 回读 == self + HOME/USER 与当前用户 passwd 条目一致）');
+  const uid = process.getuid();
+  const gid = process.getgid();
+  const inst = await startWesh(['--uid', String(uid), '--gid', String(gid), '--writable', '--', 'bash', '--norc', '--noprofile']);
+  try {
+    // cols=132 防 80 列折行把断言串截断进 \r\n（\S+ 锚定的前置条件）
+    const c = await dialHello(inst.port, { cols: 132 });
+    // 单行三值回读：uid:HOME:USER——命令回显含 $()/$ 前缀不匹配数字与 / 锚定
+    //（phase06.mjs S6 的 /S6PID=(\d+)/ 数字锚定防回显误命中同款纪律）
+    const base = c.frames.length;
+    sendInput(c.ws, 'echo S6ENV=$(id -u):$HOME:$USER\r');
+    const m = await pollMatch(c.frames, base, /S6ENV=(\d+):(\/\S*):(\S+)/);
+    const info = userInfo();
+    check('S6a', '降权 self：echo 回读 id -u == self uid（Credential 降权全链）',
+      m !== null && Number(m[1]) === uid,
+      `解析=${m !== null} uid相等=${m !== null && Number(m[1]) === uid}`);
+    check('S6b', '身份环境改写：HOME/USER 与当前用户 passwd 条目一致（D-25 LookupId(self) 即当前用户）',
+      m !== null && m[2] === info.homedir && m[3] === info.username,
+      `HOME一致=${m !== null && m[2] === info.homedir} USER一致=${m !== null && m[3] === info.username}`);
+    c.ws.close();
+    await waitClose(c.ws, 3000);
+  } finally {
+    inst.kill();
+  }
+}
+
+// ---------- S7：1001 关停序列（D-23：SIGTERM → close 1001 server_shutting_down → 退出 255） ----------
+async function s7GracefulShutdown1001() {
+  console.log('S7: 1001 优雅下线（dialHello 完成后 SIGTERM → 客户端收 close 1001 + reason server_shutting_down → wesh 15s 护栏内退出 255）');
+  const inst = await startWesh(['--', 'bash', '--norc', '--noprofile']);
+  try {
+    const c = await dialHello(inst.port, {});
+    // SIGTERM 发送点在 dialHello 完成后——握手完成 ⇒ attach 已登记，1001 广播必达；
+    // 收集器先于信号换装（collectUntilClose 接管 onmessage/onclose）
+    const coll = collectUntilClose(c.ws, 15000);
+    process.kill(inst.child.pid, 'SIGTERM');
+    const r = await coll;
+    check('S7a', 'SIGTERM 后客户端收 close 1001 且 reason 含 server_shutting_down（D-23 广播全链）',
+      r.close.code === 1001 && typeof r.close.reason === 'string' && r.close.reason.includes('server_shutting_down'),
+      `code=${r.close.code} reason含机器串=${r.close.reason?.includes('server_shutting_down') ?? false}`);
+    const proc = await waitExit(inst.child, 15000);
+    check('S7b', 'wesh 15s 护栏内退出且退出状态 255（默认 HUP 信号死亡 accept-255 同源）',
+      proc !== null && proc.code === 255, `code=${proc?.code ?? '（未到）'}`);
+  } finally {
+    inst.kill();
+  }
+}
+
+// ---------- S8：--open（OPS-11 D-26/D-27：headless 跳过不阻断 + fake xdg-open argv 断言；真实弹浏览器豁免） ----------
+async function s8OpenBrowser() {
+  console.log('S8: --open（① headless 跳过提示行 + 服务正常；② fake xdg-open PATH 前置断言 argv == rw 分享链接；③ 真实弹浏览器 skip 豁免）');
+  // ① headless 形态：env 清 DISPLAY/WAYLAND_DISPLAY——跳过提示行且服务正常（常态部署形态）
+  const envHeadless = { ...process.env };
+  delete envHeadless.DISPLAY;
+  delete envHeadless.WAYLAND_DISPLAY;
+  const instA = await startWesh(['--open', '--', 'bash', '--norc', '--noprofile'], { env: envHeadless });
+  try {
+    // openBrowser 在启动打印完成后 goroutine 调用——提示行到达略晚于 listening 行，轮询 3s
+    let hint = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 3000 && !hint) {
+      hint = instA.stderrText().includes('no display detected (headless)');
+      if (!hint) await sleep(50);
+    }
+    const respRoot = await fetch(`http://127.0.0.1:${instA.port}/`);
+    check('S8a', 'headless --open：stderr 提示跳过不阻断且服务正常（GET / → 200）',
+      hint && respRoot.status === 200, `提示行=${hint} status=${respRoot.status}`);
+    await respRoot.text();
+  } finally {
+    instA.kill();
+  }
+
+  // ② fake xdg-open：可执行脚本记录 "$@" 落盘 + PATH 前置 + DISPLAY=:99——
+  // 断言 argv == 启动打印的 rw 分享 URL（拼串单一事实源两消费点一致性）。
+  // 红线：URL 含 token——比对在闭包内完成，detail 只报布尔；记录文件随临时目录清理。
+  const tmp = mkTmp('wesh-p7-s8-');
+  try {
+    const recordFile = join(tmp, 'argv.txt');
+    const fakeBin = join(tmp, 'xdg-open');
+    writeFileSync(fakeBin, `#!/bin/sh\nprintf '%s\n' "$@" > "${recordFile}"\n`);
+    chmodSync(fakeBin, 0o755);
+    const envFake = { ...process.env, PATH: `${tmp}:${process.env.PATH}`, DISPLAY: ':99' };
+    delete envFake.WAYLAND_DISPLAY; // DISPLAY 非空即 desktop 分支，清 WAYLAND 排除干扰
+    const instB = await startWesh(['--open', '--writable', '--', 'bash', '--norc', '--noprofile'], { env: envFake });
+    try {
+      let recorded = null;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 5000 && recorded === null) {
+        if (existsSync(recordFile)) recorded = readFileSync(recordFile, 'utf8').trim();
+        if (recorded === null) await sleep(50);
+      }
+      check('S8b', 'fake xdg-open：argv == 启动打印的 rw 分享 URL（闭包内比对，detail 只报布尔）',
+        recorded !== null && recorded === instB.shareRW,
+        `调用到达=${recorded !== null} argv相等=${recorded === instB.shareRW}`);
+    } finally {
+      instB.kill();
+    }
+  } finally {
+    rmTmp(tmp);
+  }
+
+  // ③ 真实弹浏览器：双机拓扑纪律——真实 GUI 属 Windows 工作站人工层（CODEBUDDY.md
+  // 平台原生行为豁免条款）；Linux 开发机无 GUI/浏览器，协议层等价物 = ①② 两断言
+  skip('S8c', '真实弹浏览器拉起与标签页观感',
+    'headless 硬约束——真实 GUI 属 Windows 工作站人工层（CODEBUDDY.md 平台原生行为豁免条款）；协议层等价物 = S8a（headless 跳过）+ S8b（fake xdg-open argv 全等）；人工复核项见 07-08 plan flagged_assumptions');
+}
+
 // 输出自净断言（WR-02/review #7 形态——红线由注释纪律升级为运行时自证）：遍历全部已发
 // detail，断言不含 UAT_CREDENTIAL 值、任一 share token 值（含 '/s/' 链接形态串）与
 // S1 TOML 凭据探针值（同口径 sensitiveTokens 数组）；命中即 FAIL。命中时不回显冒犯
@@ -600,6 +750,10 @@ const scenarios = [
   ['S2', s2UnixSocketRelay],
   ['S3', s3BasePathCross],
   ['S4', s4AuthHeaderXff],
+  ['S5', s5StopSignalGrace],
+  ['S6', s6DropPrivilegesSelf],
+  ['S7', s7GracefulShutdown1001],
+  ['S8', s8OpenBrowser],
 ];
 // 调试场景过滤（PHASE07_ONLY=S1,S3——仅调试用；提交形态恒全场景开启）
 const ONLY = process.env.PHASE07_ONLY?.split(',').map((s) => s.trim()) ?? null;
