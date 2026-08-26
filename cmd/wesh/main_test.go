@@ -103,8 +103,8 @@ func TestParseArgs(t *testing.T) {
 		// P7：D-24 --uid/--gid 断言位。零值 = 期望 -1 未给哨兵（root uid/gid 0
 		// 是合法值，不在本表零值断言面——0 与 -1 的区分由值域拒绝行
 		//（TestTLSKeyPairError）与成对校验行（TestStartupMatrix）承载）。
-		wantUid  int // D-24：--uid 解析产物（默认 -1 不降权）
-		wantGid  int // D-24：--gid 解析产物（默认 -1 不降权）
+		wantUid int // D-24：--uid 解析产物（默认 -1 不降权）
+		wantGid int // D-24：--gid 解析产物（默认 -1 不降权）
 		// P7：D-26 --open 断言位（零值 = 期望 false 默认不开——既存行经此扩展
 		// 零值断言覆盖，命名字段扩展纪律 03-04 先例）。
 		wantOpen bool // D-26：--open 默认 false

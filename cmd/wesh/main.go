@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
 	"os/user"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -77,6 +81,8 @@ type config struct {
 	stopSignal    string         // --stop-signal 枚举名 HUP|TERM|INT|KILL（默认 HUP 现状语义；parse 期经 pty.StopSignalByName 枚举校验）
 	stopTimeout   time.Duration  // --stop-timeout stop-signal 后补发 SIGKILL 的宽限（默认 0 = 不补 KILL 纯单信号现状；负值 parse 期拒绝）
 	stopSignalSig syscall.Signal // --stop-signal 的 parse 期名→信号解析产物（StopSignalByName 命中；Options.StopSignal 接线源）
+	// Phase 7 自动打开浏览器（D-26，one-way 公开契约，P2 D-15 同纪律）：
+	open bool // --open 启动后以系统启动器打开分享链接（--writable 开 rw 链接否则 ro 链接，含 token 免交互；headless 跳过不阻断，--socket×--open 组合矛盾归 validateStartup）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -127,7 +133,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 28 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 29 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -145,7 +151,8 @@ func (v *exitEmptyValue) Set(s string) error {
 // --cwd/--term（07-04 D-21 子进程工作目录与 TERM，stat 预检归 validateStartup）、
 // --stop-signal/--stop-timeout（07-04 D-22 停止信号进程组序列，枚举/负值 parse
 // 期校验）、--uid/--gid（07-04 D-24 数字直通降权，值域 parse 期校验，成对强制
-// 归 validateStartup）。
+// 归 validateStartup）、--open（07-05 D-26 启动后自动开浏览器，headless 跳过
+// 不阻断，--socket×--open 组合矛盾归 validateStartup）。
 // WESH_CREDENTIAL env 兜底单组凭据（D-01：flag 非空时 env 整体忽略，flag 优先）。
 // `--` 后参数原样收集为 argv（D-02）；argv 为空（且非 --version/--help）
 // 返回错误（D-03：无命令不起登录 shell）。
@@ -295,6 +302,15 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// < -1 或 > 4294967295）parse 期拒绝（uint32 转换安全）。
 	fs.IntVar(&cfg.uid, "uid", -1, "numeric uid to drop privileges to (must give both --uid and --gid; resolve names with id -u first)")
 	fs.IntVar(&cfg.gid, "gid", -1, "numeric gid to drop privileges to (must give both --uid and --gid; resolve names with id -g first)")
+	// D-26：--open 自动开浏览器（one-way 公开契约）——operator 视角入口：
+	// --writable 时开 rw 分享链接，否则开 ro 链接（含 token 免交互即打即用，
+	// token 通道绕过 Basic 是 P5 D-01 既定语义；与启动打印消费同一拼串
+	// shareURLRO/shareURLRW 单一事实源）。平台机制 D-27：xdg-open（Linux）/
+	// open（macOS）；headless 检测（无 DISPLAY 且无 WAYLAND_DISPLAY）时 stderr
+	// 提示后跳过不阻断启动（headless 服务器是常态部署形态——--open 本质是
+	// 桌面便利功能）；Windows 不做（PROJECT Out of Scope）。--socket×--open
+	// 组合矛盾归 validateStartup（unix socket 无 http URL 可开，OQ1）。
+	fs.BoolVar(&cfg.open, "open", false, "open the share link in a browser after startup (rw link when --writable, otherwise ro)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: wesh [flags] -- <cmd> [args...]\n")
 		fs.PrintDefaults()
@@ -643,6 +659,15 @@ func validateStartup(cfg config) (warn string, err error) {
 	if (cfg.socketModeSet || cfg.socketOwnerSet) && cfg.socket == "" {
 		return "", errors.New("--socket-mode/--socket-owner require --socket: socket permission flags only apply to unix socket listen")
 	}
+	// D-26/OQ1 组合校验（配置矛盾 fail-fast，同位纪律——纯配置矛盾与 bind 安全
+	// 形态无关，且必须在下方 D-11 socket 早退之前判定否则结构性不可达）：
+	// --socket × --open 同给即拒——unix socket 形态无 host:port 可拼（D-12 分享
+	// 链接已退化为提示行），--open 需要 http(s) URL；给了无法兑现的 flag 组合
+	// = 配置错误（「显式」哲学一贯性，RESEARCH OQ1 建议行落地），双 flag 名进
+	// 文案。值非敏感可回显（exitEmptyValue.Set 同纪律，非 SEC-01 面）。
+	if cfg.open && cfg.socket != "" {
+		return "", errors.New("--open conflicts with --socket: no http URL to open on unix socket listen")
+	}
 	// D-11：unix socket 形态跳过 bind 安全矩阵（isLoopbackBind 早退及其后全部）——
 	// 文件系统权限即认证边界，--socket-mode/--socket-owner 就是访问控制，
 	// loopback 早退同款信任档位；流量不出机，有无凭据/TLS 均放行免警告。
@@ -784,6 +809,10 @@ func run(args []string) int {
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
 	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout})
+	// shareURLRO/shareURLRW 拼串单一事实源（07-01 D-14 既定注释）：启动打印与
+	// 07-05 --open 两消费点共用（两消费点不得各自重拼）；socket 分支保持零值
+	// 空串（该形态 --open 已被 validateStartup 拒绝，下方消费点结构性不可达）。
+	var shareURLRO, shareURLRW string
 	if cfg.socket != "" {
 		// D-12：unix 形态启动打印——地址行打 unix:// 前缀 + cfg.socket 原样
 		//（/run/wesh.sock 即得三斜杠形态）；分享链接两行退化为单行提示
@@ -823,8 +852,8 @@ func run(args []string) int {
 		// D-14：分享链接路径含 base-path 前缀（拼串在 hostport 与 /s/ 之间注入
 		// cfg.basePath——空串时与现状逐字节一致）。shareURLRO/shareURLRW 是本打印点
 		// 与 07-05 --open 消费的单一事实源（拼串唯一出口，两消费点不得各自重拼）。
-		shareURLRO := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRO)
-		shareURLRW := fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRW)
+		shareURLRO = fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRO)
+		shareURLRW = fmt.Sprintf("%s://%s%s/s/%s/", scheme, net.JoinHostPort(shareHost, strconv.Itoa(sharePort)), cfg.basePath, shareRW)
 		fmt.Printf("share read-only:  %s\n", shareURLRO)
 		if cfg.writable {
 			fmt.Printf("share read-write: %s\n", shareURLRW)
@@ -834,6 +863,30 @@ func run(args []string) int {
 	// helloTimeout 同 5s 量级，D-04）；ReadTimeout/WriteTimeout 不设——会误伤
 	// WS 长连接语义（升级后的连接读写在握手后长期空闲/突发均属正常）。
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	// D-23：SIGTERM/SIGINT 捕获 → srv.Shutdown()（1001 优雅下线广播 + stop-signal
+	// 序列，server.go Shutdown 注释）。不调 exitf：Shutdown 是触发源不是 exitf
+	// 分支——进程终结仍由 lifecycle 子进程死亡路径收口（P1 硬约束，零新 exit
+	// 分支）；goroutine 内先等 Done 再 Shutdown，stopSignals 经 defer 注销恢复
+	// 默认（NotifyContext 官方形态，RESEARCH Pattern 7）。挂点在 hs 装配后、
+	// Serve 前——监听已就绪，信号随时到达均走同一关停序列。
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSignals()
+	go func() {
+		<-sigCtx.Done()
+		srv.Shutdown()
+	}()
+	// D-26：--open 在启动打印完成之后、Serve 之前 goroutine 拉起浏览器（不阻塞
+	// Serve——xdg-open/open 失败只警告，openBrowser 注释）；URL 与启动打印同一
+	// 拼串单一事实源（上方 hoisted 局部变量）。--writable 开 rw 链接否则 ro
+	// 链接（operator 视角入口，含 token 免交互，D-26）；--socket×--open 已被
+	// validateStartup 拒绝，unix 分支下本 if 恒 false（shareURL 零值空串不消费）。
+	if cfg.open {
+		url := shareURLRO
+		if cfg.writable {
+			url = shareURLRW
+		}
+		go openBrowser(url)
+	}
 	// D-04/D-06：显式证书才 TLS（parseArgs 已保证成对）——TLSConfig 声明式下限
 	//（MinVersion 1.2 + 显式 AEAD 清单，03-02 组件复用，无二手配置路径）；
 	// 否则明文 Serve（D-03/D-05 矩阵已先行约束 + 上方 stderr 醒目警告）。
@@ -857,6 +910,31 @@ func run(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// openBrowser 以系统启动器打开分享链接（07-05，OPS-11，D-26/D-27，RESEARCH
+// Pattern 8 配方）：desktop（Linux 有 DISPLAY/WAYLAND_DISPLAY，或 darwin）→
+// exec.Command(tool, url).Start() 不等待——tool = linux "xdg-open" /
+// darwin "open"；headless（linux 且 DISPLAY 与 WAYLAND_DISPLAY 均空）→ stderr
+// 提示后跳过不阻断启动（headless 服务器是常态部署形态，--open 本质是桌面便利
+// 功能，D-27）；启动失败仅 stderr 警告不阻断（xdg-open 存在但返回非零的桌面
+// 异常同属用户预期面）。URL 由 wesh 自构（scheme+host:port+base-path+自生成
+// token，run() 拼串单一事实源），exec.Command argv 分离不经 shell（T-07-05b
+// 注入面结构性排除）。headless 检测只在 linux 分支判定，darwin 直接 open——
+// darwin 分支无本机运行时断言（构建标签差异；CI macOS 跑 TestOpenBrowser
+// 同款测试形态即整体 Skip，真实弹窗列 07-08 人工 UAT 清单）。
+func openBrowser(url string) {
+	if runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		fmt.Fprintln(os.Stderr, "wesh: --open: no display detected (headless), skipping browser launch")
+		return
+	}
+	tool := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		tool = "open"
+	}
+	if err := exec.Command(tool, url).Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "wesh: --open: failed to launch browser: %v\n", err) // 只警告不阻断（D-27）
+	}
 }
 
 func main() {
