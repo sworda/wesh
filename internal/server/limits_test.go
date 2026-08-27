@@ -139,15 +139,22 @@ func TestOversize1009(t *testing.T) {
 	// 多客户端推论：超限断开不再触发 exitf——200ms 静默反证。
 	assertNoExit(t, exitCh)
 
-	// D-12② 超限可见性三腿之二：stderr 恰一行 message_too_big 事件，三要素齐全。
+	// D-12② 超限可见性三腿之二：stderr 恰一条 message_too_big JSON 事件，
+	// 三要素齐全（event 名精确相等；code 按 float64 比——08-RESEARCH Pitfall 4）。
 	out := restore()
-	if n := strings.Count(out, "message_too_big"); n != 1 {
-		t.Fatalf("stderr message_too_big count = %d, want exactly 1 (out=%q)", n, out)
+	evs := parseEvents(t, out)
+	if n := countByEvent(evs, "message_too_big"); n != 1 {
+		t.Fatalf("stderr message_too_big event count = %d, want exactly 1 (out=%q)", n, out)
 	}
-	if !strings.Contains(out, "remote=127.0.0.1:") ||
-		!strings.Contains(out, "code=1009") ||
-		!strings.Contains(out, "reason=message_too_big") {
-		t.Fatalf("stderr event missing 三要素 (remote/code/reason): %q", out)
+	var ev map[string]any
+	for _, m := range evs {
+		if m["event"] == "message_too_big" {
+			ev = m
+		}
+	}
+	remote, _ := ev["remote"].(string)
+	if ev["code"] != float64(websocket.StatusMessageTooBig) || !strings.HasPrefix(remote, "127.0.0.1:") {
+		t.Fatalf("message_too_big 事件三要素不符（code/remote）: %v (out=%q)", ev, out)
 	}
 }
 

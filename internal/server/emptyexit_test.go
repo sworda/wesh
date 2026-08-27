@@ -17,7 +17,6 @@ package server_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -231,8 +230,9 @@ func TestExitWhenEmptyLifecycleGate(t *testing.T) {
 // TestExitWhenEmptyTimerAfterLifecycle（review #5 吸收——宽限计时器在 lifecycle
 // 启动后到期不得再触发）：grace=2s → 客户端 close 启动宽限计时（到期 ≈close+2s）→
 // 子进程 ~1s 自然退出先于计时器到期 → lifecycle 置 exiting + exitf(42) → 收 42
-// 恰好一次 → 越过计时器到期点（close+3s 护栏）无第二次收码，且 stderr 无触发事件行
-// "reason=exit_when_empty\n"（行尾锚定区分——exit_when_empty_wait 启动行允许存在）。
+// 恰好一次 → 越过计时器到期点（close+3s 护栏）无第二次收码，且 stderr 无
+// exit_when_empty 触发事件（事件名精确相等区分——exit_when_empty_wait 启动
+// 事件允许存在；JSON 字段语义下两事件名独立，无前缀歧义）。
 // 回归形态 = 计时器回调缺 exiting 复查时向已终结会话补发 SIGHUP 并打误导性触发日志
 // （review『confusing log』关切的可执行闭合）。
 func TestExitWhenEmptyTimerAfterLifecycle(t *testing.T) {
@@ -272,12 +272,13 @@ func TestExitWhenEmptyTimerAfterLifecycle(t *testing.T) {
 	// return（exiting 复查），不触 os.Stderr。
 	waitHandlers()
 	out := restore()
-	if strings.Contains(out, "reason=exit_when_empty\n") {
-		t.Fatalf("stderr contains exit_when_empty trigger line after lifecycle (out=%q) — timer callback missing exiting recheck", out)
+	evs := parseEvents(t, out)
+	if n := countByEvent(evs, "exit_when_empty"); n != 0 {
+		t.Fatalf("stderr contains exit_when_empty trigger event after lifecycle (count=%d, out=%q) — timer callback missing exiting recheck", n, out)
 	}
-	// 启动行允许存在且必须存在（行尾锚定区分的正面证据——wait 行在证明计时器
-	// 真实武装过，触发行零次才有意义）。
-	if !strings.Contains(out, "reason=exit_when_empty_wait\n") {
-		t.Fatalf("stderr missing exit_when_empty_wait start line (out=%q) — grace timer did not start on detach", out)
+	// 启动事件允许存在且必须存在（事件名精确相等的正面证据——wait 事件在
+	// 证明计时器真实武装过，触发事件零次才有意义）。
+	if n := countByEvent(evs, "exit_when_empty_wait"); n != 1 {
+		t.Fatalf("stderr missing exit_when_empty_wait start event (count=%d, out=%q) — grace timer did not start on detach", n, out)
 	}
 }

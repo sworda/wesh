@@ -1,8 +1,8 @@
 package server_test
 
 // proxy_e2e_test.go 锁定 07-03 反代信任特性的黑盒全链行为（SEC-07，D-15..D-20）：
-// TestRemoteUserLogging——attach 链路 logEvent 行携 sanitize 后 remote_user，
-// 不携头行与现状逐字节一致（不出 remote_user 键）；TestXFFThrottleKey——trust
+// TestRemoteUserLogging——attach 链路 logEvent 事件携 sanitize 后 remote_user
+// 字段，不携头事件不出 remote_user 键（与迁移前文本行语义一致）；TestXFFThrottleKey——trust
 // 开启时 throttle per-IP 键换 XFF 链首（不同 XFF 独立计数），未配置时 XFF 完全
 // 忽略（回退 TCP 对端共享计数，D-20 单一信任闸）；TestAuthHeaderNoAuthBypass——
 // 伪造头不绕过 Basic 认证（D-17 正交性回归锁）。
@@ -29,11 +29,11 @@ import (
 )
 
 // TestRemoteUserLogging（D-15/D-19）：Options.AuthHeader 配置后，attach 链路的
-// logEvent 行携 remote_user=<sanitize 后头值>；头缺席时日志行与现状逐字节一致
-// （不出 remote_user 键）。触发事件取 WS attach 携无效 ticket 的 auth_failed
-// 行——attach 链路唯一的确定性即时事件（凭据模式）。C1 控制字符头值（U+0085
-// NEL——Go http 客户端合法可发、服务端按 D-19 剥离）断言 sanitize 在提取点
-// 生效；C0/DEL 在 Go http 客户端侧即被拒（httpguts.ValidHeaderFieldValue），
+// logEvent 事件携 remote_user 键（值为 sanitize 后头值）；头缺席时事件不出
+// remote_user 键（与迁移前文本行语义一致）。触发事件取 WS attach 携无效 ticket
+// 的 auth_failed——attach 链路唯一的确定性即时事件（凭据模式）。C1 控制字符头值
+// （U+0085 NEL——Go http 客户端合法可发、服务端按 D-19 剥离）断言 sanitize 在
+// 提取点生效；C0/DEL 在 Go http 客户端侧即被拒（httpguts.ValidHeaderFieldValue），
 // 剥离覆盖由白盒 TestSanitizeRemoteUser 表驱动锁定。
 func TestRemoteUserLogging(t *testing.T) {
 	restore := captureStderr(t)
@@ -83,17 +83,33 @@ func TestRemoteUserLogging(t *testing.T) {
 	// WaitGroup happens-before 使 restore() 的 os.Stderr 写与该读同步（05-01 纪律）。
 	waitHandlers()
 	out := restore()
-	if n := strings.Count(out, "reason=auth_failed"); n != 3 {
-		t.Fatalf("auth_failed rows = %d, want 3: %q", n, out)
+	evs := parseEvents(t, out)
+	if n := countByEvent(evs, proto.ErrAuthFailed); n != 3 {
+		t.Fatalf("auth_failed events = %d, want 3: %q", n, out)
 	}
-	if !strings.Contains(out, " remote_user=alice\n") {
-		t.Errorf("stderr missing ` remote_user=alice` row: %q", out)
+	withUser := 0
+	var hasAlice, hasCarol bool
+	for _, m := range evs {
+		u, ok := m["remote_user"]
+		if !ok {
+			continue
+		}
+		withUser++
+		if u == "alice" {
+			hasAlice = true
+		}
+		if u == "carol" {
+			hasCarol = true
+		}
 	}
-	if !strings.Contains(out, " remote_user=carol\n") {
-		t.Errorf("stderr missing sanitized ` remote_user=carol` row（C1 剥离证据）: %q", out)
+	if !hasAlice {
+		t.Errorf("stderr missing remote_user=alice event: %q", out)
 	}
-	if n := strings.Count(out, "remote_user="); n != 2 {
-		t.Errorf("remote_user= occurrences = %d, want 2（不携头行与现状逐字节一致不出键）: %q", n, out)
+	if !hasCarol {
+		t.Errorf("stderr missing sanitized remote_user=carol event（C1 剥离证据）: %q", out)
+	}
+	if withUser != 2 {
+		t.Errorf("携 remote_user 键的事件数 = %d, want 2（不携头事件不出键语义保持）: %q", withUser, out)
 	}
 }
 
@@ -221,7 +237,7 @@ func TestShareChannelRemoteUser(t *testing.T) {
 	}
 	placeholder, _ := dialHelloTicket(t, ctx, wsURL, issued.Ticket, 80, 24)
 
-	// Basic 通道 503：有效凭据 + 满员 → 503，事件行携 remote_user=bob。
+	// Basic 通道 503：有效凭据 + 满员 → 503，事件 remote_user 为 bob。
 	resp = postAttach(t, attachURL(wsURL), "share-op", "share-pass", map[string]string{"X-Remote-User": "bob"})
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
@@ -229,7 +245,7 @@ func TestShareChannelRemoteUser(t *testing.T) {
 		t.Fatalf("Basic 通道满员 status = %d, want %d (503)", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 
-	// token 通道 503：body 携有效 ro token + 满员 → 503，事件行携 remote_user=carol
+	// token 通道 503：body 携有效 ro token + 满员 → 503，事件 remote_user 为 carol
 	//（shareAttach → issueTicketJSON 同一签发点，token 分支绕过 Basic 是 D-01
 	// 既定 capability 语义）。
 	tokenBody, err := json.Marshal(struct {
@@ -310,7 +326,7 @@ func TestShareChannelRemoteUser(t *testing.T) {
 	if len(data) == 0 || data[0] != proto.Welcome {
 		t.Fatalf("first frame = %v, want Welcome ('W')", data)
 	}
-	// 稳态事件触发：超限消息 → 库自动 1009 + message_too_big 行携 remote_user=dave。
+	// 稳态事件触发：超限消息 → 库自动 1009 + message_too_big 事件 remote_user 为 dave。
 	if err := c2.Write(ctx, websocket.MessageBinary, make([]byte, proto.ReadLimitPostAuth+1)); err != nil {
 		t.Fatalf("write oversize: %v", err)
 	}
@@ -321,21 +337,38 @@ func TestShareChannelRemoteUser(t *testing.T) {
 	waitHandlers2()
 
 	out := restore()
-	// 双通道 503 同口径：两行 max_clients 各携对应通道的 remote_user。
-	if n := strings.Count(out, "reason=max_clients"); n != 2 {
-		t.Fatalf("max_clients rows = %d, want 2（Basic/token 双通道）: %q", n, out)
+	evs := parseEvents(t, out)
+	// 双通道 503 同口径：两条 max_clients 事件各携对应通道的 remote_user。
+	if n := countByEvent(evs, "max_clients"); n != 2 {
+		t.Fatalf("max_clients events = %d, want 2（Basic/token 双通道）: %q", n, out)
 	}
-	if !strings.Contains(out, "reason=max_clients remote_user=bob") {
-		t.Errorf("Basic 通道 503 行缺 remote_user=bob: %q", out)
+	var bobOK, carolOK, daveOK bool
+	for _, m := range evs {
+		switch m["event"] {
+		case "max_clients":
+			if m["remote_user"] == "bob" {
+				bobOK = true
+			}
+			if m["remote_user"] == "carol" {
+				carolOK = true
+			}
+		case "message_too_big":
+			if m["remote_user"] == "dave" {
+				daveOK = true
+			}
+		}
 	}
-	if !strings.Contains(out, "reason=max_clients remote_user=carol") {
-		t.Errorf("token 通道 503 行缺 remote_user=carol: %q", out)
+	if !bobOK {
+		t.Errorf("Basic 通道 503 事件缺 remote_user=bob: %q", out)
+	}
+	if !carolOK {
+		t.Errorf("token 通道 503 事件缺 remote_user=carol: %q", out)
 	}
 	// token 渠道 WS attach 提取点：稳态事件携 dave。
-	if n := strings.Count(out, "reason=message_too_big"); n != 1 {
-		t.Fatalf("message_too_big rows = %d, want 1: %q", n, out)
+	if n := countByEvent(evs, "message_too_big"); n != 1 {
+		t.Fatalf("message_too_big events = %d, want 1: %q", n, out)
 	}
-	if !strings.Contains(out, "reason=message_too_big remote_user=dave") {
+	if !daveOK {
 		t.Errorf("token 渠道 WS attach 稳态事件缺 remote_user=dave: %q", out)
 	}
 	// D-03 红线延伸运行时自净断言（T-07-03c）：share token 与一次性 ticket

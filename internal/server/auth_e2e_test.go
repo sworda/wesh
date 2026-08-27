@@ -466,12 +466,13 @@ func TestLogRedaction(t *testing.T) {
 	if strings.Contains(strings.ToLower(out), "authorization") {
 		t.Errorf("stderr contains \"authorization\"（大小写不敏感）— 日志红线:\n%s", out)
 	}
-	// 正向对照：事件行确实被捕获（防空捕获假绿）。
-	if !strings.Contains(out, proto.ErrAuthFailed) {
-		t.Errorf("stderr missing auth_failed event line — 捕获失效或事件缺失:\n%s", out)
+	// 正向对照：事件确实被捕获（防空捕获假绿）——JSON 事件名字段精确相等。
+	evs := parseEvents(t, out)
+	if countByEvent(evs, proto.ErrAuthFailed) < 1 {
+		t.Errorf("stderr missing auth_failed event — 捕获失效或事件缺失:\n%s", out)
 	}
-	if !strings.Contains(out, "throttled") {
-		t.Errorf("stderr missing throttled event line — 捕获失效或事件缺失:\n%s", out)
+	if countByEvent(evs, "throttled") < 1 {
+		t.Errorf("stderr missing throttled event — 捕获失效或事件缺失:\n%s", out)
 	}
 
 	// (c) 后服务端关 conn 落入读循环，reader 终结 → 多客户端推论：不触发 exitf。

@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -736,7 +735,7 @@ func TestInputRateLimit(t *testing.T) {
 //     的 *http.Response 状态码断言，handshake_test.go HTTP 层拒绝形态）；③位拒绝
 //     后 halfOpen 不泄漏——MaxHalfOpenPerIP=1 装配下第四人仍达③位收 503 而非被
 //     ②位 429 截（release() 恰好一次的行为化证据：泄漏一个名额即触 429）；stderr
-//     事件含 max_clients reason + code=503（R-10 命名族，captureStderr +
+//     存在 max_clients/code=503 JSON 事件（R-10 命名族，captureStderr +
 //     startTrackedServerWith 同步边先例）。A CloseNow → detach -1 → 第三人
 //     attach 成功（计数对称断言的行为化——Pitfall 4 防线：计数只增不减 = 运行时
 //     间增长静默降低可用容量直至全员 503）。
@@ -830,11 +829,19 @@ func TestMaxClients503(t *testing.T) {
 		// 容量闸不改生命周期：断开不触发 exitf（多客户端推论）。
 		assertNoExit(t, exitCh)
 
-		// R-10 命名族：stderr 事件含 max_clients reason + code=503（HTTP 层事件
-		// code 复用 HTTP 状态码值）。次数不断言——轮询重试次数不确定（每次 503
-		// 均落事件），存在性即锁定事件落点。
+		// R-10 命名族：stderr 存在 event=="max_clients" 且 code==503 的 JSON 事件
+		//（HTTP 层事件 code 复用 HTTP 状态码值；JSON 数字按 float64 比——Pitfall 4）。
+		// 次数不断言——轮询重试次数不确定（每次 503 均落事件），存在性即锁定事件落点。
 		out := restore()
-		if !strings.Contains(out, "max_clients") || !strings.Contains(out, "code=503") {
+		evs := parseEvents(t, out)
+		found := false
+		for _, m := range evs {
+			if m["event"] == "max_clients" && m["code"] == float64(http.StatusServiceUnavailable) {
+				found = true
+				break
+			}
+		}
+		if !found {
 			t.Fatalf("stderr 缺 max_clients/code=503 事件（R-10 命名族）：out=%q", out)
 		}
 	})
