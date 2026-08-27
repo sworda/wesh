@@ -59,6 +59,20 @@ const skip = (id, name, reason) => {
   console.log(`  SKIP  ${id} ${name} — ${reason}`);
 };
 
+// parseEvents：stderr 混合流按行解析 JSON 事件（08-01 D-13 迁移后事件为 slog JSON
+// 单行）——滤非 '{' 起始行（启动行/警告行等人文本成员不算事件）；'{' 起始行非法
+// JSON 即抛错（带行号与行首 120 字符截断）。事件值只作断言材料——detail 只打
+// event 名/布尔/计数（红线保持）。
+const parseEvents = (text) =>
+  text.split('\n').flatMap((line, i) => {
+    if (!line.startsWith('{')) return [];
+    try {
+      return [JSON.parse(line)];
+    } catch (e) {
+      throw new Error(`事件行非合法 JSON（第 ${i + 1} 行）: ${line.slice(0, 120)}: ${e.message}`);
+    }
+  });
+
 // 启动 wesh 实例，解析实际端口与分享链接两行，返回 { port, scheme, shareRO, shareRW, stderrText, kill }。
 // 所有场景显式 --bind 127.0.0.1 + --port 0（loopback 随机端口，与用户服务零干扰）。
 // stdout 三行解析（05-06 启动打印形态）：listening on 行 + share read-only: 行（恒打印）
@@ -423,20 +437,21 @@ async function s6SlowConsumerKick() {
     // stall 客户端：raw socket 手工握手 + masked Hello 注册后 socket.pause() 制造内核级 stall
     const socket = await rawStallClient(inst.port);
 
-    // 断言①：spawn stderr 轮询 10s 内出现 logEvent 行含 code=1013 且 reason=slow_consumer
-    //（logEvent 三要素 remote/code/reason 无敏感串，红线不破）
+    // 断言①：spawn stderr 轮询 10s 内出现 event=="slow_consumer" 且 code==1013 的
+    // JSON 事件行（logEvent 三要素 remote/code/event 无敏感串，红线不破；
+    // 08-02 将折入 detach reason=kick——届时本行二次迁移，08-02 plan 已登记）
     let kickSeen = false;
     let bytesAtKick = 0;
     const t0 = Date.now();
     while (Date.now() - t0 < 10000) {
-      if (inst.stderrText().split('\n').some((l) => l.includes('code=1013') && l.includes('reason=slow_consumer'))) {
+      if (parseEvents(inst.stderrText()).some((m) => m.event === 'slow_consumer' && m.code === 1013)) {
         kickSeen = true;
         bytesAtKick = normalBytes;
         break;
       }
       await sleep(100);
     }
-    check('S6a', 'stall 端 outbox 写满 → stderr logEvent code=1013 reason=slow_consumer（10s 内）',
+    check('S6a', 'stall 端 outbox 写满 → stderr JSON 事件 event=slow_consumer code=1013（10s 内）',
       kickSeen, `命中=${kickSeen} 踢出时已收=${bytesAtKick}`);
 
     // 断言②：同实例第二正常客户端持续推进（踢出后两窗口累积字节单调增长——他人无卡顿）

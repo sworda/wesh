@@ -74,6 +74,20 @@ const skip = (id, name, reason) => {
   console.log(`  SKIP  ${id} ${name} — ${reason}`);
 };
 
+// parseEvents：stderr 混合流按行解析 JSON 事件（08-01 D-13 迁移后事件为 slog JSON
+// 单行）——滤非 '{' 起始行（启动行/警告行等人文本成员不算事件）；'{' 起始行非法
+// JSON 即抛错（带行号与行首 120 字符截断）。事件值只作断言材料——detail 只打
+// event 名/布尔/计数（红线保持）。
+const parseEvents = (text) =>
+  text.split('\n').flatMap((line, i) => {
+    if (!line.startsWith('{')) return [];
+    try {
+      return [JSON.parse(line)];
+    } catch (e) {
+      throw new Error(`事件行非合法 JSON（第 ${i + 1} 行）: ${line.slice(0, 120)}: ${e.message}`);
+    }
+  });
+
 // startWesh 解析 stdout 时把分享链接 token 留入本闭包数组（只作 assertOutputClean
 // 断言材料）——红线：token 值永不进 check detail/控制台输出/汇总行。S1 的 TOML
 // 凭据值探针串同口径入本数组（值同样永不进任何输出）。
@@ -530,12 +544,13 @@ async function s3BasePathCross() {
 }
 
 // ---------- S4：auth-header 记录与 sanitize + XFF 换键（SEC-07：D-15..D-20 真实二进制全链） ----------
-// 事件行触发形态：--exit-when-empty 实例 attach+close → 注册表空 → exit_when_empty
+// 事件触发形态：--exit-when-empty 实例 attach+close → 注册表空 → exit_when_empty
 // logEvent 携最后离开者 remote/remote_user（clients.go maybeExitWhenEmptyLocked——
 // attach+close 链路的确定性即时事件）；进程随后 HUP 收口退出 255（顺带锁定）。
+// 08-01 起事件为 JSON 单行（D-13）——断言走 parseEvents 字段解析，禁止子串/正则。
 async function s4AuthHeaderXff() {
   console.log('S4: auth-header/XFF（remote=XFF 链首 + remote_user=alice；NEL 控制字符剥离 alice 保留；对照组现状 remote=127.0.0.1 系无 remote_user 键）');
-  // ① trust 开启：X-Remote-User + XFF 链 → attach+close → 事件行 remote=链首 + remote_user
+  // ① trust 开启：X-Remote-User + XFF 链 → attach+close → 事件 remote=链首 + remote_user
   const instA = await startWesh(['--auth-header', 'X-Remote-User', '--exit-when-empty', '--', 'bash', '--norc', '--noprofile']);
   try {
     const c = await dialHello(instA.port, {
@@ -547,9 +562,10 @@ async function s4AuthHeaderXff() {
     c.ws.close();
     const proc = await exitP;
     // remote 字段 = XFF 链首（D-20：多值取首个 + TrimSpace）；remote_user = sanitize 后头值
-    const okRemote = instA.stderrText().includes('remote=198.51.100.7 ');
-    const okUser = instA.stderrText().includes('remote_user=alice');
-    const okReason = instA.stderrText().includes('reason=exit_when_empty');
+    const evB = parseEvents(instA.stderrText()).find((m) => m.event === 'exit_when_empty');
+    const okRemote = evB?.remote === '198.51.100.7';
+    const okUser = evB?.remote_user === 'alice';
+    const okReason = evB !== undefined;
     check('S4b', 'attach+close 后事件行：remote=XFF 链首 且 remote_user=alice（reason=exit_when_empty）',
       proc !== null && proc.code === 255 && okRemote && okUser && okReason,
       `code=${proc?.code ?? '（未到）'} remote链首=${okRemote} remote_user=${okUser} reason=${okReason}`);
@@ -572,7 +588,7 @@ async function s4AuthHeaderXff() {
     const exitP = waitExit(instB.child, 10000);
     c.ws.close();
     const proc = await exitP;
-    const aliceKept = instB.stderrText().includes(' remote_user=alice\n');
+    const aliceKept = parseEvents(instB.stderrText()).some((m) => m.remote_user === 'alice');
     const nelLeaked = instB.stderrText().includes('\u0085');
     check('S4c', 'sanitize：NEL 控制字符剥离后 alice 保留且控制字符零泄漏（D-19 日志注入防线）',
       proc !== null && proc.code === 255 && aliceKept && !nelLeaked,
@@ -582,7 +598,7 @@ async function s4AuthHeaderXff() {
   }
 
   // ③ 对照组：无 --auth-header → 同请求日志行为现状（remote=TCP 对端 host:port，
-  // XFF 完全忽略，无 remote_user 键——D-20 单一信任闸零双轨）
+  // XFF 完全忽略，事件无 remote_user 键——D-20 单一信任闸零双轨）
   const instC = await startWesh(['--exit-when-empty', '--', 'bash', '--norc', '--noprofile']);
   try {
     const c = await dialHello(instC.port, {
@@ -591,8 +607,9 @@ async function s4AuthHeaderXff() {
     const exitP = waitExit(instC.child, 10000);
     c.ws.close();
     const proc = await exitP;
-    const loopbackRemote = /remote=127\.0\.0\.1:\d+/.test(instC.stderrText());
-    const noUserKey = !instC.stderrText().includes('remote_user=');
+    const evsC = parseEvents(instC.stderrText());
+    const loopbackRemote = evsC.some((m) => typeof m.remote === 'string' && m.remote.startsWith('127.0.0.1:'));
+    const noUserKey = evsC.length > 0 && evsC.every((m) => !('remote_user' in m));
     const xffIgnored = !instC.stderrText().includes('198.51.100.7');
     check('S4d', '对照组无 --auth-header：remote=127.0.0.1 系（host:port 现状）且无 remote_user 键且 XFF 忽略',
       proc !== null && proc.code === 255 && loopbackRemote && noUserKey && xffIgnored,

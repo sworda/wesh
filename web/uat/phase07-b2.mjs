@@ -16,6 +16,19 @@ const check = (id, name, ok, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${id} ${name}${detail ? ` — ${detail}` : ''}`);
 };
 
+// parseEvents：stderr 混合流按行解析 JSON 事件（08-01 D-13 迁移后事件为 slog JSON
+// 单行）——滤非 '{' 起始行（启动行等人文本成员不算事件）；'{' 起始行非法 JSON 即
+// 抛错（带行号与行首 120 字符截断）。事件值只作断言材料，detail 只打布尔（红线保持）。
+const parseEvents = (text) =>
+  text.split('\n').flatMap((line, i) => {
+    if (!line.startsWith('{')) return [];
+    try {
+      return [JSON.parse(line)];
+    } catch (e) {
+      throw new Error(`事件行非合法 JSON（第 ${i + 1} 行）: ${line.slice(0, 120)}: ${e.message}`);
+    }
+  });
+
 function startWesh(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -127,9 +140,15 @@ try {
   check('B2a', '多值头 WS upgrade 101 + auth_failed close 到达',
     p1.upgraded && p1.close !== null && p1.close.code === 1008,
     `101=${p1.upgraded} code=${p1.close?.code ?? 'none'} reason=${p1.close?.reason ?? ''}`);
-  check('B2b', '事件行 remote_user 取首值(=alice 形状)且无第二值泄漏',
-    /remote_user=alice/.test(tail1) && !/bob/.test(tail1),
-    `首值=${/remote_user=alice/.test(tail1)} 二值缺席=${!/bob/.test(tail1)}`);
+  // B2b：JSON 字段形态——存在 event=="auth_failed" 且 remote_user 字段等于首值
+  // alice 的事件（多值头取首值语义），且无一事件的 remote_user 字段含 bob
+  //（第二值泄漏负断言）。
+  const evs1 = parseEvents(tail1);
+  const firstValOK = evs1.some((m) => m.event === 'auth_failed' && m.remote_user === 'alice');
+  const secondLeak = evs1.some((m) => typeof m.remote_user === 'string' && m.remote_user.includes('bob'));
+  check('B2b', '事件 remote_user 取首值(=alice)且无二值泄漏',
+    firstValOK && !secondLeak,
+    `首值=${firstValOK} 二值缺席=${!secondLeak}`);
 
   // C2: 空串头值 → sanitize 后空 → 事件行不出 remote_user 键（与缺席同态）
   const mark2 = inst.stderrText().length;
