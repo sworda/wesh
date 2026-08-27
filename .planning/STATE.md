@@ -1,45 +1,45 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-current_phase: 07
-current_phase_name: deployment
-status: executing
-stopped_at: Completed 07-10-PLAN.md（G-07-3/G-07-8 闭合；b1b5 7/7 + b6 7/7 + 十脚本全绿）
-last_updated: "2026-08-26T14:27:39.246Z"
-last_activity: 2026-08-26
-last_activity_desc: Phase 07 execution + automated verification complete, human UAT pending
+current_phase: 8
+current_phase_name: 可观测性
+status: planning
+stopped_at: Phase 07 complete, ready to plan Phase 8
+last_updated: "2026-08-27T03:06:24.596Z"
+last_activity: 2026-08-27
+last_activity_desc: Phase 07 complete, transitioned to Phase 8
+state_head: 2137d0ca7425674ae4da32db3497184a05636602
 progress:
-  total_phases: 7
-  completed_phases: 6
+  total_phases: 9
+  completed_phases: 7
   total_plans: 54
-  completed_plans: 53
-state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
+  completed_plans: 54
+milestone_name: milestone
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-24)
+See: .planning/PROJECT.md (updated 2026-08-27)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 07 — deployment
+**Current focus:** Phase 08 — 可观测性
 
 ## Current Position
 
-Phase: 07 (deployment) — EXECUTING
-Plan: 2 of 10
-Status: Ready to execute
-Last activity: 2026-08-26 — Phase 07 execution started
+Phase: 8 — 可观测性
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-27 — Phase 07 complete, transitioned to Phase 8
 
-Progress: [██████████] 98%
+Progress: [██████████] 54/54 plans
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 44
+- Total plans completed: 54
 - Average duration: -
 - Total execution time: -
 
@@ -53,6 +53,7 @@ Progress: [██████████] 98%
 | 04 | 6 | - | - |
 | 05 | 13 | - | - |
 | 06 | 7 | - | - |
+| 07 | 10 | - | - |
 
 **Recent Trend:**
 
@@ -256,6 +257,7 @@ None yet.
 - [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
 - [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5
 - [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9
+- [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md（1001 hint 与 systemd 自重启形态不匹配 / #status 面板族缺 role="alert" / pre-onopen 1001 落错文案竞态低危）——ship 后清零路由
 
 ## Deferred Items
 
@@ -265,6 +267,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-26T14:27:39.219Z
-Stopped at: Completed 07-10-PLAN.md（G-07-3/G-07-8 闭合；b1b5 7/7 + b6 7/7 + 十脚本全绿）
+Last session: 2026-08-27T03:12:23Z
+Stopped at: Phase 07 complete, ready to plan Phase 8
 Resume file: None
