@@ -552,7 +552,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, _ *http.Request) {
 |----------|-------|
 | Framework | Go stdlib `testing`（-race 强制，CI ci.yml 既定） |
 | Config file | 无独立配置——`go.mod` + CI `go test -race -count=1 -v ./...` |
-| Quick run command | `go test ./internal/server/ -run 'TestHealth|TestMetrics|TestEvent|TestLogEvent' -count=1` |
+| Quick run command | `go test ./internal/server/ -run 'TestHealth|TestMetrics|TestEvent|TestLogEvent|TestAttach|TestDetach|TestSession|TestShutdown|TestThrottled|TestAuthFailed' -count=1` |
 | Full suite command | `go vet ./... && go test -race -count=1 ./...` |
 | UAT command | `node web/uat/phase08.mjs [wesh 二进制路径]`（惯例：默认 /tmp/wesh-uat/wesh） |
 
