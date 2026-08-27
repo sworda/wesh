@@ -269,7 +269,7 @@ func writeCounter(b *strings.Builder, name, help string, v int64) {
 | `wesh_mem_alloc_bytes` | gauge | `runtime.ReadMemStats(&m); m.Alloc`（D-03；Alloc==HeapAlloc，GOROOT mstats.go:58-61 注释逐字） |
 | `wesh_build_info{version="..."}` | gauge(=1) | `s.version`（Options.Version，main.go:32 `var version = "dev"` 透传；label 值过 escLabel） |
 
-共 16 series，与 D-01「~15 series」口径吻合。
+共 17 series（outbox max/sum 拆两条计），与 D-01「~15 series」口径吻合。
 
 ### Pattern 3: registry 状态快照的并发形态（Discretion 裁决建议）
 
@@ -511,21 +511,24 @@ func (s *Server) healthzHandler(w http.ResponseWriter, _ *http.Request) {
 
 **除上表外，本 research 全部关键机制声明均为 [VERIFIED: GOROOT/本仓源码 本 session 逐行] 或 [CITED: 官方文档原文]。**
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **log.go 新文件还是就地 server.go 改？**
    - What we know: logEvent 现居 server.go:1071-1077；origin.go/proxy.go/headers.go 的「一关注点一文件」纪律支持独立 log.go（slog 装配 + stderrW + emit helper 内聚）。
    - What's unclear: D-13 的「内部换实现」字面最小改动是就地改 server.go；独立文件是纯组织偏好。
    - Recommendation: 倾向新 `log.go`（logEvent 迁入，注释头登记 D-13/D-15/D-18 决策号，与 proxy.go 先例同构）——但属 planner 自由裁量，两形态零语义差异。
+   - **Resolution (planning 定案）:** 新建 `log.go`——由 08-01-PLAN Task 1 落地（slog 基座 + 动态 stderr writer + logEvent 迁入）。
 
 2. **metrics handler 与 healthz handler 同文件（ops.go）还是分文件（metrics.go/health.go）？**
    - What we know: 两 handler 数据源不同（registry 快照 vs atomic 状态位），但同属「运维端点」关注点。
    - Recommendation: 单 `metrics.go` 装 exposition 三件套 + 独立小文件或同文件装 healthz——planner 定；验收不锚文件名。
+   - **Resolution (planning 定案）:** 分文件——`health.go`（08-03-PLAN）/ `metrics.go`（08-04-PLAN）。
 
 3. **UAT 中 503 draining 的断言窗口有多宽？**
    - What we know: Shutdown 全程 = 1001 广播（Close 内建 5s+5s 上界）+ stop-signal 序列（默认 HUP 无 timeout → 子进程速死 → 进程退出）；draining 窗口 = SIGTERM 到进程退出，默认配置下可能 <1s。
    - What's unclear: phase08.mjs 需要在窗口内完成一次 /healthz 请求——用 `--stop-timeout 3s` 拉长窗口（07 落地的 flag，延迟 KILL 补发）是最稳的夹具形态。
    - Recommendation: UAT 场景用 `--stop-timeout 3` spawn，SIGTERM 后立即轮询 /healthz 断言 503（phase07.mjs S5 stop-signal 宽限夹具先例同思路）。
+   - **Resolution (planning 定案）:** 采纳推荐——phase08.mjs S4 用 `--stop-timeout 3` 拉宽断言窗口（08-05-PLAN 落地）。
 
 ## Environment Availability
 
