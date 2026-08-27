@@ -24,6 +24,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 
 	"github.com/coder/websocket"
 )
@@ -33,9 +34,22 @@ import (
 // 若直接传 os.Stderr 则 captureStderr 置换后事件行写进旧 writer，全部
 // stderr 断言测试结构性失明）。每次 Write 调用时读 os.Stderr 变量是
 // 捕获语义的唯一保真形态。
+//
+// stderrMu 串行化「读 os.Stderr」与「测试置换 os.Stderr」（08-01 门禁修正）：
+// 动态 writer 的读与 captureStderr 的写都是对同一包级变量的裸访问，跨测试
+// 遗留 handler goroutine 的事件写出会与下一测试的置换构成 data race——
+// 读侧 RLock、置换侧（export_test.go LockStderr）Lock，两侧经同一互斥锁
+// 建立 happens-before，race detector 认可。仅在读/置换瞬间持锁，不在整个
+// 捕获期持写锁（否则事件写出全阻塞，waitHandlers 死锁）。
+var stderrMu sync.RWMutex
+
 type stderrW struct{}
 
-func (stderrW) Write(p []byte) (int, error) { return os.Stderr.Write(p) }
+func (stderrW) Write(p []byte) (int, error) {
+	stderrMu.RLock()
+	defer stderrMu.RUnlock()
+	return os.Stderr.Write(p)
+}
 
 // eventLog 包级单例：JSONHandler(stderrW{}, nil)——nil opts 即默认键
 // time/level/msg + LevelInfo 阈值（D-15 恒 INFO 无配置面）。

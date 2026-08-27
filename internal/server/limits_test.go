@@ -88,21 +88,30 @@ func readCloseErr(t *testing.T, c *websocket.Conn, ctx context.Context) websocke
 // CloseError 为准）。恢复时序安全（多客户端形态）：logEvent 在服务端读循环内、
 // 客户端观测 CloseError 之后数微秒写出——TestOversize1009 以 assertNoExit 的
 // 200ms 静默窗口覆盖该余量（远超读循环调度延迟），恢复无竞态。
+//
+// 置换/恢复两个写点经 server.LockStderr 持写锁（08-01 门禁修正）：上一测试
+// 未追踪 server 的遗留 handler goroutine 可能在置换瞬间仍在 stderrW.Write
+// 内读 os.Stderr（实测 ~1/3 命中率的 data race）——写锁与读侧 RLock 互斥，
+// 建立 happens-before。锁仅裹置换语句本身，不在捕获期持有。
 func captureStderr(t *testing.T) func() string {
 	t.Helper()
-	old := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
+	unlock := server.LockStderr()
+	old := os.Stderr
 	os.Stderr = w
+	unlock()
 	restored := false
 	return func() string {
 		if restored {
 			return ""
 		}
 		restored = true
+		unlock := server.LockStderr()
 		os.Stderr = old
+		unlock()
 		_ = w.Close()
 		out, _ := io.ReadAll(r) // 写端已关，读至 EOF（单行事件远小于管道缓冲）
 		_ = r.Close()
