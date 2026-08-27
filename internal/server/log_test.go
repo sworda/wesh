@@ -27,7 +27,7 @@ import (
 )
 
 // parseEvents 把捕获的 stderr 按行解析为事件 map 集——跳过非 '{' 起始行
-//（D-16 启动警告行保持文本 + panic 栈等混合流成员，不得因非 JSON 行 FAIL）；
+// （D-16 启动警告行保持文本 + panic 栈等混合流成员，不得因非 JSON 行 FAIL）；
 // '{' 起始行单行非法 JSON 即 FAIL 并带行内容（格式完整性即审计完整性，
 // T-08-01c 无双轨漂移面的断言侧防线）。
 func parseEvents(t *testing.T, captured string) []map[string]any {

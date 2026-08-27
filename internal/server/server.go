@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -1042,38 +1041,6 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote, remoteUs
 			return
 		}
 	}
-}
-
-// logEvent 打 D-12② stderr 单行事件，三要素齐全：对端 remote、码值 code、
-// reason 机器串。本期覆盖 hello_timeout/empty_frame/frame_before_hello/
-// malformed_hello/version_mismatch/subprotocol_required（assert 兜底）/
-// pong_timeout（02-04 保活）/message_too_big（02-05 超限，经 logIfMessageTooBig
-// 挂预认证首读与稳态读循环两处）/auth_failed（03-03 ticket 核销失败）/
-// throttled（03-03 HTTP 层 429 节流闸，basicAuth）/slow_consumer（05-01 背压
-// 1013 踢出，clients.go kickSlowConsumerLocked）。Phase 8 升级 slog 结构化日志
-// （OPS-08），本期为过渡形态。
-//
-// 07-03（SEC-07，D-15/D-19/D-20）：可选第四字段 remote_user——variadic 末参
-// 非空时行尾追加 ` remote_user=<u>`（空串/缺省不出键，全部既有调用点零改动
-// 编译通过，未配置 --auth-header 时日志行与现状逐字节一致）。值必须经
-// sanitizeRemoteUser 清洗（proxy.go：C0/C1/DEL 剥离 + 128 rune 截断，T-07-03b
-// 日志注入防线）且来源只能是 --auth-header 配置头名对应的 HTTP 头——本函数
-// 不做二次清洗（清洗在提取点完成，单一写口纪律）。
-//
-// 红线（SEC-01）：凭据、ticket、Authorization 头任何形态（含 base64）禁止作为
-// 任何参数传入（ttyd server.c:142 反例）——三要素只有 remote/code/reason；
-// D-03 红线随第四字段延伸：token/ticket/凭据同样禁止作为 remote_user 传入
-// （结构性保证：remote_user 提取源只能是配置头名的 HTTP 头，/s/ 路径 token
-// 与 Hello ticket 不可能进入该提取路径，T-07-03c——见 proxy.go 注释头）。
-// 包级函数（无 Server 状态依赖）：HTTP 层中间件（basicAuth）与 WS 握手段共用
-// 唯一出口；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int，
-// PATTERNS Shared Patterns 裁决）。
-func logEvent(remote string, code websocket.StatusCode, reason string, remoteUser ...string) {
-	if len(remoteUser) > 0 && remoteUser[0] != "" {
-		fmt.Fprintf(os.Stderr, "wesh: close remote=%s code=%d reason=%s remote_user=%s\n", remote, code, reason, remoteUser[0])
-		return
-	}
-	fmt.Fprintf(os.Stderr, "wesh: close remote=%s code=%d reason=%s\n", remote, code, reason)
 }
 
 // logIfMessageTooBig 是 D-12② 超限可见性三腿之二的服务端钩子：库 limitReader
