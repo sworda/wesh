@@ -323,7 +323,26 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `/metrics` 暴露连接数、会话数、收发字节数、每客户端 outbox 深度与踢出计数
   3. 日志为 JSON 结构化输出（slog），认证失败、连接建立/断开、会话生命周期等审计事件可检索；日志中无凭据（回归 P3 红线），用户可控字段已剥离控制字符
 
-**Plans**: TBD
+**Plans**: 5 plans
+**Wave 1**
+
+- [ ] 08-01-PLAN.md — slog 原子迁移：logEvent 迁入 log.go 换 slog JSONHandler + 动态 stderr writer + parseEvents helper + 5 Go 测试与 phase05/07 两 UAT 脚本断言迁移 JSON 行解析（OPS-08，D-13/D-14/D-15/D-16/D-18）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 08-02-PLAN.md — 审计事件目录：attach/detach（client_id + reason 四值）/session_start/session_end/shutdown + throttled retry_after + remote 字段 sanitize 推广（OPS-08，D-17/D-19/D-20/D-21/D-22/D-23）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 08-03-PLAN.md — /healthz：免认证 200 JSON 四字段 + 根路径固定 + 405 成对 + sessionAlive/draining 两 atomic.Bool（OPS-06，D-07/D-09/D-10/D-11/D-12）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 08-04-PLAN.md — /metrics：手写 text 0.0.4 exposition 17 series + hubMu 快照 + 认证闸跟随 + Options.Version + 计数器挂点兑现（OPS-07，D-01..D-06/D-08/D-09/D-12）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 08-05-PLAN.md — 收口：phase08.mjs 六场景 UAT + README 运维节（免认证例外/Prometheus 配方/jq 检索）+ 08-UAT.md + 全量六段式回归（OPS-06/07/08）
 
 ### Phase 9: 发布与打磨
 
