@@ -32,7 +32,7 @@ created: 2026-08-27
 
 - **After every task commit:** Run `go test ./internal/server/ -count=1`（涉及包级快速回归）
 - **After every plan wave:** Run `go vet ./... && go test -race -count=1 ./...`
-- **Before `/gsd:verify-work`:** Full suite must be green + `node web/uat/phase08.mjs` 全场景绿 + 既有 UAT 脚本（phase02..07 及 dom/width/dims 变体）回归全绿（六段式纪律）
+- **Before `/gsd:verify-work`:** Full suite must be green + `node web/uat/phase08.mjs` 全场景绿 + 既有 UAT 脚本（phase02..07 及 phase07-b2/dom/width/dims 变体）回归全绿（六段式纪律）
 - **Max feedback latency:** ~120 seconds（-race 全量）
 
 ---
@@ -43,7 +43,7 @@ created: 2026-08-27
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 08-01-01 | 01 | 1 | OPS-08 | T-08-01c | 事件单行 JSON 六键；captureStderr 动态 writer 捕获成立；无双轨 | 黑盒（captureStderr+parseEvents） | `go test ./internal/server/ -run TestLogEventJSON -count=1 -v` | ❌ 随任务创建（log_test.go） | ⬜ pending |
 | 08-01-02 | 01 | 1 | OPS-08 | T-08-01b | 红线负断言逐字保留；事件断言 JSON 字段化 | 迁移（5 文件） | `go test ./internal/server/ -count=1` | ✅（迁移既有） | ⬜ pending |
-| 08-01-03 | 01 | 1 | OPS-08 | T-08-01b | UAT 断言 JSON 行解析；token/凭据 detail 红线 | UAT 迁移 | `node web/uat/phase05.mjs && node web/uat/phase07.mjs` | ✅（迁移既有） | ⬜ pending |
+| 08-01-03 | 01 | 1 | OPS-08 | T-08-01b | UAT 断言 JSON 行解析；token/凭据 detail 红线 | UAT 迁移 | `node web/uat/phase05.mjs && node web/uat/phase07.mjs && node web/uat/phase07-b2.mjs` | ✅（迁移既有） | ⬜ pending |
 | 08-02-01 | 02 | 2 | OPS-08 | T-08-02c | attach/detach client_id 关联；reason 四值；pinger→detach hubMu 同步边 -race 干净 | 黑盒 ×5 | `go test ./internal/server/ -race -count=1 -run 'TestAttachDetachEvents|TestDetachReason' -v` | ❌ 随任务创建（events_test.go） | ⬜ pending |
 | 08-02-02 | 02 | 2 | OPS-08 | — | session_start(pid)/session_end(exit_code/signal/duration)/shutdown 三事件 | 黑盒 ×3 | `go test ./internal/server/ -race -count=1 -run 'TestSessionEnd|TestShutdownEvent' -v` | ❌ 随任务创建 | ⬜ pending |
 | 08-02-03 | 02 | 2 | OPS-08 | T-08-02a/02b | throttled 携 retry_after；auth_failed 无用户名；remote 字段 C0/C1/DEL 剥离 | 黑盒 ×2 + 白盒 ×1 | `go test ./internal/server/ -race -count=1 -run 'TestThrottledRetryAfter|TestAuthFailedNoUsername|TestRemoteSanitize' -v` | ❌ 随任务创建 | ⬜ pending |
@@ -64,7 +64,7 @@ created: 2026-08-27
 无独立 Wave 0——本 phase 测试基建全部随任务同 plan 创建交付（先例：Phase 7 各 plan 自带测试任务）：
 
 - [x] `parseEvents` helper — 08-01 Task 1 同任务交付（log_test.go）
-- [x] 既有断言迁移清单 — 08-01 Task 2/3（limits/emptyexit/auth_e2e/proxy_e2e/multi + phase05/07.mjs，RESEARCH Runtime State Inventory 全量盘点）
+- [x] 既有断言迁移清单 — 08-01 Task 2/3（limits/emptyexit/auth_e2e/proxy_e2e/multi + phase05/07/07-b2.mjs，RESEARCH Runtime State Inventory 全量盘点）
 - [x] 新测试文件（log_test/events_test/health_test/metrics_test）— 各 plan 任务内创建
 - [x] 无框架安装需求（stdlib + 既有 Node 零依赖纪律；go.mod/go.sum 逐字节不动——08-04 验收锁）
 

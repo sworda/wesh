@@ -10,7 +10,7 @@
 
 ① **slog JSONHandler 在构造时捕获 io.Writer**——若直接 `slog.NewJSONHandler(os.Stderr, ...)` 装配，测试的 `captureStderr`（置换 `os.Stderr` 变量）将捕获不到事件行。现状 `logEvent` 是**调用时解析** `os.Stderr`（`fmt.Fprintf(os.Stderr, ...)`，server.go:1073/1076），迁移必须用一个 Write 时再解析 `os.Stderr` 的动态 writer 保持该语义，否则 05-01 登记的 `-race` 同步纪律（startTrackedServerWith + waitHandlers）下全部 stderr 断言测试结构性失效。② **encoding/json 只转义 C0（<0x20），C1（0x80-0x9F，如 NEL U+0085）原样穿透**且 slog JSONHandler 显式 `SetEscapeHTML(false)`（GOROOT encode.go:1023、json_handler.go:152 逐行核实）——JSON 化消除了换行伪造成员（C0 的 \n→\\n），但 C1 伪造日志行风险**迁移后依然存在**，D-19 的「XFF 链首 remote 字段过 sanitizeRemoteUser 同款清洗」是**必需**而非冗余。③ **detach reason 的跨 goroutine 传递有 happens-before 陷阱**：pinger（pong_timeout）在独立 goroutine，reader 路径 detach 读 reason 时若无同步边即数据竞争（-race 必中）；kick 路径在 hubMu 内天然同步，shutdown 路径可复用 `s.exiting` 判定——三种 reason 三个机制，不能一刀切。④ **metrics handler 读 registry 状态的锁序必须是 hubMu > outbox.mu**（afterDrain 先例 clients.go:451-454，onChunk→trySend 同序）——R-07 单锁纪律内，hubMu 短暂快照 + 逐客户端 outbox.mu 读深度是唯一合法形态，反序同持即死锁。⑤ **CONTEXT canonical_refs 把 logEvent 定位在 auth.go 是错的**——实际在 `internal/server/server.go:1071-1077`（包级函数、全部 18 个调用点唯一出口这一事实成立，只是文件标错；auth.go 只是其中 2 个调用点所在）。planner 不要找错文件。
 
-**Primary recommendation:** 按五条主线拆 plan——(1) slog 原子迁移（logEvent 内部换实现 + 动态 stderr writer + msg="event"/event schema + 5 个 Go 测试文件与 phase05/07 两个 UAT 脚本的断言改 JSON 行解析，D-13 costly 级单点）；(2) 审计事件目录补全（attach/detach+reason/session_start/session_end/shutdown + client_id + throttled retry_after + remote 字段 sanitize 推广）；(3) /healthz（免认证根路径 + 200 JSON + draining 503，两枚新 atomic.Bool）；(4) /metrics（手写 exposition + 计数器挂点 + registry 快照 + version 经 Options 单一通道 + 认证闸跟随）；(5) phase08.mjs UAT + README 运维节 + 收口。依赖序：08-01 先行（日志基座），08-02 次之（事件进 slog 才有形态），08-03/08-04 可并行但 08-04 与 08-02 同触 auth.go 调用点建议顺序执行，08-05 收尾。
+**Primary recommendation:** 按五条主线拆 plan——(1) slog 原子迁移（logEvent 内部换实现 + 动态 stderr writer + msg="event"/event schema + 5 个 Go 测试文件与 phase05/07/07-b2 三个 UAT 脚本的断言改 JSON 行解析，D-13 costly 级单点）；(2) 审计事件目录补全（attach/detach+reason/session_start/session_end/shutdown + client_id + throttled retry_after + remote 字段 sanitize 推广）；(3) /healthz（免认证根路径 + 200 JSON + draining 503，两枚新 atomic.Bool）；(4) /metrics（手写 exposition + 计数器挂点 + registry 快照 + version 经 Options 单一通道 + 认证闸跟随）；(5) phase08.mjs UAT + README 运维节 + 收口。依赖序：08-01 先行（日志基座），08-02 次之（事件进 slog 才有形态），08-03/08-04 可并行但 08-04 与 08-02 同触 auth.go 调用点建议顺序执行，08-05 收尾。
 
 <user_constraints>
 ## User Constraints (from CONTEXT.md)
@@ -388,7 +388,7 @@ func parseEvents(t *testing.T, captured string) []map[string]any {
 | OS-registered state | **None**——无 systemd unit/任务计划随仓库分发（README §部署与配置 给出的是示例 unit，其中 ExecStart 不引用日志格式；systemd 的 stderr→journald 通道对格式透明） | 无（示例 unit 无需变更；journald 侧 JSON 行照常 ingest） |
 | Secrets/env vars | **None**——无凭据名/env 键引用日志格式；红线反断言（凭据不入日志）在新格式下语义不变 | 无 |
 | Build artifacts | **None**——无已安装产物携带旧格式（单二进制每次构建全量替换） | 无 |
-| **测试断言消费者（本仓内）** | 5 个 Go 测试文件（limits/emptyexit/auth_e2e/proxy_e2e/multi_test.go:837）+ 2 个 UAT 脚本（phase05.mjs S6、phase07.mjs S4）断言旧文本行格式——**这是格式迁移的真实消费者面** | **代码编辑**：断言改 JSON 行解析（Pattern 5）；phase02/03/04/06.mjs 不消费事件行（已逐脚本核实——phase06 仅断言 panic 缺席，phase03 仅 wire close reason），零改动 |
+| **测试断言消费者（本仓内）** | 5 个 Go 测试文件（limits/emptyexit/auth_e2e/proxy_e2e/multi_test.go:837）+ 3 个 UAT 脚本（phase05.mjs S6、phase07.mjs S4、phase07-b2.mjs B2b）断言旧文本行格式——**这是格式迁移的真实消费者面** | **代码编辑**：断言改 JSON 行解析（Pattern 5）；phase02/03/04/06.mjs 不消费事件行（已逐脚本核实——phase06 仅断言 panic 缺席，phase03 仅 wire close reason），零改动；phase07-b3.mjs 与 phase05-flood-driver.mjs 已逐脚本核实为非消费者（无事件行断言），零改动 |
 
 ## Common Pitfalls
 
@@ -586,7 +586,7 @@ func (s *Server) healthzHandler(w http.ResponseWriter, _ *http.Request) {
 - [ ] `internal/server/` 新测试文件（healthz/metrics/events 三组，命名随 plan）
 - [ ] `parseEvents` helper（Pattern 5）——limits_test.go 或新 log_test helper 文件；captureStderr 本体零改动
 - [ ] 既有断言迁移清单（本 research Runtime State Inventory 末行全量盘点：limits_test.go:144-149、emptyexit_test.go:275-281、auth_e2e_test.go:457-474、proxy_e2e_test.go:86-95/325-347、multi_test.go:837）
-- [ ] UAT 脚本迁移：phase05.mjs S6（`code=1013 && reason=slow_consumer` 行断言 → JSON detach 事件 reason=kick + 1013 关闭帧既有断言保持）、phase07.mjs S4（remote=/remote_user=/reason= 子串 → JSON 字段解析）；phase08.mjs 新建
+- [ ] UAT 脚本迁移：phase05.mjs S6（`code=1013 && reason=slow_consumer` 行断言 → JSON detach 事件 reason=kick + 1013 关闭帧既有断言保持）、phase07.mjs S4（remote=/remote_user=/reason= 子串 → JSON 字段解析）、phase07-b2.mjs B2b（remote_user 首值子串 + bob 缺席负断言 → JSON 字段解析；B2d 空值头负断言 JSON 形态下幸存零改动）；phase08.mjs 新建
 - [ ] 无框架安装需求（stdlib + 既有 Node 零依赖纪律）
 
 ## Security Domain
