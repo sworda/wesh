@@ -36,7 +36,8 @@ import (
 // 本 phase 新增测试文件，零波及——checker W3 方案 b 爆炸半径裁断）。
 func startResizeServer(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string, sess *pty.Session) {
 	t.Helper()
-	sess, err := pty.Start(argv)
+	// 零值等价形态（07-04 选项化适配：Uid/Gid -1 = 不降权，Dir/Term 空 = 现状）。
+	sess, err := pty.Start(argv, pty.StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}

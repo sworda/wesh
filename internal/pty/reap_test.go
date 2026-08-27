@@ -15,7 +15,7 @@ import (
 // "reaped: OK"）。darwin 等效语义由 plan 01-04 的 TestKqueue 系列覆盖。
 func TestReap(t *testing.T) {
 	for i := 0; i < 20; i++ {
-		sess, err := Start([]string{"/bin/true"})
+		sess, err := Start([]string{"/bin/true"}, StartOptions{Uid: -1, Gid: -1})
 		if err != nil {
 			t.Fatalf("iter %d: Start: %v", i, err)
 		}

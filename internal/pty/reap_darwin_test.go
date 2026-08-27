@@ -45,7 +45,8 @@ func TestHelperProcess(t *testing.T) {
 }
 
 // spawnHelper 以 argv 标记 spawn 一个 helper 子进程（不经 shell）。env 走与生产
-// 一致的 whitelistEnv() 替换式注入，顺带证明 argv 守卫在白名单注入下必然到达。
+// 一致的 whitelistEnv 替换式注入（07-04 签名选项化：零值等价形态 Term 空/Uid -1），
+// 顺带证明 argv 守卫在白名单注入下必然到达。
 func spawnHelper(t *testing.T, marker string) *exec.Cmd {
 	t.Helper()
 	exe, err := os.Executable()
@@ -53,7 +54,7 @@ func spawnHelper(t *testing.T, marker string) *exec.Cmd {
 		t.Fatalf("os.Executable: %v", err)
 	}
 	cmd := exec.Command(exe, "-test.run=TestHelperProcess", "--", marker)
-	cmd.Env = whitelistEnv()
+	cmd.Env = whitelistEnv("", -1)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("spawn helper %s: %v", marker, err)
 	}

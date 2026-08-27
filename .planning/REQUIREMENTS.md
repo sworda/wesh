@@ -46,7 +46,8 @@
 - [x] **SEC-04**: WS 握手 Origin 允许列表校验，不在列表内拒绝
 - [x] **SEC-05**: TLS 最低 1.2（默认 1.3），合理 cipher 套件，安全响应头（HSTS/X-Content-Type-Options 等）
 - [x] **SEC-06**: 子进程环境变量白名单，不继承服务端全部 env（防密钥泄露进 Web shell）
-- [ ] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名作为子进程环境变量
+- [x] **SEC-07**: 反代 auth-header 透传：可信 HTTP 头注入的用户名记录进服务端审计日志（remote_user 审计归因）
+  - *D-15 修订注记*：原「作为子进程环境变量」语义在 GoTTY 共享进程模型下结构性不成立（PTY 随服务端启动、spawn 时无 HTTP 请求；多客户端共享一个 shell，env 是一次性快照），收窄为服务端审计归因——头值经清洗后只进日志，不做任何认证决定（2026-08-25 Phase 7 CONTEXT D-15 裁决）
 - [x] **SEC-08**: 认证完成前零缓冲分配（防 ttyd 式预认证内存放大/崩溃）
 
 ### 资源控制（RES）
@@ -58,17 +59,17 @@
 
 ### 部署运维（OPS）
 
-- [ ] **OPS-01**: 监听配置：端口（0=随机并打印实际端口）/绑定地址/UNIX socket（含属主设置）
-- [ ] **OPS-02**: 反代子路径挂载（base-path）
+- [x] **OPS-01**: 监听配置：端口（0=随机并打印实际端口）/绑定地址/UNIX socket（含属主设置）
+- [x] **OPS-02**: 反代子路径挂载（base-path）
 - [ ] **OPS-03**: 自定义首页 HTML
-- [ ] **OPS-04**: 子进程 cwd/TERM/关闭信号可配置（信号发给进程组）
-- [ ] **OPS-05**: 降权运行（setuid/setgid）
+- [x] **OPS-04**: 子进程 cwd/TERM/关闭信号可配置（信号发给进程组）
+- [x] **OPS-05**: 降权运行（setuid/setgid）
 - [ ] **OPS-06**: /healthz 健康检查端点
 - [ ] **OPS-07**: /metrics 监控端点（连接数、会话数、收发字节数）
 - [ ] **OPS-08**: 结构化日志（JSON），含审计事件（认证失败、连接建立/断开、会话生命周期）
-- [ ] **OPS-09**: 配置文件支持，CLI 参数覆盖配置文件
+- [x] **OPS-09**: 配置文件支持，CLI 参数覆盖配置文件
 - [ ] **OPS-10**: 单静态二进制发布（linux/darwin × amd64/arm64），前端 embed 内嵌为单 HTML
-- [ ] **OPS-11**: 可选启动后自动打开浏览器
+- [x] **OPS-11**: 可选启动后自动打开浏览器
 
 ## v2 Requirements
 
@@ -137,23 +138,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEC-04 | Phase 3 | Complete |
 | SEC-05 | Phase 3 | Complete |
 | SEC-06 | Phase 1 | Complete |
-| SEC-07 | Phase 7 | Pending |
+| SEC-07 | Phase 7 | Complete |
 | SEC-08 | Phase 2 | Complete |
 | RES-01 | Phase 2 | Complete |
 | RES-02 | Phase 5 | Complete |
 | RES-03 | Phase 5 | Complete |
 | RES-04 | Phase 5 | Complete |
-| OPS-01 | Phase 7 | Pending |
-| OPS-02 | Phase 7 | Pending |
+| OPS-01 | Phase 7 | Complete |
+| OPS-02 | Phase 7 | Complete |
 | OPS-03 | Phase 9 | Pending |
-| OPS-04 | Phase 7 | Pending |
-| OPS-05 | Phase 7 | Pending |
+| OPS-04 | Phase 7 | Complete |
+| OPS-05 | Phase 7 | Complete |
 | OPS-06 | Phase 8 | Pending |
 | OPS-07 | Phase 8 | Pending |
 | OPS-08 | Phase 8 | Pending |
-| OPS-09 | Phase 7 | Pending |
+| OPS-09 | Phase 7 | Complete |
 | OPS-10 | Phase 9 | Pending |
-| OPS-11 | Phase 7 | Pending |
+| OPS-11 | Phase 7 | Complete |
 
 **Coverage:**
 

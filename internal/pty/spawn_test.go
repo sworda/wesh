@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -57,7 +60,7 @@ func awaitSession(t *testing.T, sess *Session, buf *bytes.Buffer) (string, error
 // 给 ReadLoop 读取窗口；`$(id)` 作为 argv 字面量传 sh 的 $0——若 Start 擅自经 shell
 // join，外层 shell 会展开 $(id) 为 uid 串，对抗检测语义不变。
 func TestExecArrayNoShell(t *testing.T) {
-	sess, err := Start([]string{"/bin/sh", "-c", `printf %s "$0"; sleep 0.2`, "$(id)"})
+	sess, err := Start([]string{"/bin/sh", "-c", `printf %s "$0"; sleep 0.2`, "$(id)"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -80,8 +83,8 @@ func TestEnvWhitelist(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-leak-value")
 	t.Setenv("WESH_CREDENTIAL", "test-cred-leak-value")
 
-	// (a) 单元层：白名单构造函数
-	env := whitelistEnv()
+	// (a) 单元层：白名单构造函数（零值等价形态：Term 空 = xterm-256color、Uid -1 = 不降权）
+	env := whitelistEnv("", -1)
 	for _, kv := range env {
 		if strings.Contains(kv, "AWS_SECRET_ACCESS_KEY") {
 			t.Fatalf("whitelistEnv 泄露宿主注入键: %q", kv)
@@ -98,7 +101,7 @@ func TestEnvWhitelist(t *testing.T) {
 	}
 
 	// (b) e2e 层：子进程真实 env 输出
-	sess, err := Start([]string{"/usr/bin/env"})
+	sess, err := Start([]string{"/usr/bin/env"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -124,7 +127,7 @@ func TestEnvWhitelist(t *testing.T) {
 func TestEnvWhitelistEmptyPathFallback(t *testing.T) {
 	t.Setenv("PATH", "")
 	var paths []string
-	for _, kv := range whitelistEnv() {
+	for _, kv := range whitelistEnv("", -1) {
 		if strings.HasPrefix(kv, "PATH=") {
 			paths = append(paths, kv)
 		}
@@ -137,7 +140,7 @@ func TestEnvWhitelistEmptyPathFallback(t *testing.T) {
 // TestSpawnFailKeepsStdio（VALIDATION 1-01-03，Pitfall 1）：spawn 不存在的二进制必须
 // 返回错误，且服务端自身 fd 0/1/2 保持有效——ttyd pty.c:87,112 close(0) 缺陷回归。
 func TestSpawnFailKeepsStdio(t *testing.T) {
-	sess, err := Start([]string{"/nonexistent/wesh-definitely-missing-binary"})
+	sess, err := Start([]string{"/nonexistent/wesh-definitely-missing-binary"}, StartOptions{Uid: -1, Gid: -1})
 	if err == nil {
 		if sess != nil {
 			sess.Close()
@@ -154,4 +157,190 @@ func TestSpawnFailKeepsStdio(t *testing.T) {
 	// 标记日志：向真实 stdout 写一行，实证测试进程 stdio 完好
 	fmt.Fprintln(os.Stdout, "spawn-fail probe: fd 0/1/2 alive, stdio intact")
 	t.Log("spawn 失败后 fd 0/1/2 探测均非 EBADF，stdio 完好")
+}
+
+// TestStartOptionsDir（VALIDATION 07-04，OPS-04，D-21）：opts.Dir 落 cmd.Dir——
+// 白盒断言字段原样落入；e2e 以 sh -c pwd 观测子进程真实工作目录（EvalSymlinks
+// 消解 darwin /var→/private/var 前缀差异，TempDir 跨平台等价断言）。
+func TestStartOptionsDir(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	sess, err := Start([]string{"/bin/sh", "-c", "pwd; sleep 0.2"}, StartOptions{Dir: dir, Uid: -1, Gid: -1})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// 白盒：opts.Dir 落 cmd.Dir 原样（D-21 --cwd 挂点的直接证据）。
+	if sess.Cmd.Dir != dir {
+		t.Fatalf("cmd.Dir = %q, want %q——opts.Dir 未落 cmd.Dir", sess.Cmd.Dir, dir)
+	}
+	out, werr := awaitSession(t, sess, startCollect(sess))
+	if werr != nil {
+		t.Fatalf("sh 退出异常: %v", werr)
+	}
+	if strings.TrimSpace(out) != dir {
+		t.Fatalf("子进程 pwd = %q，want %q——opts.Dir 未落到子进程 cwd", strings.TrimSpace(out), dir)
+	}
+}
+
+// TestStartOptionsTerm（VALIDATION 07-04，OPS-04，D-21）：opts.Term 参数化
+// whitelistEnv 的 TERM= 行——"vt100" 原样落 env 且无第二 TERM 行；空串按未配置
+// 处理回落 "xterm-256color"（--term="" 防显式空 TERM 使终端能力丢失）；e2e 观测
+// 子进程真实 $TERM。
+func TestStartOptionsTerm(t *testing.T) {
+	// 单元层：TERM= 行参数化 + 空串回落默认
+	env := whitelistEnv("vt100", -1)
+	if !slices.Contains(env, "TERM=vt100") {
+		t.Fatalf("whitelistEnv(vt100) 缺 TERM=vt100: %v", env)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "TERM=") && kv != "TERM=vt100" {
+			t.Fatalf("whitelistEnv(vt100) 出现重复/异常 TERM 行: %q in %v", kv, env)
+		}
+	}
+	if !slices.Contains(whitelistEnv("", -1), "TERM=xterm-256color") {
+		t.Fatalf("whitelistEnv(空串) 未回落默认 TERM=xterm-256color: %v", whitelistEnv("", -1))
+	}
+	// e2e 层：子进程真实 $TERM
+	sess, err := Start([]string{"/bin/sh", "-c", `printf %s "$TERM"; sleep 0.2`}, StartOptions{Term: "vt100", Uid: -1, Gid: -1})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	out, werr := awaitSession(t, sess, startCollect(sess))
+	if werr != nil {
+		t.Fatalf("sh 退出异常: %v", werr)
+	}
+	if out != "vt100" {
+		t.Fatalf("子进程 $TERM = %q，want %q", out, "vt100")
+	}
+}
+
+// TestStartZeroValueParity（VALIDATION 07-04，OPS-04 零值等价，D-21/D-24）：未配置
+// 全部四 flag 时 pty.Start 行为与现状逐字节一致——Dir 空 = 继承（cmd.Dir 零值
+// 不设）、Term 空 = xterm-256color（cmd.Env 与 whitelistEnv("", -1) 逐项相等）、
+// Uid -1 = 不降权（SysProcAttr.Credential 不设置；creack/pty 自补 Setsid/Setctty
+// 属现状行为非本 plan 引入）。
+func TestStartZeroValueParity(t *testing.T) {
+	sess, err := Start([]string{"/usr/bin/env"}, StartOptions{Uid: -1, Gid: -1})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if sess.Cmd.Dir != "" {
+		t.Fatalf("零值 opts cmd.Dir = %q, want 空串（继承服务端 cwd 的零值语义）", sess.Cmd.Dir)
+	}
+	if !slices.Equal(sess.Cmd.Env, whitelistEnv("", -1)) {
+		t.Fatalf("零值 opts cmd.Env 与 whitelistEnv(空, -1) 不等价:\n got %v\nwant %v", sess.Cmd.Env, whitelistEnv("", -1))
+	}
+	if sess.Cmd.SysProcAttr != nil && sess.Cmd.SysProcAttr.Credential != nil {
+		t.Fatalf("Uid -1 时 SysProcAttr.Credential = %+v, want nil（不降权现状）", sess.Cmd.SysProcAttr.Credential)
+	}
+	_, werr := awaitSession(t, sess, startCollect(sess))
+	if werr != nil {
+		t.Fatalf("env 退出异常: %v", werr)
+	}
+}
+
+// TestDropPrivilegesSelf（VALIDATION 07-04，OPS-05，D-24）：Uid/Gid >= 0 时 Start
+// 设 SysProcAttr.Credential（fork 后 exec 前生效）——降权到 self（os.Getuid/
+// Getgid，免 root 纪律；降权到 nobody 需 root 列 07-08 人工/可选场景）：白盒
+// 断言 Credential 字段（creack/pty StartWithSize 只补 Setsid/Setctty 不覆盖）；
+// e2e 以 /usr/bin/id -u 观测子进程真实 uid。
+func TestDropPrivilegesSelf(t *testing.T) {
+	uid, gid := os.Getuid(), os.Getgid()
+	sess, err := Start([]string{"/usr/bin/id", "-u"}, StartOptions{Uid: uid, Gid: gid})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// 白盒：Credential 落 SysProcAttr（fork 后 exec 前生效挂点的直接证据）。
+	if sess.Cmd.SysProcAttr == nil || sess.Cmd.SysProcAttr.Credential == nil {
+		t.Fatal("Uid>=0 时 SysProcAttr.Credential 未设置（D-24 降权挂点缺失）")
+	}
+	if got := sess.Cmd.SysProcAttr.Credential; got.Uid != uint32(uid) || got.Gid != uint32(gid) {
+		t.Fatalf("Credential = %d/%d, want %d/%d", got.Uid, got.Gid, uid, gid)
+	}
+	// supplementary groups 策略锁定（spawn.go Credential 分支注释）：root 清空
+	// 附加组（最小权限），非 root 跳过 setgroups（无 CAP_SETGID 必 EPERM；降回
+	// 自身保留自身附加组零提权面）。
+	if got := sess.Cmd.SysProcAttr.Credential.NoSetGroups; got != (os.Geteuid() != 0) {
+		t.Fatalf("Credential.NoSetGroups = %v, want %v（euid=%d 策略）", got, os.Geteuid() != 0, os.Geteuid())
+	}
+	out, werr := awaitSession(t, sess, startCollect(sess))
+	if werr != nil {
+		t.Fatalf("id -u 退出异常: %v", werr)
+	}
+	if strings.TrimSpace(out) != strconv.Itoa(uid) {
+		t.Fatalf("子进程 id -u = %q，want %d——Credential 降权未生效", strings.TrimSpace(out), uid)
+	}
+}
+
+// TestDropPrivilegesIdentityEnv（VALIDATION 07-04，OPS-05，D-25）：uid >= 0 时
+// whitelistEnv 按目标 uid 的 passwd 条目改写 HOME/USER/LOGNAME 三键（LookupId
+// 成功路径——降权直觉语义 = 连身份环境一起降，RESEARCH Pitfall 6）——三键
+// 不再从服务端 env 继承（宿主注入干扰值不得出现）；每键恰好一行（替换而非追加，
+// SEC-06 替换式注入纪律不变）。
+func TestDropPrivilegesIdentityEnv(t *testing.T) {
+	uid := os.Getuid()
+	u, err := user.LookupId(strconv.Itoa(uid))
+	if err != nil {
+		t.Skipf("LookupId(self) 失败（极简容器无 /etc/passwd？）: %v", err)
+	}
+	// 宿主 env 注入干扰值——降权路径不得继承（替换式改写证据）。
+	t.Setenv("HOME", "/wesh-should-not-inherit")
+	t.Setenv("USER", "wesh-not-inherited")
+	t.Setenv("LOGNAME", "wesh-not-inherited")
+	env := whitelistEnv("", uid)
+	for _, want := range []string{"HOME=" + u.HomeDir, "USER=" + u.Username, "LOGNAME=" + u.Username} {
+		if !slices.Contains(env, want) {
+			t.Errorf("whitelistEnv(uid=self) 缺身份改写行 %q: %v", want, env)
+		}
+	}
+	for _, k := range []string{"HOME=", "USER=", "LOGNAME="} {
+		n := 0
+		for _, kv := range env {
+			if strings.HasPrefix(kv, k) {
+				n++
+				if strings.Contains(kv, "wesh-not-inherited") || strings.Contains(kv, "wesh-should-not-inherit") {
+					t.Errorf("身份键 %s 继承了宿主值（D-25 改写失效）: %q", k, kv)
+				}
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s 行数 = %d, want 1（替换而非追加）", k, n)
+		}
+	}
+}
+
+// TestWhitelistEnvDropUnknownUid（VALIDATION 07-04，OPS-05，D-25 剔除路径）：
+// LookupId 失败（极简容器无 /etc/passwd 条目形态）→ HOME/USER/LOGNAME 三键从
+// 白名单剔除（不 append——shell 自默认），宿主 env 提供的三键同样不得出现；
+// 其余固定/继承键不受影响；uid<0 现状路径（按名继承）不受剔除逻辑影响。
+// 注意：极大 uid 的 Credential 设置本身会 spawn 失败——本用例只测 whitelistEnv
+// 纯函数，不起进程。
+func TestWhitelistEnvDropUnknownUid(t *testing.T) {
+	if _, err := user.LookupId("4999999999"); err == nil {
+		t.Skip("本机 passwd 恰有 uid 4999999999 条目——剔除路径不可达")
+	}
+	// 宿主 env 提供三键——剔除路径下仍不得出现（不继承不追加）。
+	t.Setenv("HOME", "/wesh-host-home")
+	t.Setenv("USER", "wesh-host-user")
+	t.Setenv("LOGNAME", "wesh-host-logname")
+	env := whitelistEnv("", 4999999999)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "USER=") || strings.HasPrefix(kv, "LOGNAME=") {
+			t.Errorf("LookupId 失败路径白名单含身份键（应剔除）: %q", kv)
+		}
+	}
+	// 其余固定键不受影响（剔除只作用于身份三键）。
+	if !slices.Contains(env, "TERM=xterm-256color") {
+		t.Errorf("剔除路径 TERM 行丢失: %v", env)
+	}
+	if !slices.Contains(env, "COLORTERM=truecolor") {
+		t.Errorf("剔除路径 COLORTERM 行丢失: %v", env)
+	}
+	// uid<0 现状路径不受影响——三键按名继承照旧。
+	envNoDrop := whitelistEnv("", -1)
+	if !slices.Contains(envNoDrop, "HOME=/wesh-host-home") {
+		t.Errorf("不降权路径 HOME 按名继承丢失: %v", envNoDrop)
+	}
 }

@@ -44,7 +44,8 @@ import (
 // cat 不改 termios，与 stty 并发无冲突；Listen 前无任何客户端输入可达。
 func startRawCatServer(t *testing.T) (exitCh chan int, wsURL string) {
 	t.Helper()
-	sess, err := pty.Start([]string{"/bin/cat"})
+	// 零值等价形态（07-04 选项化适配：Uid/Gid -1 = 不降权，Dir/Term 空 = 现状）。
+	sess, err := pty.Start([]string{"/bin/cat"}, pty.StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}

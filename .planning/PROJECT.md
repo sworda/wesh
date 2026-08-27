@@ -37,6 +37,13 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ --once 模式：只接受一个客户端，其断开后服务端退出 — Phase 6（SESS-01；--once ≡ --max-clients=1 --exit-when-empty=0；S3 双点位 503 + 进程退出 255 + Playwright T5 全链）
 - ✓ 可配置"所有客户端断开后退出"模式 — Phase 6（SESS-02；--exit-when-empty[=duration] 立即/宽限取消/宽限到期三形态，S4/S5 锁定）
 - ✓ 子进程退出后客户端收到明确提示（类型化错误帧，含退出码），而非静默断开 — Phase 6（SESS-03；EXIT 帧三形态文案 + EXIT→1000 广播序列；S1/S2 + Playwright T4 双形态逐字 + 双端一致广播）
+- ✓ 监听配置：端口（0=随机并打印实际端口）/绑定地址/UNIX socket（--socket/--socket-mode/--socket-owner；活性探测拒存活实例防静默赢者，残留自动清理不回归）— Phase 7（OPS-01；TestListenSocket 六子测 + phase07.mjs S2 + b1b5.sh 7/7 二进制直证）
+- ✓ 反代子路径挂载（--base-path parse 期严格校验；README nginx 配方经双机全链实证——proxy_set_header Host $http_host 为 WS 同源校验放行前提，精确块 308 保方法）— Phase 7（OPS-02；TestBasePathRoutes/WS + phase07.mjs S3a-h + phase07-a2-pw.mjs 5/5 真 nginx 全链）
+- ✓ 子进程 cwd/TERM/关闭信号可配置（信号发进程组，setsid pgid==pid 不变量防误杀）— Phase 7（OPS-04；TestStartOptionsDir/TestSignalGroup + phase07.mjs S5）
+- ✓ 降权运行（--uid/--gid 数字直通成对强制 exit 2 零窗口；HOME/USER/LOGNAME 按 LookupId 改写、查不到剔除三键）— Phase 7（OPS-05；TestDropPrivilegesSelf/IdentityEnv + phase07.mjs S6 降权 self 全链）
+- ✓ 配置文件支持（--config TOML 显式加载、CLI>env>file 优先级、DisallowUnknownFields 严格拒绝、错误三要素零敏感值回显、权限非 0600/0400 警告）— Phase 7（OPS-09；TestLoadFileConfig/TestConfigMerge/TestConfigPrecedence/TestConfigRedLines + S1 + B5 4/4）
+- ✓ 反代身份透传审计归因（--auth-header 头值 sanitize C0/C1/DEL+128 rune 截断入日志 remote_user；XFF 换键同步节流计数；零认证效力）— Phase 7（SEC-07；TestRemoteUserLogging/TestSanitizeRemoteUser/TestXFFThrottleKey + S4 + b2.mjs 4/4）
+- ✓ 优雅关停（SIGTERM/SIGINT → 1001 广播 → 退出码 255；stall 客户端内建 5s+5s 上界不拖延退出）与 --open 自动打开浏览器（headless 跳过提示、opener 非零退出 stderr 警告不阻断、goroutine Wait 收割零僵尸、警告行结构性不含 URL）— Phase 7（D-23/OPS-11；phase07.mjs S7/S8 + b6.sh 7/7）
 
 ### Active
 
@@ -50,14 +57,9 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 （Phase 5 已全部闭合，见 Validated）
 
 **部署与集成**
-- [ ] 端口/绑定地址/UNIX socket 监听配置
-- [ ] 反代子路径挂载（base-path）
-- [ ] 自定义首页
-- [ ] 子进程 cwd/TERM/关闭信号配置
-- [ ] 降权运行（uid/gid）
-- [ ] 客户端偏好下发（-t key=value 等价机制）
-- [ ] /healthz、metrics、结构化日志（ttyd 缺失的可运维性）
-- [ ] 配置文件支持
+（监听配置/反代子路径/子进程环境/降权/配置文件 Phase 7 已全部闭合，见 Validated）
+- [ ] 自定义首页（Phase 9）
+- [ ] /healthz、metrics、结构化日志（ttyd 缺失的可运维性，Phase 8）
 
 **质量底线**
 - [ ] 修复源码核实的全部 ttyd 缺陷（见 Context 节清单）
@@ -138,6 +140,10 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 | OQ1 裁决 accept-255：--once/--exit-when-empty 收口路径退出状态 255 | 子进程被 SIGHUP 终结，exitf 以 -1 收口、Unix 进程退出状态截断为 255；lifecycle 零分支改动，与 EXIT exit_code=-1 同源 | ✓ 用户 2026-08-23 裁决；Go 测试断言 -1 / 进程级 255 / README 文案三消费点单点落地 |
 | 重连触发面收窄为仅 1006 + 无限重试（退避 1s×2 封顶 30s） | 1002/1013/1008 带码关闭语义确定不自动重连（防再踢循环/协议错误放大）；「标签页放着回来已接回」主场景 30s 一次流量可忽略 | ✓ Phase 6 落地（shouldReconnect/backoffMs）；Playwright T1 30s 退避观测实证 attempts 1→5 |
 | --once ≡ --max-clients=1 --exit-when-empty=0 语法糖分层 | fs.Visit 显式设置位先行，展开只填未显式位，矛盾组合留 validateStartup fail-fast 拒绝（不静默改写用户输入） | ✓ Phase 6 落地，TestStartupMatrix/TestParseArgs 锁定 |
+| 反代后 WS 同源校验放行必须 nginx `proxy_set_header Host $http_host;` | nginx 默认转发 Host=$proxy_host（127.0.0.1:后端口）与浏览器 Origin 不同源被 originAllowed 403；$host 剥端口在非默认端口仍不匹配（全链实证） | ✓ Phase 7 G-07-2 闭合：README 配方修正 + pw 双机回归 5/5 锁定（文档即被测物） |
+| unix socket 存活/残留以活性探测再分（类型闸不可区分） | Lstat 类型闸后无条件 Remove 会让第二实例 unlink 存活 socket（静默赢者孤儿化前者）；net.Dial 连通即拒（EADDRINUSE 同形态文案 exit 1），TOCTOU 两向安全降级 | ✓ Phase 7 G-07-3 闭合：main.go:1038 + 存活竞争子测 + b1b5 7/7 |
+| --auth-header 收窄为服务端审计归因（不进子进程环境） | ttyd -H per-connection spawn 模型在 GoTTY 共享进程模型下结构性不成立（PTY 启动时无 HTTP 请求在手，env 一次性快照写谁都错） | ✓ Phase 7 D-17/D-18 落地；README 模型差异段防误用预期 |
+| opener 子进程 goroutine Wait + 非零退出 stderr 警告行 | fire-and-forget 使桌面异常不可观测且每次 --open 驻留一个僵尸；Wait err 仅 exit status N 结构性保证警告行不含 URL（token 红线） | ✓ Phase 7 G-07-8 闭合（选项 A）：main.go:1282 + b6 7/7 |
 
 ## Evolution
 
@@ -157,4 +163,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-24 after Phase 6（会话生命周期闭合：EXIT 帧/自动重连/--once/--exit-when-empty；UAT Playwright 实测 46/46 全绿 + SECURITY 24/24 closed）*
+*Last updated: 2026-08-27 after Phase 7（部署与配置闭合：监听/socket/base-path/降权/配置/关停/--open；UAT 8/8 闭合（3 修复+2 风险接受豁免）+ VERIFICATION 55/55 + SECURITY 35/35 closed + VALIDATION 刷新 + UI-REVIEW 22/24）*

@@ -16,6 +16,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -69,7 +70,15 @@ const (
 // 唯一 WS 写端（pinger 的控制帧经库 writeFrameMu 与数据写串行化，既有 02-04 纪律）。
 type client struct {
 	conn   *websocket.Conn
-	remote string // logEvent 三要素之对端（Attach 入口保存的 RemoteAddr）
+	remote string // logEvent 三要素之对端（Attach 入口保存的 RemoteAddr；07-03 trust 开启时为 XFF 链首，proxy.go）
+	// remoteUser 为 logEvent 可选第四字段 remote_user 的值（07-03，SEC-07 D-15
+	// 审计归因）：Attach 入口经 s.proxy.remoteUser(r) 提取一次（sanitize 已在
+	// 提取点完成），此后只读——并发读写面与 remote 字段既有形态相同（写一次
+	// 发生在 client 构造、registerLocked 之前，全部读者在其后启动的
+	// writer/pinger/读循环 goroutine 内，happens-before 由 goroutine 启动建立；
+	// plain 字段无锁安全，-race 全量回归锁）。空串 = 未配置/头缺席（logEvent
+	// 不出键）。share token 渠道进入的客户端同经 Attach 入口提取点赋值。
+	remoteUser string
 	// mode 生效模式（proto.ModeRO/ModeRW 字符串，atomic.Value 承载）：升档时由
 	// 判定矩阵写入初始值，运行期唯一写者是 promoteNextLocked 的 ro→rw 升格翻转
 	//（hubMu 内）。Attach 读循环的 INPUT 门每击键无锁 Load（热路径不得取 hubMu），
@@ -494,7 +503,7 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	}
 	close(c.done)
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
-	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer")
+	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer", c.remoteUser)
 	// arbiter 参与集移除 + 即时重算（05-04，D-09）：all 模式被踢的 rw 端是参与集
 	// 成员——滞留 sizes 则其陈旧尺寸永久拖累 min-rect（幽灵成员把 PTY 压在离群者
 	// 小窗口）；owner 模式被踢者为 ro 旁观者（非成员，removeMember 幂等 no-op）。
@@ -704,28 +713,28 @@ func (s *Server) detach(c *client) {
 }
 
 // maybeExitWhenEmptyLocked 是注册表空触发断开退出的判定与执行（06-02，
-// SESS-01/02，D-13/D-14）。调用方必须已持 hubMu 且刚 removeLocked(c) 成功——
-// 事件 = 非空→空迁移（RESEARCH Pitfall 2：启动期恒空天然免疫，检测只挂
-// detach/kickSlowConsumerLocked 两移除点，严禁轮询/状态式检测）。
+// SESS-01/02，D-13/D-14；07-04 D-22 换入可配 stop-signal 序列）。调用方必须
+// 已持 hubMu 且刚 removeLocked(c) 成功——事件 = 非空→空迁移（RESEARCH
+// Pitfall 2：启动期恒空天然免疫，检测只挂 detach/kickSlowConsumerLocked 两
+// 移除点，严禁轮询/状态式检测）。
 //
 // 三守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
 // 子进程继续运行，P5『断开不退出』产品承诺，D-14）|| exiting（lifecycle 终结
 // 广播门——广播 Close(1000) 引发的 detach 致空属正常终结序列，不得再生
-// SIGHUP/计时器）|| 注册表非空。
+// 信号/计时器）|| 注册表非空。
 //
 // grace==0（立即形态——0 是合法显式值，D-14 set/grace 分离）：logEvent
-// exit_when_empty + SIGHUP 子进程进程组（pty.Session.SignalHangup——负 pid =
-// 进程组，setsid 使 pgid == 子进程 pid）。只发信号，不调 exitf、不经旁路
-// terminate——零新 exitf 分支（D-13 硬约束），终结由既有 lifecycle 单一路径
-// 收口（SIGHUP → 子进程死亡 → sess.Wait 返回 → exitf 以子进程退出码收口，
-// 两模式零分支差异）。
+// exit_when_empty + stop-signal 序列（stopChildLocked——默认 SIGHUP 与 06-02
+// 现状语义一致，D-22）。只发信号，不调 exitf、不经旁路 terminate——零新
+// exitf 分支（D-13 硬约束），终结由既有 lifecycle 单一路径收口（信号 →
+// 子进程死亡 → sess.Wait 返回 → exitf 以子进程退出码收口，两模式零分支差异）。
 //
 // grace>0（宽限形态）：既有 timer 先 Stop（幂等重启——再次断开重新计时）→
 // AfterFunc 启动 exitEmptyTimer（回调捕获最后离开者 remote）→ logEvent
-// exit_when_empty_wait。回调到期取 hubMu 复查『仍空且未 exiting』才发 SIGHUP
-// （RESEARCH Pitfall 4：复查是恰好一次的兜底——宽限内 attach 已由取消点
-// Stop+置 nil，本回调能进入临界区即取消点未覆盖的残余窗口）；SIGHUP 幂等
-// （kill 已死 pgid 收 ESRCH 静默忽略）；timer 随会话消亡。
+// exit_when_empty_wait。回调到期取 hubMu 复查『仍空且未 exiting』才发
+// stop-signal 序列（RESEARCH Pitfall 4：复查是恰好一次的兜底——宽限内
+// attach 已由取消点 Stop+置 nil，本回调能进入临界区即取消点未覆盖的残余
+// 窗口）；信号幂等（kill 已死 pgid 收 ESRCH 静默忽略）；timer 随会话消亡。
 //
 // logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
 // （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
@@ -734,40 +743,59 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 		return
 	}
 	if s.exitWhenEmptyGrace == 0 {
-		// 立即形态：无计时器，迁移点直接发 SIGHUP。
-		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty")
-		s.sess.SignalHangup()
+		// 立即形态：无计时器，迁移点直接发 stop-signal 序列（D-22）。
+		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)
+		s.stopChildLocked()
 		return
 	}
 	if s.exitEmptyTimer != nil {
 		s.exitEmptyTimer.Stop() // 幂等重启——再次断开重新计时（取消点置 nil 后的防御兜底）
 	}
-	remote := c.remote // 回调捕获最后离开者对端——回调触发时 c 已随 detach 消亡
+	// 回调捕获最后离开者对端与 remote_user——回调触发时 c 已随 detach 消亡
+	//（remoteUser 与 remote 同为 Attach 入口写一次的只读字段，捕获同值）。
+	remote, remoteUser := c.remote, c.remoteUser
 	s.exitEmptyTimer = time.AfterFunc(s.exitWhenEmptyGrace, func() {
 		s.hubMu.Lock()
 		defer s.hubMu.Unlock()
 		// 复查『仍空且未 exiting』（Pitfall 4 恰好一次兜底；arbiter timer 同款
 		// 取锁纪律，resize.go initArbiter 先例）。不调 exitf——零新 exitf 分支
-		//（D-13 硬约束）；SIGHUP 幂等（已死 pgid ESRCH 静默）。
+		//（D-13 硬约束）；信号幂等（已死 pgid ESRCH 静默）。
 		if s.exiting || len(s.registry.set) != 0 {
 			return
 		}
-		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty")
-		s.sess.SignalHangup()
+		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
+		s.stopChildLocked()
 	})
-	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait")
+	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait", c.remoteUser)
+}
+
+// stopChildLocked 是 D-22 stop-signal 序列的统一出口（07-04，OPS-04）：向子进程
+// 进程组发 s.stopSignal（pty.Session.SignalGroup——负 pid = 进程组，setsid 使
+// pgid == 子进程 pid 既定不变量）；s.stopTimeout > 0 时 AfterFunc 异步补发
+// SIGKILL（RESEARCH Pitfall 8 纪律：不用 sleep 阻塞 hubMu——补发不与 lifecycle
+// 协调，ESRCH 幂等使子进程早死无害、KILL 到达空 pgid 静默；timer 随会话消亡）。
+// 调用方必须已持 hubMu（本函数自身不取锁——SignalGroup 不触 Master fd 不取
+// fdMu，锁序 hubMu > sess.fdMu 不受影响）。exit-when-empty 立即/宽限到期两
+// 触发点与 07-05 Shutdown（1001 优雅下线）共用本序列——退出收口的信号配置
+// 经 Options 单一通道（StopSignal/StopTimeout），双写即漂移。
+func (s *Server) stopChildLocked() {
+	s.sess.SignalGroup(s.stopSignal)
+	if s.stopTimeout > 0 {
+		time.AfterFunc(s.stopTimeout, func() { s.sess.SignalGroup(syscall.SIGKILL) })
+	}
 }
 
 // cancelExitEmptyTimerLocked 是宽限取消点（06-02，D-14）：宽限内任一端 attach
 // 成功（registerLocked 登记后由 Attach 升档序列在同一 hubMu 持有内调用）即取消
 // 退出——恰好一次：置 nil 防重复 Stop 与重复 exit_when_empty_cancel 事件。
 // 调用方必须已持 hubMu。code 恒 1000 收口桶（reason 区分语义，D-12② 延伸）；
-// SEC-01 红线保持——token/ticket/凭据值永不入参。
-func (s *Server) cancelExitEmptyTimerLocked(remote string) {
+// SEC-01 红线保持——token/ticket/凭据值永不入参。07-03：remoteUser 为新 attach
+// 端的提取值（与 remote 同源传入），携 remote_user 第四字段同口径（D-15）。
+func (s *Server) cancelExitEmptyTimerLocked(remote, remoteUser string) {
 	if s.exitEmptyTimer == nil {
 		return
 	}
 	s.exitEmptyTimer.Stop()
 	s.exitEmptyTimer = nil
-	logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty_cancel")
+	logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty_cancel", remoteUser)
 }

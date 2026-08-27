@@ -58,6 +58,19 @@ wesh [flags] -- <cmd> [args...]
 | `--origin` | — | 允许的 Origin `scheme://host[:port]`，可重复；不配则维持同源校验（无 Origin 头放行）。IPv6 字面量 Origin（如 `https://[::1]:8443`）不支持配置进白名单——同源 IPv6 访问不受影响 |
 | `--client-option` | — | 客户端偏好 `key=value`，可重复；白名单键：`fontSize`/`fontFamily`/`cursorBlink`/`cursorStyle`/`scrollback`/`lineHeight`/`letterSpacing`/`theme`/`resizeOverlay`/`confirmBeforeUnload`；值为 JSON（如 `fontSize=16`、`cursorBlink=false`、`'theme={"background":"#000"}'`——含引号的 JSON 值需整体单引号包裹，防 shell 剥引号）；key 不在白名单或值非法 JSON 启动报错 |
 | `--osc52` | `false` | 开启 OSC52 剪贴板写入（只写不读，默认关）；只能经本 flag 开启——URL query 与 `--client-option` 均不可设置 |
+| `--config` | — | 加载 TOML 配置文件（仅显式指定路径；CLI 参数覆盖配置文件）——见「部署与配置」 |
+| `--socket` | — | UNIX socket 监听路径（与显式 `--port`/`--bind` 互斥）——见「部署与配置」 |
+| `--socket-mode` | `0660` | UNIX socket 权限位（八进制）；仅随 `--socket` 有意义 |
+| `--socket-owner` | — | UNIX socket 属主 `user[:group]`；仅随 `--socket` 有意义 |
+| `--base-path` | — | 反代子路径挂载前缀（如 `/wesh`；必须 `/` 开头、无尾斜杠）——见「部署与配置」 |
+| `--auth-header` | — | 可信反代用户头名（如 `X-Remote-User`）；头值仅记录进服务端日志 `remote_user` 字段（审计归因，无认证效力），仅反代后部署——见「部署与配置」 |
+| `--cwd` | 继承 | 子进程工作目录（默认继承服务端 cwd；启动时预检，不存在拒绝启动） |
+| `--term` | `xterm-256color` | 子进程 TERM |
+| `--stop-signal` | `HUP` | 关停时发给子进程进程组的信号：`HUP`\|`TERM`\|`INT`\|`KILL` |
+| `--stop-timeout` | `0` | stop-signal 后补发 SIGKILL 的宽限（`0` = 不补发） |
+| `--uid` | — | 降权目标 uid（数字；须与 `--gid` 成对给出） |
+| `--gid` | — | 降权目标 gid（数字；须与 `--uid` 成对给出） |
+| `--open` | `false` | 启动后以系统启动器打开分享链接（`--writable` 开 rw 链接，否则 ro 链接；headless 提示后跳过） |
 | `--version` | — | 打印版本并退出 |
 | `--help` | — | 打印用法 |
 
@@ -148,7 +161,7 @@ Error 帧含三个正常客户端可见码：`version_mismatch`（随后以 1008
 | 1009 | 超出消息上限 |
 | 1011 | 内部错误 |
 | 1013 | 慢消费者踢出（Phase 5 启用）：接收过慢导致 outbox 写满的客户端被断开，close reason 为机器串 `slow_consumer`；手动刷新即可从最新输出重新 attach |
-| 1001 | 已在协议占住（服务端下线），由后续阶段启用发送路径 |
+| 1001 | 服务端优雅下线（Phase 7 启用）：wesh 捕获 SIGTERM/SIGINT 后向全部客户端广播，close reason 为机器串 `server_shutting_down`；前端显示「Server shutting down」终态面板，**不进入自动重连**——见「部署与配置 → 优雅下线」 |
 
 1005/1006/1015 永不发送。
 
@@ -233,6 +246,130 @@ location /s/ {
 
 - **客户端断开不再使服务端退出**（旧版单次语义终结）；子进程退出仍正常关闭全部连接并退出。
 - 第二客户端不再收到 409——仅满员（`--max-clients`）时收到 503。
+
+## 部署与配置（Phase 7）
+
+生产部署完整面：TOML 配置文件、UNIX socket、反代子路径、反代身份透传、子进程管理、降权运行、自动开浏览器、优雅下线。
+
+### 配置文件（--config）
+
+`--config /etc/wesh/wesh.toml` 显式指定 TOML 配置文件——**仅显式指定路径，零隐式默认路径搜索**（裸 `wesh -- bash` 行为与无配置文件时逐字节一致）。
+
+平铺 `key = value` 形状，**键名 = flag 名**：26 个长期运行 flag 同名键 + `command` exec 数组，共 27 键。
+
+```toml
+# /etc/wesh/wesh.toml —— 含 credential 键时建议 chmod 600
+bind = "127.0.0.1"
+port = 7681
+credential = ["alice:pw-of-alice"]   # 可重复 flag ↔ TOML 数组
+base-path = "/wesh"
+max-clients = 16
+ping-interval = "5s"                 # duration 键为字符串形态
+exit-when-empty = "30s"              # "true"/"0"/"30s" 与 CLI 三形态同语义
+command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则覆盖
+```
+
+- **优先级链**：CLI flag > env（`WESH_CREDENTIAL`）> 配置文件 > 内置默认。
+- **列表替换语义**：`credential`/`origin`/`client-option` 三列表键——CLI 给出则配置列表整体替换（不应用）；`credential` 另有 env 夹层（`WESH_CREDENTIAL` 非空时配置列表同样不应用）。CLI 未给且配置键存在时，配置列表逐项经与 CLI 相同的 parse 期校验。
+- **`command` 键**：CLI `--` 后 argv 非空则覆盖；`command = []` 空数组等价缺席。
+- **逃生门五键不可入配置**：`no-auth`/`insecure-http`/`version`/`help`/`config`——写入配置文件按未知键拒绝（逃生门必须显式说出口，写在配置里等于没说）。
+- **严格模式**：文件不存在、TOML 解析失败、未知键均以 exit 2 拒绝启动；错误文案只含类别 + 键名 + 行号，**不回显配置值**。
+- **权限建议（chmod 600）**：含 `credential` 键且文件权限非 600/400 时 stderr 警告放行（不阻断——挂载盘/容器 secret 权限语义不可靠），建议 `chmod 600`。**`WESH_CREDENTIAL` env 优先于配置文件明文**——生产凭据首选 env（systemd `EnvironmentFile=` 600 通道，见「安全说明」），不写入配置文件。
+
+### UNIX socket（--socket）
+
+三 flag：`--socket /run/wesh/wesh.sock`（与显式 `--port`/`--bind` **互斥**，组合冲突拒绝启动）+ `--socket-mode 0660`（八进制，默认 `0660`）+ `--socket-owner user[:group]`。后两者仅随 `--socket` 有意义——单独给出拒绝启动。
+
+- **残留清理**：listen 前自动删除既有 socket 文件（崩溃/systemd Restart= 场景零人工干预）；listen 后显式 Chmod/Chown——权限位确定性不依赖进程 umask。
+- **文件系统权限即认证边界**：unix socket 形态跳过 bind 安全校验矩阵（无凭据/TLS 均放行免警告）——访问控制由 `--socket-mode`/`--socket-owner` 承担，流量不出机。
+- **启动打印退化**：地址行 `listening on unix:///run/wesh/wesh.sock`；分享链接两行退化为单行提示（无 host:port 可拼——反代后的分享链接由反代 URL 决定）。
+
+systemd 配方（unix socket + 反代是生产推荐形态之一）：
+
+```ini
+# /etc/systemd/system/wesh.service
+[Service]
+RuntimeDirectory=wesh
+EnvironmentFile=/etc/wesh/credentials   # chmod 600，内容为 WESH_CREDENTIAL=user:pass
+ExecStart=/usr/local/bin/wesh --socket /run/wesh/wesh.sock --socket-owner www-data:www-data -- bash
+```
+
+### 反代子路径（--base-path）
+
+`--base-path /wesh` 把 wesh 挂到子路径下——值必须 `/` 开头、无尾斜杠（根 `/` 视为未配置；拒绝 `..`/重复斜杠/非 URL path 安全字符，非法值拒绝启动，绝不宽容自动修正）。裸 `/wesh`（无尾斜杠）由服务端 307 规范化到 `/wesh/`——尾斜杠是前端相对 URL 正确解析的硬要求。分享链接打印含 base-path 前缀。
+
+nginx 配方（前缀块必需；精确块推荐——理据见块内注释）：
+
+```nginx
+# 把 Connection 头映射为 upgrade/close（WS 升级必需）
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    # 精确块（推荐）：location /wesh/ 是前缀匹配，不匹配裸 /wesh（无尾斜杠）；本配方
+    # （proxy_pass handler）下 nginx 对裸 /wesh 会自动 301 补斜杠（GET 入口可工作），
+    # 但该自动跳转是 proxy_pass 系 handler 特例——换 return/fastcgi 等形态即不存在。
+    # 此块显式 308 重定向：308 保方法 + 规范化行为与 handler 形态无关，故推荐保留。
+    location = /wesh { return 308 /wesh/; }
+
+    location /wesh/ {
+        proxy_pass http://127.0.0.1:7681;
+        proxy_http_version 1.1;
+        # Host 必须原样转发：nginx 默认转发 $proxy_host（127.0.0.1:后端口），与浏览器 Origin 不同源会被 wesh WS 同源校验 403；$host 剥端口在 Origin 含非默认端口时仍不匹配——必须 $http_host（已全链实证）
+        proxy_set_header Host $http_host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+    }
+}
+```
+
+**`proxy_read_timeout` 必须大于 `--ping-interval`（默认 `5s`）**：反代空闲超时看应用层流量——WS 建立后若无数据往来，超时到期反代主动断连。wesh 服务端每个 ping 间隔发一帧 WS ping（应用层流量），故 `proxy_read_timeout` 大于 ping 间隔即不会误断空闲连接；`3600s` 是充裕值。`--ping-interval 0` 禁用保活时，空闲连接存活性完全取决于反代超时。
+
+### 反代身份透传（--auth-header）与 X-Forwarded-For
+
+**语义 = 服务端审计归因**：`--auth-header X-Remote-User` 配置即信任该头——反代（authelia/oauth2-proxy 等 SSO）注入的用户名经清洗（剥离控制字符、截断 128 字符）后记录进服务端 stderr 事件行的 `remote_user` 字段：
+
+```
+wesh: close remote=198.51.100.7 code=1000 reason=exit_when_empty remote_user=alice
+```
+
+**X-Forwarded-For 同闸**：`--auth-header` 给定即「信任反代」总开关——XFF 链首 IP 同时换入日志 `remote` 字段与 per-IP 节流计数键（反代后 per-IP 计数不再全聚合为代理 IP）；未配置时 XFF 完全忽略（直连客户端自设 XFF 零效果）。
+
+**信任模型 = 裸信任 + 暴露面警告，仅反代后部署**：配置即信任该头（ttyd `-H` 同款）。非 loopback 监听且无凭据时 stderr 醒目警告「可被直连伪造，确保 wesh 不直接暴露」。伪造头**不能绕过认证**——头值只做日志记录，Basic/ticket/share token 三通道语义全不变；但直连伪造会污染审计归因，故**必须置于设置该头的反代之后**，不得直接暴露。
+
+**与 ttyd `-H` 的模型差异（重要）**：ttyd `-H` 把头值注入**每个连接的子进程环境变量**——ttyd 是 per-connection spawn 模型（每个客户端连接独立 spawn 一个 shell，连接建立时 HTTP 请求在手）。wesh 采用 GoTTY 共享进程模型：PTY 随服务端启动创建（spawn 时无任何 HTTP 请求）、多客户端共享同一个 shell（env 是一次性快照，写谁的名字都错）——「shell 内感知当前用户身份」在共享模型下**结构性不成立**。故 wesh 的 `--auth-header` 收窄为**服务端审计归因**：身份记录进服务端日志，不进子进程环境。
+
+### 子进程管理（--cwd/--term/--stop-signal/--stop-timeout）
+
+| Flag | 默认值 | 说明 |
+|------|--------|------|
+| `--cwd` | 继承服务端 cwd | 子进程工作目录；启动时预检，不存在拒绝启动 |
+| `--term` | `xterm-256color` | 子进程 TERM |
+| `--stop-signal` | `HUP` | 关停时发给子进程**进程组**的信号：`HUP`\|`TERM`\|`INT`\|`KILL`（shell 的孩子如 vim 同组同收，不留孤儿） |
+| `--stop-timeout` | `0` | stop-signal 后的宽限——超时仍存活补发 SIGKILL；`0` = 不补发（纯单信号） |
+
+### 降权运行（--uid/--gid）
+
+`--uid <数字> --gid <数字>` 降权运行子进程（fork 后 exec 前生效）。**数字直通、成对强制**——只给一个拒绝启动；数字免 NSS 解析差异（极简容器无 /etc/passwd），名字解析请先 `id -u`/`id -g` 查好。
+
+**身份环境联动改写**：降权后按目标 uid 的 passwd 条目自动改写子进程环境白名单中的 `HOME`/`USER`/`LOGNAME`（查不到条目则剔除三键让 shell 自默认）——「降权运行」连身份环境一起降：root 降权到 nobody 不会出现 `HOME=/root` 的权限错乱。附加组处理：root 启动时清空（最小权限——root 的附加组永非目标身份的组）；非 root 降回自身时保留自身附加组（无提权面）。
+
+### 自动打开浏览器（--open）
+
+`--open` 启动后以系统启动器打开分享链接（Linux `xdg-open` / macOS `open`）：`--writable` 开 rw 链接，否则开 ro 链接（含 token 免交互即打即用）。headless 环境（无 `DISPLAY`/`WAYLAND_DISPLAY`）stderr 提示后跳过、**不阻断启动**；`--socket` × `--open` 组合矛盾拒绝启动（unix socket 无 http URL 可开）。
+
+### 优雅下线（1001）
+
+`SIGTERM`/`SIGINT`（含 `systemctl stop`/`restart`）触发优雅下线序列：
+
+1. 向全部在线客户端发送 **1001 Going Away**（前端显示「Server shutting down」终态面板，**不进入自动重连**——打的是一个正在关停的服务，重连无意义）；
+2. 对子进程进程组执行 stop-signal 序列（`--stop-signal` → `--stop-timeout` 宽限 → SIGKILL）；
+3. 进程退出。
+
+**退出码 255 运维注记**：子进程被信号终结时 wesh 退出状态为 **255**（信号死亡按 -1 收口，Unix 进程退出状态截断为 255——与 `--once`/`--exit-when-empty` 收口路径同源）。systemd 部署若希望把 255 视为正常关停，可自行配置 `SuccessExitStatus=255`。
 
 ## 测试
 

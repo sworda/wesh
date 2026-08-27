@@ -34,7 +34,8 @@ import (
 // 退出，exitf 不断言（生命周期断言归 e2e/multi 套件），noop 桩即可。
 func startShareServer(t *testing.T, opts Options) string {
 	t.Helper()
-	sess, err := pty.Start([]string{"/bin/cat"})
+	// 零值等价形态（07-04 选项化适配：Uid/Gid -1 = 不降权，Dir/Term 空 = 现状）。
+	sess, err := pty.Start([]string{"/bin/cat"}, pty.StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("pty.Start: %v", err)
 	}

@@ -13,6 +13,8 @@
 //   D8 online 快路径（清等待立即 attempt，D-04）
 //   D9 真实断网栈豁免场景（skipped+reason，指向 06-UAT.md 人工清单）
 //   D10 CR-01 代际守卫 fetch 半侧（双在飞 attempt 较旧链迟到成功不踩占健康连接）
+//   D11 1001 优雅下线（07-05 D-23：'Server shutting down' 终态面板 + 不进重连循环；
+//      重连上下文中收 1001 → 循环终止 + 面板分派，既有 L862-868 形态自然覆盖）
 //
 // 本文件夹具（phase05-dom.mjs loadTerminal 形态逐字复用 + 两件延伸）：
 //   - SpyWebSocket.synthClose(code)：合成 CloseEvent 驱动 onclose 分派（06-RESEARCH A2
@@ -586,6 +588,71 @@ async function d10StaleLateSuccessNoClobber() {
   }
 }
 
+// ═══════════════════ D11：1001 优雅下线（终态面板 + 不重连 + 重连上下文终止） ═══════════════════
+// 07-05 D-23：synthClose(1001) → 'Server shutting down' 终态面板（逐字文案），不进入
+// CORE-05 重连循环（1001 不在触发集——仅 1006；重连循环打正在重启的服务是 systemd
+// restart 场景的反 UX，D-23 否决形态）；对照 1006 仍进重连由 D1 既有场景锁定不回归。
+async function d11Shutdown1001NoReconnect() {
+  console.log('D11: 1001 优雅下线（Server shutting down 终态面板 + 守候窗零新连接；重连上下文 1001 终止循环）');
+  // ① 稳态会话收 1001 → 终态面板 + 不触发重连
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const base = constructed;
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+  try {
+    await waitReady(ctx.document);
+    ctx.sockets[ctx.sockets.length - 1].synthClose(1001);
+    const p = await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Server shutting down' ? q : null;
+    }, 'Server shutting down 面板');
+    check('D11a', "1001 → 'Server shutting down' 终态面板（D-23 逐字文案：body + hint）",
+      p.body === 'The wesh server is shutting down. The session has ended.'
+      && p.hint.includes('Start wesh again from your shell, then'),
+      `body=${JSON.stringify(p.body)}`);
+    // 2.5s 守候窗（容差论证同 D2b）：窗内零构造 = 1001 不进重连循环（prohibition
+    // 回归锁——若误入循环，首个 attempt ~1s 退避点必构造新连接）
+    const atPanel = constructed;
+    await sleep(2500);
+    check('D11b', '2.5s 守候窗内零新连接构造（1001 不重连——仅 1006 在 CORE-05 触发集）',
+      constructed === atPanel, `守候窗构造增量=${constructed - atPanel}`);
+  } finally {
+    await cleanup(ctx, inst);
+  }
+  // ② 重连上下文中收 1001（07-05 plan behavior 测试锁定点）：1006 启循环 → 退避
+  // 等待窗内同连接再到 1001 → reconnecting && code!==1006 不命中重连分支 →
+  // stopReconnect 循环终止 + 'Server shutting down' 面板分派（既有 L862-868 形态
+  // 自然覆盖——带码关闭在重连上下文落终态专版的通用路径）
+  const inst2 = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const base2 = constructed;
+  const ctx2 = await loadTerminal({ scheme: inst2.scheme, port: inst2.port });
+  try {
+    await waitReady(ctx2.document);
+    const sock = ctx2.sockets[ctx2.sockets.length - 1];
+    sock.synthClose(1006);
+    await waitFor(() => {
+      const q = panel(ctx2.document);
+      return q.visible && q.title === 'Reconnecting' ? q : null;
+    }, 'Reconnecting 面板出现（退避等待窗，未到 1s 退避点）');
+    // 退避等待窗内对同一连接再驱动 1001（synthClose 留存的 _savedClose 副本——
+    // sock===ws 守卫通过：退避期内未构造新连接；D6 二次驱动同款夹具形态）
+    ctx2.staleClose(sock, 1001);
+    const p = await waitFor(() => {
+      const q = panel(ctx2.document);
+      return q.visible && q.title === 'Server shutting down' ? q : null;
+    }, '重连上下文 1001 → Server shutting down 面板');
+    check('D11c', '重连上下文收 1001 → 循环终止 + 终态面板分派（非 Reconnecting 续循环）',
+      p.body === 'The wesh server is shutting down. The session has ended.',
+      `body=${JSON.stringify(p.body)}`);
+    // 2.5s 守候窗（> attempt 1 退避标称 1s + 容差）：退避定时器已被 stopReconnect
+    // 清除——窗内零构造 = 循环确已终止（未终止则 1s 退避点必构造 attempt 连接）
+    await sleep(2500);
+    check('D11d', '2.5s 守候窗内零新连接构造（stopReconnect 已清退避定时器，循环终止）',
+      constructed === base2 + 1, `构造=${constructed - base2}`);
+  } finally {
+    await cleanup(ctx2, inst2);
+  }
+}
+
 // ═══════════════════ D9：真实断网栈豁免（headless 硬约束，人工清单指针） ═══════════════════
 function d9RealNetworkStackExempt() {
   skip('D9', '真实 OS 断网栈与浏览器原生 online/offline 事件时序',
@@ -602,7 +669,7 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d9RealNetworkStackExempt];
+const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d11Shutdown1001NoReconnect, d9RealNetworkStackExempt];
 let failed = 0;
 for (const s of scenarios) {
   try {

@@ -6,9 +6,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -26,11 +31,27 @@ import (
 // Phase 4：P4 D-15 --client-option 可重复（计数断言）、P4 D-12 --osc52 默认 false；
 // Phase 5：D-05 --write-policy 默认 owner，显式传 owner/all 原样解析；
 // Phase 6：D-12 --once 语法糖展开（maxClients=1 + exit-when-empty set/grace 0）、
-// D-14 --exit-when-empty 三形态（不写 = 不开启 / 裸写 = 立即退出 / =duration = 宽限）。
+// D-14 --exit-when-empty 三形态（不写 = 不开启 / 裸写 = 立即退出 / =duration = 宽限）；
+// Phase 7：D-13 --base-path parse 期规范化（合法原样 / 根 / 归一空串；非法形态
+// 五族拒绝断言在 TestTLSKeyPairError 错误表——parse 期拒绝的既定归属）；
+// D-08/D-09 --socket 三 flag（路径原样 / --socket-mode 默认 0660 与自定义八进制 /
+// --socket-owner parse 期解析为 self 数字对；非法 mode/owner 拒绝断言同在错误表）；
+// D-21 --cwd/--term（原样入 cfg；--term="" 空串值按未配置处理；--cwd stat 预检
+// 归 TestStartupMatrix）。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
 	t.Setenv("WESH_CREDENTIAL", "")
+	// D-09 owner 解析断言材料：self 用户名与主组名（免 root；开发/CI 环境
+	// /etc/passwd、/etc/group 完备——osusergo 纯 Go 解析同路径）。
+	me, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current: %v", err)
+	}
+	grp, err := user.LookupGroupId(me.Gid)
+	if err != nil {
+		t.Fatalf("user.LookupGroupId(%s): %v", me.Gid, err)
+	}
 	tests := []struct {
 		name             string
 		args             []string
@@ -56,7 +77,39 @@ func TestParseArgs(t *testing.T) {
 		wantMaxClients     int           // D-08/D-12：零值 = 期望默认 32
 		wantExitEmptySet   bool          // D-14：exitEmpty.set（不写 = 不开启）
 		wantExitEmptyGrace time.Duration // D-14：exitEmpty.grace（裸写/默认 = 0）
-		wantArgv           []string
+		// P7：D-13 --base-path parse 期规范化断言位（零值 = 期望空串未配置，
+		// 既存行经此扩展零值断言覆盖——命名字段扩展纪律 03-04 先例）。
+		wantBasePath string // D-13：--base-path 规范化后期望值（根 "/" 归一为空串）
+		// P7：D-08/D-09 --socket 组断言位（零值语义照 wantBasePath/wantMaxClients
+		// 先例：wantSocket 零值 = 期望空串 TCP 形态；wantSocketMode 零值 = 期望
+		// 默认 0660；wantSocketOwnerSelf=false = 期望 uid/gid 为 -1 未给哨兵）。
+		wantSocket          string      // D-08：--socket 路径原样
+		wantSocketMode      os.FileMode // D-09：--socket-mode 八进制解析产物
+		wantSocketOwnerSelf bool        // D-09：--socket-owner 解析为 self 数字对
+		// P7：D-18 --auth-header 断言位（零值 = 期望空串未配置——信任闸关闭，
+		// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
+		wantAuthHeader string // D-18：--auth-header 头名原样入 cfg
+		// P7：D-21 --cwd/--term 断言位（零值 = 期望空串未配置——cwd 继承服务端、
+		// term 回落 xterm-256color 现状语义，既存行经此扩展零值断言覆盖，命名
+		// 字段扩展纪律 03-04 先例）。
+		wantCwd  string // D-21：--cwd 路径原样入 cfg
+		wantTerm string // D-21：--term 原样入 cfg（空串值按未配置处理）
+		// P7：D-22 --stop-signal/--stop-timeout 断言位（零值语义照 wantWritePolicy/
+		// wantSocketMode 先例：wantStopSignal 零值 = 期望默认 "HUP"；
+		// wantStopSignalSig 零值 = 期望 SIGHUP；wantStopTimeout 零值 = 期望 0
+		// 不补 KILL 纯单信号现状）。
+		wantStopSignal    string         // D-22：--stop-signal 枚举名原样入 cfg
+		wantStopSignalSig syscall.Signal // D-22：parse 期名→信号解析产物
+		wantStopTimeout   time.Duration  // D-22：--stop-timeout 原样入 cfg
+		// P7：D-24 --uid/--gid 断言位。零值 = 期望 -1 未给哨兵（root uid/gid 0
+		// 是合法值，不在本表零值断言面——0 与 -1 的区分由值域拒绝行
+		//（TestTLSKeyPairError）与成对校验行（TestStartupMatrix）承载）。
+		wantUid int // D-24：--uid 解析产物（默认 -1 不降权）
+		wantGid int // D-24：--gid 解析产物（默认 -1 不降权）
+		// P7：D-26 --open 断言位（零值 = 期望 false 默认不开——既存行经此扩展
+		// 零值断言覆盖，命名字段扩展纪律 03-04 先例）。
+		wantOpen bool // D-26：--open 默认 false
+		wantArgv []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -83,6 +136,47 @@ func TestParseArgs(t *testing.T) {
 		{name: "exit-when-empty bare", args: []string{"--exit-when-empty", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantExitEmptySet: true, wantArgv: []string{"bash"}},
 		// D-14：=duration 形态 = 重连宽限。
 		{name: "exit-when-empty grace", args: []string{"--exit-when-empty=30s", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantExitEmptySet: true, wantExitEmptyGrace: 30 * time.Second, wantArgv: []string{"bash"}},
+		// D-13：--base-path 合法值原样接收（单级与多级形态）；根 "/" 归一为
+		// 未配置（空串——「根视为未配置」是 D-13 显式裁决，非默认值兜底）。
+		{name: "base-path subpath", args: []string{"--base-path", "/wesh", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantBasePath: "/wesh", wantArgv: []string{"bash"}},
+		{name: "base-path nested", args: []string{"--base-path", "/a/b", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantBasePath: "/a/b", wantArgv: []string{"bash"}},
+		{name: "base-path root normalized", args: []string{"--base-path", "/", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
+		// D-08/D-09：--socket 三 flag——路径原样入 cfg（互斥/单给组合矛盾归
+		// validateStartup，TestStartupMatrix 锁定）；--socket-mode 自定义八进制
+		// 解析（默认 0660 由零值语义统一断言覆盖全部既存行）；--socket-owner
+		// parse 期经 os/user.Lookup[/LookupGroup] 解析为数字对（self 免 root；
+		// user:group 形态 gid 经 LookupGroup 覆盖——self 主组同值，分支仍被走到）。
+		{name: "socket path", args: []string{"--socket", "/run/wesh.sock", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/run/wesh.sock", wantArgv: []string{"bash"}},
+		{name: "socket-mode custom", args: []string{"--socket", "/run/wesh.sock", "--socket-mode", "0600", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/run/wesh.sock", wantSocketMode: 0o600, wantArgv: []string{"bash"}},
+		{name: "socket owner self", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
+		{name: "socket owner self group", args: []string{"--socket", "/tmp/wesh.sock", "--socket-owner", me.Username + ":" + grp.Name, "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSocket: "/tmp/wesh.sock", wantSocketOwnerSelf: true, wantArgv: []string{"bash"}},
+		// D-18：--auth-header 头名原样入 cfg（parse 期校验仅凭据载体头名拒绝
+		// 一族——07-review CR-03，拒绝断言在 TestTLSKeyPairError 错误表；头名
+		// 合法性其余面由 HTTP 层 Header.Get 语义自然承载，暴露面组合警告归
+		// validateStartup，TestStartupMatrix D-16 行锁定）；默认值空串由零值
+		// 语义统一断言。
+		{name: "auth-header flag", args: []string{"--auth-header", "X-Remote-User", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantAuthHeader: "X-Remote-User", wantArgv: []string{"bash"}},
+		// D-21：--cwd/--term 原样入 cfg（--cwd stat 预检归 validateStartup，
+		// TestStartupMatrix 锁定）；--term="" 空串值按未配置处理（显式空 TERM
+		// 会使终端能力丢失——空 = 默认 xterm-256color 现状语义）。
+		{name: "cwd and term", args: []string{"--cwd", "/tmp", "--term", "vt100", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantCwd: "/tmp", wantTerm: "vt100", wantArgv: []string{"bash"}},
+		{name: "term empty treated as unset", args: []string{"--term=", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
+		// D-22：--stop-signal 四枚举逐一断言名→信号解析产物（默认 HUP+SIGHUP 由
+		// 零值语义统一断言覆盖全部既存行）；--stop-timeout 正值原样解析（非法
+		// 枚举名与负值 duration 的 parse 期拒绝在 TestTLSKeyPairError 错误表——
+		// parse 期拒绝既定归属）。
+		{name: "stop-signal HUP explicit", args: []string{"--stop-signal", "HUP", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "HUP", wantStopSignalSig: syscall.SIGHUP, wantArgv: []string{"bash"}},
+		{name: "stop-signal TERM", args: []string{"--stop-signal", "TERM", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "TERM", wantStopSignalSig: syscall.SIGTERM, wantArgv: []string{"bash"}},
+		{name: "stop-signal INT", args: []string{"--stop-signal", "INT", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "INT", wantStopSignalSig: syscall.SIGINT, wantArgv: []string{"bash"}},
+		{name: "stop-signal KILL", args: []string{"--stop-signal", "KILL", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopSignal: "KILL", wantStopSignalSig: syscall.SIGKILL, wantArgv: []string{"bash"}},
+		{name: "stop-timeout grace", args: []string{"--stop-timeout", "2s", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantStopTimeout: 2 * time.Second, wantArgv: []string{"bash"}},
+		// D-24：--uid/--gid 数字直通原样入 cfg（成对强制归 validateStartup
+		// TestStartupMatrix 锁定；值域拒绝在 TestTLSKeyPairError——parse 期
+		// 拒绝既定归属；默认 -1/-1 哨兵由零值语义统一断言覆盖全部既存行）。
+		{name: "uid gid pair", args: []string{"--uid", "1000", "--gid", "1000", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantUid: 1000, wantGid: 1000, wantArgv: []string{"bash"}},
+		// D-26：--open 布尔 flag 原样入 cfg（--socket×--open 组合矛盾归
+		// validateStartup，TestStartupMatrix 锁定）；默认 false 由零值语义统一断言。
+		{name: "open flag", args: []string{"--open", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantOpen: true, wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -152,6 +246,83 @@ func TestParseArgs(t *testing.T) {
 			if cfg.exitEmpty.grace != tt.wantExitEmptyGrace {
 				t.Errorf("exitEmpty.grace = %v, want %v", cfg.exitEmpty.grace, tt.wantExitEmptyGrace)
 			}
+			// D-13：零值 wantBasePath = 期望空串未配置（含全部既存行）。
+			if cfg.basePath != tt.wantBasePath {
+				t.Errorf("basePath = %q, want %q", cfg.basePath, tt.wantBasePath)
+			}
+			// D-08：零值 wantSocket = 期望空串 TCP 形态（含全部既存行）。
+			if cfg.socket != tt.wantSocket {
+				t.Errorf("socket = %q, want %q", cfg.socket, tt.wantSocket)
+			}
+			// D-09：零值 wantSocketMode = 期望默认 0660（wantMaxClients 零值语义同款）。
+			wantSocketMode := tt.wantSocketMode
+			if wantSocketMode == 0 {
+				wantSocketMode = 0o660
+			}
+			if cfg.socketMode != wantSocketMode {
+				t.Errorf("socketMode = %o, want %o", cfg.socketMode, wantSocketMode)
+			}
+			// D-09：owner 未给 = -1/-1 哨兵（uid/gid 0 是 root 合法值，零值不可作
+			// 未给标记——含全部既存行）；wantSocketOwnerSelf 行断言 parse 期名字
+			// 解析为 self 数字对。
+			if tt.wantSocketOwnerSelf {
+				if cfg.socketUid != os.Getuid() || cfg.socketGid != os.Getgid() {
+					t.Errorf("socketUid/socketGid = %d/%d, want self %d/%d", cfg.socketUid, cfg.socketGid, os.Getuid(), os.Getgid())
+				}
+			} else if cfg.socketUid != -1 || cfg.socketGid != -1 {
+				t.Errorf("socketUid/socketGid = %d/%d, want -1/-1 sentinel (owner unset)", cfg.socketUid, cfg.socketGid)
+			}
+			// D-18：--auth-header 原样解析（零值 = 空串未配置，既存行零值断言覆盖）。
+			if cfg.authHeader != tt.wantAuthHeader {
+				t.Errorf("authHeader = %q, want %q", cfg.authHeader, tt.wantAuthHeader)
+			}
+			// D-21：--cwd/--term 原样解析（零值 = 空串未配置，既存行零值断言覆盖）。
+			if cfg.cwd != tt.wantCwd {
+				t.Errorf("cwd = %q, want %q", cfg.cwd, tt.wantCwd)
+			}
+			if cfg.term != tt.wantTerm {
+				t.Errorf("term = %q, want %q", cfg.term, tt.wantTerm)
+			}
+			// D-22：零值 wantStopSignal = 期望默认 "HUP"、零值 wantStopSignalSig =
+			// 期望 SIGHUP（wantWritePolicy/wantSocketMode 零值语义同款）；
+			// wantStopTimeout 零值 = 期望 0（不补 KILL 纯单信号现状）。
+			wantStopSignal := tt.wantStopSignal
+			if wantStopSignal == "" {
+				wantStopSignal = "HUP"
+			}
+			if cfg.stopSignal != wantStopSignal {
+				t.Errorf("stopSignal = %q, want %q", cfg.stopSignal, wantStopSignal)
+			}
+			wantStopSignalSig := tt.wantStopSignalSig
+			if wantStopSignalSig == 0 {
+				wantStopSignalSig = syscall.SIGHUP
+			}
+			if cfg.stopSignalSig != wantStopSignalSig {
+				t.Errorf("stopSignalSig = %v, want %v", cfg.stopSignalSig, wantStopSignalSig)
+			}
+			if cfg.stopTimeout != tt.wantStopTimeout {
+				t.Errorf("stopTimeout = %v, want %v", cfg.stopTimeout, tt.wantStopTimeout)
+			}
+			// D-24：零值 wantUid/wantGid = 期望 -1 未给哨兵（root 0 不在本表断言面，
+			// 见字段注释）。
+			wantUid := tt.wantUid
+			if wantUid == 0 {
+				wantUid = -1
+			}
+			if cfg.uid != wantUid {
+				t.Errorf("uid = %d, want %d", cfg.uid, wantUid)
+			}
+			wantGid := tt.wantGid
+			if wantGid == 0 {
+				wantGid = -1
+			}
+			if cfg.gid != wantGid {
+				t.Errorf("gid = %d, want %d", cfg.gid, wantGid)
+			}
+			// D-26：--open 原样解析（零值 = false 默认不开，既存行零值断言覆盖）。
+			if cfg.open != tt.wantOpen {
+				t.Errorf("open = %v, want %v", cfg.open, tt.wantOpen)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -201,7 +372,12 @@ func TestCredentialFlagEnv(t *testing.T) {
 // （回调内即时报错）均为配置错误零窗口暴露；--write-policy 非枚举值在 Parse
 // 返回处报错（D-05，值非敏感直接 return error 形态）；--exit-when-empty 非法/
 // 负值 duration 报错（D-14，值非敏感——flag 包 invalid value %q 包装回显
-// duration 值可接受，T-06-04a 论证登记在 main.go Set 注释）。
+// duration 值可接受，T-06-04a 论证登记在 main.go Set 注释）；
+// Phase 7：D-13 --base-path 非法形态五族 parse 期拒绝（严格模式，绝不宽容
+// 自动修正——输入与生效值分叉是配置漂移隐蔽源；值非敏感，错误文案可回显，
+// exitEmptyValue.Set 同纪律）；D-09 --socket-mode 非法值（非八进制数字 / >0777
+// 含特殊位）与 --socket-owner 未知用户/未知组 parse 期拒绝（错误文案只含错误
+// 类别与 flag 名——用户名非敏感可回显，但不泄露系统细节之外信息）。
 // WR-01 红线断言：malformed credential 行的 err 只含错误类别，不含 flag 值
 // 内容（记录式上报杜绝 flag 包 invalid value %q 包装回显——TestClientOptionError
 // forbiddenSub 同款先例；凭据值敏感度高于 prefs 值，同红线更须锁定）。
@@ -223,6 +399,45 @@ func TestTLSKeyPairError(t *testing.T) {
 		// d<0 检查（time.ParseDuration("-5s") 解析成功，负 duration 是合法语法）。
 		{"exit-when-empty bad duration", []string{"--exit-when-empty=abc", "--", "bash"}, "exit-when-empty", ""},
 		{"exit-when-empty negative duration", []string{"--exit-when-empty=-5s", "--", "bash"}, "exit-when-empty", ""},
+		// D-13：--base-path 非法五族——无前导斜杠 / 尾斜杠 / 重复斜杠（头与
+		// 中间两形态）/ ".." / 非 path 安全字符（空格/?/#/% 抽样）。
+		{"base-path no leading slash", []string{"--base-path", "wesh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path trailing slash", []string{"--base-path", "/wesh/", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path repeated slash head", []string{"--base-path", "//wesh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path repeated slash inner", []string{"--base-path", "/w//esh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path dotdot", []string{"--base-path", "/wesh/../x", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path space char", []string{"--base-path", "/we sh", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path query char", []string{"--base-path", "/wesh?x", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path fragment char", []string{"--base-path", "/wesh#x", "--", "bash"}, "invalid --base-path", ""},
+		{"base-path percent char", []string{"--base-path", "/wesh%x", "--", "bash"}, "invalid --base-path", ""},
+		// D-09：--socket-mode 非法两族（非八进制数字 / >0777 含特殊位——权限位
+		// 是认证边界，不接纳 setuid/sticky 漂移面，T-07-02b）与 --socket-owner
+		// 未知用户/未知组（拒绝串为固定类别文案，不含系统细节之外信息）。
+		{"socket-mode non-octal", []string{"--socket", "/tmp/x.sock", "--socket-mode", "0888", "--", "bash"}, "invalid --socket-mode", ""},
+		{"socket-mode special bits", []string{"--socket", "/tmp/x.sock", "--socket-mode", "1777", "--", "bash"}, "invalid --socket-mode", ""},
+		{"socket-owner unknown user", []string{"--socket", "/tmp/x.sock", "--socket-owner", "wesh-no-such-user-7f3a", "--", "bash"}, "invalid --socket-owner", ""},
+		{"socket-owner unknown group", []string{"--socket", "/tmp/x.sock", "--socket-owner", "root:wesh-no-such-group-7f3a", "--", "bash"}, "invalid --socket-owner", ""},
+		// D-22：--stop-signal 非法枚举名两族（小写/未知名——文案列合法枚举）与
+		// --stop-timeout 负值（DurationVar 直收下 "-5s" 解析成功，负值检查是
+		// 唯一闸，exitEmptyValue.Set 负值闸同纪律；值非敏感可回显）。
+		{"stop-signal lowercase rejected", []string{"--stop-signal", "term", "--", "bash"}, "invalid --stop-signal", ""},
+		{"stop-signal unknown rejected", []string{"--stop-signal", "USR1", "--", "bash"}, "invalid --stop-signal", ""},
+		{"stop-timeout negative rejected", []string{"--stop-timeout=-5s", "--", "bash"}, "invalid --stop-timeout", ""},
+		// D-24：--uid/--gid 值域拒绝——-1 哨兵之外 < -1 或 > 4294967295 即拒
+		//（uint32 转换安全；值非敏感可回显）。
+		{"uid below range rejected", []string{"--uid", "-2", "--gid", "1000", "--", "bash"}, "invalid --uid", ""},
+		{"uid above range rejected", []string{"--uid", "4294967296", "--gid", "1000", "--", "bash"}, "invalid --uid", ""},
+		{"gid below range rejected", []string{"--uid", "1000", "--gid", "-2", "--", "bash"}, "invalid --gid", ""},
+		{"gid above range rejected", []string{"--uid", "1000", "--gid", "4294967296", "--", "bash"}, "invalid --gid", ""},
+		// D-18 安全闸（07-review CR-03）：--auth-header 凭据载体头名拒绝——
+		// 配置即信任头值逐事件进 logEvent，指向凭据头即击穿 D-03 红线。
+		// CanonicalHeaderKey 归一大小写不敏感（混合大小写同拒）；拒绝文案
+		// 只含 flag 名与类别枚举（公开协议常量），不回显用户所给值——
+		// forbiddenSub 锁混合大小写原样串零出现。
+		{"auth-header authorization mixed case rejected", []string{"--auth-header", "aUtHoRiZaTiOn", "--", "bash"}, "invalid --auth-header", "aUtHoRiZaTiOn"},
+		{"auth-header proxy-authorization rejected", []string{"--auth-header", "Proxy-Authorization", "--", "bash"}, "invalid --auth-header", ""},
+		{"auth-header cookie rejected", []string{"--auth-header", "Cookie", "--", "bash"}, "invalid --auth-header", ""},
+		{"auth-header set-cookie rejected", []string{"--auth-header", "Set-Cookie", "--", "bash"}, "invalid --auth-header", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -399,12 +614,29 @@ func TestNoCommandError(t *testing.T) {
 // --exit-when-empty grace≠0 与 --once 同给即拒（双 flag 名进文案，wantErrSub2
 // 断言位；判定锚定显式设置位而非展开后终值，review #3）；--once + 显式
 // --max-clients=1 / 显式裸 --exit-when-empty 为一致冗余放行两行为其行为锁。
+// 07-02 新增：D-08/D-09/D-11 --socket 三行——互斥（--socket × 显式 --port/--bind
+// 同给即拒，双 flag 名进文案；判定锚定显式设置位而非终值，--socket + 默认
+// port/bind 不误判冲突）、单给矛盾（--socket-mode/--socket-owner 无 --socket
+// 即拒）、D-11 跳过（unix 形态 bind 安全矩阵不可达——config 零值 bind 按非
+// loopback 保守判定、无凭据本应收 D-03 拒绝，socket 给定时不拒不警告；文件
+// 系统权限即认证边界，loopback 早退同款信任档位）。
+// 07-03 新增：D-16 --auth-header 暴露面警告四行——触发（非 loopback + 无凭据
+// + --no-auth + auth-header → 警告含 flag 名，文案不含头值）；D-03 拒绝不削弱
+// （无 --no-auth 时 auth-header 照样拒）；不触发（loopback + auth-header；非
+// loopback + 凭据 + TLS + auth-header）；socket 形态同 D-11 逻辑跳过本警告。
+// 07-04 新增：D-21 --cwd stat 预检两行——不存在拒绝（fail-fast spawn 前零资源
+// 占用，纯配置有效性 loopback 也不豁免）；真实目录放行（t.TempDir 材料）。
+// 07-04 新增：D-24 --uid/--gid 成对强制三行——单给拒绝（双 flag 名进文案，
+// 纯配置矛盾 loopback 不豁免）；成对给出放行。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
 		t.Fatalf("ParseCredential: %v", err)
 	}
 	creds := []server.Credential{cred}
+	// 07-04 D-21：--cwd 合法放行行的运行时材料（t.TempDir 真实存在目录——stat
+	// 预检放行分支需要一个真实目录路径）。
+	cwdOK := t.TempDir()
 	tests := []struct {
 		name        string
 		cfg         config
@@ -442,6 +674,50 @@ func TestStartupMatrix(t *testing.T) {
 		{"once with explicit exit-when-empty grace refused", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true, grace: 5 * time.Second}}, "--once", "--exit-when-empty", ""},
 		{"once with explicit max-clients=1 allowed", config{bind: "127.0.0.1", once: true, maxClients: 1, maxClientsSet: true}, "", "", ""},
 		{"once with explicit bare exit-when-empty allowed", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true}}, "", "", ""},
+		// 07-02 D-08 互斥：--socket × 显式 --port/--bind 同给即拒（双 flag 名进
+		// 文案；显式位锚定——下方 D-11 跳过行的 socket + 默认 port/bind 不误判
+		// 即其行为锁）。
+		{"socket with explicit port refused", config{socket: "/run/wesh.sock", maxClients: 32, port: 7682, portSet: true}, "--socket", "--port", ""},
+		{"socket with explicit bind refused", config{socket: "/run/wesh.sock", maxClients: 32, bind: "127.0.0.1", bindSet: true}, "--socket", "--bind", ""},
+		// 07-02 D-09 单给矛盾：--socket-mode/--socket-owner 仅随 --socket 有意义，
+		// 单独给出 = 配置矛盾（bind 127.0.0.1 隔离其他校验维度）。
+		{"socket-mode without socket refused", config{bind: "127.0.0.1", maxClients: 32, socketModeSet: true}, "--socket-mode", "--socket", ""},
+		{"socket-owner without socket refused", config{bind: "127.0.0.1", maxClients: 32, socketOwnerSet: true}, "--socket-owner", "--socket", ""},
+		// 07-02 D-11 跳过：unix 形态下 bind 安全矩阵不可达——config 零值 bind ""
+		// 按非 loopback 保守判定，无凭据本应收 D-03 拒绝；socket 给定时不拒不警告。
+		{"socket skips bind matrix (D-11)", config{socket: "/run/wesh.sock", maxClients: 32}, "", "", ""},
+		// 07-03 D-16 暴露面警告：--auth-header 非空 + bind 非 loopback + 无凭据
+		//（--no-auth 放行形态）→ wesh: warning: 前缀警告含 --auth-header flag 名
+		//（文案不含任何头值）；无 --no-auth 时 D-03 拒绝照旧（auth-header 不削弱
+		// 拒绝语义）；loopback + auth-header 与 非 loopback + 凭据 + TLS +
+		// auth-header 不触发（矩阵其余行语义不变）；socket 形态 bind 矩阵已跳过，
+		// 同行跳过本警告（unix socket 信任边界同 D-11 逻辑）。
+		{"auth-header non-loopback no creds warns (D-16)", config{bind: "0.0.0.0", maxClients: 32, noAuth: true, authHeader: "X-Remote-User"}, "", "", "--auth-header"},
+		{"auth-header does not bypass D-03 refusal", config{bind: "0.0.0.0", maxClients: 32, authHeader: "X-Remote-User"}, "refusing to listen on non-loopback address without credentials", "", ""},
+		{"auth-header loopback silent", config{bind: "127.0.0.1", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
+		{"auth-header non-loopback creds TLS silent", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem", authHeader: "X-Remote-User"}, "", "", ""},
+		{"socket skips auth-header warning (D-16/D-11)", config{socket: "/run/wesh.sock", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
+		// 07-04 D-21 预检：--cwd 非空且 stat 失败（不存在）即拒（fail-fast spawn
+		// 前零资源占用——spawn 后才发现 ENOENT 是资源已占用且错误面到客户端；
+		// 值非敏感可回显路径）。纯配置有效性与 bind 安全形态无关，loopback 早退
+		// 之前判定（write-policy 行同位）；合法目录放行（bind 127.0.0.1 隔离
+		// 其他校验维度）。
+		{"cwd nonexistent refused", config{bind: "127.0.0.1", maxClients: 32, cwd: "/nonexistent-wesh-07-04/x"}, "--cwd", "", ""},
+		{"cwd existing allowed", config{bind: "127.0.0.1", maxClients: 32, cwd: cwdOK}, "", "", ""},
+		// 07-04 D-24 成对强制：--uid/--gid 只给一个 = 配置矛盾零窗口暴露（降权
+		// 半配置静默放行 = 子进程以原权运行，T-07-04b；exit 2 而非降级运行），
+		// 双 flag 名进文案；纯配置矛盾 loopback 也不豁免（write-policy 行同位）。
+		// 成对给出放行（bind 127.0.0.1 隔离其他校验维度）。
+		{"uid without gid refused", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: -1}, "--uid", "--gid", ""},
+		{"gid without uid refused", config{bind: "127.0.0.1", maxClients: 32, uid: -1, gid: 1000}, "--uid", "--gid", ""},
+		{"uid gid pair allowed", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: 1000}, "", "", ""},
+		// 07-05 D-26/OQ1 组合校验：--socket × --open 同给即拒（unix socket 无
+		// host:port 可拼——D-12 分享链接已退化为提示行，--open 需要 http(s) URL；
+		// 给了无法兑现的 flag 组合 = 配置错误，「显式」哲学一贯性，双 flag 名进
+		// 文案；纯配置矛盾在 D-11 socket 早退之前判定，socket 形态不豁免）。
+		// --open 单独给（TCP 形态）放行（bind 127.0.0.1 隔离其他校验维度）。
+		{"socket with open refused", config{socket: "/run/wesh.sock", maxClients: 32, open: true}, "--open", "--socket", ""},
+		{"open without socket allowed", config{bind: "127.0.0.1", maxClients: 32, open: true}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -487,15 +763,58 @@ func TestStartupMatrix(t *testing.T) {
 // 凭据时 run 必须先于 pty.Start/net.Listen 返回非零 + stderr 含拒绝文案——正常
 // 快速返回即证明未 spawn 未 listen（误启动监听会 hang 或经 lifecycle os.Exit，
 // TestNoCommandError 同构纪律）。t.Setenv 隔离宿主 WESH_CREDENTIAL 兜底干扰。
+// 07-02 同款纪律覆盖 D-08/D-09 新拒绝路径：--socket × 显式 --port 组合矛盾与
+// --socket-mode 单给矛盾均 validateStartup exit 2（零 listen 零 spawn——socket
+// 路径指向不存在目录，误 listen 会 exit 1 而非 2，退出码档位区分即证据）。
 func TestStartupRefusalNoResource(t *testing.T) {
 	t.Setenv("WESH_CREDENTIAL", "")
-	code, out := captureFd(t, &os.Stderr, func() int { return run([]string{"--", "true"}) })
-	if code == 0 {
-		t.Error("run(-- true) = 0, want non-zero (startup refusal)")
-	}
-	if !strings.Contains(out, "refusing to listen on non-loopback address without credentials") {
-		t.Errorf("run(-- true) stderr = %q, want D-03 refusal text", out)
-	}
+	t.Run("non-loopback no creds", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int { return run([]string{"--", "true"}) })
+		if code == 0 {
+			t.Error("run(-- true) = 0, want non-zero (startup refusal)")
+		}
+		if !strings.Contains(out, "refusing to listen on non-loopback address without credentials") {
+			t.Errorf("run(-- true) stderr = %q, want D-03 refusal text", out)
+		}
+	})
+	// D-08：--socket × 显式 --port 组合矛盾 exit 2（双 flag 名进文案）。
+	t.Run("socket with explicit port", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int {
+			return run([]string{"--socket", "/nonexistent-dir-7f3a/wesh.sock", "--port", "7682", "--", "true"})
+		})
+		if code != 2 {
+			t.Errorf("run(--socket ... --port 7682) = %d, want 2 (validateStartup refusal, zero listen/spawn)", code)
+		}
+		if !strings.Contains(out, "--socket") || !strings.Contains(out, "--port") {
+			t.Errorf("stderr = %q, want containing both --socket and --port", out)
+		}
+	})
+	// D-09：--socket-mode 单给（无 --socket）配置矛盾 exit 2（双 flag 名进文案）。
+	t.Run("socket-mode without socket", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int {
+			return run([]string{"--bind", "127.0.0.1", "--socket-mode", "0660", "--", "true"})
+		})
+		if code != 2 {
+			t.Errorf("run(--socket-mode 0660) = %d, want 2 (validateStartup refusal, zero listen/spawn)", code)
+		}
+		if !strings.Contains(out, "--socket-mode") || !strings.Contains(out, "--socket") {
+			t.Errorf("stderr = %q, want containing both --socket-mode and --socket", out)
+		}
+	})
+	// D-18 安全闸（07-review CR-03）：--auth-header Authorization 凭据载体头名
+	// parse 期拒绝 exit 2（零 listen 零 spawn——parse 期拒绝先于一切资源占用，
+	// 即时返回即证据，TestNoCommandError 同构纪律）。
+	t.Run("auth-header authorization refused", func(t *testing.T) {
+		code, out := captureFd(t, &os.Stderr, func() int {
+			return run([]string{"--auth-header", "Authorization", "--", "true"})
+		})
+		if code != 2 {
+			t.Errorf("run(--auth-header Authorization) = %d, want 2 (parse 期凭据头名拒绝)", code)
+		}
+		if !strings.Contains(out, "invalid --auth-header") {
+			t.Errorf("stderr = %q, want containing %q", out, "invalid --auth-header")
+		}
+	})
 }
 
 // TestBadCertPreflight（G-03-5 根因①回归锁）：坏 --tls-cert/--tls-key 路径时
@@ -558,6 +877,186 @@ func TestBadCertPreflight(t *testing.T) {
 	})
 }
 
+// shortTempDir 返回短根临时目录，替代 t.TempDir() 用于 unix socket 路径拼接。
+// 背景：bind(2) 的 sun_path 上限 Linux=108B / darwin=104B，而 darwin 的
+// t.TempDir() 根前缀形如 /var/folders/df/<30B-hash>/T/ 已占 ~51B，再拼接
+// "TestListenSocket<sub测名><rand>/001/wesh.sock" 必超 104B 触发 bind EINVAL
+// （Linux 阈值较宽但子测名 ≥46B 同样触限，live instance refused 子测原位
+// 注释曾记）。统一经 os.MkdirTemp("", prefix) 拿短根（/tmp/<prefix><rand>），
+// Cleanup RemoveAll 兜底。
+func shortTempDir(t *testing.T, prefix string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+// TestListenSocket（07-02，D-08/D-09/D-10 + T-07-02a/b；07-10 G-07-3）unix socket
+// listen 序列六子测：
+//   - 残留 socket 清理+可拨通：路径上预建真实残留 socket 不阻 bind（D-10
+//     listen 前 os.Remove——Go listenStream 直接 syscall.Bind 无 unlink，
+//     GOROOT 实证残留必收 EADDRINUSE，Remove 是必需而非保险）；listen 后
+//     net.Dial("unix") 可建连。
+//   - 存活实例拒绝且零损伤（07-10 G-07-3）：路径上预建真实存活 listener →
+//     listenSocket 拒绝，错误含 "address already in use"（与 net.Listen
+//     EADDRINUSE 形态全等，07-02 OPS-01 设计答案——第二实例 exit 1，无静默
+//     赢者）；存活 socket 文件不被删除、原 listener 仍 accept（net.Dial 仍
+//     连通）。
+//   - 非 socket 文件拒绝且内容保留（07-review CR-01）：普通文件占位 → 拒绝
+//     启动，文件内容零触碰（D-10 意图仅为清理残留 socket 端点——operator
+//     手误指向普通文件不得静默删除，拒绝文案只含路径与类别）。
+//   - 权限位恰为 0660：stat mode.Perm() 断言（D-09 显式 Chmod 达成确定性，
+//     不靠 umask 漂移——文件系统权限即认证边界，T-07-02b）。
+//   - owner=self 属主正确：uid/gid 数字对经 Chown 落到 stat（self 免 root）。
+//   - 失败回滚零残留：Listen 失败注入（父目录不存在，mode 合法）→ error 且
+//     路径无残留；Chown 失败注入（非 root 限定——chown 他人 uid EPERM）→
+//     error 且已建 socket 文件被 Close 自动 unlink 删除（UnixListener 默认
+//     unlink:true，GOROOT unixsock_posix.go:210-216,230；T-07-02a 回滚纪律：
+//     Chmod/Chown 失败必须回滚退出而非带病放行）。
+func TestListenSocket(t *testing.T) {
+	t.Run("stale socket removed and dialable", func(t *testing.T) {
+		path := filepath.Join(shortTempDir(t, "wesh-stale-"), "wesh.sock")
+		// 制造真实残留 socket 端点：listen 后 SetUnlinkOnClose(false) 再 Close——
+		// 文件遗留但无进程监听（systemd Restart= 场景 D-10 的清理对象；普通文件
+		// 不再是合法残留——CR-01 起非 socket 类型一律拒绝，见下方子测）。
+		ln0, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatalf("pre-create stale socket: %v", err)
+		}
+		ln0.(*net.UnixListener).SetUnlinkOnClose(false)
+		if err := ln0.Close(); err != nil {
+			t.Fatalf("close stale listener: %v", err)
+		}
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err != nil {
+			t.Fatalf("listenSocket over stale socket: %v (D-10 os.Remove must clear residue)", err)
+		}
+		defer func() { _ = ln.Close() }()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatalf("net.Dial unix %s: %v", path, err)
+		}
+		_ = conn.Close()
+	})
+	t.Run("live instance refused EADDRINUSE and unharmed", func(t *testing.T) {
+		// G-07-3：存活实例占用 socket 路径——活性探测（net.Dial 连通 = 存活）
+		// 拒绝启动，第二实例经 run() listen 失败通道 exit 1（07-02 OPS-01 设计
+		// 答案，静默赢者结构性消除）；存活方零损伤——socket 文件仍在、原
+		// listener 仍 accept。
+		// 路径长度纪律：见 shortTempDir 文档——sun_path 上限 + t.TempDir 根前缀
+		// 长度双重压力，unix socket 路径统一走短根。
+		path := filepath.Join(shortTempDir(t, "wesh-live-"), "wesh.sock")
+		ln0, err := net.Listen("unix", path) // 默认 unlink:true——defer Close 即清理
+		if err != nil {
+			t.Fatalf("pre-create live listener: %v", err)
+		}
+		defer func() { _ = ln0.Close() }()
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err == nil {
+			_ = ln.Close()
+			t.Fatal("listenSocket over live socket = nil error, want refusal (G-07-3)")
+		}
+		if !strings.Contains(err.Error(), "address already in use") {
+			t.Errorf("err = %v, want containing %q（与 net.Listen EADDRINUSE 形态全等）", err, "address already in use")
+		}
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Errorf("socket file after refusal: stat err = %v, want 仍存在（存活端点零触碰）", statErr)
+		}
+		conn2, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatalf("net.Dial unix after refusal: %v——原 listener 必须仍 accept（存活方零损伤）", err)
+		}
+		_ = conn2.Close()
+	})
+	t.Run("non-socket file refused and preserved", func(t *testing.T) {
+		// 07-review CR-01：普通文件占位 → listenSocket 拒绝且文件内容原样保留
+		//（拒绝经 run() listen 失败通道 exit 1——net.Listen 失败同档运行时
+		// 错误 tier；文案只含路径与 "not a socket" 类别）。
+		path := filepath.Join(t.TempDir(), "wesh.sock")
+		content := []byte("precious-operator-data")
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("pre-create regular file: %v", err)
+		}
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err == nil {
+			_ = ln.Close()
+			t.Fatal("listenSocket over regular file = nil error, want refusal (CR-01)")
+		}
+		if !strings.Contains(err.Error(), "not a socket") {
+			t.Errorf("err = %v, want containing %q", err, "not a socket")
+		}
+		got, rerr := os.ReadFile(path)
+		if rerr != nil || !bytes.Equal(got, content) {
+			t.Errorf("file after refusal = %q/%v, want 内容原样保留（未被删除）", got, rerr)
+		}
+	})
+	t.Run("mode exactly 0660", func(t *testing.T) {
+		path := filepath.Join(shortTempDir(t, "wesh-mode-"), "wesh.sock")
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err != nil {
+			t.Fatalf("listenSocket: %v", err)
+		}
+		defer func() { _ = ln.Close() }()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("os.Stat: %v", err)
+		}
+		if info.Mode().Perm() != 0o660 {
+			t.Errorf("socket mode = %o, want 660 (explicit Chmod, not umask drift)", info.Mode().Perm())
+		}
+	})
+	t.Run("owner self applied", func(t *testing.T) {
+		path := filepath.Join(shortTempDir(t, "wesh-owner-"), "wesh.sock")
+		ln, err := listenSocket(path, 0o660, os.Getuid(), os.Getgid())
+		if err != nil {
+			t.Fatalf("listenSocket with self owner: %v", err)
+		}
+		defer func() { _ = ln.Close() }()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("os.Stat: %v", err)
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatalf("Stat Sys() is %T, want *syscall.Stat_t", info.Sys())
+		}
+		if int(st.Uid) != os.Getuid() || int(st.Gid) != os.Getgid() {
+			t.Errorf("socket owner = %d/%d, want self %d/%d", st.Uid, st.Gid, os.Getuid(), os.Getgid())
+		}
+	})
+	t.Run("failure rollback leaves no residue", func(t *testing.T) {
+		// Listen 失败注入：父目录不存在（mode 合法）——error 且零残留。
+		// 父目录不存在的语义须保留，故短根目录下再拼一层 nonexistent。
+		path := filepath.Join(shortTempDir(t, "wesh-rb-"), "nonexistent", "wesh.sock")
+		ln, err := listenSocket(path, 0o660, -1, -1)
+		if err == nil {
+			_ = ln.Close()
+			t.Fatal("listenSocket with nonexistent parent dir = nil error, want error")
+		}
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Errorf("after failed listenSocket, stat err = %v, want NotExist (zero residue)", statErr)
+		}
+		// Chown 失败注入（非 root 限定）：chown 他人 uid EPERM——序列已建 socket
+		// 文件，失败回滚必须经 Close 自动 unlink 删除（T-07-02a 零残留纪律）。
+		// 同样须走短根——darwin 上 t.TempDir 长路径会以 bind EINVAL 而非 chown
+		// EPERM 通过断言，注入语义被吞。
+		if os.Getuid() != 0 {
+			p2 := filepath.Join(shortTempDir(t, "wesh-rb2-"), "wesh.sock")
+			ln2, err2 := listenSocket(p2, 0o660, 1, 1)
+			if err2 == nil {
+				_ = ln2.Close()
+				t.Fatal("listenSocket chown to uid 1 as non-root = nil error, want EPERM")
+			}
+			if _, statErr := os.Stat(p2); !os.IsNotExist(statErr) {
+				t.Errorf("rollback residue: stat err = %v, want NotExist (Close auto-unlink)", statErr)
+			}
+		}
+	})
+}
+
 // TestVersionFlag：`--version` 返回 0 且 stdout 含 wesh 与版本字符串
 // （version 为包内 var，发布构建注入，开发构建为 dev，不强制构建期注入）。
 func TestVersionFlag(t *testing.T) {
@@ -568,4 +1067,149 @@ func TestVersionFlag(t *testing.T) {
 	if !strings.Contains(out, "wesh") || !strings.Contains(out, version) {
 		t.Errorf("run(--version) stdout = %q, want containing %q and version %q", out, "wesh", version)
 	}
+}
+
+// TestOpenBrowser（07-05，OPS-11，D-26/D-27；07-10 G-07-8）三场景：
+//   - headless 跳过：linux 且 DISPLAY/WAYLAND_DISPLAY 均空 → openBrowser 直接
+//     返回且 stderr 捕获提示行（不调用任何启动器——headless 服务器是常态部署
+//     形态，跳过不阻断启动）；
+//   - fake xdg-open：t.TempDir 写可执行脚本记录 argv 到文件 + PATH 前置 +
+//     DISPLAY=:99 → 断言 argv[1] == 预期分享 URL（exec 的真实调用链不打桩，
+//     与 07-VALIDATION「fake xdg-open PATH 前置断言 argv」策略一致）；
+//   - 非零退出警告（07-10 G-07-8 选项 A）：fake xdg-open exit 1 → goroutine
+//     Wait 收割后 stderr 补警告行（D-27「只警告不阻断」覆盖运行期非零退出）；
+//     警告行不含 URL（share token 红线 P5 D-03——Wait err 仅 exit status N
+//     结构性无 argv，运行时断言占位串零命中）。exit 0 路径无新输出由实现
+//     结构保证（Wait 返回 nil 不打印），不设轮询断言（等待不可得事件必
+//     flake）。
+//
+// darwin 分支不做运行时断言（构建标签差异——openBrowser 的 headless 检测只在
+// linux 分支判定，darwin 直接 open；CI macOS 跑同款测试形态即本测试整体
+// Skip，main.go openBrowser 注释登记）。URL 用占位 host:port 串——只作 argv
+// 断言材料，不发起任何网络连接。
+func TestOpenBrowser(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fake xdg-open 场景仅 linux 形态（darwin 分支不做运行时断言，见函数头注释）")
+	}
+	t.Run("headless skips browser launch", func(t *testing.T) {
+		t.Setenv("DISPLAY", "")
+		t.Setenv("WAYLAND_DISPLAY", "")
+		_, out := captureFd(t, &os.Stderr, func() int {
+			openBrowser("http://127.0.0.1:7681/s/headless-placeholder/")
+			return 0
+		})
+		if !strings.Contains(out, "wesh: --open: no display detected (headless), skipping browser launch") {
+			t.Errorf("stderr = %q, want headless skip line（D-27 提示行逐字）", out)
+		}
+	})
+	t.Run("fake xdg-open receives share url", func(t *testing.T) {
+		dir := t.TempDir()
+		argvLog := filepath.Join(dir, "argv.log")
+		script := filepath.Join(dir, "xdg-open")
+		// 记录全部参数（每行一个）——断言材料；分享 URL 作 argv[1]（exec.Command
+		// argv 分离不经 shell，T-07-05b）。
+		content := "#!/bin/sh\nprintf '%s\n' \"$@\" > " + argvLog + "\n"
+		if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+			t.Fatalf("write fake xdg-open: %v", err)
+		}
+		t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+		t.Setenv("DISPLAY", ":99")
+		want := "http://127.0.0.1:7681/s/fake-xdg-open-placeholder/"
+		openBrowser(want)
+		// exec.Command(...).Start() 不等待（D-27 goroutine 调用形态）——fake 脚本
+		// 落盘极快但仍需小窗轮询同步。
+		deadline := time.Now().Add(2 * time.Second)
+		var got []byte
+		for {
+			b, err := os.ReadFile(argvLog)
+			if err == nil {
+				got = b
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("fake xdg-open argv.log 2s 内未出现: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		lines := strings.Split(strings.TrimRight(string(got), "\n"), "\n")
+		if len(lines) != 1 || lines[0] != want {
+			t.Errorf("xdg-open argv = %v, want exactly [%q]", lines, want)
+		}
+	})
+	t.Run("non-zero opener warns without blocking", func(t *testing.T) {
+		// G-07-8 选项 A：Start 成功后非零退出 → goroutine Wait 收割并补 stderr
+		// 警告行（D-27「只警告不阻断」覆盖运行期非零退出）；警告行不含 URL
+		//（share token 红线 P5 D-03——Wait err 仅 exit status N 结构性无 argv）。
+		dir := t.TempDir()
+		script := filepath.Join(dir, "xdg-open")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			t.Fatalf("write failing fake xdg-open: %v", err)
+		}
+		t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+		t.Setenv("DISPLAY", ":99")
+		url := "http://127.0.0.1:7681/s/nonzero-opener-placeholder/"
+
+		// 异步警告捕获（05-01 happens-before 纪律）：os.Pipe 换管 os.Stderr +
+		// 读取 goroutine 经 mutex 保护写入 buffer + 2s 轮询（同锁）；观测到
+		// 警告行后先 close(w) 再 restore os.Stderr 并经 done channel 等读取
+		// goroutine 退出——restore 必在观测之后，读写经 mutex 同步（-race 干净）。
+		old := os.Stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		os.Stderr = w
+		var mu sync.Mutex
+		var buf bytes.Buffer
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			tmp := make([]byte, 4096)
+			for {
+				n, rerr := r.Read(tmp)
+				if n > 0 {
+					mu.Lock()
+					_, _ = buf.Write(tmp[:n])
+					mu.Unlock()
+				}
+				if rerr != nil {
+					return
+				}
+			}
+		}()
+
+		openBrowser(url) // Start 成功；非零退出警告由 goroutine Wait 异步落 stderr
+
+		deadline := time.Now().Add(2 * time.Second)
+		var out string
+		for {
+			mu.Lock()
+			out = buf.String()
+			mu.Unlock()
+			if strings.Contains(out, "wesh: warning: --open: browser launcher exited with error") {
+				break
+			}
+			if time.Now().After(deadline) {
+				_ = w.Close()
+				os.Stderr = old
+				<-done
+				t.Fatalf("2s 内未观察到非零退出警告行（D-27 运行期覆盖），buffer = %q", out)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		_ = w.Close()
+		os.Stderr = old
+		<-done
+		_ = r.Close()
+
+		mu.Lock()
+		out = buf.String()
+		mu.Unlock()
+		if !strings.Contains(out, "wesh: warning: --open: browser launcher exited with error") {
+			t.Errorf("stderr = %q, want 非零退出警告行（D-27 运行期覆盖）", out)
+		}
+		if strings.Contains(out, url) {
+			t.Errorf("stderr = %q, must not contain URL %q（share token 红线 P5 D-03）", out, url)
+		}
+	})
 }

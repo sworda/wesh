@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发 (completed 2026-08-19)
 - [x] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接 (completed 2026-08-22)
 - [x] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程 (completed 2026-08-24)
-- [ ] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传
+- [x] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传 (completed 2026-08-27)
 - [ ] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志
 - [ ] **Phase 9: 发布与打磨** - 单静态二进制四平台发布、自定义首页、负载/模糊测试回填默认参数
 
@@ -271,10 +271,46 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Success Criteria** (what must be TRUE):
 
   1. 端口（0=随机并打印实际端口）/绑定地址/UNIX socket（含属主）可配置；TOML 配置文件支持，CLI 参数覆盖配置文件
-  2. 反代子路径挂载（`/wesh/` base-path）下页面与 WS 升级均正常（尾斜杠规范化）；反代注入的可信用户头作为环境变量出现在子进程中
+  2. 反代子路径挂载（`/wesh/` base-path）下页面与 WS 升级均正常（尾斜杠规范化）；反代注入的可信用户头记录进服务端审计日志（remote_user 审计归因——D-15 修订：原「作为环境变量出现在子进程中」语义在 GoTTY 共享进程模型下结构性不成立）
   3. 子进程以指定 cwd/TERM 启动，停止信号发给进程组（可配 TERM→KILL 宽限）；可以指定 uid/gid 降权运行；可选启动后自动打开浏览器
 
-**Plans**: TBD
+**Plans**: 9/10 plans executed（8/8 executed + 07-09/07-10 gap closure）
+**Wave 1**
+
+- [x] 07-01-PLAN.md — base-path tracer（OPS-02，D-13/D-14）：--base-path 严格校验 + mux 前缀装配（StripPrefix 仅静态伺服 + 307 免费）+ 前端相对 URL 三改含 share 升级前缀 + dist（OPS-02）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 07-02-PLAN.md — UNIX socket（OPS-01，D-08..D-12）：--socket/--socket-mode/--socket-owner + listen 前 Remove + listen 后 Chmod/Chown + validateStartup 互斥与跳过 + unix:// 打印与分享链接退化（OPS-01）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 07-03-PLAN.md — auth-header/XFF（SEC-07，D-15..D-20）：proxy.go sanitize/extract + logEvent remote_user 第四字段 + XFF 信任闸换 logEvent/throttle 键 + D-16 暴露面警告（SEC-07）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 07-04-PLAN.md — 子进程管理+降权（OPS-04/05，D-21/D-22/D-24/D-25）：StartOptions Dir/Term + SignalGroup + stop-signal/stop-timeout 序列 + uid/gid Credential + whitelistEnv 身份改写（OPS-04/OPS-05）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 07-05-PLAN.md — 1001 优雅下线 + --open（D-23 + OPS-11，D-26/D-27）：Server.Shutdown 1001 广播 + SIGTERM/INT 捕获 + proto 1001 启用 + 前端关停面板 + --open headless 跳过（OPS-11）
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [x] 07-06-PLAN.md — TOML 配置文件（OPS-09，D-01..D-07）：go-toml 严格模式 + 27 键（26 flag 同名 + command）两阶段合并 + flag>env>config>default 优先级 + D-07 权限警告 + 值剥离红线（OPS-09）
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [x] 07-07-PLAN.md — phase07.mjs 协议层 UAT：配置合并/unix socket relay/base-path 交叉/auth-header/XFF/stop-signal/降权/1001/--open 八场景 + 自净红线（全需求）
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [x] 07-08-PLAN.md — 收口：README 部署与配置节（含 ttyd -H 模型差异）+ SEC-07 需求文本 D-15 修订 + 07-UAT.md 人工清单 + 全量六段式与十脚本回归（全需求）
+
+**Gap closure** *(UAT 2026-08-26 三 issue：G-07-2 反代配方缺 Host 转发跨机 WS 403 / G-07-3 存活 socket 被静默接管 / G-07-8 opener 非零退出静默——A1/B4 为 blocked 环境前置（平台拓扑/无 root 通道），非代码问题不出 plan)*
+
+- [x] 07-09-PLAN.md — G-07-2 闭合：README nginx 配方补 Host $http_host + 精确块理据按 proxy_pass 301 实证改写 + pw 回归载具同步双机全链 5/5（OPS-02）
+- [x] 07-10-PLAN.md — G-07-3/G-07-8 闭合：listenSocket 活性探测（存活拒绝 EADDRINUSE exit 1）+ openBrowser goroutine Wait 非零警告（选项 A）+ b1b5/b6 二进制直证与协议套件回归（OPS-01/OPS-11）
 
 ### Phase 8: 可观测性
 
@@ -316,6 +352,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
 | 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
-| 7. 部署与配置 | TBD | Not started | - |
+| 7. 部署与配置 | 10/10 | Complete    | 2026-08-27 |
 | 8. 可观测性 | TBD | Not started | - |
 | 9. 发布与打磨 | TBD | Not started | - |

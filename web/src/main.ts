@@ -20,6 +20,10 @@ import { backoffMs } from './lib/reconnect';
 // Error code 含 auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）；
 // EXIT 载荷 {exit_code, message}——子进程退出终结帧（Phase 6 D-08/D-09，proto.go Exit/ExitPayload
 // 同形）；信号死亡 exit_code=-1；message 为服务端组文案唯一写口，前端直显不改写。
+// 关闭码 1001 优雅下线已于 Phase 7 启用（D-23，proto.go 关闭码纪律块互指）：发送路径 =
+// server/server.go Shutdown（库常量 websocket.StatusGoingAway，close reason 机器串
+// server_shutting_down）；前端分派 = 下方 onclose case 1001 'Server shutting down' 终态面板——
+// 1001 不在 CORE-05 重连触发集（仅 1006，P6 D-01）。
 const OUTPUT = 0x30,
   INPUT = 0x30,
   RESIZE = 0x31,
@@ -495,10 +499,14 @@ async function connect(): Promise<void> {
   prevFit = null;
   roNotified = false;
 
-  // ^/s/{token}/$ 提取（无尾斜杠由服务端 301 补斜杠，前端无需兼容——05 R-05）；
+  // /s/{token}/$ 提取不锚 ^（07-01 D-14）：base-path 挂载（/wesh/s/{token}/）同样命中，
+  // 正则兼作挂载点检测；无尾斜杠由服务端补斜杠，前端无需兼容（05 R-05）；
   // 前端不解析不分支 token 种类——ro/rw 判定唯一来源是 Welcome.mode（05 D-01）
-  const shareMatch = location.pathname.match(/^\/s\/([^/]+)\/$/);
+  const shareMatch = location.pathname.match(/\/s\/([^/]+)\/$/);
   const shareToken = shareMatch ? shareMatch[1] : undefined;
+  // 升级前缀（07-01 D-14）：share 页深两段（/s/{token}/ → 站根需上两级），根挂载为空串；
+  // 相对 fetch/WS URL 经此前缀回站根，base-path 形态（/wesh/s/{token}/）同型解析回 bp 下
+  const up = shareMatch ? '../../' : '';
 
   let ticket: string | undefined;
   try {
@@ -507,7 +515,7 @@ async function connect(): Promise<void> {
     // 携 token 时 POST body 上送（OQ1：token 通道与认证模式正交——无认证模式同样走
     // 本分支，服务端 /api/attach 仅当 body 携 token 时非 404）；无 token 保持空 body 现状
     const resp = await fetch(
-      '/api/attach',
+      up + 'api/attach', // 相对构造（07-01 D-14）：share 页经升级前缀回站根；base-path 挂载解析到 bp 前缀路由
       shareToken === undefined
         ? { method: 'POST' }
         : {
@@ -597,8 +605,12 @@ async function connect(): Promise<void> {
   // sock !== ws 守卫静默空转，beforeunload 监听不误拆
   if (gen !== connectGen || welcomeDone) return;
   ws?.close();
-  // scheme 按页面协议选 ws/wss——https 页面下必须 wss（TLS 部署可连，03-04 伺服形态）
-  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws', [SUBPROTOCOL]); // D-03：wesh.v1 子协议建连
+  // 相对构造（07-01 D-14）：new URL 继承页面 http(s) scheme，必须显式换 protocol——
+  // WebSocket 构造只收 ws/wss（RESEARCH Anti-Pattern 3）；https 页面下必须 wss
+  //（TLS 部署可连，03-04 伺服形态）；share 页经升级前缀回站根
+  const wsUrl = new URL(up + 'ws', location.href);
+  wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(wsUrl, [SUBPROTOCOL]); // D-03：wesh.v1 子协议建连
   const sock = ws; // 闭包内引用本连接的确定句柄（TS 对模块级可空 let 不做闭包收窄）
   sock.binaryType = 'arraybuffer';
 
@@ -877,6 +889,17 @@ async function connect(): Promise<void> {
           // R2：正文 = EXIT 帧服务端组文案（退出码/信号人话，D-09/D-10）；未收 EXIT
           //（旧服务端/异常路径）回退既有硬编码文案逐字不变（前向兼容 P2 D-02）
           lastExit?.message ?? 'The process exited and the wesh server has stopped.',
+          'Start wesh again from your shell, then',
+        );
+        break;
+      case 1001: // D-23 优雅下线（Phase 7，proto.go 关闭码纪律块互指——发送路径 server
+        // Shutdown + reason server_shutting_down）。与 1000 的语义边界：进程退出 vs 服务
+        // 关停（子进程由服务端 stop-signal 序列终结）。1001 不在 CORE-05 触发集（仅
+        // 1006——systemd restart 场景看终态面板，而非重连循环打一个正在重启的服务，
+        // D-23 UX 闭环）；不调用 startReconnect（prohibition 回归锁）
+        showStatus(
+          'Server shutting down',
+          'The wesh server is shutting down. The session has ended.',
           'Start wesh again from your shell, then',
         );
         break;

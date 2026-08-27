@@ -1,45 +1,45 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-current_phase: 7
-current_phase_name: 部署与配置
-status: planning
-stopped_at: Phase 06 complete, ready to plan Phase 7
-last_updated: "2026-08-24T13:51:19.803Z"
-last_activity: 2026-08-24
-last_activity_desc: Phase 06 complete, transitioned to Phase 7
-state_head: 3a84bc82060c50a75f7a20c21b80ea2a10b4ab59
+milestone_name: milestone
+current_phase: 8
+current_phase_name: 可观测性
+status: "Phase 07 shipped — PR #8"
+stopped_at: Phase 07 complete, ready to plan Phase 8
+last_updated: "2026-08-27T03:42:38.021Z"
+last_activity: 2026-08-27
 progress:
   total_phases: 9
-  completed_phases: 6
-  total_plans: 44
-  completed_plans: 44
-milestone_name: milestone
+  completed_phases: 7
+  total_plans: 54
+  completed_plans: 54
+last_activity_desc: Phase 07 complete, transitioned to Phase 8
+state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-24)
+See: .planning/PROJECT.md (updated 2026-08-27)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 07 — 部署与配置
+**Current focus:** Phase 08 — 可观测性
 
 ## Current Position
 
-Phase: 7 — 部署与配置
+Phase: 8 — 可观测性
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-08-24 — Phase 06 complete, transitioned to Phase 7
+Status: Phase 07 shipped — PR #8
+Last activity: 2026-08-27
 
-Progress: [██████████] 100%
+Progress: [██████████] 54/54 plans
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 44
+- Total plans completed: 54
 - Average duration: -
 - Total execution time: -
 
@@ -53,6 +53,7 @@ Progress: [██████████] 100%
 | 04 | 6 | - | - |
 | 05 | 13 | - | - |
 | 06 | 7 | - | - |
+| 07 | 10 | - | - |
 
 **Recent Trend:**
 
@@ -107,6 +108,15 @@ Progress: [██████████] 100%
 | Phase 06-session-lifecycle P05 | 21min | 2 tasks | 1 files |
 | Phase 06-session-lifecycle P06 | 23min | 2 tasks | 1 files |
 | Phase 06-session-lifecycle P07 | 26min | 2 tasks | 7 files |
+| Phase 07-deployment P01 | 35min | 2 tasks | 7 files |
+| Phase 07-deployment P02 | 32min | 2 tasks | 2 files |
+| Phase 07-deployment P03 | 30min | 2 tasks | 8 files |
+| Phase 07-deployment P04 | 1h 20m | 3 tasks | 17 files |
+| Phase 07-deployment P05 | 39min | 3 tasks tasks | 8 files files |
+| Phase 07-deployment P06 | 47min | 2 tasks tasks | 5 files files |
+| Phase 07-deployment P07 | 29min | 2 tasks | 1 files |
+| Phase 07-deployment P08 | 24min | 2 tasks | 4 files |
+| Phase 07 P10 | 20min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -214,6 +224,29 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-06]: 断连重接同一 PTY 协议层证据形态——echo S6PID=$$ 进程 ID 相等主证据（/S6PID=(\d+)/ 数字锚定防回显误命中）+ weshmark42 变量存活次级佐证 + 首连接无 EXIT 帧 + 服务端存活顺带锁定 D-14 默认
 - [Phase ?]: [Phase 06-07]: -max-clients help 重复标注裁决为修复（06-04 deferred 既定路由）——移除 help 文案自含 (default 32)，flag 包自动追加为单一事实源；纯展示层零语义，one-way 契约面不动
 - [Phase ?]: [Phase 06-07]: 旧 UAT 脚本对 EXIT 帧零适配落锤——phase02 T4a 仅断言 close code、phase03 无子进程退出场景，九脚本首跑全绿；六段式段 1 顺带清零三文件既有 gofmt 漂移（deferred-items 既定路由终点）
+- [Phase ?]: [Phase 07-01]: 无认证分支 bp 形态补注册 attach path-only 405 fallback（Rule 1 调和）——plan behavior 矩阵对无认证+BasePath 实例断言 405，现状无认证根挂载经 embed FS 404；取「bp 形态注册、根挂载不注册保持零漂移」，Pitfall 4 单侧定义防线落到两分支
+- [Phase ?]: [Phase 07-01]: 非法 --base-path 五族断言落 TestTLSKeyPairError 错误表（parse 期拒绝既定归属），TestParseArgs 只收合法/root 三行（wantBasePath 命名字段扩展，03-04 先例既存行零改动）
+- [Phase ?]: [Phase 07-01]: dist 升级前缀验收 grep 适配引号无关心形态——esbuild 以反引号模板字面量发射 '../../'（现状 /api/attach 同形态），字面量未重命名、引号非断言面（05-09 先例断言面守恒）
+- [Phase ?]: [Phase 07-02]: parseArgs 头注释 flag 计数 17→21 并补 Phase 7 行（Rule 1 文档漂移修复）——07-01 加 --base-path 后计数已陈旧，本 plan 再加三 flag 使漂移扩大；同区域主题直接相关一次修正
+- [Phase ?]: [Phase 07-02]: TestListenSocket 失败回滚子测补 Chown EPERM 注入（Rule 2 覆盖强化）——plan 给定的 Listen 失败注入零残留断言平凡成立；非 root chown uid 1 EPERM 是 T-07-02a Close 自动 unlink mitigation 的真实可达证据（root 环境自动跳过）
+- [Phase ?]: [Phase 07-03]: proxy 测试分文件（白盒 proxy_test.go / 黑盒 proxy_e2e_test.go）——Go 单文件单 package 约束使 plan 单文件四测试组字面不可达，05-04 resize 先例第二次沿用；remote_user 载体范围 = attach 链路事件行全覆盖 + 注册客户端会话事件（kick/pong_timeout/exit_when_empty 家族），未配置时 variadic 空值与现状逐字节一致
+- [Phase ?]: [Phase 07-03]: D-16 警告取合并形态（--auth-header 暴露面警告为主 + --no-auth 裸奔语义同行不丢）；Task 2 字面验收 grep 'clientIP(' 与 Task 1 验收结构性自相矛盾，按意图修正执行（旧自由函数零残留调用，修正版 grep==0）
+- [Phase ?]: [Phase 07-04]: supplementary groups 环境感知策略——root 清空附加组（NoSetGroups=false 最小权限既定语义）；非 root NoSetGroups=true 跳过（非 root 无 CAP_SETGID 清空必 EPERM 实测命中，GOROOT exec_linux.go:496-499 无条件调用；降回自身保留自身附加组零提权面）——plan flagged_assumptions 与免 root 测试要求的矛盾修正，07-08 人工 UAT 复核联动
+- [Phase ?]: [Phase 07-04]: D-22 stop-signal 序列统一出口 stopChildLocked（SignalGroup(stopSignal) + stopTimeout>0 时 AfterFunc 异步补 SIGKILL 不占 hubMu、ESRCH 幂等）——exit-when-empty 两触发点与 07-05 Shutdown 共用同一函数同一对字段，Options 单一通道双写即漂移
+- [Phase ?]: [Phase 07-04]: 信号类行为测试夹具纪律——trap 安装与 detach 信号竞态经落盘标记文件同步（01-03 先例）；trap "" 忽略型经 SIG_IGN 跨 exec 持久整组免疫（初版 setsid 探针受 fish 作业控制干扰误判，真实二进制冒烟修正）；捕获型 trap 特异退出码作证送达（exit 43）
+- [Phase ?]: [Phase 07-04]: SignalHangup 泛化删除的 grep==0 语义边界——方法删除 + 两调用点换 SignalGroup + 测试机械换名 TestSignalGroupHangup + 注释字面同清（05-08 纪律：验收 grep 是源码级机械检查，注释提及旧名同样计数）
+- [Phase ?]: [Phase 07-05]: Shutdown 的 stop-signal 序列取同步 sleep 形态（plan behavior 逐字）——stopChildLocked AfterFunc 异步补 KILL 服务 hubMu 持有方（exit-when-empty），Shutdown 不持 hubMu 同步 sleep 更直白且 KILL 测序确定；字段复用（Options 单一通道）是硬约束，函数复用非约束
+- [Phase ?]: [Phase 07-05]: WS Close 握手测试夹具 readCloseAsync——库 close 回显走读路径，测试客户端无在读 Read 时服务端主动 Close 等满内建 5s 上界；Shutdown 前启动客户端读循环 goroutine（plan behavior「客户端读循环」字面形态），真实浏览器协议栈透明回显无此窗口
+- [Phase ?]: [Phase 07-05]: 测试装配 startShutdownServerWith 本地变体（plan 字面 startTrackedServerWith 按意图修正——srv 句柄不暴露，Shutdown 直接调用面结构性需要）；parseArgs 头注释 28→29 补 --open 行（07-02 先例第二次沿用）
+- [Phase ?]: [Phase 07-06]: 配置 exit-when-empty 在 --once 展开之前应用（配置不算显式，展开覆盖配置值——flag > 配置推论）；cfgCredErr 上报点落合并段末尾，env/CLI 遮蔽的配置列表不解析不校验（D-02/D-05 不应用语义字面落地）
+- [Phase ?]: [Phase 07-06]: 默认值替换机制承载 D-05 优先级链——配置标量键换算 flag 注册默认值，flag > 配置 > 默认两档零新判定代码；配置键存在即「已给定」置显式位（socket 族/write-policy 矩阵配置同档）
+- [Phase ?]: [Phase 07-07]: S4c 控制字符探针取 UTF-8 线形等价物构造（本机三探针实证）——undici 头值 latin1 编码使朴素 JS 'ali\u0085ce' 上线为单字节 0x85（Go 侧 U+FFFD 复现不了剥离路径），'ali\u00C2\u0085ce' 双码点上线 0xC2 0x85 = UTF-8 客户端等价线形，Go 解码得 NEL 按 D-19 剥离
+- [Phase ?]: [Phase 07-07]: S4 事件行触发形态 = --exit-when-empty 的 exit_when_empty logEvent——attach+close 链路唯一确定性即时事件（携 Attach 入口提取的 c.remote/c.remote_user），进程随后 HUP 收口 255 顺带锁定；S5a 加 900ms 时序下界证宽限真实经过；S1 排序即解零 pacing（401 负面对照排最后）
+- [Phase ?]: [Phase 07-08]: RESEARCH A1 复核闭合——本机 nginx 1.14.1 实测 location /wesh/ 不匹配裸 /wesh（裸路径 404），README nginx 配方精确重定向块按实证确凿落文（非防御性建议）
+- [Phase ?]: [Phase 07-08]: SEC-07 D-15 双文件修订落位——REQUIREMENTS.md 与 ROADMAP.md SC2 同步改为服务端审计归因语义（原「子进程环境变量」表述作废），单一口径防文档间漂移；勾选状态与 Traceability 映射不动
+- [Phase ?]: [Phase 07-10]: G-07-3 闭合——listenSocket 活性探测（net.Dial unix 连通=存活→拒 EADDRINUSE 同形态文案 exit 1；失败=残留→照旧 Remove）；TOCTOU 两向安全降级；「不可服务即残留」边缘假设登记
+- [Phase ?]: [Phase 07-10]: G-07-8 选项 A 裁决落地——openBrowser goroutine Wait 收割防僵尸 + 非零退出补 wesh: warning 警告行（D-27 运行期非零覆盖从实现侧闭合，文档链不动）；警告行不含 URL（Wait err 结构性无 argv + 测试反断言双锁）
+- [Phase ?]: [Phase 07-10]: 长测试名夹具路径纪律——t.TempDir 拼长子测名可超 sun_path 108B（bind EINVAL），unix socket 测试夹具用 os.MkdirTemp 短根路径
 
 ### Pending Todos
 
@@ -224,6 +257,7 @@ None yet.
 - [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
 - [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5
 - [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9
+- [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md（1001 hint 与 systemd 自重启形态不匹配 / #status 面板族缺 role="alert" / pre-onopen 1001 落错文案竞态低危）——ship 后清零路由
 
 ## Deferred Items
 
@@ -233,6 +267,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-24T13:51:19Z
-Stopped at: Phase 06 complete, ready to plan Phase 7
+Last session: 2026-08-27T03:12:23Z
+Stopped at: Phase 07 complete, ready to plan Phase 8
 Resume file: None

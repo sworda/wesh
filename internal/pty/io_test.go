@@ -16,7 +16,7 @@ import (
 // （RESEARCH 行 571 本机原型实测 [24 80 50 132]）。
 func TestResize(t *testing.T) {
 	// /bin/sh -c 仅作测试编排夹具（产品 spawn 路径绝不经 shell，D-02/D-15 纪律不变）
-	sess, err := Start([]string{"/bin/sh", "-c", "stty size; sleep 1; stty size"})
+	sess, err := Start([]string{"/bin/sh", "-c", "stty size; sleep 1; stty size"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestResize(t *testing.T) {
 // os.ErrClosed，重复 Close 幂等返回 nil。并发面（Resize↔Close）由 -race 下的
 // e2e 套件覆盖（02-02 握手 Resize 调用点暴露的原缺陷形态）。
 func TestResizeAfterClose(t *testing.T) {
-	sess, err := Start([]string{"/bin/cat"})
+	sess, err := Start([]string{"/bin/cat"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -64,16 +64,18 @@ func TestResizeAfterClose(t *testing.T) {
 	_ = sess.Wait()
 }
 
-// TestSignalHangup（06-02，SESS-01/02 触发源送达语义锁定）：SignalHangup 向子进程
-// 进程组发 SIGHUP——Start 成功返回即子进程已完成 exec（forkExec 管道握手），信号
-// 送达即致死；sess.Wait 返回 *exec.ExitError，WaitStatus 断言 Signaled()==true 且
-// Signal()==syscall.SIGHUP。10s 护栏（既有测试统一超时纪律）。
-func TestSignalHangup(t *testing.T) {
-	sess, err := Start([]string{"sleep", "600"})
+// TestSignalGroupHangup（06-02，SESS-01/02 触发源送达语义锁定；07-04 D-22 机械
+// 换名——HUP 专用方法泛化为 SignalGroup 后本测试锁定默认 HUP 形态的送达语义）：
+// SignalGroup(SIGHUP) 向子进程进程组发 SIGHUP——Start 成功返回即子进程已完成
+// exec（forkExec 管道握手），信号送达即致死；sess.Wait 返回 *exec.ExitError，
+// WaitStatus 断言 Signaled()==true 且 Signal()==syscall.SIGHUP。10s 护栏（既有
+// 测试统一超时纪律）。
+func TestSignalGroupHangup(t *testing.T) {
+	sess, err := Start([]string{"sleep", "600"}, StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	sess.SignalHangup()
+	sess.SignalGroup(syscall.SIGHUP)
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- sess.Wait() }()
@@ -91,9 +93,9 @@ func TestSignalHangup(t *testing.T) {
 			t.Fatal("WaitStatus.Signaled() = false, want true（信号致死）")
 		}
 		if ws.Signal() != syscall.SIGHUP {
-			t.Fatalf("WaitStatus.Signal() = %v, want SIGHUP（SignalHangup 送达语义）", ws.Signal())
+			t.Fatalf("WaitStatus.Signal() = %v, want SIGHUP（SignalGroup(SIGHUP) 送达语义）", ws.Signal())
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("Wait did not return within 10s — SignalHangup not delivered")
+		t.Fatal("Wait did not return within 10s — SignalGroup(SIGHUP) not delivered")
 	}
 }
