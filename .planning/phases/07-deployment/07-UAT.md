@@ -1,10 +1,10 @@
 ---
-status: partial
+status: complete
 phase: 07-deployment
 created: 2026-08-26
 source: [07-VERIFICATION.md, 07-VALIDATION.md, 07-08-PLAN.md]
 started: 2026-08-26T07:10:00Z
-updated: 2026-08-26T12:10:00Z
+updated: 2026-08-27T01:50:27Z
 ---
 
 # Phase 7 人工 UAT 清单（部署与配置）
@@ -18,11 +18,11 @@ updated: 2026-08-26T12:10:00Z
 
 ## A. Manual-Only 项（07-VALIDATION.md 登记）
 
-- [ ] **A1. 浏览器自动打开真实效果（OPS-11）**— **blocked（平台拓扑限制）**（2026-08-26）
+- [x] **A1. 浏览器自动打开真实效果（OPS-11）**— **skipped（平台豁免·风险接受）**（2026-08-26 登记 blocked；2026-08-27 用户裁决转 skipped）
   - 步骤：在有 GUI 的环境（桌面 Linux / macOS / Windows 工作站）运行 `wesh --open --writable -- bash`。
   - 预期：启动后系统默认浏览器自动打开 rw 分享链接（含 token 免交互直接进入终端），无需手动复制 URL；终端可用。
   - 备注：macOS 真实弹窗为本机（Linux headless）未实测面——CI macOS 跑同款单测形态整体 Skip（07-05 flagged_assumptions）。
-  - **blocked_by: physical-device** — reason: "--open 的拉起方为 wesh 运行机系统启动器。双机拓扑下 wesh 只能跑在 Linux 开发机（headless，真实弹窗不可达）；Windows 工作站有 GUI 但 wesh 不能 Windows 原生构建运行（既定 Out of Scope）。可自动化面已闭合：phase07.mjs S8a（headless 跳过提示+服务正常）PASS、S8b（fake xdg-open argv == rw 分享链接全等）PASS、b6.sh（stub opener + TLS 组合 https:// ro 链接）6/7 PASS；真实浏览器弹窗观感为平台原生行为，phase07.mjs S8c 已按 CODEBUDDY.md 平台豁免条款登记 skip+reason。若需彻底闭环需桌面 Linux/macOS 机器。"
+  - **result: skipped** — reason（2026-08-26 blocked 原文保留）: "--open 的拉起方为 wesh 运行机系统启动器。双机拓扑下 wesh 只能跑在 Linux 开发机（headless，真实弹窗不可达）；Windows 工作站有 GUI 但 wesh 不能 Windows 原生构建运行（既定 Out of Scope）。可自动化面已闭合：phase07.mjs S8a（headless 跳过提示+服务正常）PASS、S8b（fake xdg-open argv == rw 分享链接全等）PASS、b6.sh（stub opener + TLS 组合 https:// ro 链接）6/7 PASS；真实浏览器弹窗观感为平台原生行为，phase07.mjs S8c 已按 CODEBUDDY.md 平台豁免条款登记 skip+reason。若需彻底闭环需桌面 Linux/macOS 机器。"
 
 - [ ] **A2. 真实 nginx 反代挂载观感（OPS-02）**— **issue: major**（2026-08-26 全链自动化实证，见 Gaps G-07-2）
   - 步骤：按 README「部署与配置 → 反代子路径」配方配置真实 nginx（`location = /wesh` 精确块 + `location /wesh/` 前缀块，后端 `wesh --base-path /wesh -- bash`）；浏览器访问 `http://<host>/wesh`（裸路径，无尾斜杠）。
@@ -52,11 +52,11 @@ updated: 2026-08-26T12:10:00Z
   - 步骤：① `--cwd` 给符号链接路径启动；② `--term` 给非标准字符串（如 `--term foobar`）启动后终端内 `echo $TERM`；③ `--stop-timeout 1h` 触发关停后中途手动 kill 子进程。
   - 预期：① 正常启动，子进程 cwd 按内核语义解析；② 启动不校验，`$TERM` 原样为 `foobar`；③ 子进程死亡后 wesh 即时退出（不等满 1h——补 KILL 是异步兜底，不阻塞收口）。
 
-- [ ] **B4. OPS-05 降权 nobody 无 shell 与附加组清空（root 可选场景）**（07-04 登记 + 07-04 SUMMARY 复核联动）— **blocked**（2026-08-26）
+- [x] **B4. OPS-05 降权 nobody 无 shell 与附加组清空（root 可选场景）**（07-04 登记 + 07-04 SUMMARY 复核联动）— **skipped（环境限制·风险接受）**（2026-08-26 登记 blocked；2026-08-27 用户裁决转 skipped）
   - 探针原文：「降权到存在但无登录 shell 的 uid（如 nobody）时 shell 自默认行为由子进程命令承担；supplementary groups 不设置（清空附加组）——与『最小权限』一致，有意为之」
   - 步骤（需 root）：`sudo ./wesh --bind 127.0.0.1 --uid 65534 --gid 65534 -- bash`；浏览器 attach 后依次执行 `id`、`echo $HOME $USER $LOGNAME`；Ctrl 台 SIGTERM 关停。
   - 预期：`id` 输出 `uid=65534(nobody) gid=65534(nogroup)` 且**附加组清空**（groups 仅 nogroup——root 启动清空附加组是最小权限既定语义；非 root 降回自身则保留自身附加组，07-04 环境感知策略复核联动）；`HOME`/`USER`/`LOGNAME` 按 nobody passwd 条目改写（无条目则剔除三键、shell 自默认）；SIGTERM 后 1001 优雅下线序列、退出码 255。
-  - **blocked_by: other** — reason: "需要 root 执行降权，但 Linux 开发机 sudo 损坏（/usr/bin/sudo → /usr/local/sa/tjj/bin/sudo-64-v30000.tlinux3 属主/suid 位异常，sudo -n 报 'must be owned by uid 0 and have the setuid bit set'），当前用户 zexueli(uid=51714) 非 root，无可提权通道。降权 self 面已由 phase07.mjs S6a/S6b 自动化覆盖（PASS），nobody 场景为 root-only 残余。"
+  - **result: skipped** — reason（2026-08-26 blocked 原文保留）: "需要 root 执行降权，但 Linux 开发机 sudo 损坏（/usr/bin/sudo → /usr/local/sa/tjj/bin/sudo-64-v30000.tlinux3 属主/suid 位异常，sudo -n 报 'must be owned by uid 0 and have the setuid bit set'），当前用户 zexueli(uid=51714) 非 root，无可提权通道。降权 self 面已由 phase07.mjs S6a/S6b 自动化覆盖（PASS），nobody 场景为 root-only 残余。"
 
 - [x] **B5. OPS-09 TOML 语法变体与空 command**（07-06 登记）— **pass**（2026-08-26 自动化实证，codebuddy）
   - 探针原文：「TOML 多行数组/内联表等合法 TOML 语法按 go-toml 语义接受（平铺形状是约定不是语法强制）；配置重复键由 TOML 解析器拒绝（规范行为）；command 空数组 `command = []` 等价缺席」
@@ -83,10 +83,10 @@ updated: 2026-08-26T12:10:00Z
 
 total: 8
 passed: 3（B2、B3、B5）
-issues: 3（A2=major/G-07-2、B1=major/G-07-3、B6=minor/G-07-8）
+issues: 3（A2=major/G-07-2、B1=major/G-07-3、B6=minor/G-07-8——三项 gap 全部 resolved，2026-08-27 调和，见 Gaps）
 pending: 0
-skipped: 0
-blocked: 2（A1=physical-device 平台拓扑、B4=other 无 root 通道）
+skipped: 2（A1=平台豁免风险接受、B4=环境限制风险接受——2026-08-27 用户裁决由 blocked 转入）
+blocked: 0
 
 另：phase07.mjs 协议层 34/34 PASS（S8c 平台豁免 skip 1 项）；A2 修正配方回归 phase07-a2-pw.mjs 4/5 PASS（T5 为预期校准错误已证伪改写）；B 组证据脚本已固化仓库（web/uat/phase07-b*.sh/.mjs、web/uat/pw/phase07-a2-*）。
 
@@ -94,7 +94,9 @@ blocked: 2（A1=physical-device 平台拓扑、B4=other 无 root 通道）
 
 - gap_id: G-07-2
   truth: "按 README「部署与配置 → 反代子路径」配方配置真实 nginx 后，浏览器经反代访问 /wesh 应页面加载、WS 升级成功、终端可用"
-  status: failed
+  status: resolved
+  resolved_by: 07-09-PLAN.md（提交 7eae376 README 配方修正 + ddda3a7 回归载具同步 + e4d46bb ctl $http_host；无 SUMMARY 工件，2026-08-27 用户指认 + 工作区核验 README.md:321 在案）
+  resolved_at: 2026-08-27
   reason: "全链实证（phase07-a2-pw.mjs，Windows Chromium → LAN nginx 1.14.1 → wesh）：按配方原样部署，页面 200 但 WS 升级 403——nginx 默认转发 Host=$proxy_host（127.0.0.1:后端口），浏览器 Origin（http://真实主机：端口）与之不同源，wesh 库默认同源校验拒绝；跨机浏览器访问按文档部署即坏。另：配方理据文案『裸路径不经精确块会 404』对 proxy_pass 形态不成立（实为 nginx 自动 301）"
   severity: major
   test: 2
@@ -108,7 +110,9 @@ blocked: 2（A1=physical-device 平台拓扑、B4=other 无 root 通道）
 
 - gap_id: G-07-3
   truth: "两个 wesh 实例以同一 --socket 路径启动时，后者收 bind: address already in use exit 1（无静默赢者之外的保证，07-02 OPS-01 设计答案）"
-  status: failed
+  status: resolved
+  resolved_by: 07-10-PLAN.md（07-10-SUMMARY.md 在案；提交 0fda7a0 活性探测；2026-08-27 核验 main.go:1038）
+  resolved_at: 2026-08-27
   reason: "自动化实证（b1b5.sh）：存活实例同路径第二实例未收 EADDRINUSE——unlink 存活 socket 后 listen 成功（静默赢者；证据 b.log 首行 listening on unix://...）。存活实例被孤儿化（进程在跑但 socket 路径已被夺走）"
   severity: major
   test: 3
@@ -122,7 +126,9 @@ blocked: 2（A1=physical-device 平台拓扑、B4=other 无 root 通道）
 
 - gap_id: G-07-8
   truth: "xdg-open/open 返回非零（桌面异常）时仅 stderr 警告、服务不阻断（07-05 D-27 字面）"
-  status: failed
+  status: resolved
+  resolved_by: 07-10-PLAN.md（07-10-SUMMARY.md 在案；提交 f19be02 goroutine Wait + 非零警告，option A；2026-08-27 核验 main.go:1282）
+  resolved_at: 2026-08-27
   reason: "自动化实证（b6.sh）：stub xdg-open 返回非零时服务正常启动且 GET / 200（不阻断 ✓），但 stderr 无警告行。openBrowser 为 fire-and-forget .Start()（cmd/wesh/main.go:1244），启动器非零退出不可观测——与 07-RESEARCH Pattern 8 配方逐字一致，plan D-27 字面『返回非零只警告』与配方/实现有差（文档-实现对齐问题）"
   severity: minor
   test: 8
