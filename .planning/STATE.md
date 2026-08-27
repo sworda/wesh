@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 8
-current_phase_name: 可观测性
-status: "Phase 07 shipped — PR #8"
-stopped_at: Phase 8 context gathered
-last_updated: "2026-08-27T13:47:54.786Z"
+current_phase: 08
+current_phase_name: observability
+status: executing
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-08-27T16:22:04.430Z"
 last_activity: 2026-08-27
 last_activity_desc: Phase 07 complete, transitioned to Phase 8
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 59
-  completed_plans: 54
+  completed_plans: 55
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -24,16 +24,16 @@ state_head: 2137d0ca7425674ae4da32db3497184a05636602
 See: .planning/PROJECT.md (updated 2026-08-27)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 08 — 可观测性
+**Current focus:** Phase 08 — observability
 
 ## Current Position
 
-Phase: 8 — 可观测性
-Plan: Not started
-Status: Phase 07 shipped — PR #8
-Last activity: 2026-08-27 — Phase 08 planning complete
+Phase: 08 (observability) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-08-27 — Phase 08 execution started
 
-Progress: [██████████] 54/54 plans
+Progress: [█████████░] 93%
 
 ## Performance Metrics
 
@@ -117,6 +117,7 @@ Progress: [██████████] 54/54 plans
 | Phase 07-deployment P07 | 29min | 2 tasks | 1 files |
 | Phase 07-deployment P08 | 24min | 2 tasks | 4 files |
 | Phase 07 P10 | 20min | 3 tasks | 3 files |
+| Phase 08 P01 | 48min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -247,6 +248,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-10]: G-07-3 闭合——listenSocket 活性探测（net.Dial unix 连通=存活→拒 EADDRINUSE 同形态文案 exit 1；失败=残留→照旧 Remove）；TOCTOU 两向安全降级；「不可服务即残留」边缘假设登记
 - [Phase ?]: [Phase 07-10]: G-07-8 选项 A 裁决落地——openBrowser goroutine Wait 收割防僵尸 + 非零退出补 wesh: warning 警告行（D-27 运行期非零覆盖从实现侧闭合，文档链不动）；警告行不含 URL（Wait err 结构性无 argv + 测试反断言双锁）
 - [Phase ?]: [Phase 07-10]: 长测试名夹具路径纪律——t.TempDir 拼长子测名可超 sun_path 108B（bind EINVAL），unix socket 测试夹具用 os.MkdirTemp 短根路径
+- [Phase ?]: [Phase 08-01]: logEvent 原子迁移 slog JSONHandler 落地——stderrW 动态 writer（Write 时读 os.Stderr 变量）保 captureStderr 语义；emitEvent(attrs) 为唯一底层出口（msg=event 单写口，08-02 扩展字段挂点）；包级 eventLog 不调 SetDefault（main.go 零改动）
+- [Phase ?]: [Phase 08-01]: 实证纠偏——slog JSONHandler time 键 = RFC3339Nano + 进程本地时区（GOROOT json_handler.go:93-99 appendJSONTime），非 08-RESEARCH/plan 所述 RFC3339 毫秒 UTC（appendRFC3339Millis 仅 TextHandler 分支）；08-02+ 与 README 运维节引用以本实证为准
+- [Phase ?]: [Phase 08-01]: 事件断言迁移形态定案——Go parseEvents/countByEvent + JS 内联 parseEvents 双侧同构（滤 '{' 起始行、单行非法 JSON 即 FAIL）；行尾锚定在 event 名精确相等下消解；红线负断言子串形态与 JSON 化正交逐字保留
 
 ### Pending Todos
 
@@ -267,6 +271,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-27T09:03:45.472Z
-Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-observability/08-CONTEXT.md
+Last session: 2026-08-27T16:22:04.402Z
+Stopped at: Completed 08-01-PLAN.md
+Resume file: None
