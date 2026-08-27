@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发 (completed 2026-08-19)
 - [x] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接 (completed 2026-08-22)
 - [x] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程 (completed 2026-08-24)
-- [ ] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传
+- [x] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传 (completed 2026-08-27)
 - [ ] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志
 - [ ] **Phase 9: 发布与打磨** - 单静态二进制四平台发布、自定义首页、负载/模糊测试回填默认参数
 
@@ -309,7 +309,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Gap closure** *(UAT 2026-08-26 三 issue：G-07-2 反代配方缺 Host 转发跨机 WS 403 / G-07-3 存活 socket 被静默接管 / G-07-8 opener 非零退出静默——A1/B4 为 blocked 环境前置（平台拓扑/无 root 通道），非代码问题不出 plan)*
 
-- [ ] 07-09-PLAN.md — G-07-2 闭合：README nginx 配方补 Host $http_host + 精确块理据按 proxy_pass 301 实证改写 + pw 回归载具同步双机全链 5/5（OPS-02）
+- [x] 07-09-PLAN.md — G-07-2 闭合：README nginx 配方补 Host $http_host + 精确块理据按 proxy_pass 301 实证改写 + pw 回归载具同步双机全链 5/5（OPS-02）
 - [x] 07-10-PLAN.md — G-07-3/G-07-8 闭合：listenSocket 活性探测（存活拒绝 EADDRINUSE exit 1）+ openBrowser goroutine Wait 非零警告（选项 A）+ b1b5/b6 二进制直证与协议套件回归（OPS-01/OPS-11）
 
 ### Phase 8: 可观测性
@@ -352,6 +352,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
 | 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
-| 7. 部署与配置 | 9/10 | In Progress|  |
+| 7. 部署与配置 | 10/10 | Complete    | 2026-08-27 |
 | 8. 可观测性 | TBD | Not started | - |
 | 9. 发布与打磨 | TBD | Not started | - |
