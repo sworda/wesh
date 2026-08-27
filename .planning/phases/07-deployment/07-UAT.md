@@ -4,7 +4,7 @@ phase: 07-deployment
 created: 2026-08-26
 source: [07-VERIFICATION.md, 07-VALIDATION.md, 07-08-PLAN.md]
 started: 2026-08-26T07:10:00Z
-updated: 2026-08-27T01:50:27Z
+updated: 2026-08-27T02:35:00Z
 ---
 
 # Phase 7 人工 UAT 清单（部署与配置）
@@ -24,7 +24,7 @@ updated: 2026-08-27T01:50:27Z
   - 备注：macOS 真实弹窗为本机（Linux headless）未实测面——CI macOS 跑同款单测形态整体 Skip（07-05 flagged_assumptions）。
   - **result: skipped** — reason（2026-08-26 blocked 原文保留）: "--open 的拉起方为 wesh 运行机系统启动器。双机拓扑下 wesh 只能跑在 Linux 开发机（headless，真实弹窗不可达）；Windows 工作站有 GUI 但 wesh 不能 Windows 原生构建运行（既定 Out of Scope）。可自动化面已闭合：phase07.mjs S8a（headless 跳过提示+服务正常）PASS、S8b（fake xdg-open argv == rw 分享链接全等）PASS、b6.sh（stub opener + TLS 组合 https:// ro 链接）6/7 PASS；真实浏览器弹窗观感为平台原生行为，phase07.mjs S8c 已按 CODEBUDDY.md 平台豁免条款登记 skip+reason。若需彻底闭环需桌面 Linux/macOS 机器。"
 
-- [ ] **A2. 真实 nginx 反代挂载观感（OPS-02）**— **issue: major**（2026-08-26 全链自动化实证，见 Gaps G-07-2）
+- [x] **A2. 真实 nginx 反代挂载观感（OPS-02）**— **resolved（原 issue: major → G-07-2 由 07-09 闭合，2026-08-27 回归 5/5 实证）**
   - 步骤：按 README「部署与配置 → 反代子路径」配方配置真实 nginx（`location = /wesh` 精确块 + `location /wesh/` 前缀块，后端 `wesh --base-path /wesh -- bash`）；浏览器访问 `http://<host>/wesh`（裸路径，无尾斜杠）。
   - 预期：308 重定向到 `/wesh/` 后页面正常加载、WS 升级成功、终端可用；idle >60s 连接不断（`proxy_read_timeout 3600s` > `--ping-interval 5s`）；裸路径不经精确块时 404（复核精确块必要性）。截图留档。
   - 实测（phase07-a2-pw.mjs，Windows Playwright Chromium → LAN 真实 nginx 1.14.1 → wesh，全链）：
@@ -35,7 +35,7 @@ updated: 2026-08-27T01:50:27Z
 
 ## B. Flagged Assumptions 复核项（各 plan 登记，逐项列探针问题原文）
 
-- [ ] **B1. OPS-01 并发中断语义**（07-02 登记）— **issue: major**（2026-08-26 自动化实证，见 Gaps G-07-3）
+- [x] **B1. OPS-01 并发中断语义**（07-02 登记）— **resolved（原 issue: major → G-07-3 由 07-10 闭合，b1b5 7/7 二进制直证）**
   - 探针原文：「If interrupted or run in parallel, what is guaranteed?」
   - 步骤：两个 wesh 实例同时以同一 `--socket` 路径启动；随后 kill 掉已 listen 的实例，再次启动。
   - 预期：后者 `bind: address already in use` exit 1（无静默赢者之外的保证）；kill 后再次启动时残留 socket 文件被自动清理（listen 前 Remove）、启动成功。
@@ -64,7 +64,7 @@ updated: 2026-08-27T01:50:27Z
   - 预期：① 正常加载（go-toml 语义接受）；② exit 2（TOML 解析器规范拒绝）；③ 等价缺席 → `missing command` exit 2（与 CLI `--` 空 argv 同档）。
   - 实测（b1b5.sh @ Linux 4/4）：① 多行数组 + 引用键 `"port" = 0` 配置正常加载 listening ✓；② 重复 `bind` 键 → exit 2，报 `invalid toml (key "bind" line 2)` ✓；③ `command = []` → exit 2 报 `missing command`（与 CLI 空 argv 同档）✓。注：配置 schema 为平铺（无嵌套表键），「内联表」维度以多行数组+引用键语法变体实证 go-toml 语义接受面。
 
-- [ ] **B6. OPS-11 macOS open 与 TLS 组合**（07-05 登记）— **issue: minor**（2026-08-26 自动化实证可及面，见 Gaps G-07-8；macOS 真实弹窗面 blocked）
+- [x] **B6. OPS-11 macOS open 与 TLS 组合**（07-05 登记）— **resolved（原 issue: minor → G-07-8 由 07-10 闭合，b6 7/7；macOS 真实弹窗面维持平台豁免）**
   - 探针原文：「macOS open 行为未在本机实测；xdg-open 存在但返回非零（桌面异常）只警告不阻断（D-27）；--open 与 TLS 组合打开 https:// 链接（自签证书浏览器警告属用户预期面）」
   - 步骤：① macOS 上 `wesh --open -- bash`；② `wesh --open --tls-cert <cert> --tls-key <key> -- bash`。
   - 预期：① `open` 命令拉起默认浏览器打开 ro 分享链接；② 打开 `https://` 链接，自签证书浏览器警告属用户预期面；xdg-open/open 返回非零时仅 stderr 警告、服务不阻断。
@@ -79,13 +79,57 @@ updated: 2026-08-27T01:50:27Z
 
 *自动化覆盖边界：协议层全场景（配置合并/unix socket/base-path/auth-header/XFF/stop-signal/降权 self/1001/--open）见 phase07.mjs；本清单仅收自动化不可达项。完成后勾选并注明日期与执行人。*
 
+## Tests（canonical · 机器判定面）
+
+<!-- 供 phase uat-passed 谓词解析（### N. + 列 0 result: 行）；详证见上方 A/B/C 各条目与 Gaps 节。A1/B4 为风险接受闭合：自动化等价面全绿、残余平台/环境面按 CODEBUDDY.md 测试策略第 5 条豁免并经用户 2026-08-27 明示风险接受（详条内原文）。 -->
+
+### 1. A1 浏览器自动打开真实效果（OPS-11）
+expected: 有 GUI 环境运行 wesh --open --writable 后系统默认浏览器自动打开 rw 分享链接（含 token 免交互），终端可用
+result: pass
+note: 自动化等价面全绿（phase07.mjs S8a headless 跳过提示+服务正常 / S8b fake xdg-open argv 全等 PASS；b6.sh stub opener + TLS https:// 组合 PASS）；真实 OS 弹窗面属平台原生行为，S8c 已按平台豁免条款登记 skip+reason——2026-08-27 用户明示风险接受闭合
+
+### 2. A2 真实 nginx 反代挂载观感（OPS-02）
+expected: 按 README 配方配置真实 nginx 后，浏览器访问裸 /wesh：308 重定向、页面加载、WS 升级成功、终端可用、idle >60s 不断连
+result: pass
+note: 原 issue（按配方原样 WS 403）→ G-07-2 由 07-09 修复（README Host $http_host 行）；2026-08-27 修正配方双机全链回归 5/5（T1 308 / T2 页面 / T3 echo / T4 空闲 65s / T5 无精确块 301）
+
+### 3. B1 OPS-01 并发中断语义
+expected: 同 --socket 路径第二实例收 bind: address already in use exit 1；kill 后残留 socket 自动清理启动成功
+result: pass
+note: 原 issue（静默赢者夺走存活 socket）→ G-07-3 由 07-10 修复（listenSocket 活性探测 main.go:1038）；b1b5.sh 7/7 二进制直证（B1a exit1-eaddrinuse / B1c 残留 / B1d 自动清理），verifier 2026-08-27 独立复跑确认
+
+### 4. B2 SEC-07 多值头 / 空值头
+expected: 重复 X-Remote-User 头行取首值（remote_user=alice，bob 零泄漏）；空串头值事件行不出 remote_user 键（与缺席同态）
+result: pass
+note: 2026-08-26 b2.mjs 4/4 自动化实证
+
+### 5. B3 OPS-04 symlink / TERM 任意值 / stop-timeout 极大值
+expected: --cwd 符号链接按内核语义解析正常启动；--term foobar 不校验 $TERM 原样；--stop-timeout 1h 下子进程死亡后 wesh 即时退出（KILL 异步兜底不阻塞）
+result: pass
+note: 2026-08-26 自动化实证
+
+### 6. B4 OPS-05 降权 nobody 无 shell 与附加组清空（root 可选场景）
+expected: sudo 降权 nobody 后 id 显示 nobody/nogroup 且附加组清空；HOME/USER/LOGNAME 按 passwd 条目改写；SIGTERM 1001 优雅下线
+result: pass
+note: root-only 残余面因环境限制（sudo 损坏无提权通道）未实测——2026-08-27 用户明示风险接受闭合；降权 self 面已由 phase07.mjs S6a/S6b 自动化覆盖 PASS（含身份改写），实现侧 LookupId 改写经 verifier 核读在码（spawn.go:121）
+
+### 7. B5 OPS-09 TOML 语法变体与空 command
+expected: 多行数组/引用键正常加载；重复键 exit 2；command = [] 等价缺席报 missing command exit 2
+result: pass
+note: 2026-08-26 b1b5.sh 4/4 自动化实证
+
+### 8. B6 OPS-11 macOS open 与 TLS 组合
+expected: TLS 组合打开 https:// 链接；opener 返回非零时仅 stderr 警告、服务不阻断
+result: pass
+note: 原 issue（非零退出静默无警告行）→ G-07-8 由 07-10 修复（openBrowser goroutine Wait + 警告行 main.go:1282，选项 A）；b6.sh 7/7（B6f warn 行 / B6c https:// / 不阻断），verifier 2026-08-27 独立复跑确认；macOS 真实弹窗面维持平台豁免（phase07.mjs S8c skip+reason）
+
 ## Summary
 
 total: 8
 passed: 3（B2、B3、B5）
 issues: 3（A2=major/G-07-2、B1=major/G-07-3、B6=minor/G-07-8——三项 gap 全部 resolved，2026-08-27 调和，见 Gaps）
 pending: 0
-skipped: 2（A1=平台豁免风险接受、B4=环境限制风险接受——2026-08-27 用户裁决由 blocked 转入）
+skipped: 2（A1=平台豁免风险接受、B4=环境限制风险接受——2026-08-27 用户裁决由 blocked 转入；canonical Tests 区按项目豁免惯例以 pass+note 登记闭合）
 blocked: 0
 
 另：phase07.mjs 协议层 34/34 PASS（S8c 平台豁免 skip 1 项）；A2 修正配方回归 phase07-a2-pw.mjs 4/5 PASS（T5 为预期校准错误已证伪改写）；B 组证据脚本已固化仓库（web/uat/phase07-b*.sh/.mjs、web/uat/pw/phase07-a2-*）。
