@@ -113,8 +113,13 @@ func TestSessionDimsLocked(t *testing.T) {
 // conn 必须真实（httptest + websocket.Dial）：kickSlowConsumerLocked 的异步
 // goroutine 调 c.conn.Close(1013, ...)，nil conn 会 panic 炸掉整个测试进程；
 // handler Accept 后读至出错即返回，承接踢出 goroutine 的 1013 Close 握手，
-// 防 goroutine 泄漏。map 遍历随机性是覆盖交织的来源（非缺陷）：至多 32 轮迭代
-// 直至命中 B-first（2^-32 未命中概率等同确定性——不静默 skip，防测试形同虚设）。
+// 防 goroutine 泄漏。map 遍历随机性是覆盖交织的来源（非缺陷）：至多 128 轮迭
+// 代直至命中 B-first——单测概率推导：Go 1.24+ swiss map 单 group（≤8 键）按插
+// 入序填槽，a 恒落 slot 0 / b 恒落 slot 1；迭代器随机起点 r ∈ [0,8) 向前扫描
+// 回绕，仅 r=1 时 b 先被访问（r=0 先见 a；r≥2 空槽回绕仍先见 a），故 P(B-first)
+// = 1/8 per iter（实测 100000 次采样 0.1250），非直觉的 1/2。128 轮全 miss 概
+// 率 = (7/8)^128 ≈ 3.7e-8，工程等同确定（早期 32 轮 = (7/8)^32 ≈ 1.4% 实证过
+// flake——CI ubuntu-latest 单次挂）——不静默 skip，防测试形同虚设。
 func TestPushSessionDimsKickRecalc(t *testing.T) {
 	// 测试起点单个 echo 丢弃服务端：Accept 后读至出错即返回（对端 1013 握手或
 	// CloseNow 均使 Read 返回错误），承接全部迭代 conn 的生命周期。
@@ -133,7 +138,7 @@ func TestPushSessionDimsKickRecalc(t *testing.T) {
 	defer echo.Close()
 
 	hitBFirst := false
-	for iter := 0; iter < 32 && !hitBFirst; iter++ {
+	for iter := 0; iter < 128 && !hitBFirst; iter++ {
 		func() {
 			// 每轮迭代全新装配（B 被踢后注册表/仲裁态已变，夹具一次性）。
 			master, tty, err := creackpty.Open()
@@ -225,6 +230,6 @@ func TestPushSessionDimsKickRecalc(t *testing.T) {
 		}()
 	}
 	if !hitBFirst {
-		t.Fatal("32 轮迭代未观测到 B-first 交织（map 随机序 2^-32 概率，等同确定性——不放行空转绿）")
+		t.Fatal("128 轮迭代未观测到 B-first 交织（P(B-first)=1/8 per iter，(7/8)^128≈3.7e-8 等同确定性——不放行空转绿）")
 	}
 }
