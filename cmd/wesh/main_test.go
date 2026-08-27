@@ -877,6 +877,23 @@ func TestBadCertPreflight(t *testing.T) {
 	})
 }
 
+// shortTempDir 返回短根临时目录，替代 t.TempDir() 用于 unix socket 路径拼接。
+// 背景：bind(2) 的 sun_path 上限 Linux=108B / darwin=104B，而 darwin 的
+// t.TempDir() 根前缀形如 /var/folders/df/<30B-hash>/T/ 已占 ~51B，再拼接
+// "TestListenSocket<sub测名><rand>/001/wesh.sock" 必超 104B 触发 bind EINVAL
+// （Linux 阈值较宽但子测名 ≥46B 同样触限，live instance refused 子测原位
+// 注释曾记）。统一经 os.MkdirTemp("", prefix) 拿短根（/tmp/<prefix><rand>），
+// Cleanup RemoveAll 兜底。
+func shortTempDir(t *testing.T, prefix string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // TestListenSocket（07-02，D-08/D-09/D-10 + T-07-02a/b；07-10 G-07-3）unix socket
 // listen 序列六子测：
 //   - 残留 socket 清理+可拨通：路径上预建真实残留 socket 不阻 bind（D-10
@@ -901,7 +918,7 @@ func TestBadCertPreflight(t *testing.T) {
 //     Chmod/Chown 失败必须回滚退出而非带病放行）。
 func TestListenSocket(t *testing.T) {
 	t.Run("stale socket removed and dialable", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "wesh.sock")
+		path := filepath.Join(shortTempDir(t, "wesh-stale-"), "wesh.sock")
 		// 制造真实残留 socket 端点：listen 后 SetUnlinkOnClose(false) 再 Close——
 		// 文件遗留但无进程监听（systemd Restart= 场景 D-10 的清理对象；普通文件
 		// 不再是合法残留——CR-01 起非 socket 类型一律拒绝，见下方子测）。
@@ -929,15 +946,9 @@ func TestListenSocket(t *testing.T) {
 		// 拒绝启动，第二实例经 run() listen 失败通道 exit 1（07-02 OPS-01 设计
 		// 答案，静默赢者结构性消除）；存活方零损伤——socket 文件仍在、原
 		// listener 仍 accept。
-		// 路径长度纪律：长子测名经 t.TempDir 拼出的路径超 sun_path 上限（Linux
-		// 108B，实测 bind EINVAL），改用 MkdirTemp 短根路径（stale 子测名短
-		// 未触限，本名 46 字节触限）。
-		dir, err := os.MkdirTemp("", "wesh-live-")
-		if err != nil {
-			t.Fatalf("MkdirTemp: %v", err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
-		path := filepath.Join(dir, "wesh.sock")
+		// 路径长度纪律：见 shortTempDir 文档——sun_path 上限 + t.TempDir 根前缀
+		// 长度双重压力，unix socket 路径统一走短根。
+		path := filepath.Join(shortTempDir(t, "wesh-live-"), "wesh.sock")
 		ln0, err := net.Listen("unix", path) // 默认 unlink:true——defer Close 即清理
 		if err != nil {
 			t.Fatalf("pre-create live listener: %v", err)
@@ -983,7 +994,7 @@ func TestListenSocket(t *testing.T) {
 		}
 	})
 	t.Run("mode exactly 0660", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "wesh.sock")
+		path := filepath.Join(shortTempDir(t, "wesh-mode-"), "wesh.sock")
 		ln, err := listenSocket(path, 0o660, -1, -1)
 		if err != nil {
 			t.Fatalf("listenSocket: %v", err)
@@ -998,7 +1009,7 @@ func TestListenSocket(t *testing.T) {
 		}
 	})
 	t.Run("owner self applied", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "wesh.sock")
+		path := filepath.Join(shortTempDir(t, "wesh-owner-"), "wesh.sock")
 		ln, err := listenSocket(path, 0o660, os.Getuid(), os.Getgid())
 		if err != nil {
 			t.Fatalf("listenSocket with self owner: %v", err)
@@ -1018,7 +1029,8 @@ func TestListenSocket(t *testing.T) {
 	})
 	t.Run("failure rollback leaves no residue", func(t *testing.T) {
 		// Listen 失败注入：父目录不存在（mode 合法）——error 且零残留。
-		path := filepath.Join(t.TempDir(), "nonexistent", "wesh.sock")
+		// 父目录不存在的语义须保留，故短根目录下再拼一层 nonexistent。
+		path := filepath.Join(shortTempDir(t, "wesh-rb-"), "nonexistent", "wesh.sock")
 		ln, err := listenSocket(path, 0o660, -1, -1)
 		if err == nil {
 			_ = ln.Close()
@@ -1029,8 +1041,10 @@ func TestListenSocket(t *testing.T) {
 		}
 		// Chown 失败注入（非 root 限定）：chown 他人 uid EPERM——序列已建 socket
 		// 文件，失败回滚必须经 Close 自动 unlink 删除（T-07-02a 零残留纪律）。
+		// 同样须走短根——darwin 上 t.TempDir 长路径会以 bind EINVAL 而非 chown
+		// EPERM 通过断言，注入语义被吞。
 		if os.Getuid() != 0 {
-			p2 := filepath.Join(t.TempDir(), "wesh.sock")
+			p2 := filepath.Join(shortTempDir(t, "wesh-rb2-"), "wesh.sock")
 			ln2, err2 := listenSocket(p2, 0o660, 1, 1)
 			if err2 == nil {
 				_ = ln2.Close()
