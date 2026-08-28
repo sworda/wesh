@@ -445,8 +445,8 @@ scrape_configs:
 
 | event | 字段 | 语义 |
 |-------|------|------|
-| `auth_failed` | remote, code=401/1008 | 认证失败（HTTP Basic / WS Hello ticket 核销）；**结构性不含用户名**——凭据任何形态永不入日志 |
-| `throttled` | remote, code=429, retry_after | 节流闸拒绝（retry_after = `Retry-After` 响应头同值秒数，排查爆破节奏） |
+| `auth_failed` | remote, code=401/1008(, remote_user) | 认证失败（HTTP Basic / WS Hello ticket 核销）；**结构性不含用户名**——凭据任何形态永不入日志（remote_user 为配置 `--auth-header` 时的反代可信头值，非凭据） |
+| `throttled` | remote, code=429, retry_after(, remote_user) | 节流闸拒绝（retry_after = `Retry-After` 响应头同值秒数，排查爆破节奏） |
 | `attach` | remote, client_id, mode(, remote_user) | 客户端握手完成 |
 | `detach` | remote, client_id, code, reason(, remote_user) | 连接断开单入口；reason = `normal`/`kick`/`pong_timeout`/`shutdown` 四值（kick/pong_timeout 不再单独打行，计数走 metrics） |
 | `session_start` | pid | PTY 子进程启动 |

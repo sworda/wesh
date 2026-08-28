@@ -8,8 +8,10 @@ package server
 //     拒绝双轨（同一事件既出旧文本行又出 JSON 行的漂移面不存在——单点切换）。
 //     迁移来源：server.go 原 L1047-1077 的 fmt.Fprintf 文本实现（本期已删除）。
 //   - D-15：运行期事件恒 JSON 恒 INFO，无 --log-format/--log-level（零新 CLI
-//     契约）；time/level/msg 用 slog 默认键，time 为 RFC3339 毫秒 UTC（stdlib
-//     固定不可配）。人读检索走 jq。
+//     契约）；time/level/msg 用 slog 默认键，time 为 RFC3339Nano 携进程本地
+//     时区偏移（stdlib 固定不可配；毫秒截断仅 TextHandler 路径，JSONHandler
+//     为纳秒——GOROOT json_handler.go appendJSONTime 实证，08-REVIEW WR-01
+//     修正）。人读检索走 jq。
 //   - D-18：schema = msg 恒 "event" + 事件名走独立 event 字段，其余字段平铺
 //     （remote/code/remote_user...）——jq/Loki 检索 event=="x" 直打字段索引。
 //   - 启动行/分享链接行（含 token）与 wesh: warning: 警告行保持人读文本不变

@@ -115,6 +115,12 @@ func (p proxyInfo) clientIP(r *http.Request) string {
 // （08-RESEARCH Pitfall 5 GOROOT encode.go:1023 实证）——清洗是唯一防线，
 // 两闸并存不冲突（TestRemoteSanitize 白盒属性断言锁定）。清洗在提取点完成
 // （单一写口纪律，与 remote_user 同款）。
+//
+// 分叉边界（08-REVIEW IN-02 补注）：sanitize 仅日志面——计数键（clientIP
+// 返回值）不清洗、日志值（本函数返回值）清洗。两值仅在「RemoteAddr 不可
+// SplitHostPort 的整串回退」路径理论可分叉（节流键 = 原始串、日志 remote =
+// 清洗串）；该回退输入为内核 netstack 对端地址，字符集天然安全，缺口实际
+// 不可达。计数键不经日志面无注入威胁，故不为字面纯度给 clientIP 回退加清洗。
 func (p proxyInfo) remote(r *http.Request) string {
 	if p.trust {
 		return sanitizeRemoteUser(p.clientIP(r))

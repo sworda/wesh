@@ -143,7 +143,7 @@ func (s *Server) metricsHandler(w http.ResponseWriter, _ *http.Request) {
 	runtime.ReadMemStats(&m)
 	writeGauge(&b, "wesh_mem_alloc_bytes", "Heap bytes allocated and in use (runtime.MemStats.Alloc).", int64(m.Alloc)) // Alloc==HeapAlloc，GOROOT mstats.go:58-61
 	writeBuildInfo(&b, "wesh_build_info", "wesh build metadata.", s.version)
-	fmt.Fprint(w, b.String())
+	_, _ = fmt.Fprint(w, b.String())
 }
 
 // writeGauge/writeCounter 按规范写一 series 的三行组（HELP/TYPE/样本——
