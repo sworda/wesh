@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 08
 current_phase_name: observability
-status: executing
-stopped_at: Completed 08-04-PLAN.md
-last_updated: "2026-08-28T02:55:52.572Z"
+status: verifying
+stopped_at: Completed 08-05-PLAN.md
+last_updated: "2026-08-28T03:58:04.343Z"
 last_activity: 2026-08-27
 last_activity_desc: Phase 07 complete, transitioned to Phase 8
 progress:
   total_phases: 8
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 59
-  completed_plans: 58
+  completed_plans: 59
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -30,10 +30,10 @@ See: .planning/PROJECT.md (updated 2026-08-27)
 
 Phase: 08 (observability) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-27 — Phase 08 execution started
 
-Progress: [██████████] 98%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -121,6 +121,7 @@ Progress: [██████████] 98%
 | Phase 08 P02 | 71min | 3 tasks tasks | 8 files files |
 | Phase 08 P03 | 28min | 2 tasks | 3 files |
 | Phase 08 P04 | 48min | 2 tasks | 6 files |
+| Phase 08 P05 | 49min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -262,6 +263,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 08-04]: metricsCounters 全五字段 + Server.mc + 快照计数器读取在 Task 1 一次落地（plan 字面任务边界调整）——避免 tracer 提交携带五个硬编码 0 占位 series（tracer 纪律 production-quality）；终态与 plan must_haves 逐字一致
 - [Phase ?]: [Phase 08-04]: TestMetricsExposition 取黑盒形态（真实实例 HTTP GET）而非 plan 字面白盒直调——metrics_test.go 为 package server_test 外部包，未导出 handler 结构性不可达；黑盒经真实注册路径额外锁定接线（08-03 TestHealthz 先例）
 - [Phase ?]: [Phase 08-04]: ws_sent ≥ 2×pty_output 放大比断言可判定性论证（/bin/cat 零 pre-attach 输出 + 两端在册后驱 INPUT 恒双端扇出 + 帧类型字节严格大于）；auth 计数器精确值锁 ==1/==2 强于 plan 的 ≥1（实例私有 + 序列确定）
+- [Phase ?]: [Phase 08-05]: S4 draining 确定性夹具 = trap 忽略 stop-signal + --stop-timeout 3s 组合（plan 字面 '--stop-timeout 3' 意图修正——DurationVar 单位要求 + lifecycle 收口下无 trap 窗口 <1s 实证）；进程终结 P1 硬约束使窗口宽度 = stop-signal 序列时长
+- [Phase ?]: [Phase 08-05]: phase05-dom D5 踢出检测迁移 detach reason=kick 字段断言——08-02 D-21 折入的漏检消费者（dom 变体不在 08-01..08-04 回归集），本 plan 全量 14 脚本回归捕获；回归集含全量变体是迁移类变更漏检的最终防线
+- [Phase ?]: [Phase 08-05]: GOROOT gofmt 清零 multi_test/slowclient_test 既有漂移（07 deferred-items 既定路由终点，纯排版独立 style 提交先例第五次沿用）
 
 ### Pending Todos
 
@@ -282,6 +286,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-28T02:55:52.542Z
-Stopped at: Completed 08-04-PLAN.md
+Last session: 2026-08-28T03:58:04.315Z
+Stopped at: Completed 08-05-PLAN.md
 Resume file: None
