@@ -14,6 +14,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -113,6 +114,12 @@ type client struct {
 	outbox    *outbox
 	done      chan struct{}      // writer 终结信号——kick/detach 关闭，恰好一次由 hubMu 内注册表成员判定保证
 	cancel    context.CancelFunc // pinger 所在 ctx 的 cancel（Attach 派生，随客户端生命周期）
+
+	// pongTimedOut 为 pinger pong 超时置位（08-02，D-21）：pinger 判定超时后取
+	// hubMu 写本字段、detach 同锁读（RESEARCH Pattern 4 形态 b——同步边 =
+	// hubMu，-race 防线；禁止 plain 字段跨 goroutine 传递）。pong_timeout 不再
+	// 单独打事件行，折入 detach reason=pong_timeout（code 1006）。
+	pongTimedOut bool
 
 	// creditBlocked 信用门阻塞位（hubMu 保护）：仅可写端参与信用集，ro 客户端
 	// 此位恒 false——ro 满即踢永不持信用（R-08 分工表）。kickOrCreditLocked 置位、
@@ -503,7 +510,11 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	}
 	close(c.done)
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
-	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer", c.remoteUser)
+	// 08-02 D-21：slow_consumer 独立事件行折入 detach 单事件（reason=kick，
+	// code=1013）——「连接断开」检索单入口；wire 关闭帧
+	// Close(1013, "slow_consumer") 与 kicks 计数逐字不动（客户端可见形态
+	// 由 slowclient_test.go 既有断言锁定）。
+	s.emitDetachLocked(c, "kick", websocket.StatusTryAgainLater)
 	// arbiter 参与集移除 + 即时重算（05-04，D-09）：all 模式被踢的 rw 端是参与集
 	// 成员——滞留 sizes 则其陈旧尺寸永久拖累 min-rect（幽灵成员把 PTY 压在离群者
 	// 小窗口）；owner 模式被踢者为 ro 旁观者（非成员，removeMember 幂等 no-op）。
@@ -693,6 +704,23 @@ func (s *Server) detach(c *client) {
 	if !s.registry.removeLocked(c) {
 		return // 已被 kick 移除——close(done)/cancel 恰好一次由成员判定保证
 	}
+	// 08-02 D-17/D-21：detach 单事件 emit（removeLocked 返回 true 之后、
+	// close(done) 之前——事件即「连接断开」检索的唯一入口）。reason 判定序：
+	//   - c.pongTimedOut（pinger 同锁置位，Pattern 4 形态 b）→ pong_timeout，
+	//     code=1006（对端观测的本地合成异常关闭码语义，wire 永不发送 1006）；
+	//   - s.exiting（lifecycle/Shutdown 终结广播窗口，既有不变量：置位先于
+	//     广播）→ shutdown，code 取 s.closeBroadcastCode（lifecycle 置 1000 /
+	//     Shutdown 置 1001——与广播关闭码同源）；
+	//   - 否则 → normal，code=1000（对端主动关闭/网络断开）。
+	// kick 路径不到本函数（kickSlowConsumerLocked 就地 emit reason=kick）。
+	reason, code := "normal", websocket.StatusNormalClosure
+	switch {
+	case c.pongTimedOut:
+		reason, code = "pong_timeout", websocket.StatusAbnormalClosure
+	case s.exiting:
+		reason, code = "shutdown", websocket.StatusCode(s.closeBroadcastCode)
+	}
+	s.emitDetachLocked(c, reason, code)
 	close(c.done)
 	c.cancel()
 	// arbiter 参与集移除 + 即时重算（05-04，D-09，不防抖——参与集收缩立即反映，
@@ -710,6 +738,26 @@ func (s *Server) detach(c *client) {
 	// 同款注释纪律）。
 	s.maybeExitWhenEmptyLocked(c)
 	s.hubCond.Broadcast() // P5-7 统一挂点：detach 后门重估
+}
+
+// emitDetachLocked 是 detach 事件的唯一 emit 形态（08-02，D-18 schema 单侧
+// 定义）：event=detach + remote/client_id（= c.attachSeq，D-20 关联检索键）
+// + code/reason（D-21 四值）+ remote_user 非空追加（07-03 同口径——提取点
+// 已 sanitize）。两调用点（detach 与 kickSlowConsumerLocked）共用本函数——
+// 调用方必须已持 hubMu 且 c 刚被 removeLocked 移除成功（恰好一次 emit 由
+// 移除所有权保证：reader detach 与 kick 互斥）。
+func (s *Server) emitDetachLocked(c *client, reason string, code websocket.StatusCode) {
+	attrs := []slog.Attr{
+		slog.String("event", "detach"),
+		slog.String("remote", c.remote),
+		slog.Int64("client_id", c.attachSeq),
+		slog.Int("code", int(code)),
+		slog.String("reason", reason),
+	}
+	if c.remoteUser != "" {
+		attrs = append(attrs, slog.String("remote_user", c.remoteUser))
+	}
+	emitEvent(attrs...)
 }
 
 // maybeExitWhenEmptyLocked 是注册表空触发断开退出的判定与执行（06-02，

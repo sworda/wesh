@@ -437,21 +437,22 @@ async function s6SlowConsumerKick() {
     // stall 客户端：raw socket 手工握手 + masked Hello 注册后 socket.pause() 制造内核级 stall
     const socket = await rawStallClient(inst.port);
 
-    // 断言①：spawn stderr 轮询 10s 内出现 event=="slow_consumer" 且 code==1013 的
-    // JSON 事件行（logEvent 三要素 remote/code/event 无敏感串，红线不破；
-    // 08-02 将折入 detach reason=kick——届时本行二次迁移，08-02 plan 已登记）
+    // 断言①：spawn stderr 轮询 10s 内出现 event=="detach" 且 reason=="kick" 且
+    // code==1013 的 JSON 事件行（08-02 D-21 终态迁移：slow_consumer 独立事件行
+    // 折入 detach reason=kick——kick/pong_timeout 不再单独打行；事件字段
+    // remote/code/reason 无敏感串，红线不破）
     let kickSeen = false;
     let bytesAtKick = 0;
     const t0 = Date.now();
     while (Date.now() - t0 < 10000) {
-      if (parseEvents(inst.stderrText()).some((m) => m.event === 'slow_consumer' && m.code === 1013)) {
+      if (parseEvents(inst.stderrText()).some((m) => m.event === 'detach' && m.reason === 'kick' && m.code === 1013)) {
         kickSeen = true;
         bytesAtKick = normalBytes;
         break;
       }
       await sleep(100);
     }
-    check('S6a', 'stall 端 outbox 写满 → stderr JSON 事件 event=slow_consumer code=1013（10s 内）',
+    check('S6a', 'stall 端 outbox 写满 → stderr JSON 事件 event=detach reason=kick code=1013（10s 内，08-02 D-21 终态）',
       kickSeen, `命中=${kickSeen} 踢出时已收=${bytesAtKick}`);
 
     // 断言②：同实例第二正常客户端持续推进（踢出后两窗口累积字节单调增长——他人无卡顿）

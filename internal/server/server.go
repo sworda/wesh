@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -130,6 +131,11 @@ type Server struct {
 	exitWhenEmptyGrace time.Duration
 	exitEmptyTimer     *time.Timer
 	exiting            bool
+	// closeBroadcastCode 为终结广播关闭码（hubMu 保护，0=未广播）：lifecycle
+	// 子进程退出广播窗口与 exiting 置位同点置 1000（StatusNormalClosure），
+	// Shutdown 1001 优雅下线同点置 1001（StatusGoingAway）——08-02 D-21
+	// detach 事件 reason=shutdown 的 code 数据源（与广播关闭码同源单写口）。
+	closeBroadcastCode int
 
 	// Phase 7 stop-signal 装配（07-04，OPS-04，D-22）：stopSignal 为 exit-when-empty
 	// 收口路径向子进程进程组所发信号（New 装配期固化、运行期只读；零值经 New
@@ -858,6 +864,21 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
 		s.hubCond.Broadcast()
 		s.hubMu.Unlock()
+		// 08-02 D-17/D-20：attach 事件（升档完成、注册表登记后）——client_id =
+		// attachSeq（registerLocked 分配，从 1 起单调递增；同一 goroutine 内其写
+		// happens-before 本读），携 remote/mode（RESEARCH A6 增强字段）键；
+		// 无 code 键（连接事件非关闭事件）；remote_user 非空出键（07-03 同口径）。
+		// 同一连接的 detach 事件经 client_id 与本事件关联检索。
+		attachAttrs := []slog.Attr{
+			slog.String("event", "attach"),
+			slog.String("remote", cl.remote),
+			slog.Int64("client_id", cl.attachSeq),
+			slog.String("mode", effMode),
+		}
+		if cl.remoteUser != "" {
+			attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
+		}
+		emitEvent(attachAttrs...)
 		c.SetReadLimit(proto.ReadLimitPostAuth)
 		// writer 是该连接全程唯一 WS 写端（clients.go）；pinger 保活（D-16）挂
 		// 升档序列尾段（PATTERNS 注意 5），与既有单 reader 循环并发装配——库硬性
@@ -866,7 +887,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// 与 writer 的数据写并发安全、无帧交错（库 writeFrameMu 串行化所有帧，
 		// write.go:288-293）。
 		go s.writer(cl)
-		go s.pinger(ctx, c, remote, remoteUser, s.pingInterval)
+		go s.pinger(ctx, cl, s.pingInterval)
 		// D-11：attach 完成向 PTY 前台进程组显式发一次 SIGWINCH 强制全屏程序重绘
 		//（TIOCGPGRP → kill(-pgid)）——与仲裁 resize 是否发生无关（P5-3 本机实证：
 		// Linux 同尺寸 TIOCSWINSZ 不发信号）；新客秒见画面，行内 shell 下次输出
@@ -1006,9 +1027,11 @@ func (s *Server) checkTicket(ip, ticket string) (string, bool) {
 // cancel 幂等兜底），ctx.Done（或在途 Ping 的 pctx 随 ctx 取消）使本 goroutine
 // 随该客户端生命周期同生灭——零新 exitf 分支（CONTEXT L92 硬约束）。
 // ctx 已取消时的在途 Ping 错误是正常终结而非 pong 超时，直接返回不打事件。
-// 07-03：remoteUser 随 remote 同参传入（Attach 入口提取一次的同值）——
-// pong_timeout 事件携 remote_user 第四字段（D-15 会话事件审计归因同口径）。
-func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote, remoteUser string, interval time.Duration) {
+// 08-02（D-21）：签名由 (ctx, c, remote, remoteUser, interval) 收窄为
+// (ctx, cl, interval)——pong_timeout 不再单独打事件行，折入 detach 单事件
+// reason=pong_timeout（「连接断开」检索单入口）；cl 承载 conn 与 pongTimedOut
+// 置位面（remote/remoteUser 随 cl 只读字段天然同值，参数随签名删除）。
+func (s *Server) pinger(ctx context.Context, cl *client, interval time.Duration) {
 	if interval <= 0 {
 		return // D-16：--ping-interval 0 = 禁用
 	}
@@ -1021,23 +1044,29 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote, remoteUs
 		case <-t.C:
 		}
 		pctx, cancel := context.WithTimeout(ctx, s.pongTimeout)
-		err := c.Ping(pctx)
+		err := cl.conn.Ping(pctx)
 		cancel()
 		if err != nil {
-			// 只有真正的 pong 超时才打事件 + CloseNow：Ping 对 pong 等待的 ctx 到期
+			// 只有真正的 pong 超时才置位 + CloseNow：Ping 对 pong 等待的 ctx 到期
 			// 返回包装后的 DeadlineExceeded（conn.go:251-258）；父 ctx 是 WithCancel
 			// 无 deadline，DeadlineExceeded 唯一来源即 pctx 到期。其余错误（连接已被
 			// 对端关闭/写失败/Attach 返回 cancel 级联取消）都是正常终结路径，
-			// 静默返回即可——误报 pong_timeout 会污染 stderr 事件流（D-12② 三要素
-			// 语义失真），连接终结由既有 reader 路径收口，pinger 无需也不应补刀。
+			// 静默返回即可——误置 pongTimedOut 会使 detach 误报 pong_timeout
+			//（D-21 reason 语义失真），连接终结由既有 reader 路径收口，pinger
+			// 无需也不应补刀。
 			if !errors.Is(err, context.DeadlineExceeded) {
 				return
 			}
-			// pong 超时（pongTimeout 内未收到应答）：stderr 单行事件（D-12② 三要素；
-			// code 记 1006 = 客户端将观测到的本地合成码，CloseNow 无关闭帧）+ CloseNow。
-			// 断开后的 reader 终结经 detach 收口（注册表移除，不进 exitf）。
-			logEvent(remote, websocket.StatusAbnormalClosure, "pong_timeout", remoteUser)
-			c.CloseNow()
+			// pong 超时（pongTimeout 内未收到应答）：置 cl.pongTimedOut 后
+			// CloseNow——reader 终结走 detach 收口 emit detach reason=pong_timeout
+			//（code 1006 = 客户端观测的本地合成码，CloseNow 无关闭帧，wire 零
+			// 改动）。置位取 hubMu 写、detach 同锁读（08-RESEARCH Pattern 4
+			// 形态 b——同步边 = hubMu，禁止 plain 字段跨 goroutine 传递，-race
+			// 防线；冷路径每 interval 才一次取锁，无热路径影响）。
+			s.hubMu.Lock()
+			cl.pongTimedOut = true
+			s.hubMu.Unlock()
+			cl.conn.CloseNow()
 			return
 		}
 	}
@@ -1163,6 +1192,9 @@ func (s *Server) lifecycle() {
 	// 计时器（事件流可信度与信号竞态防线；无此门则自然退出 exit 42 路径有
 	// SIGHUP 翻码竞态）。
 	s.exiting = true
+	// 08-02 D-21：广播关闭码同点登记（hubMu 保护，detach 同锁读）——lifecycle
+	// 子进程退出广播窗口 = 1000；detach reason=shutdown 的 code 数据源。
+	s.closeBroadcastCode = int(websocket.StatusNormalClosure)
 	clients := make([]*client, 0, len(s.registry.set))
 	for c := range s.registry.set {
 		clients = append(clients, c)
@@ -1231,6 +1263,9 @@ func (s *Server) terminate(code int) {
 func (s *Server) Shutdown() {
 	s.hubMu.Lock()
 	s.exiting = true
+	// 08-02 D-21：1001 优雅下线广播码同点登记（hubMu 保护，detach 同锁读）——
+	// 本路径广播窗口内的 detach reason=shutdown code=1001。
+	s.closeBroadcastCode = int(websocket.StatusGoingAway)
 	clients := make([]*client, 0, len(s.registry.set))
 	for c := range s.registry.set {
 		clients = append(clients, c)
