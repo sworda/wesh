@@ -11,7 +11,9 @@ package server_test
 //   - 405：POST /healthz → 405 + Allow: GET（方法模式 + path-only fallback 成对
 //     注册——内建 405 会被 "/" 子树吞掉，sharetoken.go 先例）；
 //   - session_active 翻转：exitf 桩实例子进程退出后 GET /healthz → 200 且
-//     session_active==false（sessionAlive 与 session_end 同区段置位）。
+//     session_active==false（sessionAlive 与 session_end 同区段置位）；
+//   - draining：Shutdown() 后 GET /healthz → 503 status=="draining" 四键在场
+//     （D-11——1001 广播开始前即翻转，关停全程探活器不再导新流）。
 //
 // 红线（D-10/T-08-03a）：body 键集白名单断言（DisallowUnknownFields）——
 // 恒为 status/clients/max_clients/session_active 四字段粗粒度容量面，无版本号、
@@ -47,8 +49,10 @@ func httpBaseOf(wsURL string) string {
 }
 
 // getHealthz GET 指定 URL，断言 200/503 两态之一 + Content-Type application/json，
-// 严格解码 body 返回（键集白名单锁——DisallowUnknownFields，多一键即 FAIL，
-// T-08-03a prohibition 行为锁形态）。仅用于健康端点本身；404/401 对照用裸 GET。
+// 严格解码 body 返回。键集白名单锁（T-08-03a prohibition 行为锁完整形态）：
+// 四键恰好——多一键（版本/身份/错误细节混入）或少一键（字段丢失）皆 FAIL，
+// 200 与 503 两态同锁（draining body 四键仍在场，D-11）。仅用于健康端点本身；
+// 404/401 对照用裸 GET。
 func getHealthz(t *testing.T, url string) (int, healthzBody) {
 	t.Helper()
 	resp, err := http.Get(url)
@@ -56,19 +60,32 @@ func getHealthz(t *testing.T, url string) (int, healthzBody) {
 		t.Fatalf("GET %s: %v", url, err)
 	}
 	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("GET %s read body: %v", url, err)
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable {
-		_, _ = io.Copy(io.Discard, resp.Body)
 		t.Fatalf("GET %s status = %d, want 200 或 503（/healthz 两态）", url, resp.StatusCode)
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-		_, _ = io.Copy(io.Discard, resp.Body)
 		t.Fatalf("GET %s Content-Type = %q, want application/json", url, ct)
 	}
+	var keys map[string]any
+	if err := json.Unmarshal(b, &keys); err != nil {
+		t.Fatalf("GET %s body 非合法 JSON: %q: %v", url, b, err)
+	}
+	for _, k := range []string{"status", "clients", "max_clients", "session_active"} {
+		if _, ok := keys[k]; !ok {
+			t.Fatalf("GET %s body 缺键 %q（四键白名单）: %s", url, k, b)
+		}
+		delete(keys, k)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("GET %s body 多键 %v（白名单外——版本/身份/错误细节禁止混入）: %s", url, keys, b)
+	}
 	var hb healthzBody
-	dec := json.NewDecoder(resp.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&hb); err != nil {
-		t.Fatalf("GET %s body 严格解码失败（键集白名单违反？）: %v", url, err)
+	if err := json.Unmarshal(b, &hb); err != nil {
+		t.Fatalf("GET %s body 解码失败: %q: %v", url, b, err)
 	}
 	return resp.StatusCode, hb
 }
@@ -221,4 +238,44 @@ func TestHealthz(t *testing.T) {
 		}
 		assertHealthz(t, hb, "ok", 0, 32, false)
 	})
+}
+
+// TestHealthzDraining（08-03，D-11）：srv.Shutdown() 调用前 GET /healthz →
+// 200 status=="ok"；调用后 → 503 status=="draining" 且四键仍在场（键集白名单
+// 同锁，值不锚定——子进程死亡时点与请求时序竞争，session_active 两值皆合法）。
+// 置位点 = Shutdown 入口（与 s.exiting=true 同源）——1001 广播开始前即翻转，
+// 关停全程探活器不再导新流（waitExit 后复访仍 503 锁定全程语义）。
+// 进程级 waitExit 断言沿用 shutdown_test.go 夹具既有形态（默认 HUP 信号死亡
+// = -1 桩码，exitf 恰好一次——Shutdown 不调 exitf，P1 触发源非分支）。
+func TestHealthzDraining(t *testing.T) {
+	exitCh, wsURL, srv := startShutdownServerWith(t, []string{"sh", "-c", "sleep 100"}, server.Options{Writable: true})
+	base := httpBaseOf(wsURL)
+
+	// Shutdown 前：200 ok 四字段。
+	code, hb := getHealthz(t, base+"/healthz")
+	if code != http.StatusOK {
+		t.Fatalf("Shutdown 前 GET /healthz status = %d, want %d", code, http.StatusOK)
+	}
+	assertHealthz(t, hb, "ok", 0, 32, true)
+
+	// Shutdown 后：503 draining（draining 置位 = Shutdown 入口，先于 1001 广播
+	// 与 stop-signal 序列——Shutdown 返回即确定性可见）。
+	srv.Shutdown()
+	code, hb = getHealthz(t, base+"/healthz")
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("Shutdown 后 GET /healthz status = %d, want %d (503 draining)", code, http.StatusServiceUnavailable)
+	}
+	if hb.Status != "draining" {
+		t.Errorf("Shutdown 后 status = %q, want %q", hb.Status, "draining")
+	}
+
+	// 子进程终结经既有 lifecycle 收口（默认 HUP 信号死亡 = -1）；关停全程
+	// 探活仍 503（进程退出前窗口语义不翻回）。
+	waitExit(t, exitCh, -1)
+	assertNoExit(t, exitCh)
+	code, hb = getHealthz(t, base+"/healthz")
+	if code != http.StatusServiceUnavailable || hb.Status != "draining" {
+		t.Errorf("子进程死亡后 GET /healthz = %d/%q, want 503/draining（draining 不翻回）", code, hb.Status)
+	}
+	assertHealthz(t, hb, "draining", 0, 32, false)
 }
