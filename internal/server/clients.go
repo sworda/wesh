@@ -367,6 +367,10 @@ func (s *Server) decideModeLocked(ticketMode string) (mode string, rwEligible bo
 func (s *Server) onChunk(chunk []byte) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
+	// 08-04 OPS-07（D-04）：PTY 数据源单计——onChunk 入口计 chunk（hubMu 持锁
+	// 内 atomic 递增无锁安全）；与 ws_sent 相除即吞吐放大比。门闭合持块期间
+	// chunk 已被 ReadLoop 从 PTY 读出（停留缓冲等待），计数语义不含糊。
+	s.mc.ptyOutputBytes.Add(int64(len(chunk)))
 	for s.allWritableBlockedLocked() {
 		s.hubCond.Wait() // Wait 原子释放 hubMu；持块即停读 PTY（RES-04）；chunk 停留 ReadLoop 缓冲，无别名窗口（review #1）
 	}
@@ -662,6 +666,9 @@ func (s *Server) writer(c *client) {
 			if err := c.conn.Write(context.Background(), websocket.MessageBinary, msg); err != nil {
 				return
 			}
+			// 08-04 OPS-07（D-04）：fan-out ×N 真实带宽——每条 msg 成功 Write
+			// 后计；写失败 return 路径不计（计成功送出字节）。
+			s.mc.wsSentBytes.Add(int64(len(msg)))
 		}
 		// 整批写出成功 → 信用门恢复判定（R-01 半水位；R-07 锁序：drain/写出完才取
 		// hubMu，绝不反序同持）。写失败路径已 return，不触达本行。

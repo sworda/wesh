@@ -103,7 +103,12 @@ If you opened a share link and were prompted to log in, the link is invalid or h
 // D-17 正交红线：auth-header 值只做记录——绝不进入本函数的认证/授权判定
 // （matchCredential/throttle 判定与 p 零数据流），伪造头不能绕过 Basic 检查
 // （TestAuthHeaderNoAuthBypass 回归锁）。
-func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxyInfo) http.Handler {
+//
+// 08-04（OPS-07，D-06）：mc 为 /metrics 认证计数器承载——401 站点
+// authFailed+1、429 站点 authThrottled+1（计数与事件同址递增，metrics 只加
+// 计数不打行；无 IP label——per-IP 明细查日志事件，metrics 只看总量）。
+// 三调用点同改（server.go root / attach 链 / /metrics 注册）传 &s.mc。
+func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxyInfo, mc *metricsCounters) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := p.clientIP(r)
 		if wait, throttled := th.retryAfter(ip, time.Now()); throttled {
@@ -123,6 +128,9 @@ func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxy
 				attrs = append(attrs, slog.String("remote_user", u))
 			}
 			emitEvent(attrs...)
+			// 08-04 OPS-07（D-06）：计数与事件同址递增（429 事件行既有，
+			// metrics 只加计数不打行；无 IP label——per-IP 明细查日志事件）。
+			mc.authThrottled.Add(1)
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
@@ -131,6 +139,7 @@ func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxy
 			th.recordFail(ip, time.Now())
 			w.Header().Set("WWW-Authenticate", `Basic realm="wesh", charset="UTF-8"`) // RFC 7617
 			logEvent(p.remote(r), websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed, p.remoteUser(r))
+			mc.authFailed.Add(1) // 08-04 OPS-07（D-06）：计数与事件同址递增（同上纪律）
 			http.Error(w, authRequiredBody, http.StatusUnauthorized)
 			return
 		}

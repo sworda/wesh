@@ -448,7 +448,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	bp := s.basePath
 	if len(s.credentials) > 0 {
-		root := basicAuth(wh, s.credentials, s.throttle, s.proxy)
+		root := basicAuth(wh, s.credentials, s.throttle, s.proxy, &s.mc)
 		if bp != "" {
 			mux.Handle(bp+"/", http.StripPrefix(bp, root))
 		} else {
@@ -462,7 +462,7 @@ func (s *Server) Handler() http.Handler {
 		// 分支先于 Origin 中间件是刻意排序：/ws Attach 守卫区 ⓪ 位的 Origin 检查
 		// 对 ticket 核销后的 WS 握手依然生效（纵深不变），跨站表单无从获知
 		// 128bit token，本面无 CSRF 增量。
-		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle, s.proxy), s.origins)
+		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle, s.proxy, &s.mc), s.origins)
 		mux.Handle("POST "+bp+"/api/attach", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if s.shareAttach(w, r) == shareHandled {
 				return
@@ -483,7 +483,7 @@ func (s *Server) Handler() http.Handler {
 		// 链——无/错凭据 401 同文、节流 429 同 store；Prometheus scrape_config
 		// 原生 basic_auth 可采集），根路径固定不带 bp（采集器直连后端端口，
 		// 路径恒定可写死进 Prometheus 静态配置；拒绝双挂，单侧定义纪律）。
-		mux.Handle("GET /metrics", basicAuth(http.HandlerFunc(s.metricsHandler), s.credentials, s.throttle, s.proxy))
+		mux.Handle("GET /metrics", basicAuth(http.HandlerFunc(s.metricsHandler), s.credentials, s.throttle, s.proxy, &s.mc))
 	} else {
 		if bp != "" {
 			mux.Handle(bp+"/", http.StripPrefix(bp, wh))
@@ -824,6 +824,9 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// return（多客户端推论：不进 exitf）。
 		return
 	}
+	// 08-04 OPS-07（D-04）：WS 上行流量站点一——Hello 首读计入（RESEARCH A4：
+	// 两站点计入，忠实「WS 网络流量」字面；~100B/连接，运维语义无碍）。
+	s.mc.wsRecvBytes.Add(int64(len(data)))
 	if len(data) == 0 {
 		// OQ2 裁决：Hello 前空消息按畸形处理（1002 桶）。
 		logEvent(remote, websocket.StatusProtocolError, "empty_frame", remoteUser)
@@ -850,6 +853,10 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// （Hello JSON +ticket ~120B，D-11 两档纪律不变）。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrAuthFailed, "authentication failed"))
 		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrAuthFailed, remoteUser)
+		// 08-04 OPS-07（D-06）：WS 侧 auth_failed 计数与事件同址递增
+		// （401/429 事件行既有，metrics 只加计数不打行；无 IP label——
+		// per-IP 明细查日志事件）。
+		s.mc.authFailed.Add(1)
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 	} else {
 		// 升档序列（顺序敏感，PATTERNS 注意 5/6；G-05-1 重排后时序）：停 5s 计时器 →
@@ -984,6 +991,8 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		// 08-04 OPS-07（D-04）：WS 上行流量站点二——稳态读循环每消息计入。
+		s.mc.wsRecvBytes.Add(int64(len(data)))
 		if len(data) == 0 {
 			continue // OQ2：Hello 完成后空消息维持静默跳过
 		}
