@@ -44,6 +44,9 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ 配置文件支持（--config TOML 显式加载、CLI>env>file 优先级、DisallowUnknownFields 严格拒绝、错误三要素零敏感值回显、权限非 0600/0400 警告）— Phase 7（OPS-09；TestLoadFileConfig/TestConfigMerge/TestConfigPrecedence/TestConfigRedLines + S1 + B5 4/4）
 - ✓ 反代身份透传审计归因（--auth-header 头值 sanitize C0/C1/DEL+128 rune 截断入日志 remote_user；XFF 换键同步节流计数；零认证效力）— Phase 7（SEC-07；TestRemoteUserLogging/TestSanitizeRemoteUser/TestXFFThrottleKey + S4 + b2.mjs 4/4）
 - ✓ 优雅关停（SIGTERM/SIGINT → 1001 广播 → 退出码 255；stall 客户端内建 5s+5s 上界不拖延退出）与 --open 自动打开浏览器（headless 跳过提示、opener 非零退出 stderr 警告不阻断、goroutine Wait 收割零僵尸、警告行结构性不含 URL）— Phase 7（D-23/OPS-11；phase07.mjs S7/S8 + b6.sh 7/7）
+- ✓ /healthz 健康检查端点（免认证唯一窄例外 D-07，四字段键集白名单、draining 两态、503 摘流观测）— Phase 8（OPS-06；TestHealthz/TestHealthzDraining + phase08.mjs S1/S4 + 实机 systemctl restart 轮询 200→503×15→000）
+- ✓ /metrics 监控端点（17 条 wesh_* series 零身份 label、build_info 转义、basic_auth 闸跟随、快照锁序防死锁）— Phase 8（OPS-07；TestMetricsExposition/TestMetricsAuth/TestMetricsSnapshotRace + phase08.mjs S2/S3 + Prometheus 2.55.1 实机 scrape 17 series 全入库）
+- ✓ 结构化审计日志（slog JSON 单行事件 stderr 输出、auth_failed 无用户名红线、C0/C1 注入剥离、journald+jq 检索示例可用）— Phase 8（OPS-08/SEC-01；TestAuthFailedNoUsername/TestRemoteSanitize + phase08.mjs S5/S6 + 实机 sg systemd-journal 双示例 jq 零 parse error）
 
 ### Active
 
@@ -59,7 +62,9 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 **部署与集成**
 （监听配置/反代子路径/子进程环境/降权/配置文件 Phase 7 已全部闭合，见 Validated）
 - [ ] 自定义首页（Phase 9）
-- [ ] /healthz、metrics、结构化日志（ttyd 缺失的可运维性，Phase 8）
+
+**可观测性**
+（/healthz、/metrics、结构化日志 Phase 8 已全部闭合，见 Validated）
 
 **质量底线**
 - [ ] 修复源码核实的全部 ttyd 缺陷（见 Context 节清单）
@@ -163,4 +168,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-27 after Phase 7（部署与配置闭合：监听/socket/base-path/降权/配置/关停/--open；UAT 8/8 闭合（3 修复+2 风险接受豁免）+ VERIFICATION 55/55 + SECURITY 35/35 closed + VALIDATION 刷新 + UI-REVIEW 22/24）*
+*Last updated: 2026-08-28 after Phase 8（可观测性闭合：/healthz + /metrics + slog JSON 审计日志；UAT 3/3 闭合（A1 Prometheus 实机 scrape / A2 journald+jq 检索含 G-08-2 修复复测 / A3 draining 窗口观测）+ VERIFICATION 28/28 passed + SECURITY 26/26 closed + phase08.mjs 21 断言全绿）*
