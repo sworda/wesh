@@ -69,12 +69,14 @@ func singleDetachReason(t *testing.T, evs []map[string]any, want string, out str
 	return hit
 }
 
-// startEventsShutdownServerWith 是 startShutdownServerWith（shutdown_test.go）
-// 的 handler 追踪变体：startTrackedServerWith 装配序列（wg 包裹 handler）+
-// 额外返回 srv 句柄（Shutdown 直调面——startTrackedServerWith 不暴露 srv，
-// startShutdownServerWith 无 waitHandlers）。stderr 断言测试的 05-01 同步边
-// 由本变体承载。
-func startEventsShutdownServerWith(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string, srv *server.Server, waitHandlers func()) {
+// startEventsServerWith 是 startTrackedServerWith 的全量返回变体：同装配序列
+//（wg 包裹 handler——05-01 同步边纪律）+ 额外返回 srv 与 sess 句柄
+//（srv = Shutdown 直调面；sess = session_start pid 断言面——sess.Cmd.Process.Pid
+// 与事件 pid 字段相等性断言的数据源）。进程级事件（session_*/shutdown）的
+// happens-before 边：session_start 在 New 内 emit（先于本函数返回，程序序）；
+// session_end 在 lifecycle 内 emit 先于 terminate→exitf（waitExit 收码即
+// 同步）；shutdown 由测试 goroutine 直调 srv.Shutdown() emit（程序序）。
+func startEventsServerWith(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string, srv *server.Server, sess *pty.Session, waitHandlers func()) {
 	t.Helper()
 	sess, err := pty.Start(argv, pty.StartOptions{Uid: -1, Gid: -1})
 	if err != nil {
@@ -95,7 +97,16 @@ func startEventsShutdownServerWith(t *testing.T, argv []string, opts server.Opti
 		defer wg.Done()
 		h.ServeHTTP(w, r)
 	}))
-	return exitCh, "ws://" + ln.Addr().String() + "/ws", srv, wg.Wait
+	return exitCh, "ws://" + ln.Addr().String() + "/ws", srv, sess, wg.Wait
+}
+
+// startEventsShutdownServerWith 是 startShutdownServerWith（shutdown_test.go）
+// 的 handler 追踪变体（startEventsServerWith 的 sess 丢弃包装——Shutdown
+// 直调面 + waitHandlers 同步边）。
+func startEventsShutdownServerWith(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string, srv *server.Server, waitHandlers func()) {
+	t.Helper()
+	exitCh, wsURL, srv, _, waitHandlers = startEventsServerWith(t, argv, opts)
+	return exitCh, wsURL, srv, waitHandlers
 }
 
 // TestAttachDetachEvents（D-17/D-20）：dialHello 成功 → 恰 1 条 event=="attach"
@@ -408,4 +419,103 @@ func TestDetachReason(t *testing.T) {
 			t.Fatalf("client_id 关联失败：attach=%v detach.client_id=%v (out=%q)", atts2, det2["client_id"], out2)
 		}
 	})
+}
+
+// TestSessionEnd（D-17/D-22 会话生命周期事件）：进程级事件——零客户端即全量
+// 事件面（恰 2 条：session_start + session_end，无 attach/detach 混入的强锁）。
+// session_start：pid 键 = sess.Cmd.Process.Pid（数字），无 remote/code 键；
+// session_end：exit_code 与 EXIT 帧同源（信号死亡 -1）+ duration_seconds>0
+//（startedAt 起点 = New 尾部记录）+ signal 键仅信号死亡且 signalName 映射
+// 命中出键（A7 裁决：未命中不出键，类型恒 string）。
+func TestSessionEnd(t *testing.T) {
+	// exit 42 形态：正常退出码传递——session_end exit_code==42、无 signal 键。
+	t.Run("exit_code_42", func(t *testing.T) {
+		restore := captureStderr(t)
+		defer restore()
+
+		exitCh, _, _, sess, _ := startEventsServerWith(t, []string{"sh", "-c", "exit 42"}, server.Options{Writable: true})
+		waitExit(t, exitCh, 42) // session_end emit 先于 terminate→exitf（lifecycle 程序序）——收码即同步边
+
+		out := restore()
+		evs := parseEvents(t, out)
+		if len(evs) != 2 {
+			t.Fatalf("事件总数 = %d, want 恰 2（session_start+session_end，零客户端进程级事件面）: %q", len(evs), out)
+		}
+		starts := eventsNamed(evs, "session_start")
+		ends := eventsNamed(evs, "session_end")
+		if len(starts) != 1 || len(ends) != 1 {
+			t.Fatalf("session_start=%d session_end=%d, want 各 1: %q", len(starts), len(ends), out)
+		}
+		// session_start：pid 键存在且与 sess.Cmd.Process.Pid 相等；无 remote/code 键。
+		if starts[0]["pid"] != float64(sess.Cmd.Process.Pid) {
+			t.Fatalf("session_start pid = %v, want %d（sess.Cmd.Process.Pid）", starts[0]["pid"], sess.Cmd.Process.Pid)
+		}
+		if _, ok := starts[0]["remote"]; ok {
+			t.Fatalf("session_start 不应出 remote 键（进程级事件）: %v", starts[0])
+		}
+		if _, ok := starts[0]["code"]; ok {
+			t.Fatalf("session_start 不应出 code 键（进程级事件）: %v", starts[0])
+		}
+		// session_end：exit_code==42（EXIT 帧同源）；duration_seconds>0；无 signal 键。
+		if ends[0]["exit_code"] != float64(42) {
+			t.Fatalf("session_end exit_code = %v, want 42", ends[0]["exit_code"])
+		}
+		if dur, _ := ends[0]["duration_seconds"].(float64); dur <= 0 {
+			t.Fatalf("session_end duration_seconds = %v, want >0", ends[0]["duration_seconds"])
+		}
+		if _, ok := ends[0]["signal"]; ok {
+			t.Fatalf("session_end 不应出 signal 键（非信号死亡）: %v", ends[0])
+		}
+	})
+
+	// kill -HUP 形态（exit_test.go TestExitFrameSignal argv 先例）：信号死亡
+	// exit_code==-1 + signal=="SIGHUP"（显式大写名映射命中出键）+
+	// duration_seconds>0。
+	t.Run("signal_sighup", func(t *testing.T) {
+		restore := captureStderr(t)
+		defer restore()
+
+		exitCh, _, _, _, _ := startEventsServerWith(t, []string{"sh", "-c", "kill -HUP $$"}, server.Options{Writable: true})
+		waitExit(t, exitCh, -1) // SIGHUP 致死 ExitCode()=-1（accept-255 断言常量同源）
+
+		out := restore()
+		evs := parseEvents(t, out)
+		ends := eventsNamed(evs, "session_end")
+		if len(ends) != 1 {
+			t.Fatalf("session_end count = %d, want 1: %q", len(ends), out)
+		}
+		if ends[0]["exit_code"] != float64(-1) {
+			t.Fatalf("session_end exit_code = %v, want -1（信号死亡不得粉饰为正常退出码）", ends[0]["exit_code"])
+		}
+		if ends[0]["signal"] != "SIGHUP" {
+			t.Fatalf("session_end signal = %v, want %q（signalName 映射命中出键）", ends[0]["signal"], "SIGHUP")
+		}
+		if dur, _ := ends[0]["duration_seconds"].(float64); dur <= 0 {
+			t.Fatalf("session_end duration_seconds = %v, want >0", ends[0]["duration_seconds"])
+		}
+	})
+}
+
+// TestShutdownEvent（D-17）：srv.Shutdown() 入口 → 恰 1 条 event=="shutdown"
+//（进程级事件——无 remote/code 键）。
+func TestShutdownEvent(t *testing.T) {
+	restore := captureStderr(t)
+	defer restore()
+
+	exitCh, _, srv, _, _ := startEventsServerWith(t, []string{"sh", "-c", "sleep 100"}, server.Options{Writable: true})
+	srv.Shutdown()        // shutdown emit 在本 goroutine 内（Shutdown 入口程序序）
+	waitExit(t, exitCh, -1) // 默认 HUP stop-signal 收口（session_end 同步边同 waitExit）
+
+	out := restore()
+	evs := parseEvents(t, out)
+	shutdowns := eventsNamed(evs, "shutdown")
+	if len(shutdowns) != 1 {
+		t.Fatalf("shutdown event count = %d, want exactly 1: %q", len(shutdowns), out)
+	}
+	if _, ok := shutdowns[0]["remote"]; ok {
+		t.Fatalf("shutdown 不应出 remote 键（进程级事件）: %v", shutdowns[0])
+	}
+	if _, ok := shutdowns[0]["code"]; ok {
+		t.Fatalf("shutdown 不应出 code 键（进程级事件）: %v", shutdowns[0])
+	}
 }
