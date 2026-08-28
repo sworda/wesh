@@ -1336,8 +1336,14 @@ func (s *Server) terminate(code int) {
 //     hubMu 内等待（锁序 hubMu > sess.fdMu 不受影响），与 lifecycle 并发
 //     安全——stopTimeout 期间进程若已退出，补发 KILL 到达空 pgid 静默。
 func (s *Server) Shutdown() {
+	// 08-03 D-11：draining 置位 = Shutdown 入口首行（hubMu 锁定之前，与
+	// s.exiting 同源触发点）——1001 广播开始前 /healthz 即翻转为 503
+	// draining，关停全程探活器/反代不再向将死实例导新流；hubMu 外 atomic
+	// 读故 atomic.Bool（registry.n 先例同构）。无网络可达置位路径（T-08-03d：
+	// 只能经 SIGTERM/INT → Shutdown 触发）。
+	s.draining.Store(true)
 	// 08-02 D-17：shutdown 事件（进程级——无 remote/code 键），hubMu 锁定前
-	// emit；08-03 的 draining 置位与本事件同函数不同点（本任务只加事件）。
+	// emit；draining 置位与本事件同函数不同点。
 	emitEvent(slog.String("event", "shutdown"))
 	s.hubMu.Lock()
 	s.exiting = true
