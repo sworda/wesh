@@ -79,6 +79,7 @@ created: 2026-08-28
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-08-28 | 26 | 26 | 0 | CodeBuddy agent（secure-phase short-circuit：register 计划期已立 × 6 PLAN + ASVS L1 grep 级锚点全实证） |
+| 2026-08-28 | 26 | 26 | 0 | CodeBuddy agent（secure-phase 复审：short-circuit 规则命中——register 计划期已立 × 6 PLAN × ASVS L1 × threats_open: 0；L1 grep 级 9/9 锚点复核全命中） |
 
 审计依据：6 份 PLAN 全部含计划期 `<threat_model>` 块（register_authored_at_plan_time: true）；L1 grep 级锚点抽查全部命中——sanitizeRemoteUser（proxy.go:55/126/140）、logEvent 四参签名（log.go:93）、TestAuthFailedNoUsername（events_test.go:603）、TestHealthz（health_test.go:123）、TestMetricsAuth（metrics_test.go:190）、escLabel（metrics.go:172）、snapshotMetrics（metrics.go:87）、sensitiveTokens/assertOutputClean（web/uat/phase08.mjs:20-92）；自动化面已绿（phase08.mjs 21/21 + phase08-journal.mjs 6/6 + Go -race 五包）。
 
