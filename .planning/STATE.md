@@ -5,8 +5,8 @@ milestone_name: milestone
 current_phase: 08
 current_phase_name: observability
 status: executing
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-08-28T01:14:22.601Z"
+stopped_at: Completed 08-03-PLAN.md
+last_updated: "2026-08-28T01:49:26.015Z"
 last_activity: 2026-08-27
 last_activity_desc: Phase 07 complete, transitioned to Phase 8
 progress:
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-08-27)
 ## Current Position
 
 Phase: 08 (observability) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-08-27 — Phase 08 execution started
 
@@ -119,6 +119,7 @@ Progress: [██████████] 95%
 | Phase 07 P10 | 20min | 3 tasks | 3 files |
 | Phase 08 P01 | 48min | 3 tasks | 11 files |
 | Phase 08 P02 | 71min | 3 tasks tasks | 8 files files |
+| Phase 08 P03 | 28min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -255,6 +256,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 08-02]: detach 事件恰好一次归属 = removeLocked 返回 true 的路径 emit（reader detach 与 kick 互斥的既有所有权规则映射到事件面）；emitDetachLocked 为两调用点共用唯一 emit 形态（D-18 schema 单侧定义）；reason 判定序 pongTimedOut(hubMu 同锁) → exiting+closeBroadcastCode(广播码同源) → normal
 - [Phase ?]: [Phase 08-02]: pinger 签名收窄 (ctx, cl, interval)——pong_timeout 折入 detach reason（D-21），置位取 hubMu 写/detach 同锁读（Pattern 4 形态 b，-race 防线）；exitSignalNum 抽取为 exitMessage 与 session_end 信号号提取单侧定义（行为逐字节不变）
 - [Phase ?]: [Phase 08-02]: XFF 注入测试取中段注入——尾段 NEL 被 clientIP TrimSpace 先吃掉（unicode.IsSpace(NEL)=true 实证），中段才是 ParseIP 闸受力面；remote() trust 分支过 sanitizeRemoteUser 作 D-19 纵深第二道（双闸并存）
+- [Phase ?]: [Phase 08-03]: /healthz 键集白名单锁取完整形态——四键恰好（多/少一键皆 FAIL），200 与 503 两态同锁（T-08-03a prohibition 的『body 键集白名单断言』字面兑现）；draining body 同构四字段（RESEARCH A5）
+- [Phase ?]: [Phase 08-03]: draining 置位落 Shutdown 首行（emitEvent shutdown 之前，hubMu 锁定之前）——plan『首行（hubMu 锁定之前）』字面；两原子位注释登记 T-08-03d（无网络可达置位路径）
 
 ### Pending Todos
 
@@ -275,6 +278,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-28T01:13:59.865Z
-Stopped at: Completed 08-02-PLAN.md
+Last session: 2026-08-28T01:49:06.826Z
+Stopped at: Completed 08-03-PLAN.md
 Resume file: None
