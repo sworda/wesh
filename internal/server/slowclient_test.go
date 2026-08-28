@@ -83,11 +83,11 @@ func readUntilError(c *websocket.Conn) <-chan readResult {
 //     变体：writer 用 context.Background() 永远阻塞持 writeFrameMu
 //     （clients.go:636），Close 的 writeClose 5s 超时无法获得锁，close frame
 //     未发出；close() 关 TCP 时 c1 正在读流，按 FIN 到达时读位分两种切面：
-//       - payload 中切面："failed to read frame payload: unexpected EOF"
-//         （frame header 已读、payload 未齐时 FIN）
-//       - header 边界："failed to read frame header: EOF[/unexpected EOF]"
-//         （recv buffer 完整 frame 全部消化尽、读下一 header 时 FIN；
-//         writer bufio 残余字节随 close() 丢失故消化总量 < 6MiB 管道值）
+//     - payload 中切面："failed to read frame payload: unexpected EOF"
+//     （frame header 已读、payload 未齐时 FIN）
+//     - header 边界："failed to read frame header: EOF[/unexpected EOF]"
+//     （recv buffer 完整 frame 全部消化尽、读下一 header 时 FIN；
+//     writer bufio 残余字节随 close() 丢失故消化总量 < 6MiB 管道值）
 //     r.acc 阈值证据：stall 期间 c1 recv buffer 满 ≈ 6MiB（本机 /proc 实测），
 //     CI 慢速路径下 c1 至少消化 1MiB 后才遇 EOF（ubuntu-latest 实测 2.5MiB）；
 //     远低此值的早夭 EOF 是另一类 bug（连接在 c1 启动 Read 前已死），不容忍。
@@ -328,23 +328,23 @@ func TestGlobalCredit(t *testing.T) {
 				}
 				prev = n
 			}
-		if prev != floodLast {
-			// darwin 放宽（macOS CI flake 实测）：lifecycle 广播 close frame 走
-			// c.conn.Close(1000) 绕过 outbox 直写 wire（server.go:1114，EXIT 帧
-			// 避免被 writer 超车设计）；门重开后 c2 outbox 残余（≤64KiB 测试
-			// 覆写）随 close frame 先到 wire 被丢弃，末位短 ~0.6%（993782/999999
-			// 实测）。连续性断言（上方 for 循环）才是字节精确的核心证据，末位
-			// 在 darwin 接受 ≥95% 阈值作为等价判定。Linux 大 TCP buffer 下
-			// c2 drain 远快于 close 到达，维持严格等值断言。
-			if runtime.GOOS == "darwin" {
-				if prev < floodLast*95/100 {
-					t.Fatalf("c2 final seq field = %d, want >= %d (95%% of %d, darwin outbox-close race tolerance)", prev, floodLast*95/100, floodLast)
+			if prev != floodLast {
+				// darwin 放宽（macOS CI flake 实测）：lifecycle 广播 close frame 走
+				// c.conn.Close(1000) 绕过 outbox 直写 wire（server.go:1114，EXIT 帧
+				// 避免被 writer 超车设计）；门重开后 c2 outbox 残余（≤64KiB 测试
+				// 覆写）随 close frame 先到 wire 被丢弃，末位短 ~0.6%（993782/999999
+				// 实测）。连续性断言（上方 for 循环）才是字节精确的核心证据，末位
+				// 在 darwin 接受 ≥95% 阈值作为等价判定。Linux 大 TCP buffer 下
+				// c2 drain 远快于 close 到达，维持严格等值断言。
+				if runtime.GOOS == "darwin" {
+					if prev < floodLast*95/100 {
+						t.Fatalf("c2 final seq field = %d, want >= %d (95%% of %d, darwin outbox-close race tolerance)", prev, floodLast*95/100, floodLast)
+					}
+					t.Logf("darwin tolerance: c2 final seq field = %d (< %d by %.2f%%, outbox-close race)", prev, floodLast, float64(floodLast-prev)*100/float64(floodLast))
+				} else {
+					t.Fatalf("c2 final seq field = %d, want %d (full flood received after gate reopen)", prev, floodLast)
 				}
-				t.Logf("darwin tolerance: c2 final seq field = %d (< %d by %.2f%%, outbox-close race)", prev, floodLast, float64(floodLast-prev)*100/float64(floodLast))
-			} else {
-				t.Fatalf("c2 final seq field = %d, want %d (full flood received after gate reopen)", prev, floodLast)
 			}
-		}
 		case <-time.After(15 * time.Second):
 			t.Fatal("c2 stream did not complete within 15s — gate failed to reopen (deadlock)")
 		}

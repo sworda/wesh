@@ -692,37 +692,37 @@ func TestInputRateLimit(t *testing.T) {
 		defer c.CloseNow()
 		snap := accum(c)
 
-	// 帧间 2ms 节流：压平 64KiB 瞬时突发——无节流灌入远超 tty input queue
-	// 消化速率，macos-latest CI 实测 XNU TTYHOG 丢弃 85.5%（18885/130816），
-	// cat 慢时 write 阻塞路径同样受益。发送窗口 ~256ms ≪ 10s deadline。
-	for i := 0; i < frames; i++ {
-		sendInput(t, ctx, c, frame)
-		time.Sleep(2 * time.Millisecond)
-	}
-	// 全量送达断言（对照组：证明限速子测的丢弃确由限速器而非 inputQ/其他
-	// 路径，队列 256KiB ≫ 64KiB 洪水上限）。
-	// 全平台放宽为 ≥95%：PTY 输入方向 line discipline input queue 高水位
-	// 零星丢字节是平台固有行为，非整帧、与服务端路径无关——darwin XNU
-	// TTYHOG 直接丢弃（CI 实测丢 ~2.6KB，128133/130816 ≈ 98%）；Linux
-	// n_tty input queue（N_TTY_BUF_SIZE 4096B）在 CI 繁忙 cat 调度延迟
-	// 顶穿后逐字符丢弃（ubuntu-latest 实测丢 6B，130810/130816 ≈
-	// 99.995%——"Linux master write 阻塞不丢"仅 cat 读得快时成立）。
-	// 5% 容差不动摇对照语义：限速子测丢弃 ≥75%，与 PTY 层 ~2% 丢失差
-	// 两个数量级，归因判别力不变。
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		got := bytes.Count(snap(), []byte{'x'})
-		if got >= sentX*95/100 {
-			if got != sentX {
-				t.Logf("PTY input 高水位丢弃容忍：'x' = %d/%d (%.1f%%)", got, sentX, float64(got)/float64(sentX)*100)
+		// 帧间 2ms 节流：压平 64KiB 瞬时突发——无节流灌入远超 tty input queue
+		// 消化速率，macos-latest CI 实测 XNU TTYHOG 丢弃 85.5%（18885/130816），
+		// cat 慢时 write 阻塞路径同样受益。发送窗口 ~256ms ≪ 10s deadline。
+		for i := 0; i < frames; i++ {
+			sendInput(t, ctx, c, frame)
+			time.Sleep(2 * time.Millisecond)
+		}
+		// 全量送达断言（对照组：证明限速子测的丢弃确由限速器而非 inputQ/其他
+		// 路径，队列 256KiB ≫ 64KiB 洪水上限）。
+		// 全平台放宽为 ≥95%：PTY 输入方向 line discipline input queue 高水位
+		// 零星丢字节是平台固有行为，非整帧、与服务端路径无关——darwin XNU
+		// TTYHOG 直接丢弃（CI 实测丢 ~2.6KB，128133/130816 ≈ 98%）；Linux
+		// n_tty input queue（N_TTY_BUF_SIZE 4096B）在 CI 繁忙 cat 调度延迟
+		// 顶穿后逐字符丢弃（ubuntu-latest 实测丢 6B，130810/130816 ≈
+		// 99.995%——"Linux master write 阻塞不丢"仅 cat 读得快时成立）。
+		// 5% 容差不动摇对照语义：限速子测丢弃 ≥75%，与 PTY 层 ~2% 丢失差
+		// 两个数量级，归因判别力不变。
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			got := bytes.Count(snap(), []byte{'x'})
+			if got >= sentX*95/100 {
+				if got != sentX {
+					t.Logf("PTY input 高水位丢弃容忍：'x' = %d/%d (%.1f%%)", got, sentX, float64(got)/float64(sentX)*100)
+				}
+				break
 			}
-			break
+			if time.Now().After(deadline) {
+				t.Fatalf("回显 'x' = %d, want >= %d（95%%；大限额下同量 INPUT 应近全量送达，PTY 层高水位零星丢失容忍）", got, sentX*95/100)
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("回显 'x' = %d, want >= %d（95%%；大限额下同量 INPUT 应近全量送达，PTY 层高水位零星丢失容忍）", got, sentX*95/100)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 	})
 }
 
