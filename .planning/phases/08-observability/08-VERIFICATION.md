@@ -1,7 +1,7 @@
 ---
 phase: 08-observability
 verified: 2026-08-28T12:41:00Z
-status: human_needed
+status: passed
 score: 28/28 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
@@ -9,10 +9,12 @@ re_verification:
   previous_status: human_needed
   previous_score: 24/24
   gaps_closed:
+
     - "G-08-2"
   gaps_remaining: []
   regressions: []
 human_verification:
+
   - test: "A2 真实 journald 复测（G-08-2 修复后）：systemd 用户级 unit（wesh-uat.service，A2 既存事件可回溯）下以 sg systemd-journal 代跑 README 两则新示例（含 grep '^\\{' 防护段）——journalctl -u wesh -o cat | grep '^\\{' | jq -c 'select(.event==\"auth_failed\")' 与 'select(.client_id==N)'"
     expected: "jq 零 parse error（横幅行被防护段滤除）；检出既存 auth_failed 事件行（无 user/username 键）与同一 client_id 的 attach/detach 对（reason=normal）"
     why_human: "依赖真实 systemd/journald 检索面；机械化等价面已绿——phase08-journal.mjs 6/6（合流模拟上 README 逐字管道端到端 + 负对照自证夹具不空转）。处置与 08-06-PLAN verification 第 4 条 / 08-06-SUMMARY coverage D3（human_judgment: true，非阻塞 UAT resume 项）一致；A2 blocked 点（journal 读权限）已随用户加 systemd-journal 组解除，事件无需重制"
