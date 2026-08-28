@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 08
 current_phase_name: observability
 status: executing
-stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-08-28T01:49:26.015Z"
+stopped_at: Completed 08-04-PLAN.md
+last_updated: "2026-08-28T02:55:52.572Z"
 last_activity: 2026-08-27
 last_activity_desc: Phase 07 complete, transitioned to Phase 8
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 59
-  completed_plans: 56
+  completed_plans: 58
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-27)
 ## Current Position
 
 Phase: 08 (observability) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-08-27 — Phase 08 execution started
 
-Progress: [██████████] 95%
+Progress: [██████████] 98%
 
 ## Performance Metrics
 
@@ -120,6 +120,7 @@ Progress: [██████████] 95%
 | Phase 08 P01 | 48min | 3 tasks | 11 files |
 | Phase 08 P02 | 71min | 3 tasks tasks | 8 files files |
 | Phase 08 P03 | 28min | 2 tasks | 3 files |
+| Phase 08 P04 | 48min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -258,6 +259,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 08-02]: XFF 注入测试取中段注入——尾段 NEL 被 clientIP TrimSpace 先吃掉（unicode.IsSpace(NEL)=true 实证），中段才是 ParseIP 闸受力面；remote() trust 分支过 sanitizeRemoteUser 作 D-19 纵深第二道（双闸并存）
 - [Phase ?]: [Phase 08-03]: /healthz 键集白名单锁取完整形态——四键恰好（多/少一键皆 FAIL），200 与 503 两态同锁（T-08-03a prohibition 的『body 键集白名单断言』字面兑现）；draining body 同构四字段（RESEARCH A5）
 - [Phase ?]: [Phase 08-03]: draining 置位落 Shutdown 首行（emitEvent shutdown 之前，hubMu 锁定之前）——plan『首行（hubMu 锁定之前）』字面；两原子位注释登记 T-08-03d（无网络可达置位路径）
+- [Phase ?]: [Phase 08-04]: metricsCounters 全五字段 + Server.mc + 快照计数器读取在 Task 1 一次落地（plan 字面任务边界调整）——避免 tracer 提交携带五个硬编码 0 占位 series（tracer 纪律 production-quality）；终态与 plan must_haves 逐字一致
+- [Phase ?]: [Phase 08-04]: TestMetricsExposition 取黑盒形态（真实实例 HTTP GET）而非 plan 字面白盒直调——metrics_test.go 为 package server_test 外部包，未导出 handler 结构性不可达；黑盒经真实注册路径额外锁定接线（08-03 TestHealthz 先例）
+- [Phase ?]: [Phase 08-04]: ws_sent ≥ 2×pty_output 放大比断言可判定性论证（/bin/cat 零 pre-attach 输出 + 两端在册后驱 INPUT 恒双端扇出 + 帧类型字节严格大于）；auth 计数器精确值锁 ==1/==2 强于 plan 的 ≥1（实例私有 + 序列确定）
 
 ### Pending Todos
 
@@ -278,6 +282,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-28T01:49:06.826Z
-Stopped at: Completed 08-03-PLAN.md
+Last session: 2026-08-28T02:55:52.542Z
+Stopped at: Completed 08-04-PLAN.md
 Resume file: None

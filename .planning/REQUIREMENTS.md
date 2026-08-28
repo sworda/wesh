@@ -65,7 +65,7 @@
 - [x] **OPS-04**: 子进程 cwd/TERM/关闭信号可配置（信号发给进程组）
 - [x] **OPS-05**: 降权运行（setuid/setgid）
 - [ ] **OPS-06**: /healthz 健康检查端点
-- [ ] **OPS-07**: /metrics 监控端点（连接数、会话数、收发字节数）
+- [x] **OPS-07**: /metrics 监控端点（连接数、会话数、收发字节数）
 - [x] **OPS-08**: 结构化日志（JSON），含审计事件（认证失败、连接建立/断开、会话生命周期）
 - [x] **OPS-09**: 配置文件支持，CLI 参数覆盖配置文件
 - [ ] **OPS-10**: 单静态二进制发布（linux/darwin × amd64/arm64），前端 embed 内嵌为单 HTML
@@ -150,7 +150,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-04 | Phase 7 | Complete |
 | OPS-05 | Phase 7 | Complete |
 | OPS-06 | Phase 8 | Pending |
-| OPS-07 | Phase 8 | Pending |
+| OPS-07 | Phase 8 | Complete |
 | OPS-08 | Phase 8 | Complete |
 | OPS-09 | Phase 7 | Complete |
 | OPS-10 | Phase 9 | Pending |
