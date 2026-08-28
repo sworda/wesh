@@ -135,7 +135,14 @@ type Server struct {
 	exitWhenEmpty      bool
 	exitWhenEmptyGrace time.Duration
 	exitEmptyTimer     *time.Timer
-	exiting            bool
+	// exitEmptySignaled 为「空纪元恰好一次」门闩（08-review WR-01，D-21 单入口
+	// 纪律的边角闭合）：非空→空迁移触发时置位——「递补升格踢出致空」路径下
+	// kick 内首次触发后，外层 detach/kick 移除点的二次到达被本位抑制（grace==0
+	// 双事件行 + grace>0 计时器 Stop 后重复武装同消）；Attach 升档 registerLocked
+	// 成功后清零（新 attach 开启新纪元，下次致空重新允许触发）。hubMu 保护——
+	// 置位/判定全在 hubMu 内（与 exitEmptyTimer 同锁同生命周期纪律）。
+	exitEmptySignaled bool
+	exiting           bool
 	// closeBroadcastCode 为终结广播关闭码（hubMu 保护，0=未广播）：lifecycle
 	// 子进程退出广播窗口与 exiting 置位同点置 1000（StatusNormalClosure），
 	// Shutdown 1001 优雅下线同点置 1001（StatusGoingAway）——08-02 D-21
@@ -941,6 +948,10 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		//「registerLocked 尾部」的调和：registerLocked 是 registry 方法无 Server
 		// 视角，取消点落同一 hubMu 持有内的登记之后。
 		s.cancelExitEmptyTimerLocked(cl.remote, cl.remoteUser)
+		// 08-review WR-01 门闩清零点（与上方宽限取消点同位同 hubMu 持有）：
+		// 新 attach 开启新空纪元——上次致空的 exitEmptySignaled 置位随登记成功
+		// 清零，下次致空重新允许触发。
+		s.exitEmptySignaled = false
 		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
 		s.hubCond.Broadcast()

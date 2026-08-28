@@ -779,10 +779,13 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 // Pitfall 2：启动期恒空天然免疫，检测只挂 detach/kickSlowConsumerLocked 两
 // 移除点，严禁轮询/状态式检测）。
 //
-// 三守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
+// 四守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
 // 子进程继续运行，P5『断开不退出』产品承诺，D-14）|| exiting（lifecycle 终结
 // 广播门——广播 Close(1000) 引发的 detach 致空属正常终结序列，不得再生
-// 信号/计时器）|| 注册表非空。
+// 信号/计时器）|| 注册表非空 || exitEmptySignaled（08-review WR-01 空纪元
+// 门闩——「递补升格踢出致空」路径下同一次断开两次到达本函数：promoteNextLocked
+// 循环内 kickSlowConsumerLocked 移除末位客户端后首次触发，外层 detach/kick
+// 移除点二次到达；门闩使每纪元恰好一次，Attach 升档清零开启新纪元）。
 //
 // grace==0（立即形态——0 是合法显式值，D-14 set/grace 分离）：logEvent
 // exit_when_empty + stop-signal 序列（stopChildLocked——默认 SIGHUP 与 06-02
@@ -800,9 +803,10 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 // logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
 // （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
 func (s *Server) maybeExitWhenEmptyLocked(c *client) {
-	if !s.exitWhenEmpty || s.exiting || len(s.registry.set) != 0 {
+	if !s.exitWhenEmpty || s.exiting || len(s.registry.set) != 0 || s.exitEmptySignaled {
 		return
 	}
+	s.exitEmptySignaled = true // 空纪元内幂等（08-review WR-01）：promote 踢出致空与外层移除点只发一次；新 attach（registerLocked 成功后同 hubMu 清零）开启新纪元
 	if s.exitWhenEmptyGrace == 0 {
 		// 立即形态：无计时器，迁移点直接发 stop-signal 序列（D-22）。
 		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)
