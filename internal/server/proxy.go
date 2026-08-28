@@ -102,12 +102,22 @@ func (p proxyInfo) clientIP(r *http.Request) string {
 	return host
 }
 
-// remote 取 logEvent remote 字段值（D-20 换键点）：trust → clientIP(r)
-// （XFF 链首换入，日志归因与节流计数同键——两消费不分叉）；否则
-// r.RemoteAddr 原样（现状 host:port 形态逐字节保持）。
+// remote 取 logEvent remote 字段值（D-20 换键点）：trust →
+// sanitizeRemoteUser(clientIP(r))（XFF 链首换入，日志归因与节流计数同键——
+// 两消费不分叉）；否则 r.RemoteAddr 原样（内核源值，现状 host:port 形态
+// 逐字节保持）。
+//
+// 08-02 D-19 推广（纵深第二道）：trust 分支返回值过 sanitizeRemoteUser 清洗
+// （C0/C1/DEL 剥离 + 128 rune 截断，与 remote_user 同款纪律）——XFF 链首恒为
+// 客户端可控（追加式反代语义），clientIP 的 ParseIP 校验是第一道结构性闸
+// （通过值字符集恒 [0-9a-fA-F:.]，注入值回退 TCP 对端键），本清洗是防取值
+// 路径放宽的第二道：encoding/json 只转义 C0，C1（如 NEL U+0085）原样穿透
+// （08-RESEARCH Pitfall 5 GOROOT encode.go:1023 实证）——清洗是唯一防线，
+// 两闸并存不冲突（TestRemoteSanitize 白盒属性断言锁定）。清洗在提取点完成
+// （单一写口纪律，与 remote_user 同款）。
 func (p proxyInfo) remote(r *http.Request) string {
 	if p.trust {
-		return p.clientIP(r)
+		return sanitizeRemoteUser(p.clientIP(r))
 	}
 	return r.RemoteAddr
 }

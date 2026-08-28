@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -91,6 +92,10 @@ If you opened a share link and were prompted to log in, the link is invalid or h
 // （websocket.StatusCode 底层 int，三要素结构不变，PATTERNS Shared Patterns 裁决）。
 // Hello 侧节流闸仍用 allow（无 Retry-After 需求），两处闸共享同一 store（D-08）。
 // 401/403/429 body 恒为通用文案——不回显用户名、Origin 值或任何请求细节。
+// 08-02 D-23 字段边界：throttled 事件携 retry_after 秒数（本函数 retry 现成值，
+// emitEvent 扩展字段形态）；auth_failed 事件不含用户名——logEvent 四参签名
+// 结构性无用户名通道（SEC-01 红线重申，auth_failed 站点保持 logEvent 零改动，
+// TestAuthFailedNoUsername 行为锁）。
 //
 // 07-03（SEC-07，D-15/D-17/D-20）：p 为反代信任配置——ip 节流键走 p.clientIP
 // （trust 开启时换 XFF 链首，与 Attach halfOpen/checkTicket 键同源），401/429
@@ -105,7 +110,19 @@ func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxy
 			// ceil 秒整数向上取整；窗口内 wait>0 故商恒 ≥1。
 			retry := int64((wait + time.Second - 1) / time.Second)
 			w.Header().Set("Retry-After", strconv.FormatInt(retry, 10))
-			logEvent(p.remote(r), websocket.StatusCode(http.StatusTooManyRequests), "throttled", p.remoteUser(r))
+			// 08-02 D-23：throttled 事件携 retry_after 秒数（与 Retry-After
+			// 响应头同值——同一 retry 变量两消费点，排查爆破节奏的字段边界
+			// 扩展）；remote/code/remote_user 三要素口径与 logEvent 保持。
+			attrs := []slog.Attr{
+				slog.String("event", "throttled"),
+				slog.String("remote", p.remote(r)),
+				slog.Int("code", http.StatusTooManyRequests),
+				slog.Int64("retry_after", retry),
+			}
+			if u := p.remoteUser(r); u != "" {
+				attrs = append(attrs, slog.String("remote_user", u))
+			}
+			emitEvent(attrs...)
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
