@@ -1,9 +1,9 @@
 ---
-status: testing
+status: complete
 phase: 08-observability
 created: 2026-08-28
 started: 2026-08-28T09:00:00Z
-updated: 2026-08-28T12:45:00Z
+updated: 2026-08-28T20:55:00+08:00
 source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availability, 08-VERIFICATION.md]
 ---
 
@@ -11,11 +11,7 @@ source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availabil
 
 ## Current Test
 
-number: 1
-name: A2 真实 journald 复测（G-08-2 修复后）
-expected: |
-  sg systemd-journal 代跑 README 两则新示例（含 grep '^{' 防护段）：jq 零 parse error（横幅行被滤除）；检出既存 auth_failed 事件行（无 user/username 键）与同一 client_id 的 attach/detach 对（reason=normal）
-awaiting: user response
+[testing complete]
 
 自动化断言不可达项的人工复核清单：08-05 plan flagged_assumptions 登记的三条（真实 Prometheus scrape 兼容性 / journald 实机 ingest 与 jq 检索 / draining 窗口编排观测率）。每项 = 步骤 + 预期 + 勾选框。自动化已覆盖的协议层行为见 `web/uat/phase08.mjs`（六场景 21 断言：S1 健康检查四组 / S2 metrics 认证闸两态 / S3 exposition 17 series 与数值 / S4 503 draining / S5 审计事件检索 / S6 控制字符剥离）。
 
@@ -57,8 +53,8 @@ note: 2026-08-28 实机通过（Prometheus 2.55.1 LTS + README 配方）：targe
 
 ### 2. A2 journald 实机 ingest 与 jq 检索（G-08-2 修复后复测）
 expected: sg systemd-journal 代跑 README 修复后两则新示例（journalctl -u wesh -o cat | grep '^{' | jq -c 'select(.event=="auth_failed")' 与 'select(.client_id==N)'）：jq 零 parse error（横幅行被防护段滤除）；检出既存 auth_failed 事件行（无 user/username 键）与同一 client_id 的 attach/detach 对（reason=normal）
-result: pending
-note: G-08-2 已由 08-06 闭合（f19811b README 防护 + 9ebbbe4 合流夹具 6/6）；机械化等价面已绿（phase08-journal.mjs 在合流流上端到端跑 README 逐字管道 + 负对照自证）。blocked 点（journal 读权限）已随用户加 systemd-journal 组解除；wesh-uat.service 既存事件在 journal 可回溯，无需重制——以 sg 代跑两则新示例即可收口
+result: pass
+note: 2026-08-28 实机通过（执行人：CodeBuddy agent，sg systemd-journal 代跑；unit 名按实机映射为 _SYSTEMD_USER_UNIT=wesh-uat.service，管道逐字照 README 修复后原文）：①示例1 jq 退出码 0 零 parse error（grep '^\{' 防护段滤除 stdout 横幅行——journal 中横幅与 JSON 合流实证仍在，防护生效）；②检出既存 auth_failed×2（127.0.0.1 实机制造的 401），显式 has() 断言 user/username 键均为 false；③示例2 N=1 检出同一 client_id 的 attach+detach 对（同 remote 端口 127.0.0.1:42844，detach code=1000 reason=normal）——G-08-2 修复实测收口
 
 ### 3. A3 draining 窗口编排观测率
 expected: systemctl restart 窗口内 /healthz 轮询序列出现 503 draining（200 → 503 → 000）；默认配置窗口亚秒级属预期
@@ -68,9 +64,9 @@ note: 2026-08-28 实机通过：默认配置窗口 <8ms（亚秒级极端形态�
 ## Summary
 
 total: 3
-passed: 2
+passed: 3
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
