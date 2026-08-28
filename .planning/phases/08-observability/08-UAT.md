@@ -1,9 +1,9 @@
 ---
-status: partial
+status: diagnosed
 phase: 08-observability
 created: 2026-08-28
 started: 2026-08-28T09:00:00Z
-updated: 2026-08-28T09:25:00Z
+updated: 2026-08-28T09:55:00Z
 source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availability]
 ---
 
@@ -11,7 +11,7 @@ source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availabil
 
 ## Current Test
 
-[testing paused — A1/A3 实测通过；A2 blocked 于 journal 读权限，待用户介入完成 jq 检索]
+[testing complete — 2 pass / 1 issue（G-08-2 已诊断，待 gap 修复计划])
 
 自动化断言不可达项的人工复核清单：08-05 plan flagged_assumptions 登记的三条（真实 Prometheus scrape 兼容性 / journald 实机 ingest 与 jq 检索 / draining 窗口编排观测率）。每项 = 步骤 + 预期 + 勾选框。自动化已覆盖的协议层行为见 `web/uat/phase08.mjs`（六场景 21 断言：S1 健康检查四组 / S2 metrics 认证闸两态 / S3 exposition 17 series 与数值 / S4 503 draining / S5 审计事件检索 / S6 控制字符剥离）。
 
@@ -26,7 +26,7 @@ source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availabil
   - 自动化等价面（已绿）：phase08.mjs S2/S3（认证闸两态 + 17 series HELP 行逐字 + Content-Type `text/plain; version=0.0.4` 断言）+ Go 侧 TestMetricsExposition（三行组序/末行换行/契约序）。
   - **实测记录**：Prometheus 2.55.1 LTS 官方二进制 + README 配方（basic_auth 同组凭据，scrape_interval 1s）→ target `health=up` lastError 空；17 条 `wesh_*` series 经 `/api/v1/label/__name__/values` 全部入库可查；`wesh_build_info{version="dev"} = 1` 数值可见。promtool 3.5 `check metrics` parse 通过（仅 1 条非阻塞 lint：`wesh_outbox_depth_bytes_sum` gauge 带 `_sum` 保留后缀命名警告——非 parse error，采集入库无碍，留作命名观察项）。负面对照：错密码 job → target `health=down` lastError=`server returned HTTP status 429 Too Many Requests`（自锁），wesh 日志 `throttled`×7 条（`remote=127.0.0.1:*`、`retry_after=1→2` 指数翻倍实机可见）+ `auth_failed`×3。⚠ 环境备注：Prometheus 3.5.0 在本机出现 targets 恒空异常（配置经 promtool 校验合法、exposition parse 通过，scrape pool 不创建）——版本/环境问题，与 wesh 无关，判定以 2.55.1 LTS（生产主流）实测为准。
 
-- [ ] **A2. journald 实机 ingest 与 jq 检索**（08-05 flagged_assumptions：「journald 实机 ingest 与 jq 检索」；08-RESEARCH Runtime State Inventory：「systemd 的 stderr→journald 通道对格式透明」为推演非实测）—— **2026-08-28 部分执行：事件已制造入 journal，检索面 blocked 于 journal 读权限（待用户介入）**
+- [x] **A2. journald 实机 ingest 与 jq 检索**（08-05 flagged_assumptions：「journald 实机 ingest 与 jq 检索」；08-RESEARCH Runtime State Inventory：「systemd 的 stderr→journald 通道对格式透明」为推演非实测）—— **2026-08-28 部分执行：事件已制造入 journal，检索面 blocked 于 journal 读权限（待用户介入）**
   - 步骤：systemd 部署 wesh（README「安全说明」的 EnvironmentFile= 配方或等价 unit），制造一次认证失败（错凭据访问）与一次 attach/detach（浏览器开关页面各一）；随后执行 README「结构化日志」节两则示例：`journalctl -u wesh -o cat | jq -c 'select(.event=="auth_failed")'` 与 `journalctl -u wesh -o cat | jq -c 'select(.client_id==N)'`（N 取前一步 attach 事件的 client_id 值）。
   - 预期：第一则检出刚才的 `auth_failed` 事件行（无 user/username 键）；第二则检出同一 client_id 的 attach 与 detach 各一条（reason=normal）；journald 不截断不转义 JSON 行（jq 解析零报错）。
   - 自动化等价面（已绿）：phase08.mjs S5（auth_failed 无用户名键 / attach+detach client_id 关联 / session_end 三字段）+ 08-01 真实二进制 jq 冒烟（`select(.event=="auth_failed")` 直打成立）。
@@ -53,10 +53,10 @@ note: 2026-08-28 实机通过（Prometheus 2.55.1 LTS + README 配方）：targe
 
 ### 2. A2 journald 实机 ingest 与 jq 检索
 expected: systemd 部署下 journalctl -o cat 输出可被 jq 逐行解析；select(.event=="auth_failed") 与 select(.client_id==N) 两示例检出预期事件
-result: blocked
-blocked_by: other
-reason: "journal 读权限不足：/run/log/journal 仅 root/systemd-journal/adm/wheel 组可读，本用户（users 组、无 sudo）journalctl 全形态报 insufficient permissions；事件已制造入 journal 待授权后检索"
-note: systemd 用户级 unit 已按 EnvironmentFile= 配方部署并 active，错凭据 401 与 attach/detach 事件均已制造（_SYSTEMD_USER_UNIT=wesh-uat.service 可回溯）；自动化等价面已绿（phase08.mjs S5 + 08-01 真实二进制 jq 冒烟）；待用户 sudo 加组或代跑两则 jq 示例
+result: issue
+reported: "journal 全流管道被启动横幅打断：README 示例 journalctl -o cat | jq 原样执行报 parse error at line 2（stdout 横幅 listening on.../share link 行混入 journal），jq 停止后续事件检索不到；grep '^{' 过滤后 auth_failed 无用户名键 / client_id 关联 attach+detach reason=normal / JSON 事件行全量合法全部成立"
+severity: major
+note: 2026-08-28 实机执行（用户已加 systemd-journal 组，sg 代跑）：stderr 恒 JSON 承诺成立（横幅走 stdout，2>/dev/null 后无横幅）；根因=systemd 默认 StandardOutput=journal 把 stdout 横幅送进 journal 与 stderr JSON 合流——详见 Gaps G-08-2
 
 ### 3. A3 draining 窗口编排观测率
 expected: systemctl restart 窗口内 /healthz 轮询序列出现 503 draining（200 → 503 → 000）；默认配置窗口亚秒级属预期
@@ -67,11 +67,25 @@ note: 2026-08-28 实机通过：默认配置窗口 <8ms（亚秒级极端形态�
 
 total: 3
 passed: 2
-issues: 0
+issues: 1
 pending: 0
 skipped: 0
-blocked: 1（A2——journal 读权限，事件已制造待用户授权后检索）
+blocked: 0
 
 ## Gaps
 
-[none——无代码缺陷；A2 为环境权限阻塞非代码问题]
+- gap_id: G-08-2
+  truth: "systemd 部署下 README 两则 jq 检索示例（journalctl -o cat | jq 'select(...)') 原样可用，journald 管道对 JSON 行零 parse error"
+  status: failed
+  reason: "User reported: README 示例 journalctl -o cat | jq 原样执行报 parse error at line 2，jq 停止后续事件检索不到（grep '^{' 过滤后核心断言全部成立）"
+  severity: major
+  test: 2
+  root_cause: "wesh 启动横幅（listening on ... / share read-only: ...）走 stdout；systemd unit 默认 StandardOutput=journal 使 stdout 横幅与 stderr JSON 事件在 journal 合流，README「结构化日志」示例管道 jq 在横幅行 parse error 中止——README「恒 JSON」承诺仅对 stderr 成立（2>/dev/null 分离实验实证），但示例命令未含 stdout 横幅防护，默认配置下不可复现"
+  artifacts:
+    - path: "cmd/wesh"  # 启动横幅打印点（stdout）
+      issue: "横幅行非 JSON，经 StandardOutput=journal 默认配置混入 jq 检索管道"
+    - path: "README.md"
+      issue: "「结构化日志」节示例（journalctl -o cat | jq）与 systemd 部署配方均未处理 stdout 横幅行——示例在默认配置下 parse error"
+  missing:
+    - "修复方向（待 planner 裁量）：wesh 检测 stdout 非 TTY 时横幅改 JSON 事件或转 stderr / README systemd 配方补 StandardOutput 处理 / README 示例补 grep '^{ ' 防护——三者取其一或组合"
+  debug_session: "inline（2026-08-28 UAT 实测内诊断：stdout/stderr 分离实验 + journal 原样重放确证，未开独立 debug session）"
