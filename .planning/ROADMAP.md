@@ -323,7 +323,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `/metrics` 暴露连接数、会话数、收发字节数、每客户端 outbox 深度与踢出计数
   3. 日志为 JSON 结构化输出（slog），认证失败、连接建立/断开、会话生命周期等审计事件可检索；日志中无凭据（回归 P3 红线），用户可控字段已剥离控制字符
 
-**Plans**: 6 plans（5/5 executed + 1 gap-closure pending）
+**Plans**: 6/6 plans executed（5/5 executed + 1 gap-closure pending）
 **Wave 1**
 
 - [x] 08-01-PLAN.md — slog 原子迁移：logEvent 迁入 log.go 换 slog JSONHandler + 动态 stderr writer + parseEvents helper + 5 Go 测试与 phase05/07 两 UAT 脚本断言迁移 JSON 行解析（OPS-08，D-13/D-14/D-15/D-16/D-18）
@@ -346,7 +346,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 6** *(gap closure — G-08-2，08-UAT test 2)*
 
-- [ ] 08-06-PLAN.md — G-08-2 闭合：README journald 示例补 grep 防护 + 合流机理说明（wesh 代码零改动，D-14/D-15/D-16 保持）+ phase08-journal.mjs 合流模拟回归（负对照自证）（OPS-08）
+- [x] 08-06-PLAN.md — G-08-2 闭合：README journald 示例补 grep 防护 + 合流机理说明（wesh 代码零改动，D-14/D-15/D-16 保持）+ phase08-journal.mjs 合流模拟回归（负对照自证）（OPS-08）
 
 ### Phase 9: 发布与打磨
 
@@ -376,5 +376,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
 | 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
 | 7. 部署与配置 | 10/10 | Complete    | 2026-08-27 |
-| 8. 可观测性 | 5/5 | In Progress|  |
+| 8. 可观测性 | 6/6 | In Progress|  |
 | 9. 发布与打磨 | TBD | Not started | - |
