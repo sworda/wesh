@@ -1,17 +1,21 @@
 ---
-status: diagnosed
+status: testing
 phase: 08-observability
 created: 2026-08-28
 started: 2026-08-28T09:00:00Z
-updated: 2026-08-28T09:55:00Z
-source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availability]
+updated: 2026-08-28T12:45:00Z
+source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availability, 08-VERIFICATION.md]
 ---
 
 # Phase 8 人工 UAT 清单（可观测性）
 
 ## Current Test
 
-[testing complete — 2 pass / 1 issue（G-08-2 已诊断，待 gap 修复计划])
+number: 1
+name: A2 真实 journald 复测（G-08-2 修复后）
+expected: |
+  sg systemd-journal 代跑 README 两则新示例（含 grep '^{' 防护段）：jq 零 parse error（横幅行被滤除）；检出既存 auth_failed 事件行（无 user/username 键）与同一 client_id 的 attach/detach 对（reason=normal）
+awaiting: user response
 
 自动化断言不可达项的人工复核清单：08-05 plan flagged_assumptions 登记的三条（真实 Prometheus scrape 兼容性 / journald 实机 ingest 与 jq 检索 / draining 窗口编排观测率）。每项 = 步骤 + 预期 + 勾选框。自动化已覆盖的协议层行为见 `web/uat/phase08.mjs`（六场景 21 断言：S1 健康检查四组 / S2 metrics 认证闸两态 / S3 exposition 17 series 与数值 / S4 503 draining / S5 审计事件检索 / S6 控制字符剥离）。
 
@@ -30,7 +34,7 @@ source: [08-05-PLAN.md flagged_assumptions, 08-RESEARCH.md Environment Availabil
   - 步骤：systemd 部署 wesh（README「安全说明」的 EnvironmentFile= 配方或等价 unit），制造一次认证失败（错凭据访问）与一次 attach/detach（浏览器开关页面各一）；随后执行 README「结构化日志」节两则示例：`journalctl -u wesh -o cat | jq -c 'select(.event=="auth_failed")'` 与 `journalctl -u wesh -o cat | jq -c 'select(.client_id==N)'`（N 取前一步 attach 事件的 client_id 值）。
   - 预期：第一则检出刚才的 `auth_failed` 事件行（无 user/username 键）；第二则检出同一 client_id 的 attach 与 detach 各一条（reason=normal）；journald 不截断不转义 JSON 行（jq 解析零报错）。
   - 自动化等价面（已绿）：phase08.mjs S5（auth_failed 无用户名键 / attach+detach client_id 关联 / session_end 三字段）+ 08-01 真实二进制 jq 冒烟（`select(.event=="auth_failed")` 直打成立）。
-  - **实测记录**：systemd 用户级 unit 已按 EnvironmentFile= 配方部署（`~/.config/systemd/user/wesh-uat.service`，`WESH_CREDENTIAL` 走 chmod 600 env 文件，user scope 的 stderr→journald 通道与系统级同构）；事件已制造完毕（错凭据 401 → `auth_failed`、Node 原生 WS ticket 握手 → attach/detach 对，进程 stderr 均进 journald）。**blocked 点**：本机 `/run/log/journal/` 仅 root/systemd-journal/adm/wheel 组可读（用户在 users 组、无 sudo），`journalctl`（含 `--user`）报 "No journal files were opened due to insufficient permissions"，jq 检索两则示例无法执行。**待用户介入**：`sudo usermod -aG systemd-journal $(whoami)` 后重登，或以 sudo 代跑两则检索命令；事件已在 journal（`_SYSTEMD_USER_UNIT=wesh-uat.service`）可回溯检索，无需重制。另注：journald 对 JSON 行的透明性已由 ingest 侧旁证（unit active 期间 stderr 无损送达 journal 文件），余下断言纯检索面。
+  - **实测记录**：systemd 用户级 unit 已按 EnvironmentFile= 配方部署（`~/.config/systemd/user/wesh-uat.service`，`WESH_CREDENTIAL` 走 chmod 600 env 文件，user scope 的 stderr→journald 通道与系统级同构）；事件已制造完毕（错凭据 401 → `auth_failed`、Node 原生 WS ticket 握手 → attach/detach 对，进程 stderr 均进 journald）。**原 blocked 点已解除**：用户已加 systemd-journal 组，sg 代跑可读 journal；既存事件（`_SYSTEMD_USER_UNIT=wesh-uat.service`）在 journal 可回溯，无需重制。**G-08-2 修复后待复测**：以 `sg systemd-journal` 代跑 README 两则新示例（已含 `grep '^{'` 防护段）——见 Current Test 待定项（Tests #2 result: pending）。另注：journald 对 JSON 行的透明性已由 ingest 侧旁证（unit active 期间 stderr 无损送达 journal 文件）。
 
 - [x] **A3. draining 窗口编排观测率**（08-03 flagged_assumptions 登记「默认配置 draining 窗口 <1s」已实证 + 08-05：「draining 窗口编排观测率」；RESEARCH OQ3：窗口宽度依赖 stop-signal 序列时长）—— **2026-08-28 实测通过（执行人：CodeBuddy agent）**
   - 步骤：systemd 部署下对 wesh 执行 `systemctl restart wesh`（或 `kill -TERM`），同时另开终端以 0.2s 周期循环 `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7681/healthz`；观测重启窗口内健康检查输出序列。
@@ -51,12 +55,10 @@ expected: 按 README basic_auth 配方配置真实 Prometheus 后 target UP，17
 result: pass
 note: 2026-08-28 实机通过（Prometheus 2.55.1 LTS + README 配方）：target up、17 series 全查、build_info 数值可见；promtool parse 通过（1 条非阻塞 _sum 命名 lint）；负面对照 down+429 自锁+throttled×7（retry_after 翻倍）——详见上方 A1 实测记录
 
-### 2. A2 journald 实机 ingest 与 jq 检索
-expected: systemd 部署下 journalctl -o cat 输出可被 jq 逐行解析；select(.event=="auth_failed") 与 select(.client_id==N) 两示例检出预期事件
-result: issue
-reported: "journal 全流管道被启动横幅打断：README 示例 journalctl -o cat | jq 原样执行报 parse error at line 2（stdout 横幅 listening on.../share link 行混入 journal），jq 停止后续事件检索不到；grep '^{' 过滤后 auth_failed 无用户名键 / client_id 关联 attach+detach reason=normal / JSON 事件行全量合法全部成立"
-severity: major
-note: 2026-08-28 实机执行（用户已加 systemd-journal 组，sg 代跑）：stderr 恒 JSON 承诺成立（横幅走 stdout，2>/dev/null 后无横幅）；根因=systemd 默认 StandardOutput=journal 把 stdout 横幅送进 journal 与 stderr JSON 合流——详见 Gaps G-08-2
+### 2. A2 journald 实机 ingest 与 jq 检索（G-08-2 修复后复测）
+expected: sg systemd-journal 代跑 README 修复后两则新示例（journalctl -u wesh -o cat | grep '^{' | jq -c 'select(.event=="auth_failed")' 与 'select(.client_id==N)'）：jq 零 parse error（横幅行被防护段滤除）；检出既存 auth_failed 事件行（无 user/username 键）与同一 client_id 的 attach/detach 对（reason=normal）
+result: pending
+note: G-08-2 已由 08-06 闭合（f19811b README 防护 + 9ebbbe4 合流夹具 6/6）；机械化等价面已绿（phase08-journal.mjs 在合流流上端到端跑 README 逐字管道 + 负对照自证）。blocked 点（journal 读权限）已随用户加 systemd-journal 组解除；wesh-uat.service 既存事件在 journal 可回溯，无需重制——以 sg 代跑两则新示例即可收口
 
 ### 3. A3 draining 窗口编排观测率
 expected: systemctl restart 窗口内 /healthz 轮询序列出现 503 draining（200 → 503 → 000）；默认配置窗口亚秒级属预期
@@ -67,8 +69,8 @@ note: 2026-08-28 实机通过：默认配置窗口 <8ms（亚秒级极端形态�
 
 total: 3
 passed: 2
-issues: 1
-pending: 0
+issues: 0
+pending: 1
 skipped: 0
 blocked: 0
 
@@ -76,7 +78,8 @@ blocked: 0
 
 - gap_id: G-08-2
   truth: "systemd 部署下 README 两则 jq 检索示例（journalctl -o cat | jq 'select(...)') 原样可用，journald 管道对 JSON 行零 parse error"
-  status: failed
+  status: resolved
+  resolved_by: "08-06-PLAN.md（f19811b README 两则示例补 grep '^{' 防护段 + 合流机理说明；9ebbbe4 web/uat/phase08-journal.mjs 合流模拟回归夹具 6/6 含负对照自证）"
   reason: "User reported: README 示例 journalctl -o cat | jq 原样执行报 parse error at line 2，jq 停止后续事件检索不到（grep '^{' 过滤后核心断言全部成立）"
   severity: major
   test: 2
