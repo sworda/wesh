@@ -163,6 +163,16 @@ type Server struct {
 	// 逐字节一致）。结构与提取语义见 proxy.go。
 	proxy proxyInfo
 
+	// Phase 8 探活状态位（08-03，OPS-06，D-10/D-11 数据源）：draining 为优雅
+	// 关停位（Shutdown 入口置 true——与 s.exiting 同源触发点，1001 广播开始
+	// 前即翻转，关停全程探活器不再导新流）；sessionAlive 为 PTY 会话存活位
+	//（New 尾部置 true，lifecycle sess.Wait 返回与退出码提取完成后置
+	// false——与 session_end 事件同区段）。/healthz handler 在 hubMu 外读取，
+	// 故为 atomic.Bool（与 registry.n 的「hubMu 外 atomic load」选型先例
+	// 同构，clients.go registry 注释论证）。
+	draining     atomic.Bool
+	sessionAlive atomic.Bool
+
 	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
 }
 
@@ -376,6 +386,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// 先于任何连接/会话流量落流）。
 	s.startedAt = time.Now()
 	emitEvent(slog.String("event", "session_start"), slog.Int("pid", sess.Cmd.Process.Pid))
+	// 08-03 D-10：会话存活位置位——goroutine 启动前（/healthz session_active
+	// 数据源；置 false 挂点在 lifecycle sess.Wait 返回区段）。
+	s.sessionAlive.Store(true)
 	go sess.ReadLoop(s.onChunk)
 	go s.inputWriter() // CR-01：input-writer 唯一装配点——master 写路径独占在专属 goroutine
 	go s.lifecycle()
@@ -485,6 +498,19 @@ func (s *Server) Handler() http.Handler {
 		}
 	}
 	mux.HandleFunc(bp+"/ws", s.Attach)
+	// 08-03 OPS-06（D-07/D-09）：/healthz 根路径固定注册——不带 bp 前缀
+	//（探活/采集器直连后端端口，路径恒定可写死进 k8s probe/反代静态配置；
+	// 拒绝双挂，单侧定义纪律），注册点在认证/无认证两分支之外唯一一处——
+	// 免认证窄例外（D-07：整站 Basic 闸唯一例外，探活器结构性带不了凭据 +
+	// 端点零敏感信息双前提；防例外蔓延：新端点不得以此为例外先例，README
+	// 明示义务随 08-05）。方法模式 + path-only 405 fallback 成对注册
+	//（sharetoken.go registerShareRoutes 先例——内建 405 会被 "/" 子树
+	// 吞掉，RESEARCH Pitfall 7）。
+	mux.HandleFunc("GET /healthz", s.healthzHandler)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	})
 	return securityHeaders(mux, s.tlsOn)
 }
 
@@ -1212,6 +1238,10 @@ func (s *Server) lifecycle() {
 		}
 	}
 	emitEvent(endAttrs...)
+	// 08-03 D-10：PTY 会话死亡即探活语义翻转——与 session_end 事件同区段
+	//（sess.Wait 返回与退出码提取完成后）；/healthz 的 session_active 数据源，
+	// 先于 terminate→exitf（waitExit 收码即测试侧同步边）。
+	s.sessionAlive.Store(false)
 	s.sess.Drain(200 * time.Millisecond)
 	// input-writer 收口（05-05，CR-01 修复的生命周期半侧）：Drain→Close 已关闭
 	// master fd，在途 Master.Write 经 runtime poller 解除阻塞返回错误（与 Read
