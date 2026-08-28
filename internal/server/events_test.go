@@ -23,8 +23,10 @@ package server_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -517,5 +519,126 @@ func TestShutdownEvent(t *testing.T) {
 	}
 	if _, ok := shutdowns[0]["code"]; ok {
 		t.Fatalf("shutdown 不应出 code 键（进程级事件）: %v", shutdowns[0])
+	}
+}
+
+// ====== Task 3 增量：认证事件边界（D-19/D-23）======
+
+// TestThrottledRetryAfter（D-23）：凭据实例爬梯打满节流（auth_e2e_test.go
+// TestThrottleHTTP 既有场景形态——ThrottleBase=200ms：#1 错凭据 401 过窗 →
+// #2 错凭据 401 → #3 立即请求即 429）→ 恰 1 条 event=="throttled"：
+// retry_after 键为 ≥1 整数（auth.go 现成 retry 值）且与 Retry-After 响应头
+// 同值；remote/code==429 键保持。
+func TestThrottledRetryAfter(t *testing.T) {
+	cred, err := server.ParseCredential("th-ev:throttle-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	_, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:     true,
+		Credentials:  []server.Credential{cred},
+		ThrottleBase: 200 * time.Millisecond,
+	})
+	url := attachURL(wsURL)
+
+	restore := captureStderr(t)
+	defer restore() // 失败路径兜底恢复 os.Stderr（幂等）
+
+	post := func(user, pass string) *http.Response {
+		t.Helper()
+		resp := postAttach(t, url, user, pass, nil)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp
+	}
+
+	// 爬梯（TestThrottleHTTP 同款编排）：#1 → 401（fails=1，notBefore=+200ms）；
+	// 过窗后 #2 → 401（fails=2，notBefore=+400ms）；窗口内 #3 立即 → 429。
+	if resp := post("th-ev", "wrong-1"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("#1 status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	time.Sleep(250 * time.Millisecond) // 过 200ms 窗口
+	if resp := post("th-ev", "wrong-2"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("#2 status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+	resp := post("th-ev", "throttle-pass") // #3 窗口内命中（正确凭据也 429——节流闸在 Basic 之前）
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("#3 status = %d, want %d (429)", resp.StatusCode, http.StatusTooManyRequests)
+	}
+	raHeader := resp.Header.Get("Retry-After")
+	raInt, err := strconv.Atoi(raHeader)
+	if err != nil || raInt < 1 {
+		t.Fatalf("Retry-After = %q, want ≥1 整数", raHeader)
+	}
+
+	// 同步边：throttled/auth_failed 的 emit 在各自 HTTP handler 内先于返回执行。
+	waitHandlers()
+	out := restore()
+	evs := parseEvents(t, out)
+	ths := eventsNamed(evs, "throttled")
+	if len(ths) != 1 {
+		t.Fatalf("throttled event count = %d, want exactly 1: %q", len(ths), out)
+	}
+	ev := ths[0]
+	if ev["code"] != float64(http.StatusTooManyRequests) {
+		t.Fatalf("throttled code = %v, want float64(429)", ev["code"])
+	}
+	// D-23：retry_after 键 ≥1（JSON 数字 float64 比——Pitfall 4）且与
+	// Retry-After 响应头同值（同一 retry 变量两消费点）。
+	ra, ok := ev["retry_after"].(float64)
+	if !ok || ra < 1 || ra != float64(int64(raInt)) {
+		t.Fatalf("throttled retry_after = %v (%T), want ≥1 且与 Retry-After 头 %d 同值", ev["retry_after"], ev["retry_after"], raInt)
+	}
+	// remote 键保持（loopback host:port 现状形态）。
+	remote, _ := ev["remote"].(string)
+	if !strings.HasPrefix(remote, "127.0.0.1:") {
+		t.Fatalf("throttled remote = %q, want 127.0.0.1: 前缀", remote)
+	}
+}
+
+// TestAuthFailedNoUsername（D-23/SEC-01 红线 JSON 形态回归锁）：错凭据携独特
+// 用户名 "no-such-user-7f3a" → 恰 1 条 event=="auth_failed"——无 user/
+// username 键（logEvent 四参签名结构性无用户名通道），且捕获全文不含该用户名
+// 串（红线负断言子串形态，与 JSON 化正交——08-01 迁移纪律逐字沿用）。
+func TestAuthFailedNoUsername(t *testing.T) {
+	cred, err := server.ParseCredential("ev-op:ev-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	_, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
+		Writable:    true,
+		Credentials: []server.Credential{cred},
+	})
+	url := attachURL(wsURL)
+
+	restore := captureStderr(t)
+	defer restore()
+
+	// 错凭据（独特用户名——断言材料，非真实账号）→ 401 auth_failed。
+	resp := postAttach(t, url, "no-such-user-7f3a", "no-such-pass", nil)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	waitHandlers()
+	out := restore()
+	evs := parseEvents(t, out)
+	fails := eventsNamed(evs, proto.ErrAuthFailed)
+	if len(fails) != 1 {
+		t.Fatalf("auth_failed event count = %d, want exactly 1（捕获有效性证明）: %q", len(fails), out)
+	}
+	// 结构性无用户名通道：无 user/username 键（任何大小写形态都不应有——
+	// 键名面逐键断言）。
+	for k := range fails[0] {
+		lk := strings.ToLower(k)
+		if lk == "user" || lk == "username" {
+			t.Fatalf("auth_failed 事件含用户名键 %q（SEC-01 红线结构性违反）: %v", k, fails[0])
+		}
+	}
+	// 红线负断言（子串形态）：捕获全文不含该用户名串。
+	if strings.Contains(out, "no-such-user-7f3a") {
+		t.Fatalf("stderr 含错凭据用户名（SEC-01 红线）: %q", out)
 	}
 }

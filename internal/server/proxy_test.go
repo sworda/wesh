@@ -136,3 +136,58 @@ func TestProxyClientIP(t *testing.T) {
 		}
 	})
 }
+
+// TestRemoteSanitize（08-02 D-19 纵深第二道）：trust 模式 remote() 返回值经
+// sanitizeRemoteUser 清洗——白盒属性断言：任意构造 XFF 输入下 remote() 返回
+// 值逐 rune 无 C0（ch<=0x1f）/DEL（ch==0x7f）/C1（0x80<=ch<=0x9f）。ParseIP
+// 第一道结构性闸保持（注入值回退 TCP 对端键——07-review CR-02），本测构造
+// 含 C1/NEL 的 XFF 首段与边界输入覆盖「第一道闸若放宽即穿透」面——encoding/json
+// 只转义 C0、C1 原样穿透（08-RESEARCH Pitfall 5 GOROOT 实证），清洗是唯一
+// 防线；两闸并存不冲突。
+func TestRemoteSanitize(t *testing.T) {
+	trust := proxyInfo{trust: true, userHeader: "X-Remote-User"}
+	newReq := func(remoteAddr, xff string) *http.Request {
+		r := &http.Request{RemoteAddr: remoteAddr, Header: http.Header{}}
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		return r
+	}
+	tests := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		want       string
+	}{
+		// XFF 干净值透传相等（sanitize 对合法值零改动——幂等面）。
+		{"clean ipv4 passthrough", "10.1.2.3:5555", "203.0.113.7", "203.0.113.7"},
+		{"clean ipv6 passthrough", "10.1.2.3:5555", "2001:db8::1", "2001:db8::1"},
+		{"clean chain first", "10.1.2.3:5555", "203.0.113.7, 10.0.0.1", "203.0.113.7"},
+		// 含 C1/NEL 的 XFF 首段：ParseIP 闸拒 → 回退 TCP 对端键（CR-02 既有
+		// 行为），sanitize 第二道对回退值幂等。
+		// 注入位置取中段——尾段 NEL 会被 clientIP 的 TrimSpace 先吃掉（unicode.IsSpace(NEL)=true 本机实证），
+		// 中段注入才是 ParseIP 闸的真实受力面。
+		{"C1 mid-segment falls back", "10.1.2.3:5555", "1.2.3\u00854", "10.1.2.3"},
+		{"NEL only first segment falls back", "10.1.2.3:5555", "\u0085", "10.1.2.3"},
+		{"CSI suffix falls back", "10.1.2.3:5555", "1.2.3.4\u009b", "10.1.2.3"},
+		// XFF 缺席/空值边界：回退 TCP 对端 host。
+		{"xff absent falls back", "10.1.2.3:5555", "", "10.1.2.3"},
+		// 回退链末端：RemoteAddr 不可 SplitHostPort 时整串回退（含端口缺失
+		// 形态——sanitize 对该路径同样生效）。
+		{"unparseable remoteaddr whole string", "unix-addr-no-port", "", "unix-addr-no-port"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trust.remote(newReq(tt.remoteAddr, tt.xff))
+			if got != tt.want {
+				t.Errorf("remote() = %q, want %q", got, tt.want)
+			}
+			// 属性断言：返回值逐 rune 无 C0/C1/DEL（注入面防线本体）。
+			for _, ch := range got {
+				if ch <= 0x1f || ch == 0x7f || (ch >= 0x80 && ch <= 0x9f) {
+					t.Errorf("remote() = %q 含控制 rune %#U（C0/C1/DEL 穿透）", got, ch)
+				}
+			}
+		})
+	}
+}
