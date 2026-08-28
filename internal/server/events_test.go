@@ -70,8 +70,8 @@ func singleDetachReason(t *testing.T, evs []map[string]any, want string, out str
 }
 
 // startEventsServerWith 是 startTrackedServerWith 的全量返回变体：同装配序列
-//（wg 包裹 handler——05-01 同步边纪律）+ 额外返回 srv 与 sess 句柄
-//（srv = Shutdown 直调面；sess = session_start pid 断言面——sess.Cmd.Process.Pid
+// （wg 包裹 handler——05-01 同步边纪律）+ 额外返回 srv 与 sess 句柄
+// （srv = Shutdown 直调面；sess = session_start pid 断言面——sess.Cmd.Process.Pid
 // 与事件 pid 字段相等性断言的数据源）。进程级事件（session_*/shutdown）的
 // happens-before 边：session_start 在 New 内 emit（先于本函数返回，程序序）；
 // session_end 在 lifecycle 内 emit 先于 terminate→exitf（waitExit 收码即
@@ -425,7 +425,7 @@ func TestDetachReason(t *testing.T) {
 // 事件面（恰 2 条：session_start + session_end，无 attach/detach 混入的强锁）。
 // session_start：pid 键 = sess.Cmd.Process.Pid（数字），无 remote/code 键；
 // session_end：exit_code 与 EXIT 帧同源（信号死亡 -1）+ duration_seconds>0
-//（startedAt 起点 = New 尾部记录）+ signal 键仅信号死亡且 signalName 映射
+// （startedAt 起点 = New 尾部记录）+ signal 键仅信号死亡且 signalName 映射
 // 命中出键（A7 裁决：未命中不出键，类型恒 string）。
 func TestSessionEnd(t *testing.T) {
 	// exit 42 形态：正常退出码传递——session_end exit_code==42、无 signal 键。
@@ -497,13 +497,13 @@ func TestSessionEnd(t *testing.T) {
 }
 
 // TestShutdownEvent（D-17）：srv.Shutdown() 入口 → 恰 1 条 event=="shutdown"
-//（进程级事件——无 remote/code 键）。
+// （进程级事件——无 remote/code 键）。
 func TestShutdownEvent(t *testing.T) {
 	restore := captureStderr(t)
 	defer restore()
 
 	exitCh, _, srv, _, _ := startEventsServerWith(t, []string{"sh", "-c", "sleep 100"}, server.Options{Writable: true})
-	srv.Shutdown()        // shutdown emit 在本 goroutine 内（Shutdown 入口程序序）
+	srv.Shutdown()          // shutdown emit 在本 goroutine 内（Shutdown 入口程序序）
 	waitExit(t, exitCh, -1) // 默认 HUP stop-signal 收口（session_end 同步边同 waitExit）
 
 	out := restore()

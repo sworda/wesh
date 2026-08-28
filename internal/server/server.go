@@ -34,6 +34,11 @@ type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
 
+	// startedAt 为会话起点（08-02，D-22）：New 尾部记录（goroutine 启动之前），
+	// 与 pty.Start 时刻差毫秒级、审计语义无碍；session_end 事件的
+	// duration_seconds 数据源。New 写入后运行期只读。
+	startedAt time.Time
+
 	// shares 为分享 token 两条目 store（05-06 MULTI-05，D-01 独立第三认证通道）：
 	// New 装配期固化、运行期只读；nil = 通道关闭（ShareTokenRO/RW 任一空串，
 	// 本 phase main 恒生成——nil 仅测试可构造）。结构与校验形态见 sharetoken.go。
@@ -366,6 +371,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// MULTI-04 仲裁器装配（resize.go）：timer 初始化为 stopped 态——首次
 	// reportResize 的 Reset 才武装；必须在 ReadLoop/lifecycle 启动前完成。
 	s.initArbiter()
+	// 08-02 D-17/D-22：会话起点记录 + session_start 事件（进程级：pid 键 =
+	// 子进程 PID；无 remote/code 键）——goroutine 启动之前 emit（审计事件
+	// 先于任何连接/会话流量落流）。
+	s.startedAt = time.Now()
+	emitEvent(slog.String("event", "session_start"), slog.Int("pid", sess.Cmd.Process.Pid))
 	go sess.ReadLoop(s.onChunk)
 	go s.inputWriter() // CR-01：input-writer 唯一装配点——master 写路径独占在专属 goroutine
 	go s.lifecycle()
@@ -1145,16 +1155,35 @@ func exitMessage(err error, code int) string {
 	if code >= 0 {
 		return fmt.Sprintf("The process exited with code %d.", code)
 	}
-	// 信号死亡分支：WaitStatus 提取信号号（Signaled 守卫）。断言失败时 sig 保持
-	// 占位值 code（恒 -1）——回退数字形态产出 "signal -1"，语义即「信号号未知」。
+	// 信号死亡分支：信号号提取单侧定义 = exitSignalNum（08-02 D-22——session_end
+	// 事件 signal 字段与本分支同源，纯重构抽取行为逐字节不变）。未命中时
+	//（WaitStatus 断言失败/未 Signaled——unix 上真实进程不可达的防御兜底）
+	// sig 保持占位值 code（恒 -1）——回退数字形态产出 "signal -1"，语义即
+	//「信号号未知」。
 	sig := code
-	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-		sig = int(ws.Signal())
+	if n, ok := exitSignalNum(err); ok {
+		sig = n
 	}
 	if name, ok := signalName(syscall.Signal(sig)); ok {
 		return fmt.Sprintf("The process was killed by signal %s.", name)
 	}
 	return fmt.Sprintf("The process was killed by signal %d.", sig)
+}
+
+// exitSignalNum 从 sess.Wait 返回的错误提取信号号（08-02 D-22 单侧定义——
+// exitMessage 信号分支与 session_end 事件 signal 字段共用，抽取前为
+// exitMessage 内联逻辑）：err 为 *exec.ExitError 且其 WaitStatus Signaled()
+// → (信号号, true)；其余一切形态（nil/非 ExitError/非 WaitStatus/未
+// Signaled 正常退出）→ (0, false)。exitmsg_test.go 白盒四形态锁定。
+func exitSignalNum(err error) (int, bool) {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return 0, false
+	}
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return int(ws.Signal()), true
+	}
+	return 0, false
 }
 
 // lifecycle 是 D-10 唯一终结路径触发源（多客户端形态）：子进程退出 → 带时限
@@ -1167,6 +1196,22 @@ func (s *Server) lifecycle() {
 	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	}
+	// 08-02 D-17/D-22：session_end 事件（sess.Wait 返回与退出码提取完成后、
+	// EXIT 帧组帧之前）——exit_code 与 EXIT 帧同源（信号死亡 -1）；signal 键
+	// 仅信号死亡且 signalName 映射命中出键（RESEARCH A7 裁决：未命中不出键，
+	// 键在时类型恒 string）；duration_seconds = PTY spawn 到退出（startedAt
+	// 起点，D-22）。信号号提取单侧定义 = exitSignalNum（与 exitMessage 同源）。
+	endAttrs := []slog.Attr{
+		slog.String("event", "session_end"),
+		slog.Int("exit_code", code),
+		slog.Float64("duration_seconds", time.Since(s.startedAt).Seconds()),
+	}
+	if sig, ok := exitSignalNum(err); ok {
+		if name, ok := signalName(syscall.Signal(sig)); ok {
+			endAttrs = append(endAttrs, slog.String("signal", name))
+		}
+	}
+	emitEvent(endAttrs...)
 	s.sess.Drain(200 * time.Millisecond)
 	// input-writer 收口（05-05，CR-01 修复的生命周期半侧）：Drain→Close 已关闭
 	// master fd，在途 Master.Write 经 runtime poller 解除阻塞返回错误（与 Read
@@ -1261,6 +1306,9 @@ func (s *Server) terminate(code int) {
 //     hubMu 内等待（锁序 hubMu > sess.fdMu 不受影响），与 lifecycle 并发
 //     安全——stopTimeout 期间进程若已退出，补发 KILL 到达空 pgid 静默。
 func (s *Server) Shutdown() {
+	// 08-02 D-17：shutdown 事件（进程级——无 remote/code 键），hubMu 锁定前
+	// emit；08-03 的 draining 置位与本事件同函数不同点（本任务只加事件）。
+	emitEvent(slog.String("event", "shutdown"))
 	s.hubMu.Lock()
 	s.exiting = true
 	// 08-02 D-21：1001 优雅下线广播码同点登记（hubMu 保护，detach 同锁读）——
