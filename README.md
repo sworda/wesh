@@ -332,8 +332,8 @@ server {
 
 **语义 = 服务端审计归因**：`--auth-header X-Remote-User` 配置即信任该头——反代（authelia/oauth2-proxy 等 SSO）注入的用户名经清洗（剥离控制字符、截断 128 字符）后记录进服务端 stderr 事件行的 `remote_user` 字段：
 
-```
-wesh: close remote=198.51.100.7 code=1000 reason=exit_when_empty remote_user=alice
+```json
+{"time":"2026-08-28T10:40:01.013456789+08:00","level":"INFO","msg":"event","event":"detach","remote":"198.51.100.7","client_id":1,"code":1000,"reason":"normal","remote_user":"alice"}
 ```
 
 **X-Forwarded-For 同闸**：`--auth-header` 给定即「信任反代」总开关——XFF 链首 IP 同时换入日志 `remote` 字段与 per-IP 节流计数键（反代后 per-IP 计数不再全聚合为代理 IP）；未配置时 XFF 完全忽略（直连客户端自设 XFF 零效果）。
@@ -456,13 +456,13 @@ scrape_configs:
 
 另：协议守卫事件同 schema 同出口（`message_too_big`/`max_clients`/`hello_timeout`/`subprotocol_required`/`version_mismatch` 等，code 携 HTTP 状态码或 WS 关闭码）。
 
-journald + jq 检索示例（systemd 部署下 stderr 自动进 journal）：
+journald + jq 检索示例（systemd 部署下 stderr 自动进 journal）。⚠️ 合流陷阱：systemd 默认 `StandardOutput=journal` 会把 stdout 启动横幅（人读文本——分流决策见本节末「红线重申」段）与 stderr JSON 事件合流入同一 journal，jq 遇非 JSON 行即中止整条管道；故示例统一在 journalctl 与 jq 之间插入 `| grep '^\{'` 预滤 JSON 事件行——与自动化测试 parseEvents 的滤行约定（滤 `{` 起始行）同款：
 
 ```bash
 # 认证失败审计（event 字段直打索引）
-journalctl -u wesh -o cat | jq -c 'select(.event=="auth_failed")'
+journalctl -u wesh -o cat | grep '^\{' | jq -c 'select(.event=="auth_failed")'
 # 单连接生命周期关联（attach → detach）
-journalctl -u wesh -o cat | jq -c 'select(.client_id==7)'
+journalctl -u wesh -o cat | grep '^\{' | jq -c 'select(.client_id==7)'
 ```
 
 **红线重申**：凭据、ticket、share token、Authorization 头任何形态（含 base64、含用户名）**永不进入日志**；用户可控字段（`remote` 的 XFF 链首、`remote_user` 头值）经 C0/C1/DEL 控制字符剥离 + 128 字符截断后才入日志（JSON 转义只覆盖 C0，C1 如 NEL 原样穿透——清洗是防伪造日志行的唯一防线）。启动行/分享链接行保持人读文本（stdout）不 JSON 化——operator 交互输出与机器审计事件分流，既有启动行解析（含 UAT 与部署脚本）零破坏。
