@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 08
 current_phase_name: observability
 status: executing
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-08-27T16:22:04.430Z"
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-08-28T01:14:22.601Z"
 last_activity: 2026-08-27
 last_activity_desc: Phase 07 complete, transitioned to Phase 8
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 59
-  completed_plans: 55
+  completed_plans: 56
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-27)
 ## Current Position
 
 Phase: 08 (observability) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-08-27 — Phase 08 execution started
 
-Progress: [█████████░] 93%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
@@ -118,6 +118,7 @@ Progress: [█████████░] 93%
 | Phase 07-deployment P08 | 24min | 2 tasks | 4 files |
 | Phase 07 P10 | 20min | 3 tasks | 3 files |
 | Phase 08 P01 | 48min | 3 tasks | 11 files |
+| Phase 08 P02 | 71min | 3 tasks tasks | 8 files files |
 
 ## Accumulated Context
 
@@ -251,6 +252,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 08-01]: logEvent 原子迁移 slog JSONHandler 落地——stderrW 动态 writer（Write 时读 os.Stderr 变量）保 captureStderr 语义；emitEvent(attrs) 为唯一底层出口（msg=event 单写口，08-02 扩展字段挂点）；包级 eventLog 不调 SetDefault（main.go 零改动）
 - [Phase ?]: [Phase 08-01]: 实证纠偏——slog JSONHandler time 键 = RFC3339Nano + 进程本地时区（GOROOT json_handler.go:93-99 appendJSONTime），非 08-RESEARCH/plan 所述 RFC3339 毫秒 UTC（appendRFC3339Millis 仅 TextHandler 分支）；08-02+ 与 README 运维节引用以本实证为准
 - [Phase ?]: [Phase 08-01]: 事件断言迁移形态定案——Go parseEvents/countByEvent + JS 内联 parseEvents 双侧同构（滤 '{' 起始行、单行非法 JSON 即 FAIL）；行尾锚定在 event 名精确相等下消解；红线负断言子串形态与 JSON 化正交逐字保留
+- [Phase ?]: [Phase 08-02]: detach 事件恰好一次归属 = removeLocked 返回 true 的路径 emit（reader detach 与 kick 互斥的既有所有权规则映射到事件面）；emitDetachLocked 为两调用点共用唯一 emit 形态（D-18 schema 单侧定义）；reason 判定序 pongTimedOut(hubMu 同锁) → exiting+closeBroadcastCode(广播码同源) → normal
+- [Phase ?]: [Phase 08-02]: pinger 签名收窄 (ctx, cl, interval)——pong_timeout 折入 detach reason（D-21），置位取 hubMu 写/detach 同锁读（Pattern 4 形态 b，-race 防线）；exitSignalNum 抽取为 exitMessage 与 session_end 信号号提取单侧定义（行为逐字节不变）
+- [Phase ?]: [Phase 08-02]: XFF 注入测试取中段注入——尾段 NEL 被 clientIP TrimSpace 先吃掉（unicode.IsSpace(NEL)=true 实证），中段才是 ParseIP 闸受力面；remote() trust 分支过 sanitizeRemoteUser 作 D-19 纵深第二道（双闸并存）
 
 ### Pending Todos
 
@@ -271,6 +275,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-27T16:22:04.402Z
-Stopped at: Completed 08-01-PLAN.md
+Last session: 2026-08-28T01:13:59.865Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None
