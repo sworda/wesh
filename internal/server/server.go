@@ -173,6 +173,15 @@ type Server struct {
 	draining     atomic.Bool
 	sessionAlive atomic.Bool
 
+	// Phase 8 运维端点装配（08-04，OPS-07）：version 为 New 装配期固化、运行期
+	// 只读的构建版本（Options.Version 单一通道——main var version 原样透传，
+	// 零值兜底 "dev"，发布构建 ldflags 注入属 Phase 9 既定），消费点 =
+	// /metrics 的 wesh_build_info{version} label（escLabel 转义）；mc 为
+	// metrics 热路径计数器集（结构与递增点见 metrics.go——atomic.Int64
+	// 无锁递增，inputDrops 先例形态；快照读取端 = snapshotMetrics）。
+	version string
+	mc      metricsCounters
+
 	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
 }
 
@@ -251,6 +260,11 @@ type Options struct {
 	// 通道，双写即漂移）。
 	StopSignal  syscall.Signal
 	StopTimeout time.Duration
+	// Version 为生产直传字段（08-04 OPS-07，main var version 原样透传——
+	// 发布构建 ldflags 注入属 Phase 9 既定，本 phase 只落 plumbing；零值兜底
+	// "dev"）。消费点 = /metrics 的 wesh_build_info{version} 单 label
+	//（escLabel 转义，metrics.go）。
+	Version string
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -315,6 +329,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.StopSignal == 0 {
 		opts.StopSignal = syscall.SIGHUP
 	}
+	// 08-04 OPS-07：version 零值兜底 "dev"（Options 注释分档先例——生产直传
+	// + 零值兜底说明；main var version 恒非空，兜底服务测试直构造形态）。
+	if opts.Version == "" {
+		opts.Version = "dev"
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
@@ -348,6 +367,8 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键
 		// 与 remote_user 提取共用同一开关，零双轨）；空串 = 零值不信任。
 		proxy: proxyInfo{trust: opts.AuthHeader != "", userHeader: opts.AuthHeader},
+		// New 装配直传（08-04，OPS-07；零值已在上方兜底 "dev"）。
+		version: opts.Version,
 	}
 	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
 	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
@@ -458,6 +479,11 @@ func (s *Server) Handler() http.Handler {
 			w.Header().Set("Allow", http.MethodPost)
 			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		})
+		// 08-04 OPS-07（D-08/D-09）：/metrics 跟随认证闸（与 / 同一条 basicAuth
+		// 链——无/错凭据 401 同文、节流 429 同 store；Prometheus scrape_config
+		// 原生 basic_auth 可采集），根路径固定不带 bp（采集器直连后端端口，
+		// 路径恒定可写死进 Prometheus 静态配置；拒绝双挂，单侧定义纪律）。
+		mux.Handle("GET /metrics", basicAuth(http.HandlerFunc(s.metricsHandler), s.credentials, s.throttle, s.proxy))
 	} else {
 		if bp != "" {
 			mux.Handle(bp+"/", http.StripPrefix(bp, wh))
@@ -496,6 +522,9 @@ func (s *Server) Handler() http.Handler {
 				http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 			})
 		}
+		// 08-04 OPS-07（D-08）：--no-auth 模式 /metrics 直通（无凭据无 Basic 面；
+		// 暴露面 README 明示义务随 08-05，RESEARCH Pitfall 6）。
+		mux.HandleFunc("GET /metrics", s.metricsHandler)
 	}
 	mux.HandleFunc(bp+"/ws", s.Attach)
 	// 08-03 OPS-06（D-07/D-09）：/healthz 根路径固定注册——不带 bp 前缀
@@ -508,6 +537,15 @@ func (s *Server) Handler() http.Handler {
 	// 吞掉，RESEARCH Pitfall 7）。
 	mux.HandleFunc("GET /healthz", s.healthzHandler)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	})
+	// 08-04 OPS-07（D-09）：/metrics path-only 405 fallback（Allow: GET）——
+	// 与 /healthz 成对同区（方法模式的内建 405 会被 "/" 子树吞掉，sharetoken.go
+	// registerShareRoutes 先例，RESEARCH Pitfall 7）；注册在认证两分支之外——
+	// POST /metrics 两模式同文 405，fallback 不包认证（/api/attach 405 先例
+	// 同形态；GET 方法模式仍走上方各自分支的认证语义）。
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	})

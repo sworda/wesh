@@ -273,6 +273,11 @@ type registry struct {
 	// afterDrain 清位两点递增）：Phase 8 OPS-07 门开闭周期计数挂点（review #10）；
 	// hubMu 保护，零 atomic 不违 R-07 单锁纪律。
 	gateTransitions int
+	// clientsTotal 累计注册客户端总数（08-04 OPS-07，D-05 连接三件套之二——
+	// counter 只增不减，与 n 的当前 gauge 成对）：hubMu 保护（与 kicks 同形态，
+	// R-07 单锁纪律下无需 atomic）；registerLocked 唯一加点（对称记账：n 管
+	// 当前、clientsTotal 管累计，读取端 = metrics.go snapshotMetrics 锁内快照）。
+	clientsTotal int64
 }
 
 // registerLocked 登记新客户端：分配 attachSeq、入 set 与 FIFO order，计数 +1
@@ -285,7 +290,8 @@ func (r *registry) registerLocked(c *client) {
 	}
 	r.set[c] = struct{}{}
 	r.order = append(r.order, c)
-	r.n.Add(1) // 对称记账：唯一加计数点（review #7）
+	r.n.Add(1)       // 对称记账：唯一加计数点（review #7）
+	r.clientsTotal++ // 08-04 OPS-07：累计 counter 唯一加点（只增不减，与 n 的当前 gauge 对称记账）
 }
 
 // removeLocked 移除客户端：同时清理 map 项与 slice 项（Pitfall 4 双容器防单调
