@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-08-29T13:45:24.777Z"
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-08-29T14:16:17.573Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 61
+  completed_plans: 62
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 2 of 10
+Plan: 3 of 10
 Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [█████████░] 87%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -125,6 +125,7 @@ Progress: [█████████░] 87%
 | Phase 08 P05 | 49min | 3 tasks | 6 files |
 | Phase 08 P06 | 9min | 2 tasks | 2 files |
 | Phase 09 P01 | 19min | 2 tasks | 2 files |
+| Phase 09 P02 | 21min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -272,6 +273,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 08-06]: G-08-2 闭合取 README 侧修复——两则 journald 示例统一 grep '^{' 预滤 + 合流机理说明（systemd 默认 StandardOutput=journal 使 stdout 横幅与 stderr JSON 合流），wesh 源码零改动（D-14/D-15/D-16 锁定推论）；新增 phase08-journal.mjs 合流模拟夹具（负对照自证不空转），进程收口取 child 'close' 事件防 exit 先于流 flush 竞态
 - [Phase ?]: [Phase 09-01]: goreleaser v2.18.0 构建目录实为 dist/wesh_<os>_<arch>_<variant>/（09-01 plan verify 块按 dist/<os>_<arch>/ 书写——按实证路径执行，断言面零变化）
 - [Phase ?]: [Phase 09-01]: 验收 grep 机械纪律第四次沿用——.goreleaser.yml 头注释登记 Pitfall 2 时避免字面引用模板串（注释提及同样计数）；YAML 静态审查通道 = ephemeral docker python+pyyaml（宿主无解析器，容器即弃零污染）
+- [Phase ?]: [Phase 09-02]: proto fuzz 直挂既有导出函数零改造（plan must_have 既定）——RED 种子即 PASS 为设计内回归门性质，按 TDD fail-fast 规则调查后继续；plan type=execute 不适用 plan 级 RED/GREEN 门序列，task 级 tdd 以 test→feat 提交拆分兑现
+- [Phase ?]: [Phase 09-02]: ci.yml fuzz job 注释避开 fuzztime=60s / go test -race 字面（验收 grep 机械纪律第五次沿用）；YAML 静态审查 ephemeral docker pyyaml 通道第二次沿用并强化为全结构断言
 
 ### Pending Todos
 
@@ -292,6 +295,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-29T13:45:24.748Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-08-29T14:16:17.544Z
+Stopped at: Completed 09-02-PLAN.md
 Resume file: None
