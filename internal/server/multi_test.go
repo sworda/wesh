@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -693,37 +692,37 @@ func TestInputRateLimit(t *testing.T) {
 		defer c.CloseNow()
 		snap := accum(c)
 
-	// 帧间 2ms 节流：压平 64KiB 瞬时突发——无节流灌入远超 tty input queue
-	// 消化速率，macos-latest CI 实测 XNU TTYHOG 丢弃 85.5%（18885/130816），
-	// cat 慢时 write 阻塞路径同样受益。发送窗口 ~256ms ≪ 10s deadline。
-	for i := 0; i < frames; i++ {
-		sendInput(t, ctx, c, frame)
-		time.Sleep(2 * time.Millisecond)
-	}
-	// 全量送达断言（对照组：证明限速子测的丢弃确由限速器而非 inputQ/其他
-	// 路径，队列 256KiB ≫ 64KiB 洪水上限）。
-	// 全平台放宽为 ≥95%：PTY 输入方向 line discipline input queue 高水位
-	// 零星丢字节是平台固有行为，非整帧、与服务端路径无关——darwin XNU
-	// TTYHOG 直接丢弃（CI 实测丢 ~2.6KB，128133/130816 ≈ 98%）；Linux
-	// n_tty input queue（N_TTY_BUF_SIZE 4096B）在 CI 繁忙 cat 调度延迟
-	// 顶穿后逐字符丢弃（ubuntu-latest 实测丢 6B，130810/130816 ≈
-	// 99.995%——"Linux master write 阻塞不丢"仅 cat 读得快时成立）。
-	// 5% 容差不动摇对照语义：限速子测丢弃 ≥75%，与 PTY 层 ~2% 丢失差
-	// 两个数量级，归因判别力不变。
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		got := bytes.Count(snap(), []byte{'x'})
-		if got >= sentX*95/100 {
-			if got != sentX {
-				t.Logf("PTY input 高水位丢弃容忍：'x' = %d/%d (%.1f%%)", got, sentX, float64(got)/float64(sentX)*100)
+		// 帧间 2ms 节流：压平 64KiB 瞬时突发——无节流灌入远超 tty input queue
+		// 消化速率，macos-latest CI 实测 XNU TTYHOG 丢弃 85.5%（18885/130816），
+		// cat 慢时 write 阻塞路径同样受益。发送窗口 ~256ms ≪ 10s deadline。
+		for i := 0; i < frames; i++ {
+			sendInput(t, ctx, c, frame)
+			time.Sleep(2 * time.Millisecond)
+		}
+		// 全量送达断言（对照组：证明限速子测的丢弃确由限速器而非 inputQ/其他
+		// 路径，队列 256KiB ≫ 64KiB 洪水上限）。
+		// 全平台放宽为 ≥95%：PTY 输入方向 line discipline input queue 高水位
+		// 零星丢字节是平台固有行为，非整帧、与服务端路径无关——darwin XNU
+		// TTYHOG 直接丢弃（CI 实测丢 ~2.6KB，128133/130816 ≈ 98%）；Linux
+		// n_tty input queue（N_TTY_BUF_SIZE 4096B）在 CI 繁忙 cat 调度延迟
+		// 顶穿后逐字符丢弃（ubuntu-latest 实测丢 6B，130810/130816 ≈
+		// 99.995%——"Linux master write 阻塞不丢"仅 cat 读得快时成立）。
+		// 5% 容差不动摇对照语义：限速子测丢弃 ≥75%，与 PTY 层 ~2% 丢失差
+		// 两个数量级，归因判别力不变。
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			got := bytes.Count(snap(), []byte{'x'})
+			if got >= sentX*95/100 {
+				if got != sentX {
+					t.Logf("PTY input 高水位丢弃容忍：'x' = %d/%d (%.1f%%)", got, sentX, float64(got)/float64(sentX)*100)
+				}
+				break
 			}
-			break
+			if time.Now().After(deadline) {
+				t.Fatalf("回显 'x' = %d, want >= %d（95%%；大限额下同量 INPUT 应近全量送达，PTY 层高水位零星丢失容忍）", got, sentX*95/100)
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("回显 'x' = %d, want >= %d（95%%；大限额下同量 INPUT 应近全量送达，PTY 层高水位零星丢失容忍）", got, sentX*95/100)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 	})
 }
 
@@ -736,7 +735,7 @@ func TestInputRateLimit(t *testing.T) {
 //     的 *http.Response 状态码断言，handshake_test.go HTTP 层拒绝形态）；③位拒绝
 //     后 halfOpen 不泄漏——MaxHalfOpenPerIP=1 装配下第四人仍达③位收 503 而非被
 //     ②位 429 截（release() 恰好一次的行为化证据：泄漏一个名额即触 429）；stderr
-//     事件含 max_clients reason + code=503（R-10 命名族，captureStderr +
+//     存在 max_clients/code=503 JSON 事件（R-10 命名族，captureStderr +
 //     startTrackedServerWith 同步边先例）。A CloseNow → detach -1 → 第三人
 //     attach 成功（计数对称断言的行为化——Pitfall 4 防线：计数只增不减 = 运行时
 //     间增长静默降低可用容量直至全员 503）。
@@ -830,11 +829,19 @@ func TestMaxClients503(t *testing.T) {
 		// 容量闸不改生命周期：断开不触发 exitf（多客户端推论）。
 		assertNoExit(t, exitCh)
 
-		// R-10 命名族：stderr 事件含 max_clients reason + code=503（HTTP 层事件
-		// code 复用 HTTP 状态码值）。次数不断言——轮询重试次数不确定（每次 503
-		// 均落事件），存在性即锁定事件落点。
+		// R-10 命名族：stderr 存在 event=="max_clients" 且 code==503 的 JSON 事件
+		//（HTTP 层事件 code 复用 HTTP 状态码值；JSON 数字按 float64 比——Pitfall 4）。
+		// 次数不断言——轮询重试次数不确定（每次 503 均落事件），存在性即锁定事件落点。
 		out := restore()
-		if !strings.Contains(out, "max_clients") || !strings.Contains(out, "code=503") {
+		evs := parseEvents(t, out)
+		found := false
+		for _, m := range evs {
+			if m["event"] == "max_clients" && m["code"] == float64(http.StatusServiceUnavailable) {
+				found = true
+				break
+			}
+		}
+		if !found {
 			t.Fatalf("stderr 缺 max_clients/code=503 事件（R-10 命名族）：out=%q", out)
 		}
 	})

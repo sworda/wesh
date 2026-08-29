@@ -423,6 +423,9 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"stop-signal lowercase rejected", []string{"--stop-signal", "term", "--", "bash"}, "invalid --stop-signal", ""},
 		{"stop-signal unknown rejected", []string{"--stop-signal", "USR1", "--", "bash"}, "invalid --stop-signal", ""},
 		{"stop-timeout negative rejected", []string{"--stop-timeout=-5s", "--", "bash"}, "invalid --stop-timeout", ""},
+		// D-16（08-review WR-02）：--ping-interval 负值拒绝——负 duration 语法合法，
+		// 负值检查是唯一闸（--stop-timeout 同位同纪律）；文案回显值（非敏感）。
+		{"ping-interval negative rejected", []string{"--ping-interval=-5s", "--", "bash"}, "invalid --ping-interval -5s", ""},
 		// D-24：--uid/--gid 值域拒绝——-1 哨兵之外 < -1 或 > 4294967295 即拒
 		//（uint32 转换安全；值非敏感可回显）。
 		{"uid below range rejected", []string{"--uid", "-2", "--gid", "1000", "--", "bash"}, "invalid --uid", ""},

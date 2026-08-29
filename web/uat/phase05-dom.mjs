@@ -45,6 +45,20 @@ const check = (id, name, ok, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${id} ${name}${detail ? ` — ${detail}` : ''}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// parseEvents：stderr 混合流按行解析 JSON 事件（08-01 D-13 迁移后事件为 slog JSON
+// 单行）——滤非 '{' 起始行；'{' 起始行非法 JSON 即抛错（带行号与行首 120 字符截断）。
+// 08-05 补挂：D5 踢出检测从子串 'slow_consumer' 迁移到 detach reason=kick 字段断言
+//（08-02 D-21 折入后 kick 不再单独打行，原文本行形态已终结——禁止子串断言 JSON 行）。
+const parseEvents = (text) =>
+  text.split('\n').flatMap((line, i) => {
+    if (!line.startsWith('{')) return [];
+    try {
+      return [JSON.parse(line)];
+    } catch (e) {
+      throw new Error(`事件行非合法 JSON（第 ${i + 1} 行）: ${line.slice(0, 120)}: ${e.message}`);
+    }
+  });
 async function waitFor(fn, label, timeout = 5000) {
   const t0 = Date.now();
   for (;;) {
@@ -400,9 +414,11 @@ async function d5SlowConsumerPanel() {
     while (!kicked && Date.now() - t0 < 15000) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
       await sleep(10); // 让出循环：stderr data 事件落盘
-      kicked = inst.stderrText().includes('slow_consumer');
+      // 08-05 迁移：kick 检测 = detach 事件 reason=kick code=1013（D-21 折入形态——
+      // 原 'slow_consumer' 子串消费已随独立事件行删除而失效）
+      kicked = parseEvents(inst.stderrText()).some((m) => m.event === 'detach' && m.reason === 'kick' && m.code === 1013);
     }
-    if (!kicked) throw new Error('15s 内未见 slow_consumer 踢出（stall 夹具失效）');
+    if (!kicked) throw new Error('15s 内未见 detach reason=kick 踢出事件（stall 夹具失效）');
     // 解除阻塞：内核缓冲排干 → outbox 队列尾部 1013 关闭帧到达 → onclose(1013) → C-1 专版
     await waitFor(() => panel(ctx.document).visible, '1013 面板出现', 15000);
     const p = panel(ctx.document);

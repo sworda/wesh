@@ -11,8 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -33,6 +33,11 @@ import (
 type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
+
+	// startedAt 为会话起点（08-02，D-22）：New 尾部记录（goroutine 启动之前），
+	// 与 pty.Start 时刻差毫秒级、审计语义无碍；session_end 事件的
+	// duration_seconds 数据源。New 写入后运行期只读。
+	startedAt time.Time
 
 	// shares 为分享 token 两条目 store（05-06 MULTI-05，D-01 独立第三认证通道）：
 	// New 装配期固化、运行期只读；nil = 通道关闭（ShareTokenRO/RW 任一空串，
@@ -130,7 +135,19 @@ type Server struct {
 	exitWhenEmpty      bool
 	exitWhenEmptyGrace time.Duration
 	exitEmptyTimer     *time.Timer
-	exiting            bool
+	// exitEmptySignaled 为「空纪元恰好一次」门闩（08-review WR-01，D-21 单入口
+	// 纪律的边角闭合）：非空→空迁移触发时置位——「递补升格踢出致空」路径下
+	// kick 内首次触发后，外层 detach/kick 移除点的二次到达被本位抑制（grace==0
+	// 双事件行 + grace>0 计时器 Stop 后重复武装同消）；Attach 升档 registerLocked
+	// 成功后清零（新 attach 开启新纪元，下次致空重新允许触发）。hubMu 保护——
+	// 置位/判定全在 hubMu 内（与 exitEmptyTimer 同锁同生命周期纪律）。
+	exitEmptySignaled bool
+	exiting           bool
+	// closeBroadcastCode 为终结广播关闭码（hubMu 保护，0=未广播）：lifecycle
+	// 子进程退出广播窗口与 exiting 置位同点置 1000（StatusNormalClosure），
+	// Shutdown 1001 优雅下线同点置 1001（StatusGoingAway）——08-02 D-21
+	// detach 事件 reason=shutdown 的 code 数据源（与广播关闭码同源单写口）。
+	closeBroadcastCode int
 
 	// Phase 7 stop-signal 装配（07-04，OPS-04，D-22）：stopSignal 为 exit-when-empty
 	// 收口路径向子进程进程组所发信号（New 装配期固化、运行期只读；零值经 New
@@ -152,6 +169,25 @@ type Server struct {
 	// remote_user 提取共用同一开关，D-20 零双轨；零值 = 不信任，行为与现状
 	// 逐字节一致）。结构与提取语义见 proxy.go。
 	proxy proxyInfo
+
+	// Phase 8 探活状态位（08-03，OPS-06，D-10/D-11 数据源）：draining 为优雅
+	// 关停位（Shutdown 入口置 true——与 s.exiting 同源触发点，1001 广播开始
+	// 前即翻转，关停全程探活器不再导新流）；sessionAlive 为 PTY 会话存活位
+	//（New 尾部置 true，lifecycle sess.Wait 返回与退出码提取完成后置
+	// false——与 session_end 事件同区段）。/healthz handler 在 hubMu 外读取，
+	// 故为 atomic.Bool（与 registry.n 的「hubMu 外 atomic load」选型先例
+	// 同构，clients.go registry 注释论证）。
+	draining     atomic.Bool
+	sessionAlive atomic.Bool
+
+	// Phase 8 运维端点装配（08-04，OPS-07）：version 为 New 装配期固化、运行期
+	// 只读的构建版本（Options.Version 单一通道——main var version 原样透传，
+	// 零值兜底 "dev"，发布构建 ldflags 注入属 Phase 9 既定），消费点 =
+	// /metrics 的 wesh_build_info{version} label（escLabel 转义）；mc 为
+	// metrics 热路径计数器集（结构与递增点见 metrics.go——atomic.Int64
+	// 无锁递增，inputDrops 先例形态；快照读取端 = snapshotMetrics）。
+	version string
+	mc      metricsCounters
 
 	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
 }
@@ -231,6 +267,11 @@ type Options struct {
 	// 通道，双写即漂移）。
 	StopSignal  syscall.Signal
 	StopTimeout time.Duration
+	// Version 为生产直传字段（08-04 OPS-07，main var version 原样透传——
+	// 发布构建 ldflags 注入属 Phase 9 既定，本 phase 只落 plumbing；零值兜底
+	// "dev"）。消费点 = /metrics 的 wesh_build_info{version} 单 label
+	//（escLabel 转义，metrics.go）。
+	Version string
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -295,6 +336,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.StopSignal == 0 {
 		opts.StopSignal = syscall.SIGHUP
 	}
+	// 08-04 OPS-07：version 零值兜底 "dev"（Options 注释分档先例——生产直传
+	// + 零值兜底说明；main var version 恒非空，兜底服务测试直构造形态）。
+	if opts.Version == "" {
+		opts.Version = "dev"
+	}
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
@@ -328,6 +374,8 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键
 		// 与 remote_user 提取共用同一开关，零双轨）；空串 = 零值不信任。
 		proxy: proxyInfo{trust: opts.AuthHeader != "", userHeader: opts.AuthHeader},
+		// New 装配直传（08-04，OPS-07；零值已在上方兜底 "dev"）。
+		version: opts.Version,
 	}
 	// D-12：Origin 白名单与凭据正交（--origin 无凭据也生效）；opts.Origins 为
 	// main 已规范化的串（小写 host + 剥默认端口），集合供 originAllowed 精确查找、
@@ -361,6 +409,14 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// MULTI-04 仲裁器装配（resize.go）：timer 初始化为 stopped 态——首次
 	// reportResize 的 Reset 才武装；必须在 ReadLoop/lifecycle 启动前完成。
 	s.initArbiter()
+	// 08-02 D-17/D-22：会话起点记录 + session_start 事件（进程级：pid 键 =
+	// 子进程 PID；无 remote/code 键）——goroutine 启动之前 emit（审计事件
+	// 先于任何连接/会话流量落流）。
+	s.startedAt = time.Now()
+	emitEvent(slog.String("event", "session_start"), slog.Int("pid", sess.Cmd.Process.Pid))
+	// 08-03 D-10：会话存活位置位——goroutine 启动前（/healthz session_active
+	// 数据源；置 false 挂点在 lifecycle sess.Wait 返回区段）。
+	s.sessionAlive.Store(true)
 	go sess.ReadLoop(s.onChunk)
 	go s.inputWriter() // CR-01：input-writer 唯一装配点——master 写路径独占在专属 goroutine
 	go s.lifecycle()
@@ -399,7 +455,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	bp := s.basePath
 	if len(s.credentials) > 0 {
-		root := basicAuth(wh, s.credentials, s.throttle, s.proxy)
+		root := basicAuth(wh, s.credentials, s.throttle, s.proxy, &s.mc)
 		if bp != "" {
 			mux.Handle(bp+"/", http.StripPrefix(bp, root))
 		} else {
@@ -413,7 +469,7 @@ func (s *Server) Handler() http.Handler {
 		// 分支先于 Origin 中间件是刻意排序：/ws Attach 守卫区 ⓪ 位的 Origin 检查
 		// 对 ticket 核销后的 WS 握手依然生效（纵深不变），跨站表单无从获知
 		// 128bit token，本面无 CSRF 增量。
-		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle, s.proxy), s.origins)
+		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle, s.proxy, &s.mc), s.origins)
 		mux.Handle("POST "+bp+"/api/attach", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if s.shareAttach(w, r) == shareHandled {
 				return
@@ -430,6 +486,11 @@ func (s *Server) Handler() http.Handler {
 			w.Header().Set("Allow", http.MethodPost)
 			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		})
+		// 08-04 OPS-07（D-08/D-09）：/metrics 跟随认证闸（与 / 同一条 basicAuth
+		// 链——无/错凭据 401 同文、节流 429 同 store；Prometheus scrape_config
+		// 原生 basic_auth 可采集），根路径固定不带 bp（采集器直连后端端口，
+		// 路径恒定可写死进 Prometheus 静态配置；拒绝双挂，单侧定义纪律）。
+		mux.Handle("GET /metrics", basicAuth(http.HandlerFunc(s.metricsHandler), s.credentials, s.throttle, s.proxy, &s.mc))
 	} else {
 		if bp != "" {
 			mux.Handle(bp+"/", http.StripPrefix(bp, wh))
@@ -468,8 +529,33 @@ func (s *Server) Handler() http.Handler {
 				http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 			})
 		}
+		// 08-04 OPS-07（D-08）：--no-auth 模式 /metrics 直通（无凭据无 Basic 面；
+		// 暴露面 README 明示义务随 08-05，RESEARCH Pitfall 6）。
+		mux.HandleFunc("GET /metrics", s.metricsHandler)
 	}
 	mux.HandleFunc(bp+"/ws", s.Attach)
+	// 08-03 OPS-06（D-07/D-09）：/healthz 根路径固定注册——不带 bp 前缀
+	//（探活/采集器直连后端端口，路径恒定可写死进 k8s probe/反代静态配置；
+	// 拒绝双挂，单侧定义纪律），注册点在认证/无认证两分支之外唯一一处——
+	// 免认证窄例外（D-07：整站 Basic 闸唯一例外，探活器结构性带不了凭据 +
+	// 端点零敏感信息双前提；防例外蔓延：新端点不得以此为例外先例，README
+	// 明示义务随 08-05）。方法模式 + path-only 405 fallback 成对注册
+	//（sharetoken.go registerShareRoutes 先例——内建 405 会被 "/" 子树
+	// 吞掉，RESEARCH Pitfall 7）。
+	mux.HandleFunc("GET /healthz", s.healthzHandler)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	})
+	// 08-04 OPS-07（D-09）：/metrics path-only 405 fallback（Allow: GET）——
+	// 与 /healthz 成对同区（方法模式的内建 405 会被 "/" 子树吞掉，sharetoken.go
+	// registerShareRoutes 先例，RESEARCH Pitfall 7）；注册在认证两分支之外——
+	// POST /metrics 两模式同文 405，fallback 不包认证（/api/attach 405 先例
+	// 同形态；GET 方法模式仍走上方各自分支的认证语义）。
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	})
 	return securityHeaders(mux, s.tlsOn)
 }
 
@@ -745,6 +831,9 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// return（多客户端推论：不进 exitf）。
 		return
 	}
+	// 08-04 OPS-07（D-04）：WS 上行流量站点一——Hello 首读计入（RESEARCH A4：
+	// 两站点计入，忠实「WS 网络流量」字面；~100B/连接，运维语义无碍）。
+	s.mc.wsRecvBytes.Add(int64(len(data)))
 	if len(data) == 0 {
 		// OQ2 裁决：Hello 前空消息按畸形处理（1002 桶）。
 		logEvent(remote, websocket.StatusProtocolError, "empty_frame", remoteUser)
@@ -771,6 +860,10 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// （Hello JSON +ticket ~120B，D-11 两档纪律不变）。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrAuthFailed, "authentication failed"))
 		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrAuthFailed, remoteUser)
+		// 08-04 OPS-07（D-06）：WS 侧 auth_failed 计数与事件同址递增
+		// （401/429 事件行既有，metrics 只加计数不打行；无 IP label——
+		// per-IP 明细查日志事件）。
+		s.mc.authFailed.Add(1)
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrAuthFailed)
 	} else {
 		// 升档序列（顺序敏感，PATTERNS 注意 5/6；G-05-1 重排后时序）：停 5s 计时器 →
@@ -855,10 +948,29 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		//「registerLocked 尾部」的调和：registerLocked 是 registry 方法无 Server
 		// 视角，取消点落同一 hubMu 持有内的登记之后。
 		s.cancelExitEmptyTimerLocked(cl.remote, cl.remoteUser)
+		// 08-review WR-01 门闩清零点（与上方宽限取消点同位同 hubMu 持有）：
+		// 新 attach 开启新空纪元——上次致空的 exitEmptySignaled 置位随登记成功
+		// 清零，下次致空重新允许触发。
+		s.exitEmptySignaled = false
 		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
 		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
 		s.hubCond.Broadcast()
 		s.hubMu.Unlock()
+		// 08-02 D-17/D-20：attach 事件（升档完成、注册表登记后）——client_id =
+		// attachSeq（registerLocked 分配，从 1 起单调递增；同一 goroutine 内其写
+		// happens-before 本读），携 remote/mode（RESEARCH A6 增强字段）键；
+		// 无 code 键（连接事件非关闭事件）；remote_user 非空出键（07-03 同口径）。
+		// 同一连接的 detach 事件经 client_id 与本事件关联检索。
+		attachAttrs := []slog.Attr{
+			slog.String("event", "attach"),
+			slog.String("remote", cl.remote),
+			slog.Int64("client_id", cl.attachSeq),
+			slog.String("mode", effMode),
+		}
+		if cl.remoteUser != "" {
+			attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
+		}
+		emitEvent(attachAttrs...)
 		c.SetReadLimit(proto.ReadLimitPostAuth)
 		// writer 是该连接全程唯一 WS 写端（clients.go）；pinger 保活（D-16）挂
 		// 升档序列尾段（PATTERNS 注意 5），与既有单 reader 循环并发装配——库硬性
@@ -867,7 +979,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// 与 writer 的数据写并发安全、无帧交错（库 writeFrameMu 串行化所有帧，
 		// write.go:288-293）。
 		go s.writer(cl)
-		go s.pinger(ctx, c, remote, remoteUser, s.pingInterval)
+		go s.pinger(ctx, cl, s.pingInterval)
 		// D-11：attach 完成向 PTY 前台进程组显式发一次 SIGWINCH 强制全屏程序重绘
 		//（TIOCGPGRP → kill(-pgid)）——与仲裁 resize 是否发生无关（P5-3 本机实证：
 		// Linux 同尺寸 TIOCSWINSZ 不发信号）；新客秒见画面，行内 shell 下次输出
@@ -890,6 +1002,8 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		// 08-04 OPS-07（D-04）：WS 上行流量站点二——稳态读循环每消息计入。
+		s.mc.wsRecvBytes.Add(int64(len(data)))
 		if len(data) == 0 {
 			continue // OQ2：Hello 完成后空消息维持静默跳过
 		}
@@ -1007,9 +1121,11 @@ func (s *Server) checkTicket(ip, ticket string) (string, bool) {
 // cancel 幂等兜底），ctx.Done（或在途 Ping 的 pctx 随 ctx 取消）使本 goroutine
 // 随该客户端生命周期同生灭——零新 exitf 分支（CONTEXT L92 硬约束）。
 // ctx 已取消时的在途 Ping 错误是正常终结而非 pong 超时，直接返回不打事件。
-// 07-03：remoteUser 随 remote 同参传入（Attach 入口提取一次的同值）——
-// pong_timeout 事件携 remote_user 第四字段（D-15 会话事件审计归因同口径）。
-func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote, remoteUser string, interval time.Duration) {
+// 08-02（D-21）：签名由 (ctx, c, remote, remoteUser, interval) 收窄为
+// (ctx, cl, interval)——pong_timeout 不再单独打事件行，折入 detach 单事件
+// reason=pong_timeout（「连接断开」检索单入口）；cl 承载 conn 与 pongTimedOut
+// 置位面（remote/remoteUser 随 cl 只读字段天然同值，参数随签名删除）。
+func (s *Server) pinger(ctx context.Context, cl *client, interval time.Duration) {
 	if interval <= 0 {
 		return // D-16：--ping-interval 0 = 禁用
 	}
@@ -1022,58 +1138,32 @@ func (s *Server) pinger(ctx context.Context, c *websocket.Conn, remote, remoteUs
 		case <-t.C:
 		}
 		pctx, cancel := context.WithTimeout(ctx, s.pongTimeout)
-		err := c.Ping(pctx)
+		err := cl.conn.Ping(pctx)
 		cancel()
 		if err != nil {
-			// 只有真正的 pong 超时才打事件 + CloseNow：Ping 对 pong 等待的 ctx 到期
+			// 只有真正的 pong 超时才置位 + CloseNow：Ping 对 pong 等待的 ctx 到期
 			// 返回包装后的 DeadlineExceeded（conn.go:251-258）；父 ctx 是 WithCancel
 			// 无 deadline，DeadlineExceeded 唯一来源即 pctx 到期。其余错误（连接已被
 			// 对端关闭/写失败/Attach 返回 cancel 级联取消）都是正常终结路径，
-			// 静默返回即可——误报 pong_timeout 会污染 stderr 事件流（D-12② 三要素
-			// 语义失真），连接终结由既有 reader 路径收口，pinger 无需也不应补刀。
+			// 静默返回即可——误置 pongTimedOut 会使 detach 误报 pong_timeout
+			//（D-21 reason 语义失真），连接终结由既有 reader 路径收口，pinger
+			// 无需也不应补刀。
 			if !errors.Is(err, context.DeadlineExceeded) {
 				return
 			}
-			// pong 超时（pongTimeout 内未收到应答）：stderr 单行事件（D-12② 三要素；
-			// code 记 1006 = 客户端将观测到的本地合成码，CloseNow 无关闭帧）+ CloseNow。
-			// 断开后的 reader 终结经 detach 收口（注册表移除，不进 exitf）。
-			logEvent(remote, websocket.StatusAbnormalClosure, "pong_timeout", remoteUser)
-			c.CloseNow()
+			// pong 超时（pongTimeout 内未收到应答）：置 cl.pongTimedOut 后
+			// CloseNow——reader 终结走 detach 收口 emit detach reason=pong_timeout
+			//（code 1006 = 客户端观测的本地合成码，CloseNow 无关闭帧，wire 零
+			// 改动）。置位取 hubMu 写、detach 同锁读（08-RESEARCH Pattern 4
+			// 形态 b——同步边 = hubMu，禁止 plain 字段跨 goroutine 传递，-race
+			// 防线；冷路径每 interval 才一次取锁，无热路径影响）。
+			s.hubMu.Lock()
+			cl.pongTimedOut = true
+			s.hubMu.Unlock()
+			cl.conn.CloseNow()
 			return
 		}
 	}
-}
-
-// logEvent 打 D-12② stderr 单行事件，三要素齐全：对端 remote、码值 code、
-// reason 机器串。本期覆盖 hello_timeout/empty_frame/frame_before_hello/
-// malformed_hello/version_mismatch/subprotocol_required（assert 兜底）/
-// pong_timeout（02-04 保活）/message_too_big（02-05 超限，经 logIfMessageTooBig
-// 挂预认证首读与稳态读循环两处）/auth_failed（03-03 ticket 核销失败）/
-// throttled（03-03 HTTP 层 429 节流闸，basicAuth）/slow_consumer（05-01 背压
-// 1013 踢出，clients.go kickSlowConsumerLocked）。Phase 8 升级 slog 结构化日志
-// （OPS-08），本期为过渡形态。
-//
-// 07-03（SEC-07，D-15/D-19/D-20）：可选第四字段 remote_user——variadic 末参
-// 非空时行尾追加 ` remote_user=<u>`（空串/缺省不出键，全部既有调用点零改动
-// 编译通过，未配置 --auth-header 时日志行与现状逐字节一致）。值必须经
-// sanitizeRemoteUser 清洗（proxy.go：C0/C1/DEL 剥离 + 128 rune 截断，T-07-03b
-// 日志注入防线）且来源只能是 --auth-header 配置头名对应的 HTTP 头——本函数
-// 不做二次清洗（清洗在提取点完成，单一写口纪律）。
-//
-// 红线（SEC-01）：凭据、ticket、Authorization 头任何形态（含 base64）禁止作为
-// 任何参数传入（ttyd server.c:142 反例）——三要素只有 remote/code/reason；
-// D-03 红线随第四字段延伸：token/ticket/凭据同样禁止作为 remote_user 传入
-// （结构性保证：remote_user 提取源只能是配置头名的 HTTP 头，/s/ 路径 token
-// 与 Hello ticket 不可能进入该提取路径，T-07-03c——见 proxy.go 注释头）。
-// 包级函数（无 Server 状态依赖）：HTTP 层中间件（basicAuth）与 WS 握手段共用
-// 唯一出口；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int，
-// PATTERNS Shared Patterns 裁决）。
-func logEvent(remote string, code websocket.StatusCode, reason string, remoteUser ...string) {
-	if len(remoteUser) > 0 && remoteUser[0] != "" {
-		fmt.Fprintf(os.Stderr, "wesh: close remote=%s code=%d reason=%s remote_user=%s\n", remote, code, reason, remoteUser[0])
-		return
-	}
-	fmt.Fprintf(os.Stderr, "wesh: close remote=%s code=%d reason=%s\n", remote, code, reason)
 }
 
 // logIfMessageTooBig 是 D-12② 超限可见性三腿之二的服务端钩子：库 limitReader
@@ -1149,16 +1239,35 @@ func exitMessage(err error, code int) string {
 	if code >= 0 {
 		return fmt.Sprintf("The process exited with code %d.", code)
 	}
-	// 信号死亡分支：WaitStatus 提取信号号（Signaled 守卫）。断言失败时 sig 保持
-	// 占位值 code（恒 -1）——回退数字形态产出 "signal -1"，语义即「信号号未知」。
+	// 信号死亡分支：信号号提取单侧定义 = exitSignalNum（08-02 D-22——session_end
+	// 事件 signal 字段与本分支同源，纯重构抽取行为逐字节不变）。未命中时
+	//（WaitStatus 断言失败/未 Signaled——unix 上真实进程不可达的防御兜底）
+	// sig 保持占位值 code（恒 -1）——回退数字形态产出 "signal -1"，语义即
+	//「信号号未知」。
 	sig := code
-	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-		sig = int(ws.Signal())
+	if n, ok := exitSignalNum(err); ok {
+		sig = n
 	}
 	if name, ok := signalName(syscall.Signal(sig)); ok {
 		return fmt.Sprintf("The process was killed by signal %s.", name)
 	}
 	return fmt.Sprintf("The process was killed by signal %d.", sig)
+}
+
+// exitSignalNum 从 sess.Wait 返回的错误提取信号号（08-02 D-22 单侧定义——
+// exitMessage 信号分支与 session_end 事件 signal 字段共用，抽取前为
+// exitMessage 内联逻辑）：err 为 *exec.ExitError 且其 WaitStatus Signaled()
+// → (信号号, true)；其余一切形态（nil/非 ExitError/非 WaitStatus/未
+// Signaled 正常退出）→ (0, false)。exitmsg_test.go 白盒四形态锁定。
+func exitSignalNum(err error) (int, bool) {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return 0, false
+	}
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return int(ws.Signal()), true
+	}
+	return 0, false
 }
 
 // lifecycle 是 D-10 唯一终结路径触发源（多客户端形态）：子进程退出 → 带时限
@@ -1171,6 +1280,26 @@ func (s *Server) lifecycle() {
 	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	}
+	// 08-02 D-17/D-22：session_end 事件（sess.Wait 返回与退出码提取完成后、
+	// EXIT 帧组帧之前）——exit_code 与 EXIT 帧同源（信号死亡 -1）；signal 键
+	// 仅信号死亡且 signalName 映射命中出键（RESEARCH A7 裁决：未命中不出键，
+	// 键在时类型恒 string）；duration_seconds = PTY spawn 到退出（startedAt
+	// 起点，D-22）。信号号提取单侧定义 = exitSignalNum（与 exitMessage 同源）。
+	endAttrs := []slog.Attr{
+		slog.String("event", "session_end"),
+		slog.Int("exit_code", code),
+		slog.Float64("duration_seconds", time.Since(s.startedAt).Seconds()),
+	}
+	if sig, ok := exitSignalNum(err); ok {
+		if name, ok := signalName(syscall.Signal(sig)); ok {
+			endAttrs = append(endAttrs, slog.String("signal", name))
+		}
+	}
+	emitEvent(endAttrs...)
+	// 08-03 D-10：PTY 会话死亡即探活语义翻转——与 session_end 事件同区段
+	//（sess.Wait 返回与退出码提取完成后）；/healthz 的 session_active 数据源，
+	// 先于 terminate→exitf（waitExit 收码即测试侧同步边）。
+	s.sessionAlive.Store(false)
 	s.sess.Drain(200 * time.Millisecond)
 	// input-writer 收口（05-05，CR-01 修复的生命周期半侧）：Drain→Close 已关闭
 	// master fd，在途 Master.Write 经 runtime poller 解除阻塞返回错误（与 Read
@@ -1196,6 +1325,9 @@ func (s *Server) lifecycle() {
 	// 计时器（事件流可信度与信号竞态防线；无此门则自然退出 exit 42 路径有
 	// SIGHUP 翻码竞态）。
 	s.exiting = true
+	// 08-02 D-21：广播关闭码同点登记（hubMu 保护，detach 同锁读）——lifecycle
+	// 子进程退出广播窗口 = 1000；detach reason=shutdown 的 code 数据源。
+	s.closeBroadcastCode = int(websocket.StatusNormalClosure)
 	clients := make([]*client, 0, len(s.registry.set))
 	for c := range s.registry.set {
 		clients = append(clients, c)
@@ -1262,8 +1394,20 @@ func (s *Server) terminate(code int) {
 //     hubMu 内等待（锁序 hubMu > sess.fdMu 不受影响），与 lifecycle 并发
 //     安全——stopTimeout 期间进程若已退出，补发 KILL 到达空 pgid 静默。
 func (s *Server) Shutdown() {
+	// 08-03 D-11：draining 置位 = Shutdown 入口首行（hubMu 锁定之前，与
+	// s.exiting 同源触发点）——1001 广播开始前 /healthz 即翻转为 503
+	// draining，关停全程探活器/反代不再向将死实例导新流；hubMu 外 atomic
+	// 读故 atomic.Bool（registry.n 先例同构）。无网络可达置位路径（T-08-03d：
+	// 只能经 SIGTERM/INT → Shutdown 触发）。
+	s.draining.Store(true)
+	// 08-02 D-17：shutdown 事件（进程级——无 remote/code 键），hubMu 锁定前
+	// emit；draining 置位与本事件同函数不同点。
+	emitEvent(slog.String("event", "shutdown"))
 	s.hubMu.Lock()
 	s.exiting = true
+	// 08-02 D-21：1001 优雅下线广播码同点登记（hubMu 保护，detach 同锁读）——
+	// 本路径广播窗口内的 detach reason=shutdown code=1001。
+	s.closeBroadcastCode = int(websocket.StatusGoingAway)
 	clients := make([]*client, 0, len(s.registry.set))
 	for c := range s.registry.set {
 		clients = append(clients, c)

@@ -88,21 +88,30 @@ func readCloseErr(t *testing.T, c *websocket.Conn, ctx context.Context) websocke
 // CloseError 为准）。恢复时序安全（多客户端形态）：logEvent 在服务端读循环内、
 // 客户端观测 CloseError 之后数微秒写出——TestOversize1009 以 assertNoExit 的
 // 200ms 静默窗口覆盖该余量（远超读循环调度延迟），恢复无竞态。
+//
+// 置换/恢复两个写点经 server.LockStderr 持写锁（08-01 门禁修正）：上一测试
+// 未追踪 server 的遗留 handler goroutine 可能在置换瞬间仍在 stderrW.Write
+// 内读 os.Stderr（实测 ~1/3 命中率的 data race）——写锁与读侧 RLock 互斥，
+// 建立 happens-before。锁仅裹置换语句本身，不在捕获期持有。
 func captureStderr(t *testing.T) func() string {
 	t.Helper()
-	old := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
+	unlock := server.LockStderr()
+	old := os.Stderr
 	os.Stderr = w
+	unlock()
 	restored := false
 	return func() string {
 		if restored {
 			return ""
 		}
 		restored = true
+		unlock := server.LockStderr()
 		os.Stderr = old
+		unlock()
 		_ = w.Close()
 		out, _ := io.ReadAll(r) // 写端已关，读至 EOF（单行事件远小于管道缓冲）
 		_ = r.Close()
@@ -139,15 +148,22 @@ func TestOversize1009(t *testing.T) {
 	// 多客户端推论：超限断开不再触发 exitf——200ms 静默反证。
 	assertNoExit(t, exitCh)
 
-	// D-12② 超限可见性三腿之二：stderr 恰一行 message_too_big 事件，三要素齐全。
+	// D-12② 超限可见性三腿之二：stderr 恰一条 message_too_big JSON 事件，
+	// 三要素齐全（event 名精确相等；code 按 float64 比——08-RESEARCH Pitfall 4）。
 	out := restore()
-	if n := strings.Count(out, "message_too_big"); n != 1 {
-		t.Fatalf("stderr message_too_big count = %d, want exactly 1 (out=%q)", n, out)
+	evs := parseEvents(t, out)
+	if n := countByEvent(evs, "message_too_big"); n != 1 {
+		t.Fatalf("stderr message_too_big event count = %d, want exactly 1 (out=%q)", n, out)
 	}
-	if !strings.Contains(out, "remote=127.0.0.1:") ||
-		!strings.Contains(out, "code=1009") ||
-		!strings.Contains(out, "reason=message_too_big") {
-		t.Fatalf("stderr event missing 三要素 (remote/code/reason): %q", out)
+	var ev map[string]any
+	for _, m := range evs {
+		if m["event"] == "message_too_big" {
+			ev = m
+		}
+	}
+	remote, _ := ev["remote"].(string)
+	if ev["code"] != float64(websocket.StatusMessageTooBig) || !strings.HasPrefix(remote, "127.0.0.1:") {
+		t.Fatalf("message_too_big 事件三要素不符（code/remote）: %v (out=%q)", ev, out)
 	}
 }
 

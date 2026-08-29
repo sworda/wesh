@@ -169,9 +169,15 @@ func TestPushSessionDimsKickRecalc(t *testing.T) {
 				c := &client{
 					conn:   conn,
 					remote: remote,
-					outbox: newOutbox(outboxCap),
-					done:   make(chan struct{}),
-					cancel: func() {},
+					// attach 宽限早已过期（2026-08-29 kickOrCreditLocked grace）：本
+					// 测试的 B 端确定性踢出前提 = B 失败时「剔除后存在未 blocked
+					// 对端」即时判定——宽限内失败改置信用会破坏该前提。直构模拟
+					// 的是已稳定存在许久的连接，attachedAt 回拨一小时为语义正确
+					// 表达（不走 registerLocked 的 now 赋值路径，见下方手动注册）。
+					attachedAt: time.Now().Add(-time.Hour),
+					outbox:     newOutbox(outboxCap),
+					done:       make(chan struct{}),
+					cancel:     func() {},
 				}
 				c.mode.Store(proto.ModeRW)
 				return c

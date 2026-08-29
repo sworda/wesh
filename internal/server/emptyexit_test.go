@@ -17,7 +17,6 @@ package server_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -231,8 +230,9 @@ func TestExitWhenEmptyLifecycleGate(t *testing.T) {
 // TestExitWhenEmptyTimerAfterLifecycle（review #5 吸收——宽限计时器在 lifecycle
 // 启动后到期不得再触发）：grace=2s → 客户端 close 启动宽限计时（到期 ≈close+2s）→
 // 子进程 ~1s 自然退出先于计时器到期 → lifecycle 置 exiting + exitf(42) → 收 42
-// 恰好一次 → 越过计时器到期点（close+3s 护栏）无第二次收码，且 stderr 无触发事件行
-// "reason=exit_when_empty\n"（行尾锚定区分——exit_when_empty_wait 启动行允许存在）。
+// 恰好一次 → 越过计时器到期点（close+3s 护栏）无第二次收码，且 stderr 无
+// exit_when_empty 触发事件（事件名精确相等区分——exit_when_empty_wait 启动
+// 事件允许存在；JSON 字段语义下两事件名独立，无前缀歧义）。
 // 回归形态 = 计时器回调缺 exiting 复查时向已终结会话补发 SIGHUP 并打误导性触发日志
 // （review『confusing log』关切的可执行闭合）。
 func TestExitWhenEmptyTimerAfterLifecycle(t *testing.T) {
@@ -272,12 +272,107 @@ func TestExitWhenEmptyTimerAfterLifecycle(t *testing.T) {
 	// return（exiting 复查），不触 os.Stderr。
 	waitHandlers()
 	out := restore()
-	if strings.Contains(out, "reason=exit_when_empty\n") {
-		t.Fatalf("stderr contains exit_when_empty trigger line after lifecycle (out=%q) — timer callback missing exiting recheck", out)
+	evs := parseEvents(t, out)
+	if n := countByEvent(evs, "exit_when_empty"); n != 0 {
+		t.Fatalf("stderr contains exit_when_empty trigger event after lifecycle (count=%d, out=%q) — timer callback missing exiting recheck", n, out)
 	}
-	// 启动行允许存在且必须存在（行尾锚定区分的正面证据——wait 行在证明计时器
-	// 真实武装过，触发行零次才有意义）。
-	if !strings.Contains(out, "reason=exit_when_empty_wait\n") {
-		t.Fatalf("stderr missing exit_when_empty_wait start line (out=%q) — grace timer did not start on detach", out)
+	// 启动事件允许存在且必须存在（事件名精确相等的正面证据——wait 事件在
+	// 证明计时器真实武装过，触发事件零次才有意义）。
+	if n := countByEvent(evs, "exit_when_empty_wait"); n != 1 {
+		t.Fatalf("stderr missing exit_when_empty_wait start event (count=%d, out=%q) — grace timer did not start on detach", n, out)
+	}
+}
+
+// TestExitWhenEmptyPromoteKickOnce（08-review WR-01 回归锁定）：「递补升格踢出致空」
+// 边角路径下 exit-when-empty 事件恰好一次纪律——owner A detach → promoteNextLocked
+// 命中 rwEligible 但 outbox 预填至满（连升格 Welcome 都放不下 = 事实上 stalled）的
+// 唯一递补者 B → 同义踢出（05-03 该踢出重扫分支正是为此边角所建）→ 注册表恰空 →
+// kick 内 maybeExitWhenEmptyLocked 首次触发；外层 detach 的 maybeExitWhenEmptyLocked
+// 在注册表仍空下二次到达——exitEmptySignaled 空纪元门闩使 exit_when_empty_wait
+// 全程恰 1 条（修复前恰 2 条、remote 分属 B/A，计时器亦被 Stop 后重复武装）。
+//
+// 夹具论证（WR-01 触发条件叠加的确定性构造）：
+//   - /bin/cat 无 INPUT 即静默——onChunk 不触发，B 不会被 onChunk 路径先踢
+//    （ro 满即踢的唯一触发点是 trySend 失败的 chunk 到达，kickOrCreditLocked）；
+//   - Options.PingInterval 零值 → pinger 禁用（New 对 PingInterval 无兜底直传 0，
+//     pinger interval<=0 直接返回）——保活路径全程不介入本场景；
+//   - B 的「outbox 满到连升格 Welcome 都写不进」由白盒出口 ShrinkOutboxForTest
+//     注入（cap 改写为 1——trySend 对任何帧结构性必败）；不用真实字节填充：
+//     writer 的 drain 是整批 swap 语义，填充与 drain 竞态下填满状态会在 promote
+//     前被 drain 清空（实测），cap 改写无此窗口且与 TCP 吸收带/平台缓冲无关；
+//   - grace=1min 计时器在测试窗口内不触发；cleanup killServer 后 lifecycle 置
+//     exiting，到期回调复查静默返回——零跨测试 stderr 污染。
+//
+// 同步边：kick 的异步 Close 与正常读取的 B 完成关闭握手后即时收口，B 的
+// handler 随连接终结返回——waitHandlers 返回即全部事件已落 stderr（logEvent
+// 在 A handler 的 detach 内先于其返回，WaitGroup happens-before 先例同
+// TestExitWhenEmptyTimerAfterLifecycle）。
+func TestExitWhenEmptyPromoteKickOnce(t *testing.T) {
+	restore := captureStderr(t)
+	defer restore() // 失败路径兜底恢复 os.Stderr（幂等，limits_test.go 先例）
+
+	exitCh, wsURL, waitHandlers, srv := startTrackedServerHandle(t, []string{"/bin/cat"}, server.Options{
+		Writable:           true, // owner 默认策略（WritePolicy 零值兜底 owner，New 装配）
+		ExitWhenEmpty:      true,
+		ExitWhenEmptyGrace: time.Minute,
+	})
+	_ = exitCh // 本测试不断言子进程退出（cleanup killServer 收口）
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	// A：首个 rw attach → 立 owner（D-06）；B：后续 rw attach → D-07 降级 ro 进
+	// 递补队列（rwEligible=true——promoteNextLocked 的唯一候选）。attachSeq 由
+	// registerLocked 从 1 起顺序分配——本实例先 A 后 B，B 恒为 2。
+	cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
+	if modeA != proto.ModeRW {
+		t.Fatalf("A welcome mode = %q, want %q（首个 rw attach 立 owner）", modeA, proto.ModeRW)
+	}
+	cB, modeB := dialHello(t, ctx, wsURL, 80, 24)
+	if modeB != proto.ModeRO {
+		t.Fatalf("B welcome mode = %q, want %q（D-07 降级进递补队列）", modeB, proto.ModeRO)
+	}
+	defer cB.CloseNow()
+
+	// 注入「B stalled 到 outbox 连升格 Welcome 都写不进」：cap 改写为 1（任何帧
+	// trySend 结构性必败）。B 保持正常 Read——cap 注入后读不读对 promote 的
+	// trySend 失败无影响，且使 kick 的关闭握手即时完成（waitHandlers 不等写超时），
+	// 顺带取 1013 客户端侧证据。
+	if !srv.ShrinkOutboxForTest(2, 1) {
+		t.Fatal("ShrinkOutboxForTest: B（attachSeq=2）不在注册表——夹具前提不成立")
+	}
+
+	// owner A 硬断 → detach(A) → promote 命中 B → 升格 Welcome trySend 必败 →
+	// 同义踢出 B → 注册表恰空 → kick 内首次触发 + 外层 detach 二次到达。
+	cA.CloseNow()
+
+	// B 端客户端侧证据：1013 slow_consumer 逐字（promote 同义踢出复用 R-10 命名族
+	// 关闭帧）。outbox 空 + TCP 空 → 关闭帧必达（CloseError 形态，无 EOF 变体面）。
+	assertKicked1013(t, cB, 10*time.Second, "B (promotion target)")
+
+	// 等 A/B handler 全返回——事件落 stderr 先于 handler 返回，restore 读与事件
+	// 写由 WaitGroup 同步（startTrackedServerWith 同步边先例）。
+	waitHandlers()
+	out := restore()
+	evs := parseEvents(t, out)
+
+	// 主断言：空纪元事件恰好一次（修复前 2 条：kick 内 B 一条 + 外层 A 一条）。
+	if n := countByEvent(evs, "exit_when_empty_wait"); n != 1 {
+		t.Fatalf("exit_when_empty_wait count = %d, want 1（空纪元恰好一次纪律失守；out=%q）", n, out)
+	}
+	// grace>0 形态无立即事件（计时器 1min 未到期）。
+	if n := countByEvent(evs, "exit_when_empty"); n != 0 {
+		t.Fatalf("exit_when_empty count = %d, want 0（grace 计时器未到期；out=%q）", n, out)
+	}
+	// 正面证据：B 经 promote 同义踢出分支收口（detach reason=kick 恰 1 条）——
+	// 场景真实走过「升格失败 → kick → 致空」路径，排除「B 先被其他路径移除、
+	// detach(A) 直接致空」的假绿形态。
+	kickN := 0
+	for _, m := range evs {
+		if m["event"] == "detach" && m["reason"] == "kick" {
+			kickN++
+		}
+	}
+	if kickN != 1 {
+		t.Fatalf("detach reason=kick count = %d, want 1（promote 同义踢出分支证据；out=%q）", kickN, out)
 	}
 }

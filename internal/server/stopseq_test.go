@@ -19,8 +19,11 @@ package server_test
 //     掩码在 fork/exec 后保持）——sh 忽略 TERM 时 fork+exec 的 sleep 同样继承
 //     SIG_IGN，整组免疫 TERM（真实二进制冒烟实证：stop-timeout=1s 时 wesh 在
 //     close+1002ms 经 KILL 退出 255，而非 TERM 后自然退出）。trap "exit 43"
-//     形态相反：捕获型 disposition 在 exec 时复位默认，sleep 被 TERM 杀死、
-//     sh 执行 trap 退出 43——两形态互补锁定送达与忽略两语义。
+//     形态相反：捕获型 disposition 在 exec 时复位默认，TERM 命中 sh 的 trap
+//     退出 43——两形态互补锁定送达与忽略两语义。TERM 测等待形态用
+//     `sleep 100 & wait`（bash 手册 wait+trapped 信号立即中断保证；前台 sleep
+//     形态在 macOS bash 3.2 下 trap 延后至命令完成导致超时，2026-08-29 CI
+//     run 33151570736 裁决，机理详见测试注释）。
 //   - KILL 测取 `while :; do sleep 10; done` 循环形态：不依赖 SIG_IGN 继承
 //     机理的显式恒活（即使未来 shell 行为差异也更易诊断）。
 //
@@ -59,13 +62,21 @@ func waitMarker(t *testing.T, marker string) {
 
 // TestExitWhenEmptyStopSignalTERM（07-04，OPS-04，D-22）：Options.StopSignal=SIGTERM
 // 时，注册表空触发收口向子进程进程组发 SIGTERM——argv
-// `sh -c 'trap "exit 43" TERM; touch M; sleep 100'`（探针实证形态）：TERM 命中
-// sh 的 trap 以特异退出码 43 退出（同组的 sleep 被同一 TERM 默认动作杀死后 sh
-// 执行 trap）→ exitf(43) 为 TERM 送达的结构证据（若误发 SIGHUP——旧行为——sh
-// 无 HUP trap 直接信号死亡，exitf 收 -1）。
+// `sh -c 'trap "exit 43" TERM; touch M; sleep 100 & wait'`（探针实证形态）：
+// TERM 命中 sh 的 trap 以特异退出码 43 退出 → exitf(43) 为 TERM 送达的结构证据
+// （若误发 SIGHUP——旧行为——sh 无 HUP trap 直接信号死亡，exitf 收 -1）。
+// 等待形态选 `sleep 100 & wait` 而非前台 `sleep 100`（2026-08-29 macOS CI 裁决）：
+// bash 手册 Jobs/Signals 节明文——wait builtin 等待期间收到 trapped 信号，
+// wait 立即返回并在其后执行 trap；而 bash 等待**前台命令**时 trap 延后至命令
+// 完成（dash 则立即中断等待执行 trap）——前台形态在 Linux dash 恒绿，但 macOS
+// /bin/sh 是 bash 3.2 posix mode，trap 延后语义使 TERM 测试稳定超时（CI run
+// 33151570736：trap 已装、sh 5s 不死、cleanup KILL 收尸）。wait 形态不依赖
+// 「sleep 被同组 TERM 杀死」的间接链条（bash 3.2 与 dash 通用的 portable
+// 语义），TERM 送达 sh 的证据反而更直接；trap exit 后后台 sleep 成孤儿由
+// killServer 进程组 KILL 收尸。
 func TestExitWhenEmptyStopSignalTERM(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "trap-armed")
-	exitCh, wsURL := startTestServerWith(t, []string{"sh", "-c", fmt.Sprintf(`trap "exit 43" TERM; touch %s; sleep 100`, marker)}, server.Options{
+	exitCh, wsURL := startTestServerWith(t, []string{"sh", "-c", fmt.Sprintf(`trap "exit 43" TERM; touch %s; sleep 100 & wait`, marker)}, server.Options{
 		Writable:           true,
 		ExitWhenEmpty:      true,
 		ExitWhenEmptyGrace: 0,

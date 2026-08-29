@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 8
-current_phase_name: 可观测性
-status: "Phase 07 shipped — PR #8"
-stopped_at: Phase 07 complete, ready to plan Phase 8
-last_updated: "2026-08-27T03:42:38.021Z"
-last_activity: 2026-08-27
+current_phase: 9
+current_phase_name: 发布与打磨
+status: planning
+stopped_at: Completed 08-06-PLAN.md
+last_updated: "2026-08-28T14:56:25.423Z"
+last_activity: 2026-08-28
+last_activity_desc: Phase 08 execution started
 progress:
-  total_phases: 9
-  completed_phases: 7
-  total_plans: 54
-  completed_plans: 54
-last_activity_desc: Phase 07 complete, transitioned to Phase 8
+  total_phases: 8
+  completed_phases: 8
+  total_plans: 60
+  completed_plans: 60
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -21,25 +21,25 @@ state_head: 2137d0ca7425674ae4da32db3497184a05636602
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-27)
+See: .planning/PROJECT.md (updated 2026-08-28)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 08 — 可观测性
+**Current focus:** Phase 9 — 发布与打磨
 
 ## Current Position
 
-Phase: 8 — 可观测性
+Phase: 9 — 发布与打磨
 Plan: Not started
-Status: Phase 07 shipped — PR #8
-Last activity: 2026-08-27
+Status: Ready to plan
+Last activity: 2026-08-28 — Phase 08 complete, transitioned to Phase 9
 
-Progress: [██████████] 54/54 plans
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 54
+- Total plans completed: 60
 - Average duration: -
 - Total execution time: -
 
@@ -54,6 +54,7 @@ Progress: [██████████] 54/54 plans
 | 05 | 13 | - | - |
 | 06 | 7 | - | - |
 | 07 | 10 | - | - |
+| 08 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -117,6 +118,12 @@ Progress: [██████████] 54/54 plans
 | Phase 07-deployment P07 | 29min | 2 tasks | 1 files |
 | Phase 07-deployment P08 | 24min | 2 tasks | 4 files |
 | Phase 07 P10 | 20min | 3 tasks | 3 files |
+| Phase 08 P01 | 48min | 3 tasks | 11 files |
+| Phase 08 P02 | 71min | 3 tasks tasks | 8 files files |
+| Phase 08 P03 | 28min | 2 tasks | 3 files |
+| Phase 08 P04 | 48min | 2 tasks | 6 files |
+| Phase 08 P05 | 49min | 3 tasks | 6 files |
+| Phase 08 P06 | 9min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -247,6 +254,21 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 07-10]: G-07-3 闭合——listenSocket 活性探测（net.Dial unix 连通=存活→拒 EADDRINUSE 同形态文案 exit 1；失败=残留→照旧 Remove）；TOCTOU 两向安全降级；「不可服务即残留」边缘假设登记
 - [Phase ?]: [Phase 07-10]: G-07-8 选项 A 裁决落地——openBrowser goroutine Wait 收割防僵尸 + 非零退出补 wesh: warning 警告行（D-27 运行期非零覆盖从实现侧闭合，文档链不动）；警告行不含 URL（Wait err 结构性无 argv + 测试反断言双锁）
 - [Phase ?]: [Phase 07-10]: 长测试名夹具路径纪律——t.TempDir 拼长子测名可超 sun_path 108B（bind EINVAL），unix socket 测试夹具用 os.MkdirTemp 短根路径
+- [Phase ?]: [Phase 08-01]: logEvent 原子迁移 slog JSONHandler 落地——stderrW 动态 writer（Write 时读 os.Stderr 变量）保 captureStderr 语义；emitEvent(attrs) 为唯一底层出口（msg=event 单写口，08-02 扩展字段挂点）；包级 eventLog 不调 SetDefault（main.go 零改动）
+- [Phase ?]: [Phase 08-01]: 实证纠偏——slog JSONHandler time 键 = RFC3339Nano + 进程本地时区（GOROOT json_handler.go:93-99 appendJSONTime），非 08-RESEARCH/plan 所述 RFC3339 毫秒 UTC（appendRFC3339Millis 仅 TextHandler 分支）；08-02+ 与 README 运维节引用以本实证为准
+- [Phase ?]: [Phase 08-01]: 事件断言迁移形态定案——Go parseEvents/countByEvent + JS 内联 parseEvents 双侧同构（滤 '{' 起始行、单行非法 JSON 即 FAIL）；行尾锚定在 event 名精确相等下消解；红线负断言子串形态与 JSON 化正交逐字保留
+- [Phase ?]: [Phase 08-02]: detach 事件恰好一次归属 = removeLocked 返回 true 的路径 emit（reader detach 与 kick 互斥的既有所有权规则映射到事件面）；emitDetachLocked 为两调用点共用唯一 emit 形态（D-18 schema 单侧定义）；reason 判定序 pongTimedOut(hubMu 同锁) → exiting+closeBroadcastCode(广播码同源) → normal
+- [Phase ?]: [Phase 08-02]: pinger 签名收窄 (ctx, cl, interval)——pong_timeout 折入 detach reason（D-21），置位取 hubMu 写/detach 同锁读（Pattern 4 形态 b，-race 防线）；exitSignalNum 抽取为 exitMessage 与 session_end 信号号提取单侧定义（行为逐字节不变）
+- [Phase ?]: [Phase 08-02]: XFF 注入测试取中段注入——尾段 NEL 被 clientIP TrimSpace 先吃掉（unicode.IsSpace(NEL)=true 实证），中段才是 ParseIP 闸受力面；remote() trust 分支过 sanitizeRemoteUser 作 D-19 纵深第二道（双闸并存）
+- [Phase ?]: [Phase 08-03]: /healthz 键集白名单锁取完整形态——四键恰好（多/少一键皆 FAIL），200 与 503 两态同锁（T-08-03a prohibition 的『body 键集白名单断言』字面兑现）；draining body 同构四字段（RESEARCH A5）
+- [Phase ?]: [Phase 08-03]: draining 置位落 Shutdown 首行（emitEvent shutdown 之前，hubMu 锁定之前）——plan『首行（hubMu 锁定之前）』字面；两原子位注释登记 T-08-03d（无网络可达置位路径）
+- [Phase ?]: [Phase 08-04]: metricsCounters 全五字段 + Server.mc + 快照计数器读取在 Task 1 一次落地（plan 字面任务边界调整）——避免 tracer 提交携带五个硬编码 0 占位 series（tracer 纪律 production-quality）；终态与 plan must_haves 逐字一致
+- [Phase ?]: [Phase 08-04]: TestMetricsExposition 取黑盒形态（真实实例 HTTP GET）而非 plan 字面白盒直调——metrics_test.go 为 package server_test 外部包，未导出 handler 结构性不可达；黑盒经真实注册路径额外锁定接线（08-03 TestHealthz 先例）
+- [Phase ?]: [Phase 08-04]: ws_sent ≥ 2×pty_output 放大比断言可判定性论证（/bin/cat 零 pre-attach 输出 + 两端在册后驱 INPUT 恒双端扇出 + 帧类型字节严格大于）；auth 计数器精确值锁 ==1/==2 强于 plan 的 ≥1（实例私有 + 序列确定）
+- [Phase ?]: [Phase 08-05]: S4 draining 确定性夹具 = trap 忽略 stop-signal + --stop-timeout 3s 组合（plan 字面 '--stop-timeout 3' 意图修正——DurationVar 单位要求 + lifecycle 收口下无 trap 窗口 <1s 实证）；进程终结 P1 硬约束使窗口宽度 = stop-signal 序列时长
+- [Phase ?]: [Phase 08-05]: phase05-dom D5 踢出检测迁移 detach reason=kick 字段断言——08-02 D-21 折入的漏检消费者（dom 变体不在 08-01..08-04 回归集），本 plan 全量 14 脚本回归捕获；回归集含全量变体是迁移类变更漏检的最终防线
+- [Phase ?]: [Phase 08-05]: GOROOT gofmt 清零 multi_test/slowclient_test 既有漂移（07 deferred-items 既定路由终点，纯排版独立 style 提交先例第五次沿用）
+- [Phase ?]: [Phase 08-06]: G-08-2 闭合取 README 侧修复——两则 journald 示例统一 grep '^{' 预滤 + 合流机理说明（systemd 默认 StandardOutput=journal 使 stdout 横幅与 stderr JSON 合流），wesh 源码零改动（D-14/D-15/D-16 锁定推论）；新增 phase08-journal.mjs 合流模拟夹具（负对照自证不空转），进程收口取 child 'close' 事件防 exit 先于流 flush 竞态
 
 ### Pending Todos
 
@@ -267,6 +289,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-27T03:12:23Z
-Stopped at: Phase 07 complete, ready to plan Phase 8
+Last session: 2026-08-28T14:56:25.423Z
+Stopped at: Phase 8 complete (UAT 3/3 + verification passed + security verified), ready to plan Phase 9
 Resume file: None

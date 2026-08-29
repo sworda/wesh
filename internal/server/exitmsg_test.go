@@ -6,6 +6,7 @@ package server
 
 import (
 	"errors"
+	"os/exec"
 	"syscall"
 	"testing"
 )
@@ -57,5 +58,37 @@ func TestExitMessage(t *testing.T) {
 	}
 	if got := exitMessage(errors.New("synthetic wait error"), 0); got != "The process terminated." {
 		t.Errorf("exitMessage(非 ExitError, 0) = %q, want %q（兜底分支）", got, "The process terminated.")
+	}
+}
+
+// TestExitSignalNum（08-02 D-22 单侧定义抽取的白盒锁）：exitSignalNum 四形态——
+// ExitError 信号死亡命中（信号号, true）；ExitError 非信号退出未命中；非
+// ExitError 未命中；nil 输入未命中（errors.As(nil) 恒 false 的防御面）。
+// exec.ExitError 无公开构造器——两 ExitError 形态经真实子进程产出（与
+// TestExitMessage 注释登记的覆盖纪律一致）。
+func TestExitSignalNum(t *testing.T) {
+	// ExitError 信号形态命中：真实子进程 SIGHUP 自杀 → (SIGHUP, true)。
+	errHUP := exec.Command("sh", "-c", "kill -HUP $$").Run()
+	if errHUP == nil {
+		t.Fatal("sh -c 'kill -HUP $$' 意外成功——信号死亡前置不成立")
+	}
+	if sig, ok := exitSignalNum(errHUP); !ok || sig != int(syscall.SIGHUP) {
+		t.Errorf("exitSignalNum(SIGHUP 死亡) = %d,%v, want %d,true", sig, ok, int(syscall.SIGHUP))
+	}
+	// ExitError 非信号退出未命中：exit 42 → ok==false（正常退出码形态）。
+	errExit := exec.Command("sh", "-c", "exit 42").Run()
+	if errExit == nil {
+		t.Fatal("sh -c 'exit 42' 意外成功——ExitError 前置不成立")
+	}
+	if sig, ok := exitSignalNum(errExit); ok {
+		t.Errorf("exitSignalNum(exit 42) = %d,true, want ok==false（非信号退出未命中）", sig)
+	}
+	// 非 ExitError 未命中。
+	if sig, ok := exitSignalNum(errors.New("synthetic wait error")); ok {
+		t.Errorf("exitSignalNum(非 ExitError) = %d,true, want ok==false", sig)
+	}
+	// nil 输入未命中（防御面）。
+	if sig, ok := exitSignalNum(nil); ok {
+		t.Errorf("exitSignalNum(nil) = %d,true, want ok==false", sig)
 	}
 }

@@ -14,6 +14,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -54,6 +55,15 @@ const (
 	// PITFALLS Pitfall 10 SIGWINCH 风暴防线）。Phase 9 负载测试标定回填
 	//（P2 D-10 纪律）。消费点 = resize.go 仲裁器单 time.Timer reset（05-04 已落地）。
 	defaultResizeDebounce = 50 * time.Millisecond
+	// defaultGateDwell 已废弃（2026-08-29 kickOrCreditLocked 注释第 3/4 轮实证）：
+	// 计时器踢出与 R-08「全体可写端均满 → 置信用保护」语义冲突（TestGlobalCredit
+	// 双 stall 设计场景中踢出了持信用端，10/10 稳定复现），整体移除。
+	// defaultAttachGrace attach 宽限期（500ms）：新端 writer 首次调度前的满箱
+	// 瞬态（单核下调度延迟可达百毫秒级）不构成慢端证据——宽限内满箱失败一律置
+	// 信用不踢（kickOrCreditLocked）。三轮失败现场（kick_fail 系列）被误踢端均
+	// 为刚 attach 的消费端（attach+6ms / attach+177ms），宽限期直接封堵该窗口。
+	// 活跃消费端恢复是毫秒级（三个数量级余量）。Phase 9 负载测试标定回填。
+	defaultAttachGrace = 500 * time.Millisecond
 )
 
 // WritePolicy 取值（D-05 公开 CLI 契约——--write-policy=owner|all，全名无短选项
@@ -110,9 +120,18 @@ type client struct {
 	dims dims
 
 	attachSeq int64 // attach FIFO 序号（registerLocked 分配；05-03 owner 递补取序）
-	outbox    *outbox
+	// attachedAt 为 attach 完成时刻（registerLocked 记录，plain 只读字段——运行期
+	// 只在 hubMu 内读）：defaultAttachGrace 宽限判定的起点（kickOrCreditLocked）。
+	attachedAt time.Time
+	outbox     *outbox
 	done      chan struct{}      // writer 终结信号——kick/detach 关闭，恰好一次由 hubMu 内注册表成员判定保证
 	cancel    context.CancelFunc // pinger 所在 ctx 的 cancel（Attach 派生，随客户端生命周期）
+
+	// pongTimedOut 为 pinger pong 超时置位（08-02，D-21）：pinger 判定超时后取
+	// hubMu 写本字段、detach 同锁读（RESEARCH Pattern 4 形态 b——同步边 =
+	// hubMu，-race 防线；禁止 plain 字段跨 goroutine 传递）。pong_timeout 不再
+	// 单独打事件行，折入 detach reason=pong_timeout（code 1006）。
+	pongTimedOut bool
 
 	// creditBlocked 信用门阻塞位（hubMu 保护）：仅可写端参与信用集，ro 客户端
 	// 此位恒 false——ro 满即踢永不持信用（R-08 分工表）。kickOrCreditLocked 置位、
@@ -266,6 +285,11 @@ type registry struct {
 	// afterDrain 清位两点递增）：Phase 8 OPS-07 门开闭周期计数挂点（review #10）；
 	// hubMu 保护，零 atomic 不违 R-07 单锁纪律。
 	gateTransitions int
+	// clientsTotal 累计注册客户端总数（08-04 OPS-07，D-05 连接三件套之二——
+	// counter 只增不减，与 n 的当前 gauge 成对）：hubMu 保护（与 kicks 同形态，
+	// R-07 单锁纪律下无需 atomic）；registerLocked 唯一加点（对称记账：n 管
+	// 当前、clientsTotal 管累计，读取端 = metrics.go snapshotMetrics 锁内快照）。
+	clientsTotal int64
 }
 
 // registerLocked 登记新客户端：分配 attachSeq、入 set 与 FIFO order，计数 +1
@@ -273,12 +297,19 @@ type registry struct {
 func (r *registry) registerLocked(c *client) {
 	r.seq++
 	c.attachSeq = r.seq
+	// attach 宽限起点（defaultAttachGrace，kickOrCreditLocked 消费）——仅零值时
+	// 赋 now：直构 client 的测试可预置回拨值表达「早已存在的稳定连接」不被覆盖
+	//（resize_test.go TestPushSessionDimsKickRecalc 的 B 端确定性踢出前提）。
+	if c.attachedAt.IsZero() {
+		c.attachedAt = time.Now()
+	}
 	if r.set == nil {
 		r.set = make(map[*client]struct{}) // 零值可用（TestClientCountInvariant 直构造，无需 Server/pty 装配）
 	}
 	r.set[c] = struct{}{}
 	r.order = append(r.order, c)
-	r.n.Add(1) // 对称记账：唯一加计数点（review #7）
+	r.n.Add(1)       // 对称记账：唯一加计数点（review #7）
+	r.clientsTotal++ // 08-04 OPS-07：累计 counter 唯一加点（只增不减，与 n 的当前 gauge 对称记账）
 }
 
 // removeLocked 移除客户端：同时清理 map 项与 slice 项（Pitfall 4 双容器防单调
@@ -354,6 +385,10 @@ func (s *Server) decideModeLocked(ticketMode string) (mode string, rwEligible bo
 func (s *Server) onChunk(chunk []byte) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
+	// 08-04 OPS-07（D-04）：PTY 数据源单计——onChunk 入口计 chunk（hubMu 持锁
+	// 内 atomic 递增无锁安全）；与 ws_sent 相除即吞吐放大比。门闭合持块期间
+	// chunk 已被 ReadLoop 从 PTY 读出（停留缓冲等待），计数语义不含糊。
+	s.mc.ptyOutputBytes.Add(int64(len(chunk)))
 	for s.allWritableBlockedLocked() {
 		s.hubCond.Wait() // Wait 原子释放 hubMu；持块即停读 PTY（RES-04）；chunk 停留 ReadLoop 缓冲，无别名窗口（review #1）
 	}
@@ -386,13 +421,37 @@ func (s *Server) allWritableBlockedLocked() bool {
 	return writable > 0
 }
 
-// kickOrCreditLocked 是 trySend 写满后的踢出/信用分工判定（R-08 逐字）：
+// kickOrCreditLocked 是 trySend 写满后的踢出/信用分工判定（R-08）：
 //   - c.mode == ro → 立即 1013 踢出（旁观者可弃，永不持信用）；
-//   - c 为 rw 且剔除 c 后仍存在未 blocked 的可写端 → 立即 1013 踢出（慢的是
-//     离群者，MULTI-03 本义）；
-//   - c 为 rw 且全体可写端均满 → 不踢，置 c.creditBlocked = true（保护 owner
-//     演示者，离群慢端才踢；onChunk 下轮门判定闭合 → 持块停读 PTY）。
+//   - c 为 rw 且已出 attach 宽限（defaultAttachGrace）+ 存在未 blocked 的可写端
+//     → 立即 1013 踢出（离群慢端，MULTI-03 本义）；
+//   - 其余（宽限内瞬态满 / 全体可写端均满）→ 不踢，置 c.creditBlocked = true
+//     （保护 owner 演示者；onChunk 下轮门判定闭合 → 持块停读 PTY）。
 //
+// 判定演化（2026-08-29 单核压测 GOMAXPROCS=1 多轮实证裁决，macOS CI run
+// 33225598342 同源偶发）：
+//   1. 原标志判定（creditBlocked 仅 trySend 失败时置位）：同轮 fan-out map 随机
+//      序下双满瞬间先失败端被误判离群者踢出（kick_fail_13：healthy 端被踢 +
+//      滞留端 writer 阻塞 + 门闭死锁，onChunk 卡 hubCond.Wait 全链栈证）；
+//   2. 「实况余量替代标志」：慢端 writer 灌 TCP 吸收带期间 outbox 被清空
+//      （bytes=0），刚 attach 的健康端 6ms 内被误踢（kick_fail2_3：detach
+//      client_id=2 于 attach+6ms）；
+//   3. 「writeBlockedEver 自身实锤」：门闭后 fan-out 停止、trySend 失败不再发生，
+//      踢出判定失去触发点；且吸收带在门闭反压下耗尽极慢，writer 长期不阻塞
+//      （kick_fail3_7 同形态 + 回归 TestSlowConsumerKick 门闭死锁实证）；
+//   4. 「writePending + dwell 轮询」：吸收带在门闭反压下耗尽极慢，子进程全速
+//      写完先到（TestSlowConsumerKick 3.59s 收 1000 子进程退出广播，want 1013）
+//      ——观测窗口慢于洪水耗尽；
+//   5. 「dwell 计时器踢出」：与 R-08「全体可写端均满 → 置信用保护」语义根本冲突
+//      ——TestGlobalCredit 双 stall 设计场景（c2 持信用恒满）中被计时器踢出，
+//      10/10 稳定复现「close code = 1000, want 1013」，整体移除；
+//   6. 终稿（attach 宽限 + 旧行为判定原样恢复）：多轮失败现场的被误踢端全部是
+//      刚 attach 的消费端（attach+6ms / attach+177ms）——writer 首次调度前的
+//      满箱瞬态是唯一稳定的误踢源。宽限期封堵该窗口（宽限内满箱一律置信用，
+//      不踢任何端），宽限外恢复原「存在未 blocked 的可写端 → 踢 c」纯标志判定
+//      （TestGlobalCredit/TestSlowConsumerKick 设计前提的踢出时序原样保持）。
+//      时间维度方案（writeBlockedEver/writePending/dwell）全部废弃——吸收带
+//      窗口内「谁慢」的瞬时与历史信号均不可靠，唯「新端瞬态」是可识别误踢源。
 // 触发帧不丢（must_haves prohibitions 硬约束——丢帧保连接 = 有序流画面静默损坏，
 // RESEARCH Anti-Pattern 2）：信用路径把被拒的当前帧暂存 c.creditPending，
 // afterDrain 半水位恢复时重投（TestGlobalCredit 门转换字节精确断言实测发现：
@@ -404,22 +463,26 @@ func (s *Server) allWritableBlockedLocked() bool {
 // 迟滞带论证（review #2）：门关闭阈值 = outbox 写满（100% 字节上界才置
 // creditBlocked）、恢复阈值 = drain 至 <50%——2:1 迟滞带内建于分工表，非
 // 『50% 单点抖动』；残余振荡（滴漏读者每次 drain 开门、下一 chunk 可能再闭门）
-// 经 RESEARCH Open Question 3 裁决接受（各端持续前进；dwell 计时器 Phase 9
-// 负载标定时评估）。调用方必须已持 hubMu。
+// 经 RESEARCH Open Question 3 裁决接受（各端持续前进；attach 宽限 2026-08-29
+// 落地——macOS CI 偶发单核压测实证其必要性，dwell 计时器方案经同日第 5 轮
+// 实证否决废弃，见上方演化记录）。调用方必须已持 hubMu。
 func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 	if c.mode.Load() == proto.ModeRO {
 		s.kickSlowConsumerLocked(c)
 		return
 	}
-	// rw：剔除 c 后仍存在未 blocked 的可写端 → c 是离群慢端，立即踢出。
-	for oc := range s.registry.set {
-		if oc != c && oc.mode.Load() == proto.ModeRW && !oc.creditBlocked {
-			s.kickSlowConsumerLocked(c)
-			return
+	// rw 且已出 attach 宽限 + 存在未 blocked 的可写端 → c 是离群慢端，立即踢出
+	//（原 R-08 判定原样恢复；宽限封堵新端瞬态误踢窗口，见上方演化记录）。
+	if time.Since(c.attachedAt) >= defaultAttachGrace {
+		for oc := range s.registry.set {
+			if oc != c && oc.mode.Load() == proto.ModeRW && !oc.creditBlocked {
+				s.kickSlowConsumerLocked(c)
+				return
+			}
 		}
 	}
-	// 全体可写端均满 → 不踢，计入信用（保护 owner 演示者；幂等置位防重复计数、
-	// 防触发帧被二次暂存覆写）。
+	// 全体可写端均满（或 c 在 attach 宽限内）→ 不踢，计入信用（保护 owner 演示
+	// 者；幂等置位防重复计数、防触发帧被二次暂存覆写）。
 	if !c.creditBlocked {
 		c.creditBlocked = true
 		c.creditPending = frame      // 触发帧暂存，afterDrain 重投（触发帧不丢）
@@ -503,7 +566,11 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	}
 	close(c.done)
 	s.registry.kicks++ // Phase 8 OPS-07 1013 踢出计数挂点（review #10）
-	logEvent(c.remote, websocket.StatusTryAgainLater, "slow_consumer", c.remoteUser)
+	// 08-02 D-21：slow_consumer 独立事件行折入 detach 单事件（reason=kick，
+	// code=1013）——「连接断开」检索单入口；wire 关闭帧
+	// Close(1013, "slow_consumer") 与 kicks 计数逐字不动（客户端可见形态
+	// 由 slowclient_test.go 既有断言锁定）。
+	s.emitDetachLocked(c, "kick", websocket.StatusTryAgainLater)
 	// arbiter 参与集移除 + 即时重算（05-04，D-09）：all 模式被踢的 rw 端是参与集
 	// 成员——滞留 sizes 则其陈旧尺寸永久拖累 min-rect（幽灵成员把 PTY 压在离群者
 	// 小窗口）；owner 模式被踢者为 ro 旁观者（非成员，removeMember 幂等 no-op）。
@@ -645,6 +712,9 @@ func (s *Server) writer(c *client) {
 			if err := c.conn.Write(context.Background(), websocket.MessageBinary, msg); err != nil {
 				return
 			}
+			// 08-04 OPS-07（D-04）：fan-out ×N 真实带宽——每条 msg 成功 Write
+			// 后计；写失败 return 路径不计（计成功送出字节）。
+			s.mc.wsSentBytes.Add(int64(len(msg)))
 		}
 		// 整批写出成功 → 信用门恢复判定（R-01 半水位；R-07 锁序：drain/写出完才取
 		// hubMu，绝不反序同持）。写失败路径已 return，不触达本行。
@@ -693,6 +763,23 @@ func (s *Server) detach(c *client) {
 	if !s.registry.removeLocked(c) {
 		return // 已被 kick 移除——close(done)/cancel 恰好一次由成员判定保证
 	}
+	// 08-02 D-17/D-21：detach 单事件 emit（removeLocked 返回 true 之后、
+	// close(done) 之前——事件即「连接断开」检索的唯一入口）。reason 判定序：
+	//   - c.pongTimedOut（pinger 同锁置位，Pattern 4 形态 b）→ pong_timeout，
+	//     code=1006（对端观测的本地合成异常关闭码语义，wire 永不发送 1006）；
+	//   - s.exiting（lifecycle/Shutdown 终结广播窗口，既有不变量：置位先于
+	//     广播）→ shutdown，code 取 s.closeBroadcastCode（lifecycle 置 1000 /
+	//     Shutdown 置 1001——与广播关闭码同源）；
+	//   - 否则 → normal，code=1000（对端主动关闭/网络断开）。
+	// kick 路径不到本函数（kickSlowConsumerLocked 就地 emit reason=kick）。
+	reason, code := "normal", websocket.StatusNormalClosure
+	switch {
+	case c.pongTimedOut:
+		reason, code = "pong_timeout", websocket.StatusAbnormalClosure
+	case s.exiting:
+		reason, code = "shutdown", websocket.StatusCode(s.closeBroadcastCode)
+	}
+	s.emitDetachLocked(c, reason, code)
 	close(c.done)
 	c.cancel()
 	// arbiter 参与集移除 + 即时重算（05-04，D-09，不防抖——参与集收缩立即反映，
@@ -712,16 +799,39 @@ func (s *Server) detach(c *client) {
 	s.hubCond.Broadcast() // P5-7 统一挂点：detach 后门重估
 }
 
+// emitDetachLocked 是 detach 事件的唯一 emit 形态（08-02，D-18 schema 单侧
+// 定义）：event=detach + remote/client_id（= c.attachSeq，D-20 关联检索键）
+// + code/reason（D-21 四值）+ remote_user 非空追加（07-03 同口径——提取点
+// 已 sanitize）。两调用点（detach 与 kickSlowConsumerLocked）共用本函数——
+// 调用方必须已持 hubMu 且 c 刚被 removeLocked 移除成功（恰好一次 emit 由
+// 移除所有权保证：reader detach 与 kick 互斥）。
+func (s *Server) emitDetachLocked(c *client, reason string, code websocket.StatusCode) {
+	attrs := []slog.Attr{
+		slog.String("event", "detach"),
+		slog.String("remote", c.remote),
+		slog.Int64("client_id", c.attachSeq),
+		slog.Int("code", int(code)),
+		slog.String("reason", reason),
+	}
+	if c.remoteUser != "" {
+		attrs = append(attrs, slog.String("remote_user", c.remoteUser))
+	}
+	emitEvent(attrs...)
+}
+
 // maybeExitWhenEmptyLocked 是注册表空触发断开退出的判定与执行（06-02，
 // SESS-01/02，D-13/D-14；07-04 D-22 换入可配 stop-signal 序列）。调用方必须
 // 已持 hubMu 且刚 removeLocked(c) 成功——事件 = 非空→空迁移（RESEARCH
 // Pitfall 2：启动期恒空天然免疫，检测只挂 detach/kickSlowConsumerLocked 两
 // 移除点，严禁轮询/状态式检测）。
 //
-// 三守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
+// 四守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
 // 子进程继续运行，P5『断开不退出』产品承诺，D-14）|| exiting（lifecycle 终结
 // 广播门——广播 Close(1000) 引发的 detach 致空属正常终结序列，不得再生
-// 信号/计时器）|| 注册表非空。
+// 信号/计时器）|| 注册表非空 || exitEmptySignaled（08-review WR-01 空纪元
+// 门闩——「递补升格踢出致空」路径下同一次断开两次到达本函数：promoteNextLocked
+// 循环内 kickSlowConsumerLocked 移除末位客户端后首次触发，外层 detach/kick
+// 移除点二次到达；门闩使每纪元恰好一次，Attach 升档清零开启新纪元）。
 //
 // grace==0（立即形态——0 是合法显式值，D-14 set/grace 分离）：logEvent
 // exit_when_empty + stop-signal 序列（stopChildLocked——默认 SIGHUP 与 06-02
@@ -739,9 +849,10 @@ func (s *Server) detach(c *client) {
 // logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
 // （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
 func (s *Server) maybeExitWhenEmptyLocked(c *client) {
-	if !s.exitWhenEmpty || s.exiting || len(s.registry.set) != 0 {
+	if !s.exitWhenEmpty || s.exiting || len(s.registry.set) != 0 || s.exitEmptySignaled {
 		return
 	}
+	s.exitEmptySignaled = true // 空纪元内幂等（08-review WR-01）：promote 踢出致空与外层移除点只发一次；新 attach（registerLocked 成功后同 hubMu 清零）开启新纪元
 	if s.exitWhenEmptyGrace == 0 {
 		// 立即形态：无计时器，迁移点直接发 stop-signal 序列（D-22）。
 		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)

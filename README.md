@@ -106,7 +106,7 @@ pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 
 **认证与传输安全（Phase 3）**：
 
-- **整站 Basic 认证**：配置凭据后，`/` 与 `POST /api/attach` 均返回 401 challenge（`WWW-Authenticate: Basic realm="wesh"`）——浏览器打开页面弹原生登录框，输入一次后同源请求自动携带缓存凭据；无/错凭据响应完全同文（无枚举 oracle）。
+- **整站 Basic 认证**：配置凭据后，`/` 与 `POST /api/attach` 均返回 401 challenge（`WWW-Authenticate: Basic realm="wesh"`）——浏览器打开页面弹原生登录框，输入一次后同源请求自动携带缓存凭据；无/错凭据响应完全同文（无枚举 oracle）。唯一例外：`GET /healthz` 探活端点免认证（零敏感信息，探活器结构性带不了凭据）——见「运维（Phase 8）」。
 - **一次性 ticket**：认证通过后前端 `POST /api/attach` 换取一次性 ticket（128bit `crypto/rand`、单次使用、60s TTL、绑定只读/可写模式），WS 握手 Hello 帧携带核销；过期/非法/重放统一 `auth_failed` + 1008 关闭，不给攻击者区分 oracle。ticket 与静态凭据是独立 secret，替代 ttyd 的 `/token` 明文下发。
 - **失败节流（SEC-03）**：凭据失败与 ticket 核销失败计入同一 per-IP 指数退避计数器（1s 起翻倍、封顶 30s、认证成功清零），窗口内请求收到 429 + `Retry-After`——爆破 100 次累计等待 ≥47 分钟。
 - **常数时间比较（SEC-01）**：凭据先 SHA-256 等长化再用 `crypto/subtle` 逐组比较（不短路，耗时与组数正交）；**凭据、ticket、Authorization 头任何形态（含 base64）永不进入任何日志**。
@@ -332,8 +332,8 @@ server {
 
 **语义 = 服务端审计归因**：`--auth-header X-Remote-User` 配置即信任该头——反代（authelia/oauth2-proxy 等 SSO）注入的用户名经清洗（剥离控制字符、截断 128 字符）后记录进服务端 stderr 事件行的 `remote_user` 字段：
 
-```
-wesh: close remote=198.51.100.7 code=1000 reason=exit_when_empty remote_user=alice
+```json
+{"time":"2026-08-28T10:40:01.013456789+08:00","level":"INFO","msg":"event","event":"detach","remote":"198.51.100.7","client_id":1,"code":1000,"reason":"normal","remote_user":"alice"}
 ```
 
 **X-Forwarded-For 同闸**：`--auth-header` 给定即「信任反代」总开关——XFF 链首 IP 同时换入日志 `remote` 字段与 per-IP 节流计数键（反代后 per-IP 计数不再全聚合为代理 IP）；未配置时 XFF 完全忽略（直连客户端自设 XFF 零效果）。
@@ -370,6 +370,102 @@ wesh: close remote=198.51.100.7 code=1000 reason=exit_when_empty remote_user=ali
 3. 进程退出。
 
 **退出码 255 运维注记**：子进程被信号终结时 wesh 退出状态为 **255**（信号死亡按 -1 收口，Unix 进程退出状态截断为 255——与 `--once`/`--exit-when-empty` 收口路径同源）。systemd 部署若希望把 255 视为正常关停，可自行配置 `SuccessExitStatus=255`。
+
+## 运维（Phase 8）
+
+可观测性三面：`/healthz` 探活端点、`/metrics` Prometheus 文本指标、运行期事件 slog JSON 结构化审计日志。两个端点与主服务**同端口**且**根路径固定**——不受 `--base-path` 影响（探活器/采集器直连后端端口不经反代，路径恒定可写死进 k8s probe 与 Prometheus 静态配置；base-path 是浏览器用户面挂载形态，与运维面正交）。
+
+### 健康检查（/healthz）
+
+`GET /healthz` 返回 200 + 状态 JSON 四字段：
+
+```json
+{"status":"ok","clients":2,"max_clients":32,"session_active":true}
+```
+
+- `clients`/`max_clients`：当前 attach 数与容量上限；`session_active`：PTY 会话存活（子进程退出后翻 false）。
+- **优雅关停进行中返回 503 + `"draining"`**：SIGTERM/SIGINT（含 `systemctl stop`/`restart`）触发优雅下线后、进程退出前，`status` 翻转为 `"draining"` 且状态码 503——反代/编排健康检查在关停窗口内不再向将死实例导新流。body 与 200 态同构四字段。
+- body 恒为这四个粗粒度容量字段——无版本号、无客户端身份、无内部错误细节（version 只在需认证的 `/metrics` 的 `build_info`）；非 GET 方法 405 + `Allow: GET`。
+
+**`/healthz` 免认证是整站 Basic 认证闸的唯一例外**：探活器（k8s liveness/反代健康检查）结构性携带不了凭据，且端点只暴露「进程活着」零敏感信息——两个前提同时成立才开此例外。该例外**不蔓延**：`/metrics` 与其余一切路径照常过认证闸，未来新端点不得以此为例外先例。
+
+### 指标（/metrics）
+
+`GET /metrics` 返回手写 Prometheus text 0.0.4 exposition（`Content-Type: text/plain; version=0.0.4; charset=utf-8`），17 条 series 全 gauge/counter，stdlib 零外部依赖：
+
+| Series | 类型 | 语义 |
+|--------|------|------|
+| `wesh_clients_connected` | gauge | 当前 attach 的 WS 客户端数 |
+| `wesh_clients_total` | counter | 进程启动以来累计 attach 数 |
+| `wesh_clients_kicked_total` | counter | 1013 慢消费者踢出数 |
+| `wesh_session_active` | gauge | PTY 会话存活（1/0） |
+| `wesh_outbox_depth_bytes_max` | gauge | 每客户端 outbox 深度聚合 max（慢客户端检测信号） |
+| `wesh_outbox_depth_bytes_sum` | gauge | outbox 深度聚合 sum |
+| `wesh_pty_output_bytes_total` | counter | PTY 源读取字节（fan-out 源，单计） |
+| `wesh_ws_sent_bytes_total` | counter | WS 下行字节（fan-out ×N 真实带宽；÷ pty_output 即吞吐放大比） |
+| `wesh_ws_recv_bytes_total` | counter | WS 上行字节 |
+| `wesh_auth_failed_total` | counter | 认证失败（HTTP 401 + WS Hello ticket 核销失败） |
+| `wesh_auth_throttled_total` | counter | 节流闸拒绝（HTTP 429） |
+| `wesh_input_rate_dropped_total` | counter | 每客户端输入限速丢弃的 INPUT 帧 |
+| `wesh_input_queue_dropped_total` | counter | 有界会话输入队列丢弃的 INPUT 载荷 |
+| `wesh_credit_gate_transitions_total` | counter | 全局信用门开闭次数 |
+| `wesh_goroutines` | gauge | 当前 goroutine 数（goroutine 生命周期纪律的泄漏观测） |
+| `wesh_mem_alloc_bytes` | gauge | 堆内存占用（`runtime.MemStats.Alloc`） |
+| `wesh_build_info{version="..."}` | gauge(=1) | 构建元信息（version 单 label；发布构建 ldflags 注入，开发构建为 `dev`） |
+
+- **认证闸跟随**：配置凭据后 `/metrics` 过同一 Basic 认证与节流闸（Prometheus `scrape_config` 原生支持 `basic_auth`，见下方配方）；`--no-auth`/loopback 裸跑模式直通——**注意此时 `/metrics` 对该端口的一切可达者暴露服务行为轮廓**（连接数/失败计数/字节量），非 loopback 部署务必保持认证开启。
+- **label 零身份面**：全部 series 不带 remote/remote_user/client_id 等身份 label（日志红线在 metrics 面的镜像——隐私 + label 基数纪律）；per-IP/每连接明细查日志事件（`client_id` 关联），metrics 只看总量与聚合。非 GET 方法 405 + `Allow: GET`。
+
+Prometheus 配方（`scrape_configs` 片段）：
+
+```yaml
+scrape_configs:
+  - job_name: wesh
+    static_configs:
+      - targets: ['127.0.0.1:7681']   # 直连后端端口，不经反代（/metrics 根路径固定）
+    basic_auth:
+      username: alice                 # 与 wesh 凭据同组（建议与环境变量 WESH_CREDENTIAL 同源管理）
+      password: pw-of-alice
+```
+
+**⚠️ 凭据错误会触发全站节流（429）导致采集目标自锁**：scrape 凭据配错/过期时，失败计入与浏览器登录同一 per-IP 指数退避计数器（1s 起翻倍、封顶 30s）——scrape 是高频自动客户端，失败计数涨得比人工快得多，采集器 IP 会长期锁在退避窗口内，表现为 target 持续 down。排查通道：`throttled` 日志事件（`remote` = 采集器 IP、`retry_after` 秒数，见「结构化日志」）；修正凭据后等待退避窗口过期（最长 30s）即恢复。
+
+### 结构化日志（JSON 审计事件）
+
+运行期事件恒为 stderr 单行 JSON（stdlib slog JSONHandler——**恒 JSON 恒 INFO，无 `--log-format`/`--log-level` 开关**，人读走 jq）：
+
+```json
+{"time":"2026-08-28T10:40:01.013456789+08:00","level":"INFO","msg":"event","event":"attach","remote":"198.51.100.7","remote_user":"alice","client_id":1,"mode":"rw"}
+```
+
+- **schema**：`msg` 恒 `"event"`，事件名走独立 `event` 字段，其余字段平铺（`time`/`level` 为 slog 默认键）——jq/Loki 按 `event=="x"` 直打字段索引。
+- **client_id 关联**：同一连接的 `attach`/`detach` 携同一进程内单调递增序号（从 1 起，重启归零，无隐私面）——单连接生命周期可关联检索。
+
+事件目录（审计三面：认证 / 连接 / 会话生命周期）：
+
+| event | 字段 | 语义 |
+|-------|------|------|
+| `auth_failed` | remote, code=401/1008(, remote_user) | 认证失败（HTTP Basic / WS Hello ticket 核销）；**结构性不含用户名**——凭据任何形态永不入日志（remote_user 为配置 `--auth-header` 时的反代可信头值，非凭据） |
+| `throttled` | remote, code=429, retry_after(, remote_user) | 节流闸拒绝（retry_after = `Retry-After` 响应头同值秒数，排查爆破节奏） |
+| `attach` | remote, client_id, mode(, remote_user) | 客户端握手完成 |
+| `detach` | remote, client_id, code, reason(, remote_user) | 连接断开单入口；reason = `normal`/`kick`/`pong_timeout`/`shutdown` 四值（kick/pong_timeout 不再单独打行，计数走 metrics） |
+| `session_start` | pid | PTY 子进程启动 |
+| `session_end` | exit_code, duration_seconds(, signal) | 子进程退出——「活多久、怎么死的」单事件齐备（信号死亡 exit_code=-1 且出 signal 键，与 EXIT 帧同源） |
+| `shutdown` | — | SIGTERM/SIGINT 优雅下线序列开始 |
+| `exit_when_empty` 族 | remote, code=1000(, remote_user) | `--exit-when-empty` 触发（`exit_when_empty`）/ 宽限开始（`_wait`）/ 宽限取消（`_cancel`） |
+
+另：协议守卫事件同 schema 同出口（`message_too_big`/`max_clients`/`hello_timeout`/`subprotocol_required`/`version_mismatch` 等，code 携 HTTP 状态码或 WS 关闭码）。
+
+journald + jq 检索示例（systemd 部署下 stderr 自动进 journal）。⚠️ 合流陷阱：systemd 默认 `StandardOutput=journal` 会把 stdout 启动横幅（人读文本——分流决策见本节末「红线重申」段）与 stderr JSON 事件合流入同一 journal，jq 遇非 JSON 行即中止整条管道；故示例统一在 journalctl 与 jq 之间插入 `| grep '^\{'` 预滤 JSON 事件行——与自动化测试 parseEvents 的滤行约定（滤 `{` 起始行）同款：
+
+```bash
+# 认证失败审计（event 字段直打索引）
+journalctl -u wesh -o cat | grep '^\{' | jq -c 'select(.event=="auth_failed")'
+# 单连接生命周期关联（attach → detach）
+journalctl -u wesh -o cat | grep '^\{' | jq -c 'select(.client_id==7)'
+```
+
+**红线重申**：凭据、ticket、share token、Authorization 头任何形态（含 base64、含用户名）**永不进入日志**；用户可控字段（`remote` 的 XFF 链首、`remote_user` 头值）经 C0/C1/DEL 控制字符剥离 + 128 字符截断后才入日志（JSON 转义只覆盖 C0，C1 如 NEL 原样穿透——清洗是防伪造日志行的唯一防线）。启动行/分享链接行保持人读文本（stdout）不 JSON 化——operator 交互输出与机器审计事件分流，既有启动行解析（含 UAT 与部署脚本）零破坏。
 
 ## 测试
 

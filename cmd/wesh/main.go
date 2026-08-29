@@ -621,6 +621,14 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	if cfg.stopTimeout < 0 {
 		return cfg, nil, fmt.Errorf("invalid --stop-timeout %v: must be a non-negative duration (e.g. 2s)", cfg.stopTimeout)
 	}
+	// D-16：--ping-interval 负值拒绝（08-review WR-02——0 = 禁用为唯一合法非正
+	// 形态；DurationVar 直收负值语法合法，负值检查是唯一闸，exitEmptyValue.Set/
+	// --stop-timeout 同纪律；配置来源负值经默认值替换机制落同一终值，一闸双覆盖；
+	// 值非敏感可回显）。缺闸时 pinger 按 interval<=0 静默不启动——用户笔误把
+	// 保活关了而零报错（反代空闲超时收割表现为「终端莫名掉线」）。
+	if cfg.pingInterval < 0 {
+		return cfg, nil, fmt.Errorf("invalid --ping-interval %v: must be a non-negative duration (0 = disable keepalive)", cfg.pingInterval)
+	}
 	// D-24：--uid/--gid 值域校验（插入点同 03-04 先例——showVersion 早退之后，
 	// write-policy 枚举校验同位）：-1 哨兵之外 < -1 或 > 4294967295 即拒
 	//（uint32 转换安全——越界值 uint32 截断会降权到非预期账号，T-07-04b；
@@ -1131,7 +1139,7 @@ func run(args []string) int {
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version})
 	// shareURLRO/shareURLRW 拼串单一事实源（07-01 D-14 既定注释）：启动打印与
 	// 07-05 --open 两消费点共用（两消费点不得各自重拼）；socket 分支保持零值
 	// 空串（该形态 --open 已被 validateStartup 拒绝，下方消费点结构性不可达）。

@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接 (completed 2026-08-22)
 - [x] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程 (completed 2026-08-24)
 - [x] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传 (completed 2026-08-27)
-- [ ] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志
+- [x] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志 (completed 2026-08-28)
 - [ ] **Phase 9: 发布与打磨** - 单静态二进制四平台发布、自定义首页、负载/模糊测试回填默认参数
 
 ## Phase Details
@@ -323,7 +323,30 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `/metrics` 暴露连接数、会话数、收发字节数、每客户端 outbox 深度与踢出计数
   3. 日志为 JSON 结构化输出（slog），认证失败、连接建立/断开、会话生命周期等审计事件可检索；日志中无凭据（回归 P3 红线），用户可控字段已剥离控制字符
 
-**Plans**: TBD
+**Plans**: 6/6 plans executed（5/5 executed + 1 gap-closure pending）
+**Wave 1**
+
+- [x] 08-01-PLAN.md — slog 原子迁移：logEvent 迁入 log.go 换 slog JSONHandler + 动态 stderr writer + parseEvents helper + 5 Go 测试与 phase05/07 两 UAT 脚本断言迁移 JSON 行解析（OPS-08，D-13/D-14/D-15/D-16/D-18）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 08-02-PLAN.md — 审计事件目录：attach/detach（client_id + reason 四值）/session_start/session_end/shutdown + throttled retry_after + remote 字段 sanitize 推广（OPS-08，D-17/D-19/D-20/D-21/D-22/D-23）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 08-03-PLAN.md — /healthz：免认证 200 JSON 四字段 + 根路径固定 + 405 成对 + sessionAlive/draining 两 atomic.Bool（OPS-06，D-07/D-09/D-10/D-11/D-12）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 08-04-PLAN.md — /metrics：手写 text 0.0.4 exposition 17 series + hubMu 快照 + 认证闸跟随 + Options.Version + 计数器挂点兑现（OPS-07，D-01..D-06/D-08/D-09/D-12）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 08-05-PLAN.md — 收口：phase08.mjs 六场景 UAT + README 运维节（免认证例外/Prometheus 配方/jq 检索）+ 08-UAT.md + 全量六段式回归（OPS-06/07/08）
+
+**Wave 6** *(gap closure — G-08-2，08-UAT test 2)*
+
+- [x] 08-06-PLAN.md — G-08-2 闭合：README journald 示例补 grep 防护 + 合流机理说明（wesh 代码零改动，D-14/D-15/D-16 保持）+ phase08-journal.mjs 合流模拟回归（负对照自证）（OPS-08）
 
 ### Phase 9: 发布与打磨
 
@@ -353,5 +376,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
 | 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
 | 7. 部署与配置 | 10/10 | Complete    | 2026-08-27 |
-| 8. 可观测性 | TBD | Not started | - |
+| 8. 可观测性 | 6/6 | Complete    | 2026-08-28 |
 | 9. 发布与打磨 | TBD | Not started | - |

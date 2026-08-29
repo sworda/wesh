@@ -193,6 +193,33 @@ func startTrackedServerWith(t *testing.T, argv []string, opts server.Options) (e
 	return exitCh, "ws://" + ln.Addr().String() + "/ws", wg.Wait
 }
 
+// startTrackedServerHandle 是 startTrackedServerWith 的 srv 暴露变体（08-review
+// WR-01 白盒夹具需要 *server.Server 调 FillOutboxForTest 出口）。装配、返回语义
+// 与同步边纪律与 startTrackedServerWith 逐字相同。
+func startTrackedServerHandle(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string, waitHandlers func(), srv *server.Server) {
+	t.Helper()
+	sess, err := pty.Start(argv, pty.StartOptions{Uid: -1, Gid: -1})
+	if err != nil {
+		t.Fatalf("pty.Start: %v", err)
+	}
+	exitCh = make(chan int, 1)
+	srv = server.New(sess, func(code int) { exitCh <- code }, opts)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	t.Cleanup(func() { killServer(ln, sess) })
+	var wg sync.WaitGroup
+	h := srv.Handler()
+	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wg.Add(1)
+		defer wg.Done()
+		h.ServeHTTP(w, r)
+	}))
+	return exitCh, "ws://" + ln.Addr().String() + "/ws", wg.Wait, srv
+}
+
 // dialHello 统一收口握手（RESEARCH §Wave 0）：以 wesh.v1 子协议 Dial → 发 Hello 首帧
 // → 读首帧断言为 Welcome 且 JSON 解码取 mode → 返回 (conn, mode)。
 // cols/rows 参数化是签名硬要求——02-03 TestReadOnlyAllowsResize 以 (111, 44) 复用
