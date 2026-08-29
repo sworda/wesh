@@ -1,7 +1,8 @@
 ---
 phase: 9
 slug: release-polish
-status: draft
+status: approved
+reviewed_at: 2026-08-29
 shadcn_initialized: false
 preset: none
 created: 2026-08-29
@@ -188,21 +189,28 @@ Accent reserved for: 状态面板提示行的动作链接槽位（`.status-hint 
 > Populated by the ui-phase UI-consideration probe (Step 9.5) and lifted by plan-phase's
 > `## UI Considerations` lift rule via the identical rule as SPEC `## Edge Coverage`.
 
-UI 元素清单：`status-panel`（static-content + interactive-control——C-10 修订 + role="alert" + pre-onopen 分派）、`custom-index-page`（media——用户自定义页伺服面，wesh 侧边界）、`cli-startup-output`（static-content——`--index` 启动校验错误行，CLI 表面）。本 phase 仍无 form / list-collection / nav 元素。
+UI 元素清单：`status-panel`（static-content + interactive-control——C-10 修订 + role="alert" + pre-onopen 分派；probe 检出 error/long-text/loading/overflow）、`custom-index-page`（media/served-page——用户自定义页伺服面，probe 原始分类 unclassified，经用户确认补 overflow/populated/empty/loading）、`cli-startup-output`（static-content——`--index` 启动校验错误行，CLI 表面）。本 phase 仍无 form / list-collection / nav 元素。
 
-Applicable state considerations resolved: 7 covered, 1 backstop, 1 dismissed
+分类基线：probe 检出 ∪ researcher 识别，经用户确认的并集（2026-08-29）。
+
+Applicable state considerations resolved: 9 covered, 1 backstop, 4 dismissed
 
 | Category | Element(s) | Status | Resolution / Reason |
 |----------|------------|--------|---------------------|
 | error | status-panel | ✅ covered | pre-onopen 1001 不再误述为「refusing new connections」——`!opened` 分支前先分派 1001 落 C-10 专版（R3）；稳态 1001 两部署形态下 hint 皆为真（R1 条件句式） |
-| error | cli-startup-output | ✅ covered | `--index` 不存在/不可读/非常规/超限 → exit 2 fail-fast，错误行只含路径与原因类别、不含内容字节（§Custom Index Contract 3 + 启动面红线） |
-| overflow | custom-index-page | ✅ covered | 16MiB 硬顶（D-08）在**启动读入期**拒绝（io.LimitReader）——运行期伺服的是已读入内存的定长字节，无溢出面；`index-max-size` TOML 键可调 |
 | long-text | status-panel | ✅ covered | C-10 新 hint 渲染行 ~88 字符（12px/400，480px max-width 内容宽 432px ≈ 60 字符/行）自然折 2 行，无截断；textContent 渲染无 HTML 注入面 |
+| loading | status-panel | dismissed | 面板是终态展示非异步加载面；瞬态进展属 C-9 Reconnecting（06 契约既管，本 phase 不修订） |
+| overflow | status-panel | ✅ covered | 面板文案全为契约定稿短文本（title/body/hint 均钉死），480px max-width + 自然折行，无滚动/裁切/截断面 |
+| `role="alert"` 真实 AT 播报行为（含 Reconnecting 1Hz 重读） | status-panel | 🧪 backstop | jsdom 断言 `#status` role 属性存在（phase06-dom.mjs 同族断言面）；真实屏幕阅读器播报/节流行为按项目分层测试策略属平台原生豁免面，UAT 以 skipped+reason 记录（06-VALIDATION §Manual-Only 先例） |
+| overflow | custom-index-page | ✅ covered | 16MiB 硬顶（D-08）在**启动读入期**拒绝（io.LimitReader）——运行期伺服的是已读入内存的定长字节，无溢出面；`index-max-size` TOML 键可调 |
 | populated | custom-index-page | ✅ covered | 用户页字节原样伺服：gzip 预压/明文双态按 Accept-Encoding 分派 + Vary 恒发（§Custom Index Contract 4）；安全头现状同源（契约行 5） |
 | empty | custom-index-page | ✅ covered | 0 字节文件合法——伺服空白页是用户明示的整页替换语义（D-07 拒绝列表 = 不存在/不可读/非常规/超限，不含空文件；「验证为主」纪律不过度校验） |
 | loading | custom-index-page | ✅ covered | 启动一次读入内存（D-07），运行期零磁盘 IO——伺服无加载态；读入失败即启动失败（exit 2），无部分可用中间态 |
-| partial / zero-one-many | （无 form/list 元素） | dismissed | 本 phase 无表单与列表集合（01 裁决同款） |
-| `role="alert"` 真实 AT 播报行为（含 Reconnecting 1Hz 重读） | status-panel | 🧪 backstop | jsdom 断言 `#status` role 属性存在（phase06-dom.mjs 同族断言面）；真实屏幕阅读器播报/节流行为按项目分层测试策略属平台原生豁免面，UAT 以 skipped+reason 记录（06-VALIDATION §Manual-Only 先例） |
+| error | cli-startup-output | ✅ covered | `--index` 不存在/不可读/非常规/超限 → exit 2 fail-fast，错误行只含路径与原因类别、不含内容字节（§Custom Index Contract 3 + 启动面红线） |
+| empty | cli-startup-output | dismissed | fail-fast 构造上恒输出原因行，无空输出形态 |
+| loading | cli-startup-output | dismissed | 启动读入为同步操作，失败即退出，无加载中间态 |
+| partial | cli-startup-output | dismissed | 错误行为原子单行（路径+原因类别），无部分数据形态 |
+| long-text | cli-startup-output | ✅ covered | 长路径在终端自然折行不截断；路径长度不设契约上限；错误行走 P3 记录式上报通道 |
 
 <!-- Status vocabulary (locked by probe-core projectTruths):
      ✅ covered   → a plain truth string lifted into must_haves.truths
@@ -225,11 +233,11 @@ Applicable state considerations resolved: 7 covered, 1 backstop, 1 dismissed
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved (2026-08-29)
