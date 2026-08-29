@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -462,7 +463,19 @@ func TestMetricsValues(t *testing.T) {
 		deadline := time.Now().Add(15 * time.Second)
 		for normalBytes.Load() < 12*1024*1024 {
 			if time.Now().After(deadline) {
-				t.Fatalf("normal client received %d bytes in 15s, want >= 12MiB (flood not flowing)", normalBytes.Load())
+				// 2026-08-29 macOS CI 偶发取证（run 33225598342，同 commit 双 run
+				// 一绿一红）：kick 后 flood 停流，normal 冻结 ~120KiB（≈ 2×64KiB
+				// outbox 量），子进程被反压阻塞至 cleanup。静态分析状态机自愈
+				// 完备且 Linux stress 30 次全绿——失败分支 dump 全 goroutine 栈
+				// （onChunk 卡 hubCond.Wait（门闭待重开）/ writer 卡 conn.Write
+				// （对端停读）/ writer 消失（静默死亡）三态分辨）+ 两次 metrics
+				// 快照（pty_output/ws_sent 冻结判定停流层级）。取证后本段删除。
+				snap1 := getMetrics(t, base+"/metrics")
+				time.Sleep(1 * time.Second)
+				snap2 := getMetrics(t, base+"/metrics")
+				gstack := make([]byte, 2<<20)
+				n := runtime.Stack(gstack, true)
+				t.Fatalf("normal client received %d bytes in 15s, want >= 12MiB (flood not flowing)\n=== metrics t0 ===\n%s\n=== metrics t0+1s ===\n%s\n=== goroutines ===\n%s", normalBytes.Load(), snap1, snap2, gstack[:n])
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
