@@ -19,11 +19,11 @@ import (
 )
 
 func FuzzDecodeFileConfig(f *testing.F) {
-	f.Add([]byte("port = 7681\nbind = \"127.0.0.1\"\n"))   // 合法键
+	f.Add([]byte("port = 7681\nbind = \"127.0.0.1\"\n"))      // 合法键
 	f.Add([]byte("credential = [\"FUZZ_PROBE_SECRET:x\"]\n")) // 值剥离红线探针
-	f.Add([]byte("unknown-key = 1\n"))                       // 未知键拒绝面（严格模式）
-	f.Add([]byte("port = \"not-a-number\"\n"))               // 类型不符面
-	f.Add([]byte{0xff, 0xfe, 0x00})                          // 非 UTF-8/二进制
+	f.Add([]byte("unknown-key = 1\n"))                        // 未知键拒绝面（严格模式）
+	f.Add([]byte("port = \"not-a-number\"\n"))                // 类型不符面
+	f.Add([]byte{0xff, 0xfe, 0x00})                           // 非 UTF-8/二进制
 	f.Fuzz(func(t *testing.T, data []byte) {
 		_, err := decodeFileConfig("fuzz.toml", bytes.NewReader(data))
 		if err == nil {

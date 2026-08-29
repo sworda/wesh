@@ -30,6 +30,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -77,31 +78,23 @@ func configErr(path, category, detail string) error {
 	return fmt.Errorf("invalid config file %s: %s (%s)", path, category, detail)
 }
 
-// loadFileConfig 加载并严格校验 TOML 配置文件（D-06 fail-fast 的错误经返回值
-// 上抛，exit 2 由调用方落地；NormalizeOrigin 同位纯函数形态——无副作用）。
+// decodeFileConfig 承载 TOML 解码与错误分类（fuzz 接缝，09-02 D-09）：reader
+// 委托使 bytes-in 可测（FuzzDecodeFileConfig 经 bytes.NewReader 直驱）；错误
+// 分类三分支与 configErr 包装为唯一副本（单写口不复制第二份——值剥离红线逻辑
+// 分叉即 SEC-01 破口），path 参数仅供 configErr 错误包装，不从 path 读盘。
 //
 // 严格模式经 Decoder 链式严格模式方法启用（官方唯一严格模式 API，该库无
 // SetStrict 方法——07-RESEARCH 明示，pkg.go.dev CITED；验收机械检查锚定下方
 // 调用行）。错误分类：
-//   - 文件不存在/不可读 → cannot read（OS 错误只含路径与系统类别，非配置值）；
 //   - 未知键 → *toml.StrictMissingError 经 errors.As 提取键名清单组 detail
 //     （StrictMissingError.Error() 是固定类别串，但其 String() 与逐个
 //     DecodeError.String() 带源行上下文会回显值——只取 Key()，Pitfall 5）；
 //   - TOML 解析失败/类型不符 → *toml.DecodeError 提取 Key()/Position() 组
-//     detail（Error() 文本对语法错误含源字符 %#U，同样不透传，Pitfall 5）。
-//
-// D-07：fc.Credential != nil 且 os.Stat(path).Mode().Perm() 非 0600/0400 →
-// 返回 warn 串（警告形态照 validateStartup 的 `wesh: warning:` 前缀先例，
-// main.go:691,693,699），警告串不含凭据值；Stat 失败不升级（加载已成功，
-// 权限检查是提醒而非闸门）。
-func loadFileConfig(path string) (fc *fileConfig, warn string, err error) {
-	f, err := os.Open(path) // D-06：不存在即拒（exit 2 由调用方落地）
-	if err != nil {
-		return nil, "", configErr(path, "cannot read", err.Error())
-	}
-	defer func() { _ = f.Close() }()
+//     detail（Error() 文本对语法错误含源字符 %#U，同样不透传，Pitfall 5）；
+//   - 兜底 → cannot parse（非 go-toml 结构化错误不透传原始文本，红线无例外通道）。
+func decodeFileConfig(path string, r io.Reader) (*fileConfig, error) {
 	var decoded fileConfig
-	derr := toml.NewDecoder(f).DisallowUnknownFields().Decode(&decoded)
+	derr := toml.NewDecoder(r).DisallowUnknownFields().Decode(&decoded)
 	if derr != nil {
 		var strictErr *toml.StrictMissingError
 		if errors.As(derr, &strictErr) {
@@ -109,7 +102,7 @@ func loadFileConfig(path string) (fc *fileConfig, warn string, err error) {
 			for i := range strictErr.Errors {
 				keys = append(keys, strings.Join(strictErr.Errors[i].Key(), "."))
 			}
-			return nil, "", configErr(path, "unknown keys", strings.Join(keys, ", "))
+			return nil, configErr(path, "unknown keys", strings.Join(keys, ", "))
 		}
 		var decodeErr *toml.DecodeError
 		if errors.As(derr, &decodeErr) {
@@ -118,11 +111,34 @@ func loadFileConfig(path string) (fc *fileConfig, warn string, err error) {
 			if key := decodeErr.Key(); len(key) > 0 {
 				detail = fmt.Sprintf("key %q line %d", strings.Join(key, "."), row)
 			}
-			return nil, "", configErr(path, "invalid toml", detail)
+			return nil, configErr(path, "invalid toml", detail)
 		}
 		// 兜底：非 go-toml 结构化错误（io 读取失败等）——不透传原始错误文本，
 		// 只报类别（值剥离红线无例外通道）。
-		return nil, "", configErr(path, "cannot parse", "unrecognized toml error")
+		return nil, configErr(path, "cannot parse", "unrecognized toml error")
+	}
+	return &decoded, nil
+}
+
+// loadFileConfig 加载并严格校验 TOML 配置文件（D-06 fail-fast 的错误经返回值
+// 上抛，exit 2 由调用方落地；NormalizeOrigin 同位纯函数形态——无副作用）。
+// 缩为 open-file + 委托 decodeFileConfig（解码/错误分类唯一副本在委托内）+
+// D-07 权限警告；错误分类第一分支：
+//   - 文件不存在/不可读 → cannot read（OS 错误只含路径与系统类别，非配置值）。
+//
+// D-07：fc.Credential != nil 且 os.Stat(path).Mode().Perm() 非 0600/0400 →
+// 返回 warn 串（警告形态照 validateStartup 的 `wesh: warning:` 前缀先例，
+// main.go:691,693,699），警告串不含凭据值；Stat 失败不升级（加载已成功，
+// 权限检查是提醒而非闸门）。Stat 仍按 path（委托只持 reader，权限语义属文件）。
+func loadFileConfig(path string) (fc *fileConfig, warn string, err error) {
+	f, err := os.Open(path) // D-06：不存在即拒（exit 2 由调用方落地）
+	if err != nil {
+		return nil, "", configErr(path, "cannot read", err.Error())
+	}
+	defer func() { _ = f.Close() }()
+	decoded, derr := decodeFileConfig(path, f)
+	if derr != nil {
+		return nil, "", derr
 	}
 	// D-07：含 credential 键且权限非 600/400 → stderr 警告放行（不阻断）。
 	if decoded.Credential != nil {
@@ -133,7 +149,7 @@ func loadFileConfig(path string) (fc *fileConfig, warn string, err error) {
 			}
 		}
 	}
-	return &decoded, warn, nil
+	return decoded, warn, nil
 }
 
 // prescanConfigPath 手工预扫 --config 路径（D-01 装配前提）：flag 注册前需要
