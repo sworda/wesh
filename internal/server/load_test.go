@@ -32,7 +32,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -42,6 +44,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/sworda/wesh/internal/proto"
+	"github.com/sworda/wesh/internal/pty"
 	"github.com/sworda/wesh/internal/server"
 )
 
@@ -543,4 +546,111 @@ func TestLoadGateTransitions(t *testing.T) {
 	}
 	t.Logf("LOADDATA cell=gate_transitions clients=1 profile=burst_64KiB/30ms(2.2MBps) slowlink=rate_limited_600KBps kicks=%d gate_transitions=%d outbox_max=%d alloc_peak=%d alloc_base=%d bytes=%d dur_ms=%d",
 		kicks, gateT, outboxMax, allocPeak, allocBase, r.bytes, dur.Milliseconds())
+}
+
+// ====== 高频建销 defunct 三面 ======
+
+// countFds 读 /proc/self/fd 目录项计数（Linux-only 夹具——调用点已 GOOS 门控）。
+func countFds(t *testing.T) int {
+	t.Helper()
+	ents, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatalf("read /proc/self/fd: %v", err)
+	}
+	return len(ents)
+}
+
+// readProcState 读 /proc/<pid>/stat 的 state 字段；进程已收割消失（健康归宿）
+// 或形态异常返回空串。comm 字段可含空格与括号——取最后一个 ')' 之后的首字段
+//（proc(5) stat 标准解析法）。
+func readProcState(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "" // 已收割消失 = 健康归宿
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 {
+		return ""
+	}
+	fields := strings.Fields(s[i+1:])
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+// TestLoadDefunct（高频建销三面，Linux-only——/proc 口径，darwin t.Skip；load
+// 测试本机手动跑 CI 不进）：基线 NumGoroutine + /proc/self/fd 计数 → N 轮
+//（spawn Server + argv=["true"] 立即退出子进程 + 等待 exitf 收口 + killServer
+// 轮内显式清理——非 t.Cleanup：fd/goroutine 回基线口径要求轮间释放，
+// t.Cleanup 会把 200 个 listener 积压到测试尾）→ 终态 NumGoroutine/fd 回基线
+// +容差 + 全部曾存子进程 /proc/<pid>/stat 无 Z 态（pty.Session Wait 唯一
+// 收割者承诺的负载形态证据）。
+//
+// 容差 +4 论证：exitf 在 lifecycle goroutine 内被调（terminate 单点），收码即
+// 该 goroutine 返回边缘；ReadLoop/inputWriter 的终结先于 exitf（Drain 关
+// master → close(inputDone) 均排在 EXIT 广播之前），http.Serve goroutine 随
+// ln.Close 即退——500ms settle + +4 裕度对时序 straggler 充分。
+func TestLoadDefunct(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("defunct 三面为 Linux-only（/proc 口径）——darwin 分支 skip")
+	}
+	const rounds = 200
+
+	// 基线采集前 settle：同进程内前序测试族的收尾 goroutine/http keep-alive 归位。
+	runtime.GC()
+	time.Sleep(500 * time.Millisecond)
+	baseGor := runtime.NumGoroutine()
+	baseFDs := countFds(t)
+
+	pids := make([]int, 0, rounds)
+	start := time.Now()
+	for i := 0; i < rounds; i++ {
+		sess, err := pty.Start([]string{"true"}, pty.StartOptions{Uid: -1, Gid: -1})
+		if err != nil {
+			t.Fatalf("round %d pty.Start: %v", i, err)
+		}
+		exitCh := make(chan int, 1)
+		srv := server.New(sess, func(code int) { exitCh <- code }, server.Options{})
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("round %d net.Listen: %v", i, err)
+		}
+		go http.Serve(ln, srv.Handler())
+		pids = append(pids, sess.Cmd.Process.Pid)
+
+		select {
+		case code := <-exitCh:
+			if code != 0 {
+				t.Fatalf("round %d exit code = %d, want 0（true 立即退出）", i, code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d exitf 5s 未触发（高频建销收口失败——lifecycle 卡死信号）", i)
+		}
+		killServer(ln, sess) // 轮内显式收口（每格独立收口纪律的 defunct 形态）
+	}
+	dur := time.Since(start)
+
+	runtime.GC()
+	time.Sleep(500 * time.Millisecond)
+	endGor := runtime.NumGoroutine()
+	endFDs := countFds(t)
+	if endGor > baseGor+4 {
+		t.Fatalf("goroutine 终态 = %d, want ≤ 基线 %d +4（%d 轮建销后 goroutine 泄漏——defunct 面一）", endGor, baseGor, rounds)
+	}
+	if endFDs > baseFDs+4 {
+		t.Fatalf("fd 终态 = %d, want ≤ 基线 %d +4（%d 轮建销后 fd 泄漏——defunct 面二）", endFDs, baseFDs, rounds)
+	}
+	zombies := 0
+	for _, pid := range pids {
+		if readProcState(pid) == "Z" {
+			zombies++
+		}
+	}
+	if zombies > 0 {
+		t.Fatalf("%d/%d 个曾存子进程残留 Z 态（收割者承诺失效——defunct 面三）", zombies, rounds)
+	}
+	t.Logf("LOADDATA cell=defunct rounds=%d goroutine_base=%d goroutine_end=%d fd_base=%d fd_end=%d zombies=%d dur_ms=%d",
+		rounds, baseGor, endGor, baseFDs, endFDs, zombies, dur.Milliseconds())
 }
