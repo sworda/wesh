@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Phase 9 UI-SPEC approved
-last_updated: "2026-08-29T13:14:57.756Z"
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-08-29T13:45:24.777Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 60
+  completed_plans: 61
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 1 of 10
-Status: Executing Phase 09
+Plan: 2 of 10
+Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [██████████] 100%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -124,6 +124,7 @@ Progress: [██████████] 100%
 | Phase 08 P04 | 48min | 2 tasks | 6 files |
 | Phase 08 P05 | 49min | 3 tasks | 6 files |
 | Phase 08 P06 | 9min | 2 tasks | 2 files |
+| Phase 09 P01 | 19min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -269,6 +270,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 08-05]: phase05-dom D5 踢出检测迁移 detach reason=kick 字段断言——08-02 D-21 折入的漏检消费者（dom 变体不在 08-01..08-04 回归集），本 plan 全量 14 脚本回归捕获；回归集含全量变体是迁移类变更漏检的最终防线
 - [Phase ?]: [Phase 08-05]: GOROOT gofmt 清零 multi_test/slowclient_test 既有漂移（07 deferred-items 既定路由终点，纯排版独立 style 提交先例第五次沿用）
 - [Phase ?]: [Phase 08-06]: G-08-2 闭合取 README 侧修复——两则 journald 示例统一 grep '^{' 预滤 + 合流机理说明（systemd 默认 StandardOutput=journal 使 stdout 横幅与 stderr JSON 合流），wesh 源码零改动（D-14/D-15/D-16 锁定推论）；新增 phase08-journal.mjs 合流模拟夹具（负对照自证不空转），进程收口取 child 'close' 事件防 exit 先于流 flush 竞态
+- [Phase ?]: [Phase 09-01]: goreleaser v2.18.0 构建目录实为 dist/wesh_<os>_<arch>_<variant>/（09-01 plan verify 块按 dist/<os>_<arch>/ 书写——按实证路径执行，断言面零变化）
+- [Phase ?]: [Phase 09-01]: 验收 grep 机械纪律第四次沿用——.goreleaser.yml 头注释登记 Pitfall 2 时避免字面引用模板串（注释提及同样计数）；YAML 静态审查通道 = ephemeral docker python+pyyaml（宿主无解析器，容器即弃零污染）
 
 ### Pending Todos
 
@@ -289,6 +292,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-29T06:28:47.359Z
-Stopped at: Phase 9 UI-SPEC approved
-Resume file: .planning/phases/09-release-polish/09-UI-SPEC.md
+Last session: 2026-08-29T13:45:24.748Z
+Stopped at: Completed 09-01-PLAN.md
+Resume file: None

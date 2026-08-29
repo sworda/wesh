@@ -68,7 +68,7 @@
 - [x] **OPS-07**: /metrics 监控端点（连接数、会话数、收发字节数）
 - [x] **OPS-08**: 结构化日志（JSON），含审计事件（认证失败、连接建立/断开、会话生命周期）
 - [x] **OPS-09**: 配置文件支持，CLI 参数覆盖配置文件
-- [ ] **OPS-10**: 单静态二进制发布（linux/darwin × amd64/arm64），前端 embed 内嵌为单 HTML
+- [x] **OPS-10**: 单静态二进制发布（linux/darwin × amd64/arm64），前端 embed 内嵌为单 HTML
 - [x] **OPS-11**: 可选启动后自动打开浏览器
 
 ## v2 Requirements
@@ -153,7 +153,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-07 | Phase 8 | Complete |
 | OPS-08 | Phase 8 | Complete |
 | OPS-09 | Phase 7 | Complete |
-| OPS-10 | Phase 9 | Pending |
+| OPS-10 | Phase 9 | Complete |
 | OPS-11 | Phase 7 | Complete |
 
 **Coverage:**
