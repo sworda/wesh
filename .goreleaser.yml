@@ -1,0 +1,45 @@
+# wesh 发布链配置（OPS-10）——09-CONTEXT 锁定决策落点：
+#   D-01 tag push 触发（release.yml）；D-02 供应链文件仅 checksums.txt；
+#   D-03 前端产物由 release.yml 显式编排（pnpm build 先于 goreleaser，不用 before hooks）；
+#   D-04 tar.gz 命名族 wesh_v<TAG>_<os>_<arch>.tar.gz（costly 级公开契约）。
+# Pitfall 钉点（09-RESEARCH）：
+#   Pitfall 1 — checksum.name_template 显式钉裸名（v2.18.0 默认是 {{ .ProjectName }}_{{ .Version }}_checksums.txt）
+#   Pitfall 2 — archive 命名用 .Tag 模板变量保 v 前缀（.Version 会被 TrimPrefix 剥 v）
+#   Pitfall 3 — builds.main 显式 ./cmd/wesh（默认 "." 在仓库根找不到 main 包必败）
+# Source: goreleaser v2.18.0 schema.json + internal/pipe/{archive,checksums,git} 源码核实
+version: 2
+project_name: wesh
+
+builds:
+  - main: ./cmd/wesh # Pitfall 3：默认 "." 必败
+    binary: wesh
+    env:
+      - CGO_ENABLED=0 # Pitfall 5：全仓唯一出现点（ci.yml -race 通道不设；release.yml 不设）
+    goos: [linux, darwin] # PROJECT 平台边界（Windows 终局 Out of Scope）
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} # 挂 cmd/wesh/main.go:32 var version = "dev" 注入点
+    mod_timestamp: "{{ .CommitTimestamp }}" # 可复现构建
+
+archives:
+  - formats: [tar.gz] # v2 schema：formats 为列表键
+    # D-04 命名族 wesh_v1.0.0_linux_amd64.tar.gz：.Tag 保留 v 前缀（Pitfall 2）
+    name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt # Pitfall 1：D-02 裸名契约，须显式钉死
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^style:"
