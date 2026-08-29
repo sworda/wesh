@@ -28,3 +28,15 @@ jobs:
           node-version: 24
       - run: pnpm -C web install --frozen-lockfile
       - run: pnpm -C web build # tsc 类型检查 + vite 构建一体（D-18 构建顺序的 CI 固化）
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      # D-10 CI 短跑回归门（09-02）：两目标两次独立调用——-fuzz 每次只能匹配单包单目标
+      #（工具链结构性约束，RESEARCH Pitfall 4）；不加竞态检测器（与 go leg 并行墙钟 +60-70s）。
+      # 种子/崩溃语料随 go leg 常规全量测试零时长回归（既有行覆盖，testdata/fuzz 入库 D-10）。
+      - run: go test -fuzz=FuzzDecodeHello -fuzztime=60s ./internal/proto/
+      - run: go test -fuzz=FuzzDecodeFileConfig -fuzztime=60s ./cmd/wesh/
