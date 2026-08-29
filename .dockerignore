@@ -1,0 +1,8 @@
+# 构建上下文排除（上下文体积与产物纯净）
+# 红线：绝不可忽略仓库根的 wesh 二进制——COPY wesh /wesh 依赖构建前置产物落在上下文根
+.git
+.planning
+**/node_modules
+web/dist
+dist
+*.tar.gz
