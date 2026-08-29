@@ -55,6 +55,15 @@ const (
 	// PITFALLS Pitfall 10 SIGWINCH 风暴防线）。Phase 9 负载测试标定回填
 	//（P2 D-10 纪律）。消费点 = resize.go 仲裁器单 time.Timer reset（05-04 已落地）。
 	defaultResizeDebounce = 50 * time.Millisecond
+	// defaultGateDwell 已废弃（2026-08-29 kickOrCreditLocked 注释第 3/4 轮实证）：
+	// 计时器踢出与 R-08「全体可写端均满 → 置信用保护」语义冲突（TestGlobalCredit
+	// 双 stall 设计场景中踢出了持信用端，10/10 稳定复现），整体移除。
+	// defaultAttachGrace attach 宽限期（500ms）：新端 writer 首次调度前的满箱
+	// 瞬态（单核下调度延迟可达百毫秒级）不构成慢端证据——宽限内满箱失败一律置
+	// 信用不踢（kickOrCreditLocked）。三轮失败现场（kick_fail 系列）被误踢端均
+	// 为刚 attach 的消费端（attach+6ms / attach+177ms），宽限期直接封堵该窗口。
+	// 活跃消费端恢复是毫秒级（三个数量级余量）。Phase 9 负载测试标定回填。
+	defaultAttachGrace = 500 * time.Millisecond
 )
 
 // WritePolicy 取值（D-05 公开 CLI 契约——--write-policy=owner|all，全名无短选项
@@ -111,7 +120,10 @@ type client struct {
 	dims dims
 
 	attachSeq int64 // attach FIFO 序号（registerLocked 分配；05-03 owner 递补取序）
-	outbox    *outbox
+	// attachedAt 为 attach 完成时刻（registerLocked 记录，plain 只读字段——运行期
+	// 只在 hubMu 内读）：defaultAttachGrace 宽限判定的起点（kickOrCreditLocked）。
+	attachedAt time.Time
+	outbox     *outbox
 	done      chan struct{}      // writer 终结信号——kick/detach 关闭，恰好一次由 hubMu 内注册表成员判定保证
 	cancel    context.CancelFunc // pinger 所在 ctx 的 cancel（Attach 派生，随客户端生命周期）
 
@@ -285,6 +297,12 @@ type registry struct {
 func (r *registry) registerLocked(c *client) {
 	r.seq++
 	c.attachSeq = r.seq
+	// attach 宽限起点（defaultAttachGrace，kickOrCreditLocked 消费）——仅零值时
+	// 赋 now：直构 client 的测试可预置回拨值表达「早已存在的稳定连接」不被覆盖
+	//（resize_test.go TestPushSessionDimsKickRecalc 的 B 端确定性踢出前提）。
+	if c.attachedAt.IsZero() {
+		c.attachedAt = time.Now()
+	}
 	if r.set == nil {
 		r.set = make(map[*client]struct{}) // 零值可用（TestClientCountInvariant 直构造，无需 Server/pty 装配）
 	}
@@ -403,13 +421,37 @@ func (s *Server) allWritableBlockedLocked() bool {
 	return writable > 0
 }
 
-// kickOrCreditLocked 是 trySend 写满后的踢出/信用分工判定（R-08 逐字）：
+// kickOrCreditLocked 是 trySend 写满后的踢出/信用分工判定（R-08）：
 //   - c.mode == ro → 立即 1013 踢出（旁观者可弃，永不持信用）；
-//   - c 为 rw 且剔除 c 后仍存在未 blocked 的可写端 → 立即 1013 踢出（慢的是
-//     离群者，MULTI-03 本义）；
-//   - c 为 rw 且全体可写端均满 → 不踢，置 c.creditBlocked = true（保护 owner
-//     演示者，离群慢端才踢；onChunk 下轮门判定闭合 → 持块停读 PTY）。
+//   - c 为 rw 且已出 attach 宽限（defaultAttachGrace）+ 存在未 blocked 的可写端
+//     → 立即 1013 踢出（离群慢端，MULTI-03 本义）；
+//   - 其余（宽限内瞬态满 / 全体可写端均满）→ 不踢，置 c.creditBlocked = true
+//     （保护 owner 演示者；onChunk 下轮门判定闭合 → 持块停读 PTY）。
 //
+// 判定演化（2026-08-29 单核压测 GOMAXPROCS=1 多轮实证裁决，macOS CI run
+// 33225598342 同源偶发）：
+//   1. 原标志判定（creditBlocked 仅 trySend 失败时置位）：同轮 fan-out map 随机
+//      序下双满瞬间先失败端被误判离群者踢出（kick_fail_13：healthy 端被踢 +
+//      滞留端 writer 阻塞 + 门闭死锁，onChunk 卡 hubCond.Wait 全链栈证）；
+//   2. 「实况余量替代标志」：慢端 writer 灌 TCP 吸收带期间 outbox 被清空
+//      （bytes=0），刚 attach 的健康端 6ms 内被误踢（kick_fail2_3：detach
+//      client_id=2 于 attach+6ms）；
+//   3. 「writeBlockedEver 自身实锤」：门闭后 fan-out 停止、trySend 失败不再发生，
+//      踢出判定失去触发点；且吸收带在门闭反压下耗尽极慢，writer 长期不阻塞
+//      （kick_fail3_7 同形态 + 回归 TestSlowConsumerKick 门闭死锁实证）；
+//   4. 「writePending + dwell 轮询」：吸收带在门闭反压下耗尽极慢，子进程全速
+//      写完先到（TestSlowConsumerKick 3.59s 收 1000 子进程退出广播，want 1013）
+//      ——观测窗口慢于洪水耗尽；
+//   5. 「dwell 计时器踢出」：与 R-08「全体可写端均满 → 置信用保护」语义根本冲突
+//      ——TestGlobalCredit 双 stall 设计场景（c2 持信用恒满）中被计时器踢出，
+//      10/10 稳定复现「close code = 1000, want 1013」，整体移除；
+//   6. 终稿（attach 宽限 + 旧行为判定原样恢复）：多轮失败现场的被误踢端全部是
+//      刚 attach 的消费端（attach+6ms / attach+177ms）——writer 首次调度前的
+//      满箱瞬态是唯一稳定的误踢源。宽限期封堵该窗口（宽限内满箱一律置信用，
+//      不踢任何端），宽限外恢复原「存在未 blocked 的可写端 → 踢 c」纯标志判定
+//      （TestGlobalCredit/TestSlowConsumerKick 设计前提的踢出时序原样保持）。
+//      时间维度方案（writeBlockedEver/writePending/dwell）全部废弃——吸收带
+//      窗口内「谁慢」的瞬时与历史信号均不可靠，唯「新端瞬态」是可识别误踢源。
 // 触发帧不丢（must_haves prohibitions 硬约束——丢帧保连接 = 有序流画面静默损坏，
 // RESEARCH Anti-Pattern 2）：信用路径把被拒的当前帧暂存 c.creditPending，
 // afterDrain 半水位恢复时重投（TestGlobalCredit 门转换字节精确断言实测发现：
@@ -421,22 +463,26 @@ func (s *Server) allWritableBlockedLocked() bool {
 // 迟滞带论证（review #2）：门关闭阈值 = outbox 写满（100% 字节上界才置
 // creditBlocked）、恢复阈值 = drain 至 <50%——2:1 迟滞带内建于分工表，非
 // 『50% 单点抖动』；残余振荡（滴漏读者每次 drain 开门、下一 chunk 可能再闭门）
-// 经 RESEARCH Open Question 3 裁决接受（各端持续前进；dwell 计时器 Phase 9
-// 负载标定时评估）。调用方必须已持 hubMu。
+// 经 RESEARCH Open Question 3 裁决接受（各端持续前进；attach 宽限 2026-08-29
+// 落地——macOS CI 偶发单核压测实证其必要性，dwell 计时器方案经同日第 5 轮
+// 实证否决废弃，见上方演化记录）。调用方必须已持 hubMu。
 func (s *Server) kickOrCreditLocked(c *client, frame []byte) {
 	if c.mode.Load() == proto.ModeRO {
 		s.kickSlowConsumerLocked(c)
 		return
 	}
-	// rw：剔除 c 后仍存在未 blocked 的可写端 → c 是离群慢端，立即踢出。
-	for oc := range s.registry.set {
-		if oc != c && oc.mode.Load() == proto.ModeRW && !oc.creditBlocked {
-			s.kickSlowConsumerLocked(c)
-			return
+	// rw 且已出 attach 宽限 + 存在未 blocked 的可写端 → c 是离群慢端，立即踢出
+	//（原 R-08 判定原样恢复；宽限封堵新端瞬态误踢窗口，见上方演化记录）。
+	if time.Since(c.attachedAt) >= defaultAttachGrace {
+		for oc := range s.registry.set {
+			if oc != c && oc.mode.Load() == proto.ModeRW && !oc.creditBlocked {
+				s.kickSlowConsumerLocked(c)
+				return
+			}
 		}
 	}
-	// 全体可写端均满 → 不踢，计入信用（保护 owner 演示者；幂等置位防重复计数、
-	// 防触发帧被二次暂存覆写）。
+	// 全体可写端均满（或 c 在 attach 宽限内）→ 不踢，计入信用（保护 owner 演示
+	// 者；幂等置位防重复计数、防触发帧被二次暂存覆写）。
 	if !c.creditBlocked {
 		c.creditBlocked = true
 		c.creditPending = frame      // 触发帧暂存，afterDrain 重投（触发帧不丢）

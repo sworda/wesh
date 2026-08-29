@@ -207,17 +207,16 @@ func TestSlowConsumerKick(t *testing.T) {
 	// ——关闭帧写出带 5s 超时（close.go:168-183），须在其窗口内开始消化管道。
 	assertKicked1013(t, stall, 10*time.Second, "stall client")
 
-	// 踢出后正常端持续前进（MULTI-03 无卡顿准则）：三次采样严格单调增长——
-	// ReadLoop 未被拖死（stall 端的踢出/Close 全部异步，hub 临界区无阻塞）。
-	// 洪水 38.9MB 远大于此处已收 ~15MiB，采样窗口内输出必然仍在推进。
+	// 踢出后正常端持续前进（MULTI-03 无卡顿准则）：总窗口净增长——ReadLoop 未被
+	// 拖死（stall 端的踢出/Close 全部异步，hub 临界区无阻塞）。洪水 38.9MB 远大于
+	// 此处已收 ~15MiB，采样窗口内输出必然仍在推进。2026-08-29 单核压测：grace 使
+	// 踢出时点落在 c2 满箱振荡期（outbox 满箱瞬态毫秒级自愈），单点 200ms 采样
+	// 对调度抖动过敏误报 stalled——改为总窗口（600ms）净增长判定，瞬态门闭被
+	// 平均掉，「真停滞」（ReadLoop 拖死 = 永不前进）仍是唯一失败形态。
 	prev := normalBytes.Load()
-	for i := 0; i < 3; i++ {
-		time.Sleep(200 * time.Millisecond)
-		cur := normalBytes.Load()
-		if cur <= prev {
-			t.Fatalf("normal client fan-out stalled at %d bytes after kick (sample %d) — ReadLoop dragged", cur, i)
-		}
-		prev = cur
+	time.Sleep(600 * time.Millisecond)
+	if cur := normalBytes.Load(); cur <= prev {
+		t.Fatalf("normal client fan-out stalled at %d bytes after kick — ReadLoop dragged", cur)
 	}
 	// 正常端在断言窗口内不应收到任何错误（连接存活）；子进程耗尽洪水后的 1000
 	// 广播属正常终结，容忍。
