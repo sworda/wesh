@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Completed 09-06-PLAN.md
-last_updated: "2026-08-29T15:19:11.585Z"
+stopped_at: Completed 09-07-PLAN.md
+last_updated: "2026-08-29T15:59:40.380Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 63
+  completed_plans: 64
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 4 of 10
+Plan: 5 of 10
 Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 91%
 
 ## Performance Metrics
 
@@ -127,6 +127,7 @@ Progress: [█████████░] 90%
 | Phase 09 P01 | 19min | 2 tasks | 2 files |
 | Phase 09 P02 | 21min | 2 tasks | 4 files |
 | Phase 09 P06 | 20min | 2 tasks | 1 files |
+| Phase 09 P07 | 28min | 2 tasks tasks | 3 files files |
 
 ## Accumulated Context
 
@@ -279,6 +280,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 09-06]: 负载矩阵标定通道落地——//go:build load 首行硬纪律 + 触发式洪水（bash read 闸消 pre-attach 不确定量）+ 尾闸 sleep 1 消 EXIT/1000 广播对 outbox 残余的截断竞态（首跑实测 32 端格缺 22428 字节，严格字节相等断言结构性恢复）
 - [Phase ?]: [Phase 09-06]: D-12 三断言全量实测现值成立零证伪——fanout 1/4/16/32 kicks=0 逐字节一致；legit-slow 400KB/s 读者 kicks=0；32 端 Alloc 峰值 19.8MB<=64MiB；信用门 6 次/16.7s=0.36/s 不震颤；defunct 三面 200 轮 goroutine/fd 精确回基线零 Z 态
 - [Phase ?]: [Phase 09-06]: go list 排除证据取 TestGoFiles+XTestGoFiles 双清单（server_test 外部包文件在 XTestGoFiles，plan 字面单清单为弱证据按意图升级）
+- [Phase ?]: [Phase 09-07]: Dockerfile ADD 远程 URL 制品必须 --chmod=755——默认落 0600 无执行位，scratch 零 RUN 无法补救（RESEARCH 定稿缺失，/tini permission denied exit 126 实测命中）；与 ADD --checksum=sha256 同行是供应链钉死+执行位的唯一形态
+- [Phase ?]: [Phase 09-07]: 实机 systemctl 通道 = systemd --user（08-05 先例单元 wesh-uat.service 即 user manager，plan『08-05 同通道』字面对应物）；两个 systemd 通道断言纪律——ExecMainStatus 须在 auto-restart 窗口内捕获（新进程启动归零）；停窗口夹具须 trap TERM+HUP（KillMode=control-group 使 systemctl stop 直 TERM 全 cgroup，只 trap HUP 结构性失效 0.4ms 瞬杀实测）
+- [Phase ?]: [Phase 09-07]: 验收 grep 机械纪律第六次沿用——unit 加固张力注释以散文说明（家目录隔离/根文件系统只读化），不写 ProtectHome/ProtectSystem 字面（注释提及同样计数，验收 ==0 是源码级机械检查）；systemd 239 纹理记录：manual stop 下 wesh 退出 255 → ActiveState=failed 但绝不复活（09-09 README 说明素材）
 
 ### Pending Todos
 
@@ -299,6 +303,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-29T15:18:40.906Z
-Stopped at: Completed 09-06-PLAN.md
+Last session: 2026-08-29T15:59:40.140Z
+Stopped at: Completed 09-07-PLAN.md
 Resume file: None
