@@ -32,7 +32,7 @@ created: 2026-08-29
 - **After every task commit:** Run `go test ./...`
 - **After every plan wave:** Run full suite + 该波次相关 UAT 脚本
 - **Before `/gsd:verify-work`:** Full suite must be green
-- **Max feedback latency:** 120 秒
+- **Max feedback latency:** 120 秒（不含 load/fuzz 长测——手动 `-tags=load` 负载矩阵与 2×10min 长 fuzz 不进 CI/采样回路，D-11/D-14 既定设计）
 
 ---
 

@@ -649,19 +649,19 @@ const HINT_SHUTDOWN =
 | A6 | ADD --checksum 在本机 docker 24.0.6（buildx 0.11.2）可用（需 `# syntax=docker/dockerfile:1` 拉取 1.6+ frontend） | Dockerfile | 构建失败——D-16 本机构建实测兜底；退路 = alpine builder stage 下载+sha256sum -c（§Open Questions 未列，实现期两分钟即可切换） |
 | A7 | goreleaser v1 的裸 checksums.txt 默认（D-02 表述的历史来源） | Pitfall 1 | 无行动影响——v2.18.0 实证默认已变，显式钉名与默认漂移解耦 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **index-max-size TOML 值形态**
+1. **index-max-size TOML 值形态** — **RESOLVED**: 采纳 Recommendation「整数字节」，落点 09-04 Task 2（fileConfig.IndexMaxSize *int 纯配置键、validateStartup ≤0 拒绝）与 09-09 Task 2 ③（README 配置节写明单位字节）。
    - What we know: D-08 只锁定「TOML 配置键可调、不开 CLI flag」；现有 duration 键为字符串形态（ping-interval="5s"）、计数/尺寸键为整数（max-clients=16）
    - What's unclear: 字节尺寸类键取整数（`index-max-size = 33554432`，零新解析、go-toml 原生 int）还是单位串（`"32MiB"`，需自写解析器——违零新依赖倾向）
    - Recommendation: **整数字节**（与 TOML 类型系统一致、零新代码、P2 D-15 flag 面紧缩哲学延伸）；README 写明单位字节；校验 `> 0`（负/零 exit 2 落 validateStartup 矩阵）
 
-2. **Cloudflare idle timeout 官方数值直取**
+2. **Cloudflare idle timeout 官方数值直取** — **RESOLVED**: 按 Recommendation 既定执行——官方文档写 + 显著「未实测」标注（ping 5s 余量使结论不敏感），落点 09-09 Task 2 ④ Cloudflare 配方节。
    - What we know: 社区共识 ~100s；WebFetch 被安全中心网络策略阻断、Context7 配额耗尽，本会话无法读 developers.cloudflare.com 原文
    - What's unclear: 官方当前表述与 Enterprise 可调性
    - Recommendation: 按 D-15 既定执行（官方文档写 + 标注未实测）；执行期若网络条件允许补一次原文核实，不阻塞（ping 5s 余量使结论不敏感）
 
-3. **darwin 产物运行冒烟是否进 release.yml**
+3. **darwin 产物运行冒烟是否进 release.yml** — **RESOLVED**: 采纳 Recommendation「不加」（D-03 显式编排面最小 + ci.yml darwin leg 常规回归背书），落点 09-01 Task 2（release.yml 单 ubuntu leg，无 macOS smoke leg）；macOS 冒烟留作 09-VALIDATION Manual-Only 登记项。
    - What we know: D-03 最小面只有 ubuntu leg；darwin 二进制 Linux 本机不可运行；macos-latest runner 跑 `wesh --version` 冒烟成本 ~1min
    - What's unclear: 是否值得为 darwin 产物加 macOS smoke leg（超出 D-03 字面范围）
    - Recommendation: 不加（D-03 显式编排面最小 + Phase 1 起 ci.yml darwin leg 常规回归背书）；产物检查（file/解压内容/校验和）覆盖发布物形状——登记为可接受的验证取舍，若用户要求再加
