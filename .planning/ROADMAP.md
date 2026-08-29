@@ -359,12 +359,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 自定义首页 HTML 可配置生效；负载/模糊测试通过（高吞吐 fan-out、慢客户端矩阵、百万小帧/空帧、高频建销会话无 defunct），测试数据回填 P2/P5 默认参数
   3. 部署文档覆盖 nginx/Cloudflare/Caddy 反代配方（含空闲超时与 ping 间隔关系）、Docker（tini/PID 1 收割）、systemd unit 模板（Restart/LimitNOFILE/EnvironmentFile 600）
 
-**Plans**: 2/10 plans executed
+**Plans**: 3/10 plans executed
 **Wave 1**
 
 - [x] 09-01-PLAN.md — 发布链 tracer：.goreleaser.yml（D-01..D-04 定稿）+ release.yml 显式编排 + 本机 snapshot 预演与四平台产物分层断言（OPS-10）
 - [x] 09-02-PLAN.md — fuzz 两目标：decodeFileConfig reader 接缝 + FuzzDecodeFileConfig/FuzzDecodeHello/FuzzDecodeResize + ci.yml fuzz leg（D-09/D-10）
-- [ ] 09-06-PLAN.md — 负载矩阵：load_test.go（//go:build load）三断言（零误踢/内存上界/门频率）+ defunct 三面 + 标定数据落表（D-11/D-12）
+- [x] 09-06-PLAN.md — 负载矩阵：load_test.go（//go:build load）三断言（零误踢/内存上界/门频率）+ defunct 三面 + 标定数据落表（D-11/D-12）
 - [ ] 09-07-PLAN.md — Dockerfile（scratch+tini sha256 钉死）+ deploy/wesh.service + 本机 docker/实机 systemctl 双实测（D-16/D-17）
 - [ ] 09-08-PLAN.md — Caddy 配方实证：Linux 协议层（Host 透传/WS 全链/idle 存活）+ 双机载具与 Windows 确认门（D-15）
 
@@ -402,4 +402,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
 | 7. 部署与配置 | 10/10 | Complete    | 2026-08-27 |
 | 8. 可观测性 | 6/6 | Complete    | 2026-08-28 |
-| 9. 发布与打磨 | 2/10 | In Progress|  |
+| 9. 发布与打磨 | 3/10 | In Progress|  |

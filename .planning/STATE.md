@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-08-29T14:16:17.573Z"
+stopped_at: Completed 09-06-PLAN.md
+last_updated: "2026-08-29T15:19:11.585Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 62
+  completed_plans: 63
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 3 of 10
+Plan: 4 of 10
 Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [█████████░] 89%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -126,6 +126,7 @@ Progress: [█████████░] 89%
 | Phase 08 P06 | 9min | 2 tasks | 2 files |
 | Phase 09 P01 | 19min | 2 tasks | 2 files |
 | Phase 09 P02 | 21min | 2 tasks | 4 files |
+| Phase 09 P06 | 20min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -275,6 +276,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 09-01]: 验收 grep 机械纪律第四次沿用——.goreleaser.yml 头注释登记 Pitfall 2 时避免字面引用模板串（注释提及同样计数）；YAML 静态审查通道 = ephemeral docker python+pyyaml（宿主无解析器，容器即弃零污染）
 - [Phase ?]: [Phase 09-02]: proto fuzz 直挂既有导出函数零改造（plan must_have 既定）——RED 种子即 PASS 为设计内回归门性质，按 TDD fail-fast 规则调查后继续；plan type=execute 不适用 plan 级 RED/GREEN 门序列，task 级 tdd 以 test→feat 提交拆分兑现
 - [Phase ?]: [Phase 09-02]: ci.yml fuzz job 注释避开 fuzztime=60s / go test -race 字面（验收 grep 机械纪律第五次沿用）；YAML 静态审查 ephemeral docker pyyaml 通道第二次沿用并强化为全结构断言
+- [Phase ?]: [Phase 09-06]: 负载矩阵标定通道落地——//go:build load 首行硬纪律 + 触发式洪水（bash read 闸消 pre-attach 不确定量）+ 尾闸 sleep 1 消 EXIT/1000 广播对 outbox 残余的截断竞态（首跑实测 32 端格缺 22428 字节，严格字节相等断言结构性恢复）
+- [Phase ?]: [Phase 09-06]: D-12 三断言全量实测现值成立零证伪——fanout 1/4/16/32 kicks=0 逐字节一致；legit-slow 400KB/s 读者 kicks=0；32 端 Alloc 峰值 19.8MB<=64MiB；信用门 6 次/16.7s=0.36/s 不震颤；defunct 三面 200 轮 goroutine/fd 精确回基线零 Z 态
+- [Phase ?]: [Phase 09-06]: go list 排除证据取 TestGoFiles+XTestGoFiles 双清单（server_test 外部包文件在 XTestGoFiles，plan 字面单清单为弱证据按意图升级）
 
 ### Pending Todos
 
@@ -295,6 +299,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-29T14:16:17.544Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-08-29T15:18:40.906Z
+Stopped at: Completed 09-06-PLAN.md
 Resume file: None
