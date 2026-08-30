@@ -1,9 +1,10 @@
 // Phase 09 UAT：Caddy 反代双机全链实证（09-08 D-15；G-07-2 nginx 套路的 Caddy 版——
 // Linux 侧 Caddy+wesh 生命周期由同目录配套 .sh 控制脚本经 ssh 管理）。
 // 拓扑（见本目录 README.md 双机模型）：Linux 侧一次性 Caddy（/tmp/wesh-uat/caddy，
-// LAN 绑定 0.0.0.0:10014 reverse_proxy → loopback wesh :17682 --credential 一次性
-// 测试凭据）；Windows 侧 Playwright Chromium 直连 LAN IP（端口与 a2 的 10013 错开；
-// 连通性以安全组放通为前提，setup 前置检查）。
+// LAN 绑定 0.0.0.0:10014 reverse_proxy → loopback wesh :17682，凭据经 WESH_CREDENTIAL
+// env 递交——setup 时由本脚本经 ssh stdin 传入，不进 argv/ps 可见面）；Windows 侧
+// Playwright Chromium 直连 Linux 侧 LAN IP（端口与 a2 的 10013 错开；连通性以安全组
+// 放通为前提，setup 前置检查）。
 // Caddy 断言面差异（Pitfall 6，与 nginx 配方互抄必错）：reverse_proxy 默认原样透传
 // Host（wesh Origin 同源校验天然过——ctl 侧不配任何 Host 改写行）；WS upgrade 内建
 // 自动处理；hijack 后无默认 WS idle 超时（t3 65s 空闲窗实证）。
@@ -18,20 +19,30 @@ import { fileURLToPath } from 'node:url';
 import { Check, sleep } from './lib/check.mjs';
 import { launch, CRED, authedContext, openSession, runCmd, waitTermText, panel } from './lib/browser.mjs';
 
-const SSH = '9.134.229.124';
-const BASE = 'http://9.134.229.124:10014'; // LAN 直连（安全组已放通，连通性实证）
+// rig 配置对齐本目录 README/lib/server.mjs 既有环境变量机制（09-review WR-04：
+// 消除硬编码内网 IP——换机器/换人可运行）：WESH_UAT_SSH（必填）/WESH_UAT_SSH_PORT/
+// WESH_UAT_TARGET_HOST；凭据单一事实源 = lib/browser.mjs 的 CRED（WESH_UAT_CRED
+// 覆盖机制），setup 时经 ssh stdin 递交 ctl——两侧同源，不再「pw 可覆盖/ctl
+// 硬编码」分叉导致 T1/T2 静默 401 变红。
+const SSH = process.env.WESH_UAT_SSH || '';
+const SSH_PORT = process.env.WESH_UAT_SSH_PORT || '22';
+if (!SSH) throw new Error('WESH_UAT_SSH 未设置（形态 user@host；端口经 WESH_UAT_SSH_PORT，默认 22）。见 web/uat/pw/README.md');
+const TARGET_HOST = process.env.WESH_UAT_TARGET_HOST || (SSH.includes('@') ? SSH.split('@')[1] : SSH);
+const BASE = `http://${TARGET_HOST}:10014`; // 浏览器直连 Linux 侧 LAN（端口与 a2 的 10013 错开；安全组放通为前提）
 const IDLE_MS = 65_000; // >60s 空闲窗（预期：Caddy hijack 后无默认 WS idle 超时——不断连）
 const CTL_NAME = 'phase09-caddy-ctl.sh';
 const CTL_LOCAL = fileURLToPath(new URL(`./${CTL_NAME}`, import.meta.url)).replaceAll('\\', '/');
 const AUTH_HEADER = 'Basic ' + Buffer.from(CRED).toString('base64');
 
 const results = [];
-const ssh = (cmd) => execSync(`ssh -o BatchMode=yes ${SSH} ${JSON.stringify(cmd)}`, { encoding: 'utf8' }).trim();
+const ssh = (cmd, opts = {}) => execSync(`ssh -o BatchMode=yes -p ${SSH_PORT} ${SSH} ${JSON.stringify(cmd)}`, { encoding: 'utf8', ...opts }).trim();
 const ctl = (args) => ssh(`bash /tmp/wesh-uat/${CTL_NAME} ${args}`);
 
 async function setup() {
-  execSync(`scp -o BatchMode=yes "${CTL_LOCAL}" ${SSH}:/tmp/wesh-uat/${CTL_NAME}`, { stdio: 'pipe' });
-  const out = ctl('setup'); // Linux 侧：caddy 二进制幂等部署 + 一次性 Caddy(LAN) + loopback wesh
+  execSync(`scp -o BatchMode=yes -P ${SSH_PORT} "${CTL_LOCAL}" ${SSH}:/tmp/wesh-uat/${CTL_NAME}`, { stdio: 'pipe' });
+  // 凭据经 stdin 单程递交（不进远端 argv/命令行——ps 不可见；README「凭据勿走
+  // ps 可见面」指引同向）；ctl setup 读首行，空读回落一次性默认（ctl 手跑兼容）。
+  const out = ssh(`bash /tmp/wesh-uat/${CTL_NAME} setup`, { input: `${CRED}\n` }); // Linux 侧：caddy 二进制幂等部署 + 一次性 Caddy(LAN) + loopback wesh
   if (!out.includes('CADDY_UP')) throw new Error(`Linux 侧 setup 失败: ${out}`);
 }
 async function teardown() {
