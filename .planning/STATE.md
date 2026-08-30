@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Completed 09-07-PLAN.md
-last_updated: "2026-08-29T15:59:40.380Z"
+stopped_at: Completed 09-08-PLAN.md
+last_updated: "2026-08-30T03:54:31.785Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 64
+  completed_plans: 65
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 5 of 10
+Plan: 6 of 10
 Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [█████████░] 91%
+Progress: [█████████░] 93%
 
 ## Performance Metrics
 
@@ -128,6 +128,7 @@ Progress: [█████████░] 91%
 | Phase 09 P02 | 21min | 2 tasks | 4 files |
 | Phase 09 P06 | 20min | 2 tasks | 1 files |
 | Phase 09 P07 | 28min | 2 tasks tasks | 3 files files |
+| Phase 09 P08 | 55min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -283,6 +284,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 09-07]: Dockerfile ADD 远程 URL 制品必须 --chmod=755——默认落 0600 无执行位，scratch 零 RUN 无法补救（RESEARCH 定稿缺失，/tini permission denied exit 126 实测命中）；与 ADD --checksum=sha256 同行是供应链钉死+执行位的唯一形态
 - [Phase ?]: [Phase 09-07]: 实机 systemctl 通道 = systemd --user（08-05 先例单元 wesh-uat.service 即 user manager，plan『08-05 同通道』字面对应物）；两个 systemd 通道断言纪律——ExecMainStatus 须在 auto-restart 窗口内捕获（新进程启动归零）；停窗口夹具须 trap TERM+HUP（KillMode=control-group 使 systemctl stop 直 TERM 全 cgroup，只 trap HUP 结构性失效 0.4ms 瞬杀实测）
 - [Phase ?]: [Phase 09-07]: 验收 grep 机械纪律第六次沿用——unit 加固张力注释以散文说明（家目录隔离/根文件系统只读化），不写 ProtectHome/ProtectSystem 字面（注释提及同样计数，验收 ==0 是源码级机械检查）；systemd 239 纹理记录：manual stop 下 wesh 退出 255 → ActiveState=failed 但绝不复活（09-09 README 说明素材）
+- [Phase ?]: [Phase 09-08]: Caddyfile LAN 监听站点地址须裸 :PORT（28ae2f2 勘误）——http://0.0.0.0:PORT 在 Caddy 是字面 Host 匹配（仅 Host: 0.0.0.0 命中，真实主机名落空走兜底空 200），与 nginx 监听语义相反；两平台配方互抄必错第二实证点（Pitfall 6）
+- [Phase ?]: [Phase 09-08]: Caddy 三行为面实证锁定（09-09 README Caddy 节「实证 2026-08-30，Caddy v2.11.4」素材）：reverse_proxy 默认原样透传 Host（Origin 同源校验天然过，零 Host 行）；WS upgrade 内建自动；hijack 后无默认 WS idle 超时（65s 空闲存活双机实测）
+- [Phase ?]: [Phase 09-08]: Task 1 首证「外部 Host 照常被服务」结论勘误为假绿——proto-verify 就绪探针 curl 0.0.0.0 自身使 Host 字面命中站点地址；外部 Host 行为面断言必须以真实主机名/LAN IP 为请求目标（探针目标与断言语义正交纪律）
+- [Phase ?]: [Phase 09-08]: pw t1 认证形态与 phase07-a2 关键差异——Caddy 无认证层走 authedContext 预置 Authorization（避开 wesh 401→recordFail→429 节流 1s 窗口），裸 context 负面对照 + sleep 1.2s pacing 消解（05-09/07-07 纪律）
 
 ### Pending Todos
 
@@ -303,6 +308,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-29T15:59:40.140Z
-Stopped at: Completed 09-07-PLAN.md
+Last session: 2026-08-30T03:54:31.755Z
+Stopped at: Completed 09-08-PLAN.md
 Resume file: None
