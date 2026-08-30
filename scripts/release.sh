@@ -60,7 +60,12 @@ preflight() {
     # 闸④：与远端同步（落后/分叉即拒，ahead 放行）。降级钉死：fetch 失败
     # （无网络/远端不可达）或无上游时降级为跳过提示——同源保证无法判定时
     # 不伪造失败、不阻塞干跑与后续闸。
-    if ! git fetch --dry-run >/dev/null 2>&1; then
+    # 09-review WR-01：须真实 fetch（非 --dry-run）——--dry-run 不更新任何远端
+    # 跟踪引用，下方 HEAD..@{u} 落后计数只对本地陈旧的 origin/<branch> 生效；
+    # 远端在上次真实 fetch 后新增提交时 behind 仍为 0，闸门假绿放行，tag 可能
+    # 打在缺少远端最新提交的旧代码上。真实 fetch 更新跟踪引用后再比较；降级
+    # 语义不变（fetch 失败即跳过提示）。
+    if ! git fetch >/dev/null 2>&1; then
         echo "release: upstream check skipped (no network or upstream)"
         return 0
     fi
