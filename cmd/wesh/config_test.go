@@ -979,12 +979,12 @@ func TestConfigRedLines(t *testing.T) {
 			{"write-policy enum", "write-policy = \"sometimes\"\n", "must be owner or all"},
 			{"base-path strict", "base-path = \"wesh\"\n", "invalid --base-path"},
 			{"tls pair", "tls-cert = \"/tmp/c.pem\"\n", "both --tls-cert and --tls-key"},
-		// 07-review CR-03：配置来源的凭据载体头名与 CLI 同闸拒绝（配置即
-		// 破线的结构性缺口——审查发现场景正是配置文件通道）。
-		{"auth-header credential header", "auth-header = \"Authorization\"\n", "invalid --auth-header"},
-		// 08-review WR-02：配置来源 ping-interval 负值经默认值替换机制落同一
-		// 终值，与 CLI 同闸拒绝（一闸双覆盖——负值检查是唯一闸）。
-		{"ping-interval negative", "ping-interval = \"-5s\"\n", "invalid --ping-interval"},
+			// 07-review CR-03：配置来源的凭据载体头名与 CLI 同闸拒绝（配置即
+			// 破线的结构性缺口——审查发现场景正是配置文件通道）。
+			{"auth-header credential header", "auth-header = \"Authorization\"\n", "invalid --auth-header"},
+			// 08-review WR-02：配置来源 ping-interval 负值经默认值替换机制落同一
+			// 终值，与 CLI 同闸拒绝（一闸双覆盖——负值检查是唯一闸）。
+			{"ping-interval negative", "ping-interval = \"-5s\"\n", "invalid --ping-interval"},
 		} {
 			t.Run(row.name, func(t *testing.T) {
 				_, _, err := parseConfigArgs(t, row.toml, nil, "--", "bash")

@@ -20,7 +20,7 @@
 // 夹具纪律（slowclient_test.go 头注释戒律沿用）：stall 端 dialHello 后绝不
 // Read；客户端 Read 永不带 deadline ctx（goroutine + 缓冲 channel + select
 // time.After 竞速形态）；loopback 单连接最坏吸收 ≈ wmem 4MiB + rmem 6MiB
-//（本机实测），stall/限速施压格洪水量级 ≫10MiB。每格独立
+// （本机实测），stall/限速施压格洪水量级 ≫10MiB。每格独立
 // startTrackedServerWith + t.Cleanup(killServer) 收口（e2e_test.go:120-134
 // 泄漏教训先例）。数据源单侧 = /metrics 黑盒 scrape（metrics_test.go
 // getMetrics/metricSample 先例）+ 进程内 runtime 观测（D-11 in-process 装配
@@ -75,7 +75,7 @@ func (r *loadDrain) note(data []byte) {
 }
 
 // drainClient 持续读 conn 至终结（只计数不缓存）。Read 永不带 deadline ctx
-//（Pitfall 2 竞速形态）——调用方以 select time.After 收口（awaitDrain）。
+// （Pitfall 2 竞速形态）——调用方以 select time.After 收口（awaitDrain）。
 func drainClient(c *websocket.Conn) <-chan loadDrain {
 	ch := make(chan loadDrain, 1)
 	go func() {
@@ -168,7 +168,7 @@ func loadMetricValue(body, name string) (int64, bool) {
 }
 
 // scrapePeakSampler 周期黑盒 scrape /metrics 并跟踪指定 series 的峰值
-//（wesh_outbox_depth_bytes_max 的快照是瞬态值——格内峰值须采样获取）。
+// （wesh_outbox_depth_bytes_max 的快照是瞬态值——格内峰值须采样获取）。
 // 尽力而为：单次 scrape 失败跳过该拍，不致命。
 func scrapePeakSampler(url string, names []string, interval time.Duration, stop <-chan struct{}) <-chan map[string]int64 {
 	ch := make(chan map[string]int64, 1)
@@ -250,7 +250,7 @@ func loadFloodLast() int {
 // 与 wesh_pty_output_bytes_total 的字节级对照由此精确（D-12 数据源精确性）。
 // 尾闸 sleep 1：子进程退出即触发 EXIT+1000 广播（绕过 outbox 直写 wire），
 // 无尾闸则活跃读格在 32 端 CPU 竞争下 observed 末段 outbox 残余随关闭丢弃
-//（首跑实测 client 4 缺 22428/34888899 字节）——停 1s 让 writer 腾空 outbox
+// （首跑实测 client 4 缺 22428/34888899 字节）——停 1s 让 writer 腾空 outbox
 // 后广播，严格字节相等断言结构性成立。
 func gatedFloodArgv(last int) []string {
 	return []string{"bash", "-c", fmt.Sprintf("read x; seq 1 %d; sleep 1", last)}
@@ -375,7 +375,7 @@ func TestLoadFanoutMatrix(t *testing.T) {
 // TestLoadLegitSlowReaderZeroKick（D-12 断言一验收首要格）：滴漏产出（1KiB/5ms
 // ≈ 205KB/s）+ 每 200 拍 128KiB 突发抖动（< 默认 outbox 容量 512KiB）× 限速
 // 合法读者（drain 400KB/s ≈ 平均产出 ~330KB/s）。同格快读者武装离群误踢路径
-//（限速端 outbox 写满 + 快端未 blocked → 踢）；全程 wesh_clients_kicked_total
+// （限速端 outbox 写满 + 快端未 blocked → 踢）；全程 wesh_clients_kicked_total
 // 精确不增 ==0 且限速端收流与快端逐字节相等（零丢帧——trySend 失败只走
 // 踢出/信用，绝无静默丢帧的推论断言）。
 func TestLoadLegitSlowReaderZeroKick(t *testing.T) {
@@ -507,7 +507,7 @@ func TestLoadMemoryBound(t *testing.T) {
 // 断言：gateTransitions ≥ 2（门确实完成至少一次闭→开周期——机制实证）且
 // 速率 ≤ 10 次/s（不震颤——50% 半水位迟滞下单周期至少搬运 256KiB，600KB/s
 // 读者周期 ≥0.43s，10/s 为两个数量级裕度的病态震荡判界线）且 kicks==0
-//（信用保护形态——合法慢端由门承载而非踢出）。计数/格时经 LOADDATA 上报。
+// （信用保护形态——合法慢端由门承载而非踢出）。计数/格时经 LOADDATA 上报。
 func TestLoadGateTransitions(t *testing.T) {
 	// 尾闸 sleep 1 同 gatedFloodArgv 注释纪律。
 	argv := []string{"bash", "-c", `i=0; while [ $i -lt 150 ]; do head -c 65536 /dev/zero | tr '\0' 'A'; i=$((i+1)); sleep 0.03; done; sleep 1`}
@@ -562,7 +562,7 @@ func countFds(t *testing.T) int {
 
 // readProcState 读 /proc/<pid>/stat 的 state 字段；进程已收割消失（健康归宿）
 // 或形态异常返回空串。comm 字段可含空格与括号——取最后一个 ')' 之后的首字段
-//（proc(5) stat 标准解析法）。
+// （proc(5) stat 标准解析法）。
 func readProcState(pid int) string {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
@@ -582,7 +582,7 @@ func readProcState(pid int) string {
 
 // TestLoadDefunct（高频建销三面，Linux-only——/proc 口径，darwin t.Skip；load
 // 测试本机手动跑 CI 不进）：基线 NumGoroutine + /proc/self/fd 计数 → N 轮
-//（spawn Server + argv=["true"] 立即退出子进程 + 等待 exitf 收口 + killServer
+// （spawn Server + argv=["true"] 立即退出子进程 + 等待 exitf 收口 + killServer
 // 轮内显式清理——非 t.Cleanup：fd/goroutine 回基线口径要求轮间释放，
 // t.Cleanup 会把 200 个 listener 积压到测试尾）→ 终态 NumGoroutine/fd 回基线
 // +容差 + 全部曾存子进程 /proc/<pid>/stat 无 Z 态（pty.Session Wait 唯一

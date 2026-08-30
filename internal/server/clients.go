@@ -124,8 +124,8 @@ type client struct {
 	// 只在 hubMu 内读）：defaultAttachGrace 宽限判定的起点（kickOrCreditLocked）。
 	attachedAt time.Time
 	outbox     *outbox
-	done      chan struct{}      // writer 终结信号——kick/detach 关闭，恰好一次由 hubMu 内注册表成员判定保证
-	cancel    context.CancelFunc // pinger 所在 ctx 的 cancel（Attach 派生，随客户端生命周期）
+	done       chan struct{}      // writer 终结信号——kick/detach 关闭，恰好一次由 hubMu 内注册表成员判定保证
+	cancel     context.CancelFunc // pinger 所在 ctx 的 cancel（Attach 派生，随客户端生命周期）
 
 	// pongTimedOut 为 pinger pong 超时置位（08-02，D-21）：pinger 判定超时后取
 	// hubMu 写本字段、detach 同锁读（RESEARCH Pattern 4 形态 b——同步边 =
@@ -430,28 +430,29 @@ func (s *Server) allWritableBlockedLocked() bool {
 //
 // 判定演化（2026-08-29 单核压测 GOMAXPROCS=1 多轮实证裁决，macOS CI run
 // 33225598342 同源偶发）：
-//   1. 原标志判定（creditBlocked 仅 trySend 失败时置位）：同轮 fan-out map 随机
-//      序下双满瞬间先失败端被误判离群者踢出（kick_fail_13：healthy 端被踢 +
-//      滞留端 writer 阻塞 + 门闭死锁，onChunk 卡 hubCond.Wait 全链栈证）；
-//   2. 「实况余量替代标志」：慢端 writer 灌 TCP 吸收带期间 outbox 被清空
-//      （bytes=0），刚 attach 的健康端 6ms 内被误踢（kick_fail2_3：detach
-//      client_id=2 于 attach+6ms）；
-//   3. 「writeBlockedEver 自身实锤」：门闭后 fan-out 停止、trySend 失败不再发生，
-//      踢出判定失去触发点；且吸收带在门闭反压下耗尽极慢，writer 长期不阻塞
-//      （kick_fail3_7 同形态 + 回归 TestSlowConsumerKick 门闭死锁实证）；
-//   4. 「writePending + dwell 轮询」：吸收带在门闭反压下耗尽极慢，子进程全速
-//      写完先到（TestSlowConsumerKick 3.59s 收 1000 子进程退出广播，want 1013）
-//      ——观测窗口慢于洪水耗尽；
-//   5. 「dwell 计时器踢出」：与 R-08「全体可写端均满 → 置信用保护」语义根本冲突
-//      ——TestGlobalCredit 双 stall 设计场景（c2 持信用恒满）中被计时器踢出，
-//      10/10 稳定复现「close code = 1000, want 1013」，整体移除；
-//   6. 终稿（attach 宽限 + 旧行为判定原样恢复）：多轮失败现场的被误踢端全部是
-//      刚 attach 的消费端（attach+6ms / attach+177ms）——writer 首次调度前的
-//      满箱瞬态是唯一稳定的误踢源。宽限期封堵该窗口（宽限内满箱一律置信用，
-//      不踢任何端），宽限外恢复原「存在未 blocked 的可写端 → 踢 c」纯标志判定
-//      （TestGlobalCredit/TestSlowConsumerKick 设计前提的踢出时序原样保持）。
-//      时间维度方案（writeBlockedEver/writePending/dwell）全部废弃——吸收带
-//      窗口内「谁慢」的瞬时与历史信号均不可靠，唯「新端瞬态」是可识别误踢源。
+//  1. 原标志判定（creditBlocked 仅 trySend 失败时置位）：同轮 fan-out map 随机
+//     序下双满瞬间先失败端被误判离群者踢出（kick_fail_13：healthy 端被踢 +
+//     滞留端 writer 阻塞 + 门闭死锁，onChunk 卡 hubCond.Wait 全链栈证）；
+//  2. 「实况余量替代标志」：慢端 writer 灌 TCP 吸收带期间 outbox 被清空
+//     （bytes=0），刚 attach 的健康端 6ms 内被误踢（kick_fail2_3：detach
+//     client_id=2 于 attach+6ms）；
+//  3. 「writeBlockedEver 自身实锤」：门闭后 fan-out 停止、trySend 失败不再发生，
+//     踢出判定失去触发点；且吸收带在门闭反压下耗尽极慢，writer 长期不阻塞
+//     （kick_fail3_7 同形态 + 回归 TestSlowConsumerKick 门闭死锁实证）；
+//  4. 「writePending + dwell 轮询」：吸收带在门闭反压下耗尽极慢，子进程全速
+//     写完先到（TestSlowConsumerKick 3.59s 收 1000 子进程退出广播，want 1013）
+//     ——观测窗口慢于洪水耗尽；
+//  5. 「dwell 计时器踢出」：与 R-08「全体可写端均满 → 置信用保护」语义根本冲突
+//     ——TestGlobalCredit 双 stall 设计场景（c2 持信用恒满）中被计时器踢出，
+//     10/10 稳定复现「close code = 1000, want 1013」，整体移除；
+//  6. 终稿（attach 宽限 + 旧行为判定原样恢复）：多轮失败现场的被误踢端全部是
+//     刚 attach 的消费端（attach+6ms / attach+177ms）——writer 首次调度前的
+//     满箱瞬态是唯一稳定的误踢源。宽限期封堵该窗口（宽限内满箱一律置信用，
+//     不踢任何端），宽限外恢复原「存在未 blocked 的可写端 → 踢 c」纯标志判定
+//     （TestGlobalCredit/TestSlowConsumerKick 设计前提的踢出时序原样保持）。
+//     时间维度方案（writeBlockedEver/writePending/dwell）全部废弃——吸收带
+//     窗口内「谁慢」的瞬时与历史信号均不可靠，唯「新端瞬态」是可识别误踢源。
+//
 // 触发帧不丢（must_haves prohibitions 硬约束——丢帧保连接 = 有序流画面静默损坏，
 // RESEARCH Anti-Pattern 2）：信用路径把被拒的当前帧暂存 c.creditPending，
 // afterDrain 半水位恢复时重投（TestGlobalCredit 门转换字节精确断言实测发现：
