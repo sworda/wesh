@@ -9,18 +9,20 @@ requires:
     provides: "09-01 发布链定稿与 snapshot 断言组 / 09-03 D-18 三项清零 + phase06-dom D1-D13 / 09-04+09-05 --index 全行为面 / 09-06 负载矩阵 / 09-09 release.sh + README 定稿"
 provides:
   - "发布前全绿证据链：六段式 + 全量 UAT 18 脚本 + fuzz 2×60s + load 矩阵 + snapshot 断言组五面同源复核——发布闸（Task 2 checkpoint:decision）呈堂证据"
-affects: [ship（v1.0.0 发布裁决后收口）, milestone v1.0（OPS-03/OPS-10 最后两条清零）]
+  - "发布裁决记录：用户裁决 publish-later（2026-08-30）——v1.0.0 择机自行发布，发布操作指引在册（单命令 ./scripts/release.sh v1.0.0）；phase 以能力交付收尾"
+affects: [ship（v1.0.0 就绪待发——发布指引在册，发布时由用户执行）, milestone v1.0（OPS-03/OPS-10 最后两条清零——44/44 全量收尾）]
 
 actuals:
-  tokens: 2200    # 初版（Task 1 验证证据 + gofmt style 修正 42+/41-）；终值随 Task 3 分支定稿
-  tasks: 1        # Task 1 完成；Task 2 发布闸待用户裁决、Task 3 待执行
-  commits: 2      # 8098244 style + 06bb4ed test（--allow-empty）；docs 提交随定稿追加
+  tokens: 11650   # 全 plan 仓库内 realized diff 46,600 chars / 4（gofmt 五文件 42+/41- + SUMMARY 呈堂与定稿 + STATE/ROADMAP 追踪收口）；estimate 35000 高估约 3×——verification-only plan 的实际改动面远小于估算（验证成本在 agent 上下文不在 diff）
+  tasks: 3        # Task 1 全量验证 + Task 2 发布闸（checkpoint:decision 用户裁决 publish-later）+ Task 3 publish-later 收尾
+  commits: 4      # 8098244 style + 06bb4ed test + b06e645 docs 呈堂 + 终版 docs 定稿
 
 tech-stack:
   added: []
   patterns:
     - "verification-only 收口 plan 的证据形态：五面（六段式/UAT/fuzz/load/snapshot）一次性同源复核，证据落 SUMMARY 作发布闸呈堂材料"
     - "GOROOT gofmt 漂移清零先例第六次沿用（02-06/03-06/05-09/08-05/09-10）——独立 style 提交 + git diff -w 零语义自证"
+    - "publish-later 分支的 deferred 收尾形态：裁决记录 + 单命令发布指引（前置条件引用脚本自身 preflight 闸语义）+ 仓库零残留复核——发布能力交付与发布动作解耦"
 
 key-files:
   created:
@@ -35,19 +37,19 @@ key-files:
 key-decisions:
   - "gofmt 漂移 5 文件按先例独立 style 提交清零（8098244）：全部为注释缩进/对齐/CJK 全角括号空格——go1.26 gofmt 规则差异，git diff -w 仅剩 clients.go 一处新增空注释行（doc comment 列表块分隔规范），零语义机械自证"
   - "Task 1 以 --allow-empty test 提交记录回归里程碑（06bb4ed，09-05 先例第二次沿用）：五面全绿证据进提交信息，verification-only 任务保持 per-task 原子提交协议"
+  - "发布闸（Task 2 checkpoint:decision gate=\"blocking\"）用户裁决 publish-later（2026-08-30）——v1.0.0 择机自行发布，单命令 ./scripts/release.sh v1.0.0（前置：工作树干净、与远端同步）；phase 以能力交付收尾，release.yml 真实全链首证留待发布时（snapshot 已证形状——RESEARCH Pitfall 12 既定取舍，09-01 flagged_assumptions 既定验证取舍）"
+  - "Blockers 节 Phase 5/6 标定挂账随本 plan 闭环（2026-08-30）：09-06 负载矩阵全量现值零证伪 + 09-09 README 标定表 12 行全量回填——STATE.md 挂账行标注闭合依据，milestone 无遗留挂账"
 
-requirements-completed: [OPS-03, OPS-10]   # 待发布闸裁决后随 plan 定稿生效
+requirements-completed: [OPS-03, OPS-10]
 
-duration: 24min    # Task 1（2026-08-30T08:40..09:04Z）；总时长随 Task 3 分支定稿
+duration: 40min    # Task 1 24min（2026-08-30T08:40..09:04Z）+ Task 3 收尾 ~16min（2026-08-30T10:30..10:46Z）；Task 2 checkpoint 用户裁决等待期不计执行时长
 completed: 2026-08-30
-status: awaiting-release-decision           # 非 complete——Task 2 发布闸待用户裁决
+status: complete
 ---
 
-# Phase 9 Plan 10: 全量收口验证 + 发布闸 Summary（初版——发布闸待裁决）
+# Phase 9 Plan 10: 全量收口验证 + 发布闸 Summary
 
-**发布前全绿证据链闭合：六段式六面全绿（gofmt 漂移 5 文件先例清零/vet/-race 五包 1m0s/pnpm build/裸 clone embed 链/冒烟 echo）+ 全量 UAT 18 脚本 294 断言零 FAIL（5 skip 均有 reason 登记）+ fuzz 2×60s 双 PASS（14.1M/338K execs 零崩溃）+ load 矩阵全量 103s PASS + snapshot 断言组五层复演全过（干净容器版本注入 wesh 0.0.0-SNAPSHOT-8098244）——Task 2 发布闸（v1.0.0 立即发布 vs 稍后自行发布）停止等待用户裁决**
-
-> **状态说明：** 本 SUMMARY 为 Task 1 呈堂证据初版。Task 2（checkpoint:decision 发布闸）与 Task 3（发布执行/收尾）待用户裁决后由续任 agent 定稿——裁决记录与发布证据将补入本文并改 status: complete。
+**发布前全绿证据链五面闭合（六段式六面全绿/全量 UAT 18 脚本 294 断言零 FAIL/fuzz 2×60s 双 PASS/load 矩阵 103s PASS/snapshot 断言组五层复演全过）+ 发布闸用户裁决 publish-later——v1.0.0 择机以 `./scripts/release.sh v1.0.0` 单命令自行发布（前置：工作树干净、与远端同步），phase 以能力交付收尾，milestone v1.0 44/44 需求全量清零**
 
 ## Task 1 五面证据（发布闸呈堂材料）
 
@@ -126,23 +128,48 @@ status: awaiting-release-decision           # 非 complete——Task 2 发布闸
 
 1. **gofmt 漂移清零（六段式段 a 先例路由）** - `8098244` (style)
 2. **Task 1 全量收口验证（五面全绿回归里程碑）** - `06bb4ed` (test, --allow-empty——09-05 verification-only 先例)
+3. **Task 1 SUMMARY 呈堂（五面证据初版落盘）** - `b06e645` (docs)
+4. **Task 3 publish-later 收尾定稿（本文件终版 + STATE/ROADMAP 追踪收口）** - 终版 docs 提交（见 git log 最新 docs(09-10)）
 
-**待续：** Task 2 发布闸裁决记录 + Task 3 发布执行/收尾提交由续任 agent 追加。
+## Task 2：发布闸（checkpoint:decision gate="blocking"）——用户裁决 publish-later
 
-## Task 2：发布闸（checkpoint:decision gate="blocking"）——待用户裁决
+**裁决记录（2026-08-30）：publish-later——稍后自行发布。** phase 以能力交付收尾；release.yml 真实全链首证留待发布时（snapshot 已证形状——RESEARCH Pitfall 12 既定取舍）。resume-signal 解析：publish-later → Task 3 记录 deferred 收尾（publish-now 实发分支未启用）。
 
-**状态：STOPPED——等待用户明确二选一（Phase 05 协议违规记录：blocking 闸必须停止等待用户，先例不得作为自动通过依据）**
+发布闸曾以 blocking 停止等待用户（Phase 05 协议违规记录：blocking 闸必须停止等待用户，先例不得作为自动通过依据）——本轮由用户明示裁决后续任 agent 执行 Task 3 publish-later 分支。
 
 | 选项 | 内容 | 权衡 |
 |------|------|------|
 | publish-now | 立即以 `./scripts/release.sh v1.0.0` 执行真实发布（长 fuzz 2×10min → 负载矩阵 → 确认闸 → tag push 触发 release.yml + 公开 GitHub Release） | 发布链真实首证在本 phase 内闭合；milestone v1.0 实发收尾 / one-way 公开动作——产物即刻可查 |
-| publish-later | 稍后自行发布（用户择机跑同一脚本） | phase 以能力交付收尾 / release.yml 真实全链首证留待发布时（snapshot 已证形状——RESEARCH Pitfall 12 既定取舍） |
+| **publish-later（已选）** | 稍后自行发布（用户择机跑同一脚本） | phase 以能力交付收尾 / release.yml 真实全链首证留待发布时（snapshot 已证形状——RESEARCH Pitfall 12 既定取舍） |
 
-**resume-signal：** 选择 publish-now（续任执行 Task 3 实发）或 publish-later（记录 deferred 收尾）。
+## Task 3：publish-later 收尾——deferred 裁决记录 + 发布操作指引 + 仓库零残留确认
 
-## Task 3：发布执行/收尾——待执行
+### ① deferred 裁决与发布操作指引（plan 字面路由）
 
-（发布裁决后由续任 agent 按选定分支执行并补录证据。）
+**发布 v1.0.0 单命令：**
+
+```
+./scripts/release.sh v1.0.0
+```
+
+- **前置条件**（plan 字面）：工作树干净、与远端同步——即脚本 preflight 闸③（`git status --porcelain` 非空即拒）/ 闸④（落后远端即拒，ahead 放行——发布物本就是本地新增提交/tag；fetch 失败或无上游自动降级为跳过提示不阻塞）
+- **脚本自动承载其余全部闸门**（D-14 定稿形态）：go vet + `go test -race -count=1 ./...`（与 CI 同口径）→ `pnpm -C web install --frozen-lockfile && pnpm -C web build`（dist 新鲜，embed 链本地验证）→ 长 fuzz ×2（FuzzDecodeHello/FuzzDecodeFileConfig 各 10 分钟，崩溃即中止——语料自动落 testdata/fuzz/）→ 负载矩阵（-tags=load，30 分钟上限）→ 确认闸（回显 tag + 最近 5 条提交，应答 yes 继续）→ `git tag v1.0.0 && git push origin v1.0.0` 触发 release.yml（pnpm build 先于 goreleaser：四平台全静态产物 + checksums.txt——D-01/D-03）
+- **发布后核验面**（供参考，publish-now 分支验收口径）：`gh release view v1.0.0` 产物清单 = 4× `wesh_v1.0.0_{linux,darwin}_{amd64,arm64}.tar.gz` + `checksums.txt`（D-04 精确命名）；`sha256sum -c checksums.txt` 全 OK；linux_amd64 包 tar 三件套（wesh/LICENSE/README.md）+ 产物 `--version` 输出 `wesh 1.0.0`
+
+### ② 仓库零残留确认
+
+- `git status --porcelain` = 0 行（收尾提交后复核）
+- 无 `dist/` 残留（snapshot 验毕已 `rm -rf dist`）；`/tmp/wesh-fresh-clone` 已清
+- `pgrep -x wesh` 零进程泄漏
+- `/tmp/wesh-uat` 为跨 phase UAT 常驻工作区约定路径（repo 外 /tmp，非仓库残留；phase 收尾保留，可随时手动清除）
+
+### verify 结果（plan 字面命令，fish-safe bash -c if/else 形态）
+
+```
+git status --porcelain | grep -c . | grep -qx 0 && bash -c 'if git tag -l v1.0.0 | grep -q v1.0.0; then gh release view v1.0.0 ... | grep -qx 4; else echo "publish-later: no tag, deferred recorded"; fi'
+```
+
+→ 输出 **`publish-later: no tag, deferred recorded`**、exit 0（工作树 0 行 + 无 v1.0.0 tag——deferred 分支预期态，收尾提交后终态复核同过）。
 
 ## Deviations from Plan
 
@@ -158,17 +185,23 @@ status: awaiting-release-decision           # 非 complete——Task 2 发布闸
 
 ---
 
-**Total deviations:** 1 auto-fixed（Rule 3 先例路由的 gofmt 清零）
+**Total deviations:** 1 auto-fixed（Rule 3 先例路由的 gofmt 清零）——Task 2/Task 3 publish-later 分支零偏差（plan 字面执行：deferred 裁决与指引落 SUMMARY、仓库零残留）
 **Impact on plan:** plan 段 a 自带该路由授权（「既有漂移若有按先例独立 style 提交清零」），交付物与 must_haves 逐字一致；无范围蔓延。
 
 ## Known Stubs
 
-None —— 纯验证 plan，无占位/硬编码空值/TODO；五面证据全部为对真实构建产物的可执行断言结果。
+None —— 纯验证 plan，无占位/硬编码空值/TODO；五面证据全部为对真实构建产物的可执行断言结果。publish-later 为 plan 既定两分支之一（用户明示裁决），非 stub——发布能力（release.sh + release.yml + snapshot 证据链）已全量交付，发布动作本身按裁决 deferred。
 
-## Self-Check: PENDING（随定稿执行）
+## Self-Check: PASSED
 
-（发布闸裁决 + Task 3 完成后由续任 agent 补齐：文件/提交存在性核验 + 结论。）
+- **Files:** 09-10-SUMMARY.md（本文件终版）/ cmd/wesh/config_test.go、internal/server/{clients,emptyexit_test,export_test,load_test}.go（gofmt 清零五文件）均 FOUND
+- **Commits:** `8098244`（style）/ `06bb4ed`（test）/ `b06e645`（docs 呈堂）均 FOUND（git log --oneline）；Task 3 终版 docs 提交随后落于 HEAD
+- **Task 3 verify（plan 字面命令）:** `publish-later: no tag, deferred recorded` + exit 0——工作树 0 行、无 v1.0.0 tag（deferred 分支预期态）
+- **仓库零残留:** 无 dist/、`pgrep -x wesh` 零进程、/tmp/wesh-fresh-clone 已清（/tmp/wesh-uat 为 UAT 常驻工作区——repo 外约定路径非残留）
+- **追踪收口:** STATE.md 70/70 plans 100%（status: verifying——phase 9 执行收尾待 verify 门）；ROADMAP Phase 9 10/10；REQUIREMENTS.md OPS-03/OPS-10 已 Complete（幂等复核）
 
 ---
 *Phase: 09-release-polish*
 *Task 1 completed: 2026-08-30T09:04Z — 发布闸呈堂*
+*Task 2 裁决: 2026-08-30 — publish-later（用户）*
+*Task 3 completed: 2026-08-30T10:46Z — publish-later 收尾定稿*
