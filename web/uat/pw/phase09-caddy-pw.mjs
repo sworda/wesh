@@ -58,7 +58,7 @@ try {
   const r200 = await bare.request.get(`${BASE}/`, { maxRedirects: 0, headers: { Authorization: AUTH_HEADER } });
   const body200 = await r200.text();
   t1.ok(r200.status() === 200 && body200.includes('<html'), '带凭据 GET / → 200 终端页',
-    `got=${r200.status} html=${body200.includes('<html')}`);
+    `got=${r200.status()} html=${body200.includes('<html')}`);
   await bare.close();
 
   // T2: 浏览器打开页面 → 终端就绪（openSession 含 200 + xterm-rows + 提示符）→ echo 全链

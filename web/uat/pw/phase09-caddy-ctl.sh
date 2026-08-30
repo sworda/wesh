@@ -23,13 +23,16 @@ WESH_PIDF=/tmp/wesh-uat/caddy-wesh.pid
 CADDY_PIDF=/tmp/wesh-uat/caddy-run.pid
 CADDY_URL=https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_amd64.tar.gz
 
-write_caddyfile() { # LAN 监听形态：0.0.0.0 站点地址不带 Host 匹配约束（09-08 探针实证：外部 Host 头照常被服务）
+write_caddyfile() { # LAN 监听形态：裸 :PORT 站点地址 = 绑定全部网卡 + 匹配任意 Host。
+  # 实证勘误（09-08 Windows 首跑捕获）：0.0.0.0:PORT 在 Caddy 中是字面 Host 匹配
+  # （仅 Host: 0.0.0.0 命中），真实主机名请求落空 → Caddy 兜底空 200——Task 1
+  # 「外部 Host 照常被服务」结论系 probe 恰好 curl 0.0.0.0 的假绿，与 nginx 语义相反。
   cat > $CADDYFILE <<EOF
 {
 	admin off
 }
 
-http://0.0.0.0:$CADDY_PORT {
+http://:$CADDY_PORT {
 	reverse_proxy 127.0.0.1:$WESH_PORT
 }
 EOF
