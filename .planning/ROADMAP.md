@@ -359,7 +359,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 自定义首页 HTML 可配置生效；负载/模糊测试通过（高吞吐 fan-out、慢客户端矩阵、百万小帧/空帧、高频建销会话无 defunct），测试数据回填 P2/P5 默认参数
   3. 部署文档覆盖 nginx/Cloudflare/Caddy 反代配方（含空闲超时与 ping 间隔关系）、Docker（tini/PID 1 收割）、systemd unit 模板（Restart/LimitNOFILE/EnvironmentFile 600）
 
-**Plans**: 8/10 plans executed
+**Plans**: 9/10 plans executed
 **Wave 1**
 
 - [x] 09-01-PLAN.md — 发布链 tracer：.goreleaser.yml（D-01..D-04 定稿）+ release.yml 显式编排 + 本机 snapshot 预演与四平台产物分层断言（OPS-10）
@@ -379,7 +379,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 09-09-PLAN.md — scripts/release.sh（D-14）+ README 全量（发布节/--index 节/Caddy+CF+Docker+systemd/标定表 D-13 回填）
+- [x] 09-09-PLAN.md — scripts/release.sh（D-14）+ README 全量（发布节/--index 节/Caddy+CF+Docker+systemd/标定表 D-13 回填）
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -402,4 +402,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
 | 7. 部署与配置 | 10/10 | Complete    | 2026-08-27 |
 | 8. 可观测性 | 6/6 | Complete    | 2026-08-28 |
-| 9. 发布与打磨 | 8/10 | In Progress|  |
+| 9. 发布与打磨 | 9/10 | In Progress|  |

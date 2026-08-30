@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Completed 09-05-PLAN.md
-last_updated: "2026-08-30T07:58:40.829Z"
+stopped_at: Completed 09-09-PLAN.md
+last_updated: "2026-08-30T08:36:42.685Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 68
+  completed_plans: 69
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 9 of 10
+Plan: 10 of 10
 Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [██████████] 97%
+Progress: [██████████] 99%
 
 ## Performance Metrics
 
@@ -132,6 +132,7 @@ Progress: [██████████] 97%
 | Phase 09 P03 | 13min | 2 tasks | 4 files |
 | Phase 09 P04 | 28min | 2 tasks | 7 files |
 | Phase 09 P05 | 25min | 2 tasks | 1 files |
+| Phase 09 P09 | 19min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -298,6 +299,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 09-04: Options.CustomIndex 字段提前至 Task 2（Rule 3 最小跨文件必要——Task 2 验收 grep 要求 Options 字面量透传，字段缺失包不可编译）；TestStartupMatrix 既有行 indexMaxSize 16MiB 基线注入（maxClients 基线同步先例同款）
 - [Phase ?]: 09-05: undici fetch 自动 accept-encoding + Content-Encoding 透明解压使自定义页明文伺服态结构性不可观测——phase09.mjs 以 node:http rawFetch 原始请求通道（不注入头/不透明解压/5s 护栏）直证 gzip/明文双态与头面（09-04 Go transport 显式编码适配的 JS 侧对偶）
 - [Phase ?]: 09-05: UAT 脚本 task 级 tdd RED 形态——被测实现属先序 plan（09-04），RED 以 git archive 09-03 HEAD 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1）后 GREEN 18/18；plan 单 test 提交字面保持（09-02 先例第三次沿用）
+- [Phase ?]: [Phase 09-09]: D-13 标定表回填走验证结论形态——09-06 三断言全量现值成立零证伪，常量默认值零改动（git diff 零 .go 文件），README 12 行全量清单负载敏感项附 09-06 LOADDATA 数据摘要、时序项「行为测试已锁 + 一阶依据复核成立」；实测日期取 2026-08-29（09-06 实跑日）保数据可溯源
+- [Phase ?]: [Phase 09-09]: release.sh 干跑步骤清单取描述性措辞（验收 grep 机械纪律第七次沿用）——fuzztime=10m/-tags=load/git push origin 命令字面只在执行段单次出现满足 ==N 计数；好树干跑态利用脚本未入库窗口期（mv /tmp 副本对仓跑），闸序钉死（形态/已存在先于脏树闸）是各态独立可触发前提；shellcheck 缺席以 bash -n + 四态行为自证
 
 ### Pending Todos
 
@@ -318,6 +321,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-30T07:58:40.800Z
-Stopped at: Completed 09-05-PLAN.md
+Last session: 2026-08-30T08:36:42.656Z
+Stopped at: Completed 09-09-PLAN.md
 Resume file: None
