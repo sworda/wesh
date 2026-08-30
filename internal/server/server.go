@@ -164,6 +164,12 @@ type Server struct {
 	// 消费，StripPrefix 仅包静态伺服链。
 	basePath string
 
+	// Phase 9 自定义首页装配（09-04 OPS-03，D-05..D-08）：customIndex 为 New
+	// 装配期固化、运行期只读的启动读入字节（Options.CustomIndex []byte 原样
+	// 直传；nil = 未配置零值兜底——Handler() 不装饰，装配与现状逐字节一致）。
+	// 伺服字节与读入字节 byte-identity（wesh 零注入零模板零校验，D-05）。
+	customIndex []byte
+
 	// Phase 7 反代信任装配（07-03，SEC-07 D-15..D-20）：proxy 为 New 装配期
 	// 固化、运行期只读的信任配置（AuthHeader 非空 = 信任闸开——XFF 换键与
 	// remote_user 提取共用同一开关，D-20 零双轨；零值 = 不信任，行为与现状
@@ -377,6 +383,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		stopTimeout: opts.StopTimeout,
 		// New 装配直传（07-01，D-13；零值 = 根挂载，无兜底改写）。
 		basePath: opts.BasePath,
+		// New 装配直传（09-04，D-05..D-08；nil 零值 = 未配置，无兜底改写——
+		// Handler() 按零值装配与现状逐字节一致）。
+		customIndex: opts.CustomIndex,
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键
 		// 与 remote_user 提取共用同一开关，零双轨）；空串 = 零值不信任。
 		proxy: proxyInfo{trust: opts.AuthHeader != "", userHeader: opts.AuthHeader},
@@ -458,6 +467,16 @@ func (s *Server) Handler() http.Handler {
 		wh = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "embedded assets unavailable", http.StatusInternalServerError)
 		})
+	}
+	// 09-04 OPS-03（D-05/D-06）自定义首页单点装饰：此处是 wh 的唯一持有点，
+	// 装饰后的 wh 使凭据/无认证两分支与 registerShareRoutes 的 page 参数同获
+	// 装饰态——/ 与 /s/{token}/ 两通道经 sharePage 既有委托自然统一（D-06，
+	// sharetoken.go 零改动）；index.html 路径（含空路径回落）返回启动读入
+	// 字节，其余路径照旧（相对资源 404 契约语义；gzip 预压 + Vary 恒发见
+	// web 包装饰器）。customIndex nil 零值不装饰——与现状逐字节一致（零值
+	// 兜底纪律）。
+	if s.customIndex != nil {
+		wh = web.WithCustomIndex(wh, s.customIndex)
 	}
 	bp := s.basePath
 	if len(s.credentials) > 0 {
