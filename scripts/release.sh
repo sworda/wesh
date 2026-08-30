@@ -86,10 +86,18 @@ run_tests() {
     go test -race -count=1 ./...
 }
 
-# 前端构建：dist 新鲜，embed 链本地验证（前端构建先于 go build，P1 D-18）
+# 前端构建：dist 新鲜，embed 链本地验证（前端构建先于 go build，P1 D-18）。
+# + dist 漂移闸（09-review WR-02）：闸③脏树检查在本函数之前——此处构建若
+#   重写被跟踪的 web/dist/index.html，即「前端源码改了、dist 忘记重建提交」：
+#   四闸全绿照常发 tag，仓库「dist 即产物」契约静默破坏，本地 go build 分发
+#   的二进制内嵌旧前端（发布产物不受影响——release.yml 在 CI 侧重建 dist）。
 build_web() {
     pnpm -C web install --frozen-lockfile
     time pnpm -C web build
+    # dist 漂移闸：构建重写了被跟踪文件 → 已提交 dist 与源码不一致，发布前须提交新产物
+    if [ -n "$(git status --porcelain web/dist)" ]; then
+        die "web/dist differs from committed artifact; rebuild output must be committed before release"
+    fi
 }
 
 # 长 fuzz：两目标两次独立调用（go 工具链 -fuzz 单包单目标约束）
@@ -129,7 +137,7 @@ preflight
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "release: dry run ok for $V; the steps below would run:"
     echo "  1. go vet ./... + go test -race -count=1 ./...   (full test suite)"
-    echo "  2. pnpm -C web install --frozen-lockfile + pnpm -C web build   (frontend)"
+    echo "  2. pnpm -C web install --frozen-lockfile + pnpm -C web build   (frontend + dist drift gate)"
     echo "  3. long fuzz 1/2: FuzzDecodeHello in ./internal/proto/ (10 minutes)"
     echo "  4. long fuzz 2/2: FuzzDecodeFileConfig in ./cmd/wesh/ (10 minutes)"
     echo "  5. load matrix in ./internal/server/ (build tag: load; 30-minute cap)"
