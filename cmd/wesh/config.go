@@ -6,8 +6,8 @@
 //     flag 注册前手工预扫出路径）。
 //   - D-03：TOML 形状 = 平铺 key = value，键名 = flag 名——fileConfig 的 toml
 //     tag 与 flag 名逐字一致；拒绝分组 sections。
-//   - D-04：覆盖面 = 27 个长期运行 flag 同名键 + command exec 数组
-//   - index-max-size 纯配置键 = 29 键（09-04 D-07 index 随 flag 面；
+//   - D-04：覆盖面 = 27 个长期运行 flag 同名键、command exec 数组与
+//     index-max-size 纯配置键，共 29 键（09-04 D-07 index 随 flag 面；
 //     index-max-size 无对应 flag 是 D-08 裁决的明示例外——P7 D-03 纪律的
 //     首个纯配置键，防例外蔓延 README 写明）；no-auth/insecure-http/version/
 //     help/config 五逃生门键不入 fileConfig——严格模式（未知键拒绝）将其
