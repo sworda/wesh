@@ -63,6 +63,7 @@ wesh [flags] -- <cmd> [args...]
 | `--socket-mode` | `0660` | UNIX socket 权限位（八进制）；仅随 `--socket` 有意义 |
 | `--socket-owner` | — | UNIX socket 属主 `user[:group]`；仅随 `--socket` 有意义 |
 | `--base-path` | — | 反代子路径挂载前缀（如 `/wesh`；必须 `/` 开头、无尾斜杠）——见「部署与配置」 |
+| `--index` | — | 自定义首页 HTML 文件路径：整页替换内建终端页（ttyd `-i` 同款），分享链接同效；启动一次读入，改文件需重启生效——见「部署与配置」 |
 | `--auth-header` | — | 可信反代用户头名（如 `X-Remote-User`）；头值仅记录进服务端日志 `remote_user` 字段（审计归因，无认证效力），仅反代后部署——见「部署与配置」 |
 | `--cwd` | 继承 | 子进程工作目录（默认继承服务端 cwd；启动时预检，不存在拒绝启动） |
 | `--term` | `xterm-256color` | 子进程 TERM |
@@ -93,6 +94,39 @@ pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 ```
 
 仓库提交了前端构建产物（`web/dist/index.html` 及其 `.gz`，由 `go:embed` 嵌入二进制）——裸 clone 即可直接 `go build` / `go test ./...` 并运行。**修改 `web/` 前端源码后必须先重新 `pnpm -C web build` 再 `go build`**，否则二进制内嵌的仍是旧产物。
+
+## 发布
+
+发布物由 goreleaser 经 `.github/workflows/release.yml` 构建：**推送 `v*` tag 自动触发**（版本史与 git tag 同源，起点 v1.0.0）。产物命名族（linux/darwin × amd64/arm64 四平台——Windows 不在支持范围；CGO_ENABLED=0 全静态 + `-trimpath` + `-X main.version` 注入，`--version` 可核对）：
+
+```
+wesh_v1.0.0_linux_amd64.tar.gz
+wesh_v1.0.0_linux_arm64.tar.gz
+wesh_v1.0.0_darwin_amd64.tar.gz
+wesh_v1.0.0_darwin_arm64.tar.gz
+checksums.txt
+```
+
+每个 tar.gz 为三件套：`wesh` + `LICENSE` + `README.md`——解压即见文档，scp 单文件即用。
+
+**完整性验证**：下载产物后以 `checksums.txt` 核对 sha256：
+
+```sh
+sha256sum -c checksums.txt --ignore-missing   # 只验本机已下载的产物
+```
+
+**发布流程 = `scripts/release.sh`，发布之前跑一次即可**（所有发布前操作单脚本整合，脚本即发布文档的可执行形态——本节描述流程、脚本承载流程，两者同源不漂移）：
+
+```sh
+./scripts/release.sh --dry-run v1.0.0   # 干跑：只跑前置校验四闸，打印步骤清单不执行
+./scripts/release.sh v1.0.0             # 真实发布：前置校验 → 全量测试 → 前端构建
+                                        #   → 长 fuzz ×2（每目标 10 分钟）→ 负载矩阵
+                                        #   → 确认闸 → tag push
+```
+
+前置校验四闸：tag 形态（`vX.Y.Z`）/ tag 不存在 / 工作树干净 / 与远端同步（无网络或无上游时该闸降级为跳过提示，不阻塞）；确认闸回显将创建的 tag 与最近 5 条提交，应答 `yes` 才落 tag。fuzz 崩溃即中止——崩溃语料自动落 `testdata/fuzz/`，修复后重跑脚本。tag push 后 release.yml 接管：**pnpm build 先于 goreleaser**（workflow 步骤显式编排，不用 goreleaser before hooks）；`CGO_ENABLED=0` 仅属于发布构建（`.goreleaser.yml` 单侧持有——本地 `go test -race` 需要 cgo）。
+
+**两裁决明示**：供应链文件仅 `checksums.txt`（无 cosign 签名/SBOM——个人运维工具威胁模型裁决）；**不发布容器镜像**（Dockerfile 入库用户自建，见「部署与配置 → Docker」，与单二进制 scp 哲学一致）。
 
 ## 安全说明
 
@@ -228,19 +262,26 @@ location /s/ {
 
 `--max-clients` 默认 32；满员时新客户端在 `/api/attach` 与 WS 握手两处收到 503（前端显示 Server is full 面板），槽位随断开/踢出释放。计数口径为注册成功后计数——**单源 IP 瞬时超编 ≤ per-IP 半开帽（默认 8）**（容量策略非安全边界）。
 
-### 默认参数与 Phase 9 标定
+### 默认参数与标定
 
-下列初值为一阶推算的合理值（非负载实测），Phase 9 负载标定后回填：
+下列默认值已经负载矩阵实测验证（2026-08-29，`go test -tags=load`——internal/server 黑盒负载测试；「验证为主、证伪才改」纪律）：全部现值成立，零证伪、零常量改动。
 
-| 参数 | 初值 | 一阶依据 |
-|------|------|----------|
-| outbox 字节容量/客户端 | 512KiB | 16×32KiB 读块；100KB/s 慢链路约 5s 抖动容忍；32 客户端账面最坏 16MiB（共享帧实占更低） |
-| 信用门恢复水位 | 50% | 半水位迟滞防门震颤 |
-| 输入限速 rate / burst | 32KiB/s / 64KiB | 人类击键 ~10B/s、快粘 ~50KB 瞬时；持续超限远超合法、远低于洪水 |
-| `--max-clients` | 32 | 团队围观/教学场景区间下沿；账面内存与 goroutine 开销微小 |
-| resize 防抖 | 50ms | SIGWINCH 风暴防线 |
+| 参数 | 默认值 | 标定结论 |
+|------|--------|----------|
+| outbox 字节容量/客户端 | 512KiB | **实测成立**——{1,4,16,32} 端洪水（34.9MB/端，32 端格总扇出 ≈1.1GB）全端收流逐字节一致、kicks=0；活跃读格 outbox 峰值 ≤133KiB（裕度 ≈4×）；限速承压格峰值 523,449B ≈ 容量 99.8% 精确转信用，无溢出无踢出 |
+| 信用门恢复水位 | 50% | **实测成立**——突发 2.2MB/s × 限速 600KB/s 承压格 16.7s 内门开闭 6 次（0.36/s），半水位迟滞不震颤 |
+| 输入限速 rate / burst | 32KiB/s / 64KiB | **实测成立**——矩阵全格 kicks=0、洪水触发 INPUT 全格正常送达；行为测试已锁（持续超限静默丢弃、burst 内放行） |
+| 会话输入队列容量 | 256KiB | **实测成立**——矩阵全格输入链路正常（限速器在前、队列满为设计罕见位）；行为测试已锁（对照组全量送达） |
+| `--max-clients` | 32 | **实测成立**——32 端洪水 Alloc 峰值 19.8MiB ≤ 64MiB（账面最坏 4×），GC 后回基线；200 轮高频建销 goroutine/fd 精确回基线、零 Z 态 |
+| resize 防抖 | 50ms | 行为测试已锁 + 一阶依据复核成立（SIGWINCH 风暴防线） |
+| attach 宽限 | 500ms | **实测成立**——{1,4,16,32} 端洪水 + 新端 attach 全程 kicks=0：宽限内满箱一律转信用不误踢（三轮 kick_fail 误踢现场封堵后零回归） |
+| pong 超时 | 10s | 行为测试已锁 + 一阶依据复核成立（ping 间隔 5s × 2） |
+| Hello 超时 | 5s | 行为测试已锁 + 一阶依据复核成立 |
+| EXIT 直写超时 | 2s | 行为测试已锁 + 一阶依据复核成立（stall 客户端不拖延全局终结） |
+| `--stop-timeout` 默认 | 0 | 行为测试已锁 + 一阶依据复核成立（纯单信号形态；`>0` 时超时补发 SIGKILL） |
+| `--exit-when-empty` 宽限 | 无内置默认 | 行为测试已锁（立即退出/宽限取消/宽限到期三形态）+ 一阶依据复核成立（`duration` 由用户给定，无默认值可标定） |
 
-标定方法 = **负载矩阵**（客户端数 1/4/16/32 × 输出速率 × 慢链路注入），验收标准 = 合法慢端零误踢 + 内存上界成立 + 信用门开闭频率可接受；数据源 = 本 phase 已埋计数器（踢出数/门开闭次数/输入丢弃计数/注册数，Phase 8 接入 metrics）。
+标定方法 = **负载矩阵**（客户端数 1/4/16/32 × 输出速率 × 慢链路注入），验收标准 = 合法慢端零误踢 + 内存上界成立 + 信用门开闭频率可接受；数据源 = /metrics 计数器（踢出数/门开闭次数/输入丢弃计数/注册数）+ runtime 内存/fd/goroutine 采样。该方法论已兑现——上表实测结论即其产出：负载敏感类参数以矩阵实测数据回填，时序类参数以既有行为测试锁定为一阶依据复核。
 
 ### 行为变更（单客户端 → 多客户端）
 
@@ -249,13 +290,13 @@ location /s/ {
 
 ## 部署与配置（Phase 7）
 
-生产部署完整面：TOML 配置文件、UNIX socket、反代子路径、反代身份透传、子进程管理、降权运行、自动开浏览器、优雅下线。
+生产部署完整面：TOML 配置文件、自定义首页、UNIX socket、反代（nginx/Caddy/Cloudflare）、反代身份透传、子进程管理、降权运行、自动开浏览器、Docker、systemd、优雅下线。
 
 ### 配置文件（--config）
 
 `--config /etc/wesh/wesh.toml` 显式指定 TOML 配置文件——**仅显式指定路径，零隐式默认路径搜索**（裸 `wesh -- bash` 行为与无配置文件时逐字节一致）。
 
-平铺 `key = value` 形状，**键名 = flag 名**：26 个长期运行 flag 同名键 + `command` exec 数组，共 27 键。
+平铺 `key = value` 形状，**键名 = flag 名**：27 个长期运行 flag 同名键 + `command` exec 数组 + `index-max-size` 纯配置键，共 29 键。
 
 ```toml
 # /etc/wesh/wesh.toml —— 含 credential 键时建议 chmod 600
@@ -263,6 +304,8 @@ bind = "127.0.0.1"
 port = 7681
 credential = ["alice:pw-of-alice"]   # 可重复 flag ↔ TOML 数组
 base-path = "/wesh"
+index = "/srv/wesh/index.html"       # 自定义首页（--index 同名键，见「自定义首页」节）
+index-max-size = 33554432            # 纯配置键：自定义首页读入上限（整数字节，默认 16MiB）
 max-clients = 16
 ping-interval = "5s"                 # duration 键为字符串形态
 exit-when-empty = "30s"              # "true"/"0"/"30s" 与 CLI 三形态同语义
@@ -274,7 +317,21 @@ command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则
 - **`command` 键**：CLI `--` 后 argv 非空则覆盖；`command = []` 空数组等价缺席。
 - **逃生门五键不可入配置**：`no-auth`/`insecure-http`/`version`/`help`/`config`——写入配置文件按未知键拒绝（逃生门必须显式说出口，写在配置里等于没说）。
 - **严格模式**：文件不存在、TOML 解析失败、未知键均以 exit 2 拒绝启动；错误文案只含类别 + 键名 + 行号，**不回显配置值**。
+- **`index-max-size` 纯配置键例外**：自定义首页读入上限（整数字节，默认 16MiB）只经配置文件调整，**无对应 CLI flag**——「配置键 = flag 名」纪律的明示例外（上限属低频调参，配置文件承载；此例外不蔓延，详见「自定义首页」节）。
 - **权限建议（chmod 600）**：含 `credential` 键且文件权限非 600/400 时 stderr 警告放行（不阻断——挂载盘/容器 secret 权限语义不可靠），建议 `chmod 600`。**`WESH_CREDENTIAL` env 优先于配置文件明文**——生产凭据首选 env（systemd `EnvironmentFile=` 600 通道，见「安全说明」），不写入配置文件。
+
+### 自定义首页（--index）
+
+`--index /srv/wesh/index.html` 用你的 HTML **整页替换**内建终端页（ttyd `-i` 同款语义）：启动时一次读入内存常驻，运行期零磁盘依赖——**改文件需重启生效**。`/` 根路径与 `/s/{token}/` 分享链接两通道统一替换（同一字节源）；`/api/attach`、`/ws`、`/healthz`、`/metrics` 照旧暴露不受影响。可经 TOML 配置同名键 `index` 给定（CLI flag 覆盖配置）。
+
+自定义页是用户自治页面——wesh 零注入、零模板、零内容校验；页面的可访问性、视觉质量、终端逻辑正确性由你自负。两义务承诺：
+
+- 自定义页完全替代内建终端页：**终端功能须自行实现**（POST /api/attach 换 ticket + wesh.v1 WS 协议回连），否则根路径与分享链接将失去终端功能。
+- 自定义页须为**自包含单 HTML**（内联一切脚本/样式/资源）：wesh 不伺服其引用的相对路径资源（404）；wesh 安全头 CSP 允许内联脚本与同源 WS 连接，但阻断外部源资源（CDN 脚本/样式/图片/webfont），与内建页同约束。
+
+**大小上限**：默认 **16MiB** 硬顶（启动读入上限，防误指大文件 OOM）。上限经 TOML 纯配置键 `index-max-size`（整数字节）调整——该键**无对应 CLI flag**，是「配置键 = flag 名」纪律的明示例外（见上节）；`0`/负值拒绝启动。
+
+**启动校验（exit 2 fail-fast）**：文件不存在 / 不可读 / 非常规文件（目录、设备、socket）/ 超上限，四态拒绝启动；错误行只含路径与原因类别，**不含文件内容任何字节**（启动面红线——路径非敏感可回显，HTML 内容是探针面）。
 
 ### UNIX socket（--socket）
 
@@ -328,6 +385,34 @@ server {
 
 **`proxy_read_timeout` 必须大于 `--ping-interval`（默认 `5s`）**：反代空闲超时看应用层流量——WS 建立后若无数据往来，超时到期反代主动断连。wesh 服务端每个 ping 间隔发一帧 WS ping（应用层流量），故 `proxy_read_timeout` 大于 ping 间隔即不会误断空闲连接；`3600s` 是充裕值。`--ping-interval 0` 禁用保活时，空闲连接存活性完全取决于反代超时。
 
+### 反向代理：Caddy（已实证）
+
+nginx 之外的轻量反代选项。已全链实证（2026-08-30，Caddy v2.11.4；Linux 协议层七断言 + Windows 浏览器双机全链）。根路径反代只需一条指令：
+
+```caddyfile
+wesh.example.com {
+    reverse_proxy 127.0.0.1:7681
+}
+```
+
+与 nginx 的三个关键差异（两平台默认语义相反，**配方互抄必错**）：
+
+- **Host 默认原样透传**——wesh Origin 同源校验天然通过，**不需要任何 Host 配置行**（nginx 默认转发 `$proxy_host`，必须显式 `proxy_set_header Host $http_host`，见上节配方）。
+- **WS upgrade 内建自动处理**——零 upgrade 配置行（nginx 须 `proxy_set_header Upgrade`/`Connection` 映射）。
+- **站点地址语义相反**：Caddyfile 站点地址写 `http://0.0.0.0:PORT` 是**字面 Host 匹配**（仅 Host: 0.0.0.0 的请求命中），不是 nginx 的「绑定全网卡」监听语义——LAN 监听站点地址须写**裸 `:PORT`**（绑定全网卡 + 匹配任意 Host）；上例域名形态不受影响。
+
+XFF 默认添加（`--auth-header` 可选消费）。**空闲超时**：Caddy 对 hijack 后的 WS 连接无默认 idle 超时（65s 空闲存活实测）——wesh 默认 `--ping-interval 5s` 远小于任何中间盒 idle 阈值，无需额外配置；`--ping-interval 0` 禁用保活时，连接存活性取决于路径上的其他中间设备。
+
+### 反向代理：Cloudflare（未实测）
+
+**本节按 Cloudflare 官方文档书写，未经实测**（SaaS 反代无本机复现条件——部署配方实证分级中唯一例外；nginx/Caddy 均经全链实证）。要点：
+
+- **DNS 橙云代理**：wesh 域名记录开代理（橙云）即经 CF 边缘；**WebSockets 默认开启**（Network 面板）。
+- **空闲超时**：社区共识约 **~100s 无流量关连**（该数值未能从官方文档直取，为多源社区共识）——wesh 默认 `--ping-interval 5s` 应用层 ping 使连接恒有流量，**默认即安全**；`--ping-interval 0` 禁用保活时空闲连接将在 ~100s 被 CF 关闭（前端 1006 自动重连可恢复，见「断线自动重连」）。
+- **TLS**：CF 边缘终止；源站建议 **Full (strict)**（wesh 配 `--tls-cert`/`--tls-key` 真实证书），或源站仅 loopback 监听 + CF 回源（源站不直接暴露）。
+- **Host 默认保持**（同 Caddy）；`--base-path` 子路径挂载在 CF 后照常可用。
+- **`/s/{token}/` 对 CF 明文可见**：分享 token 经 CF 边缘与访问日志（见「分享链接」节脱敏建议——在 CF 语境同样适用，且 CF 侧日志不在你的掌控内，转发分享链接前请知悉）。
+
 ### 反代身份透传（--auth-header）与 X-Forwarded-For
 
 **语义 = 服务端审计归因**：`--auth-header X-Remote-User` 配置即信任该头——反代（authelia/oauth2-proxy 等 SSO）注入的用户名经清洗（剥离控制字符、截断 128 字符）后记录进服务端 stderr 事件行的 `remote_user` 字段：
@@ -360,6 +445,35 @@ server {
 ### 自动打开浏览器（--open）
 
 `--open` 启动后以系统启动器打开分享链接（Linux `xdg-open` / macOS `open`）：`--writable` 开 rw 链接，否则开 ro 链接（含 token 免交互即打即用）。headless 环境（无 `DISPLAY`/`WAYLAND_DISPLAY`）stderr 提示后跳过、**不阻断启动**；`--socket` × `--open` 组合矛盾拒绝启动（unix socket 无 http URL 可开）。
+
+### Docker（用户自建）
+
+仓库根 `Dockerfile` 是参考镜像（FROM scratch + 静态二进制 + tini 作 PID 1 收割僵尸；tini 以 sha256 钉死拉取）——**不发布镜像**（与单二进制 scp 哲学一致，用户自建）。本机 docker 构建与 PID 1 收割行为已实测（正例零僵尸 + 无 init 负对照 5 僵尸的判别形态）。
+
+```sh
+# 构建前置：先产出静态二进制到仓库根（scratch 无动态库，wesh 必须纯静态）
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o wesh ./cmd/wesh
+docker build -t wesh .
+docker run --rm wesh --version
+```
+
+**本镜像不含任何可执行命令**——scratch 零内容，`--` 后命令须来自 bind-mount（如 `-v /bin:/bin:ro -v /lib:/lib:ro -v /lib64:/lib64:ro`，实测形态）或 `FROM` 本镜像派生自建。PID 1 = tini：孤儿孙进程由 tini 收割；不加 `-g`——wesh 自管 stop-signal 进程组序列（tini 只向直接子进程 wesh 转发信号，正确的形态）。`--socket` 在容器内需配合 volume 把 socket 文件暴露给宿主反代；容器内 loopback 免凭据矩阵同样适用。
+
+### systemd（deploy/wesh.service）
+
+完整 unit 模板入库于 `deploy/wesh.service`（实机 systemctl 通道验证：255 复活语义/draining 窗口/停后不复活）。全配要点：
+
+```ini
+[Service]
+EnvironmentFile=-/etc/wesh/credentials   # chmod 600，内容 WESH_CREDENTIAL=user:pass（- 前缀 = 缺席不拒）
+ExecStart=/usr/local/bin/wesh --config /etc/wesh/wesh.toml
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15s
+LimitNOFILE=65536
+```
+
+**255 交互**（退出码语义见「优雅下线」节注记）：wesh 优雅关停（SIGTERM）与会话终结（`--once`/`--exit-when-empty`）均以 **255** 退出。`Restart=on-failure` 下自主终结（255 归为失败类）会自动重启——服务常驻形态的期望行为；而 `systemctl stop`/`restart` 发起的停止**永不触发重启**（systemd 知道是自己发起的停止——实测 systemd 239：stop 后 ActiveState=failed 但不复活，failed 态是 255 语义的正常纹理而非异常）。期望「会话完即停」改 `Restart=no`；希望把 255 视为正常关停可配置 `SuccessExitStatus=255`。`TimeoutStopSec=15s` 覆盖 1001 广播 + stall 客户端关闭内建 5s+5s 上界（不撞 90s 默认）。
 
 ### 优雅下线（1001）
 
