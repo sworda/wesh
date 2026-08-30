@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 22
+open_count: 24
 waived_count: 0
 fixed_count: 3
-total_count: 25
-last_updated: 2026-08-30T04:14:53.268Z
+total_count: 27
+last_updated: 2026-08-30T07:57:44.432Z
 ---
 
 # Broken Windows Ledger
@@ -40,6 +40,8 @@ last_updated: 2026-08-30T04:14:53.268Z
 | 23 | 09 | deviation | .planning/phases/09-release-polish/09-01-PLAN.md | 118 | 09-01 plan verify 块 goreleaser 产物目录路径（dist/<os>_<arch>/）与 v2.18.0 实证布局（dist/wesh_<os>_<arch>_<variant>/）不符——执行已按实证路径，断言全绿；PLAN 文档字面未改（历史产物） | fixed |  | 2026-08-29T13:45:46.256Z | 2026-08-29T13:46:51.606Z |
 | 24 | 09 | deviation | web/uat/pw/phase09-caddy-ctl.sh | 26 | 09-08: Caddyfile 站点地址 http://0.0.0.0:10014 系字面 Host 匹配（仅 Host: 0.0.0.0 命中，真实主机名落空走兜底空 200）——Task 1『外部 Host 照常被服务』结论系 proto-verify 探针 curl 0.0.0.0 自身的假绿，Windows 首跑 0/2 捕获；改裸 :10014（绑定全网卡+匹配任意 Host）三层复验全绿：LAN IP 矩阵 + proto 7/7 + Windows 4/4（28ae2f2） | fixed |  | 2026-08-30T03:53:43.425Z | 2026-08-30T03:53:54.769Z |
 | 25 | 09 | deviation | web/uat/phase06-dom.mjs |  | 09-03: D13 夹具形态替换——plan 括注建议『hold 或不发 Hello 使 opened 保持 false』两形态结构性不可达（fetch hold 期间 WS 未构造无 socket 可驱动；opened 在 WS onopen 即置位先于 Hello 发送），改黑洞 TCP 伺服器夹具（accept-never-upgrade + SpyWebSocket URL 端口改写）确定性构造 pre-onopen 驻留；断言面与 plan 行为逐字一致（D13a RED 复现 WARNING#3 后 GREEN） | open |  | 2026-08-30T04:14:53.268Z |  |
+| 26 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: task 级 tdd RED 形态裁决——被测实现属先序 plan（09-04 已落地），failing-first 提交结构性不可达（交付物即测试脚本）；RED 以 git archive 49ed5b2 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1），GREEN 当前二进制 18/18 exit 0（1649639） | open |  | 2026-08-30T07:57:33.918Z |  |
+| 27 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: Task 2 回归里程碑取 --allow-empty 提交——plan 指定提交语但 verification-only 任务零文件改动，裸 git commit 必失败；空提交保持 per-task 原子提交协议（四脚本 18+28+40+34 断言零 FAIL 证据入提交信息，95f06f0） | open |  | 2026-08-30T07:57:44.432Z |  |
 
 ````json
 [
@@ -341,6 +343,30 @@ last_updated: 2026-08-30T04:14:53.268Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-30T04:14:53.268Z",
+    "resolved_at": null
+  },
+  {
+    "id": 26,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "web/uat/phase09.mjs",
+    "line": null,
+    "description": "09-05: task 级 tdd RED 形态裁决——被测实现属先序 plan（09-04 已落地），failing-first 提交结构性不可达（交付物即测试脚本）；RED 以 git archive 49ed5b2 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1），GREEN 当前二进制 18/18 exit 0（1649639）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-30T07:57:33.918Z",
+    "resolved_at": null
+  },
+  {
+    "id": 27,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "web/uat/phase09.mjs",
+    "line": null,
+    "description": "09-05: Task 2 回归里程碑取 --allow-empty 提交——plan 指定提交语但 verification-only 任务零文件改动，裸 git commit 必失败；空提交保持 per-task 原子提交协议（四脚本 18+28+40+34 断言零 FAIL 证据入提交信息，95f06f0）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-30T07:57:44.432Z",
     "resolved_at": null
   }
 ]

@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Completed 09-04-PLAN.md
-last_updated: "2026-08-30T07:26:03.843Z"
+stopped_at: Completed 09-05-PLAN.md
+last_updated: "2026-08-30T07:58:40.829Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 67
+  completed_plans: 68
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 8 of 10
+Plan: 9 of 10
 Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [██████████] 96%
+Progress: [██████████] 97%
 
 ## Performance Metrics
 
@@ -131,6 +131,7 @@ Progress: [██████████] 96%
 | Phase 09 P08 | 55min | 3 tasks | 3 files |
 | Phase 09 P03 | 13min | 2 tasks | 4 files |
 | Phase 09 P04 | 28min | 2 tasks | 7 files |
+| Phase 09 P05 | 25min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -295,6 +296,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 09-03: dist 产物指纹断言以 grep -o 计出现次数（esbuild 单行 bundle 下 grep -c 计行数恒 1 失真）；esbuild 不去重字符串字面量实证（旧 hint 改前产物 2 处→改后恰 1 处）；TDD RED 先证——更新断言对旧 dist 三 FAIL 恰复现三项 WARNING bug 形态后重建转 GREEN（09-02 task 级 tdd 先例第二次沿用）
 - [Phase ?]: 09-04: D-05..D-08 确认门 as-locked（用户 2026-08-30 裁决）——--index 整页替换（ttyd -i 同款零模板注入面）+ 全通道统一（/ 与 /s/{token}/ 经 wh 单点装饰同一字节源，sharetoken.go 零改动）+ 启动一次读入（LimitReader(max+1) 四拒绝 exit 2，错误行零内容字节）+ index-max-size 纯配置键（16MiB 默认，无 CLI flag——P7 D-03 纪律明示例外）
 - [Phase ?]: 09-04: Options.CustomIndex 字段提前至 Task 2（Rule 3 最小跨文件必要——Task 2 验收 grep 要求 Options 字面量透传，字段缺失包不可编译）；TestStartupMatrix 既有行 indexMaxSize 16MiB 基线注入（maxClients 基线同步先例同款）
+- [Phase ?]: 09-05: undici fetch 自动 accept-encoding + Content-Encoding 透明解压使自定义页明文伺服态结构性不可观测——phase09.mjs 以 node:http rawFetch 原始请求通道（不注入头/不透明解压/5s 护栏）直证 gzip/明文双态与头面（09-04 Go transport 显式编码适配的 JS 侧对偶）
+- [Phase ?]: 09-05: UAT 脚本 task 级 tdd RED 形态——被测实现属先序 plan（09-04），RED 以 git archive 09-03 HEAD 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1）后 GREEN 18/18；plan 单 test 提交字面保持（09-02 先例第三次沿用）
 
 ### Pending Todos
 
@@ -315,6 +318,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-30T07:26:03.814Z
-Stopped at: Completed 09-04-PLAN.md
+Last session: 2026-08-30T07:58:40.800Z
+Stopped at: Completed 09-05-PLAN.md
 Resume file: None
