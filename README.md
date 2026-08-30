@@ -93,7 +93,7 @@ share read-write: http://host:port/s/<rw-token>/   # 仅 --writable 时打印
 pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 ```
 
-仓库提交了前端构建产物（`web/dist/index.html` 及其 `.gz`，由 `go:embed` 嵌入二进制）——裸 clone 即可直接 `go build` / `go test ./...` 并运行。**修改 `web/` 前端源码后必须先重新 `pnpm -C web build` 再 `go build`**，否则二进制内嵌的仍是旧产物。
+仓库提交 `web/dist/index.html` 占位（由 `go:embed` 嵌入二进制——裸 clone 即可直接 `go build` / `go test ./...` 并运行）；`.gz` 预压产物由 `pnpm -C web build` 生成、不入库（`.gitignore` 忽略 `web/dist/*.gz`），发布构建在 CI 侧完成（发布二进制含 `.gz`）。**修改 `web/` 前端源码后必须先重新 `pnpm -C web build` 再 `go build`**，否则二进制内嵌的仍是旧产物。
 
 ## 发布
 
