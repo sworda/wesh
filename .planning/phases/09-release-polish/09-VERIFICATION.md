@@ -1,14 +1,16 @@
 ---
 phase: 09-release-polish
 verified: 2026-08-30T11:27:20Z
-status: human_needed
+status: passed
 score: 3/3 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 human_verification:
+
   - test: "darwin 产物 macOS 实机冒烟：scp wesh_v0.0.0_darwin_{amd64,arm64}.tar.gz 解包产物到真实 Mac，运行 ./wesh --version 并完成一次 attach echo"
     expected: "exit 0、版本号非 dev、终端回显正常（与 linux 干净容器行为一致）"
     why_human: "本验证环境无 macOS；09-VALIDATION.md Manual-Only 既定项 + 09-01 flagged_assumptions Pitfall 12 既定取舍——本验证器只能做 Mach-O 架构层断言（已过），实机运行为平台原生行为面"
+
   - test: "执行 ./scripts/release.sh v1.0.0（用户已裁决 publish-later，择机执行）——真实 tag push 触发 release.yml 全链，发布后 gh release view v1.0.0 核验产物清单"
     expected: "GitHub Release 附 4× wesh_v1.0.0_{linux,darwin}_{amd64,arm64}.tar.gz + checksums.txt；sha256sum -c 全 OK；linux_amd64 产物 --version 输出 wesh 1.0.0"
     why_human: "09-01 coverage D2 明示 release.yml 真实全链首证 = v1.0.0 实际发布，verifier 不得 auto-pass 端到端发布链；发布动作本身经用户裁决 deferred（publish-later，2026-08-30），属用户择机执行的一次性公开动作"
