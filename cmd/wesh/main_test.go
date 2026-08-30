@@ -106,13 +106,13 @@ func TestParseArgs(t *testing.T) {
 		//（TestTLSKeyPairError）与成对校验行（TestStartupMatrix）承载）。
 		wantUid int // D-24：--uid 解析产物（默认 -1 不降权）
 		wantGid int // D-24：--gid 解析产物（默认 -1 不降权）
-	// P7：D-26 --open 断言位（零值 = 期望 false 默认不开——既存行经此扩展
-	// 零值断言覆盖，命名字段扩展纪律 03-04 先例）。
-	wantOpen bool // D-26：--open 默认 false
-	// P9：D-07 --index 断言位（零值 = 期望空串未配置——内建页伺服现状，
-	// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
-	wantIndex string // D-07：--index 自定义首页路径原样入 cfg
-	wantArgv  []string
+		// P7：D-26 --open 断言位（零值 = 期望 false 默认不开——既存行经此扩展
+		// 零值断言覆盖，命名字段扩展纪律 03-04 先例）。
+		wantOpen bool // D-26：--open 默认 false
+		// P9：D-07 --index 断言位（零值 = 期望空串未配置——内建页伺服现状，
+		// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
+		wantIndex string // D-07：--index 自定义首页路径原样入 cfg
+		wantArgv  []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -326,22 +326,22 @@ func TestParseArgs(t *testing.T) {
 			if cfg.gid != wantGid {
 				t.Errorf("gid = %d, want %d", cfg.gid, wantGid)
 			}
-		// D-26：--open 原样解析（零值 = false 默认不开，既存行零值断言覆盖）。
-		if cfg.open != tt.wantOpen {
-			t.Errorf("open = %v, want %v", cfg.open, tt.wantOpen)
-		}
-		// D-07：--index 原样解析（零值 = 空串未配置——内建页伺服现状，既存行
-		// 零值断言覆盖）。
-		if cfg.index != tt.wantIndex {
-			t.Errorf("index = %q, want %q", cfg.index, tt.wantIndex)
-		}
-		// D-08：index-max-size 无 CLI flag（纯配置键——P7 D-03 纪律的明示例外），
-		// 默认 16MiB 全行恒定（CLI 面结构性不存在该 flag 的行为锁；配置键经 TOML
-		// 生效由 config_test 锁定）。
-		if cfg.indexMaxSize != 16*1024*1024 {
-			t.Errorf("indexMaxSize = %d, want %d (默认 16MiB，D-08 纯配置键无 CLI flag)", cfg.indexMaxSize, 16*1024*1024)
-		}
-		if !reflect.DeepEqual(argv, tt.wantArgv) {
+			// D-26：--open 原样解析（零值 = false 默认不开，既存行零值断言覆盖）。
+			if cfg.open != tt.wantOpen {
+				t.Errorf("open = %v, want %v", cfg.open, tt.wantOpen)
+			}
+			// D-07：--index 原样解析（零值 = 空串未配置——内建页伺服现状，既存行
+			// 零值断言覆盖）。
+			if cfg.index != tt.wantIndex {
+				t.Errorf("index = %q, want %q", cfg.index, tt.wantIndex)
+			}
+			// D-08：index-max-size 无 CLI flag（纯配置键——P7 D-03 纪律的明示例外），
+			// 默认 16MiB 全行恒定（CLI 面结构性不存在该 flag 的行为锁；配置键经 TOML
+			// 生效由 config_test 锁定）。
+			if cfg.indexMaxSize != 16*1024*1024 {
+				t.Errorf("indexMaxSize = %d, want %d (默认 16MiB，D-08 纯配置键无 CLI flag)", cfg.indexMaxSize, 16*1024*1024)
+			}
+			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
 		})

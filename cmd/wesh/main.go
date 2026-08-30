@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -83,6 +84,9 @@ type config struct {
 	stopSignalSig syscall.Signal // --stop-signal 的 parse 期名→信号解析产物（StopSignalByName 命中；Options.StopSignal 接线源）
 	// Phase 7 自动打开浏览器（D-26，one-way 公开契约，P2 D-15 同纪律）：
 	open bool // --open 启动后以系统启动器打开分享链接（--writable 开 rw 链接否则 ro 链接，含 token 免交互；headless 跳过不阻断，--socket×--open 组合矛盾归 validateStartup）
+	// Phase 9 自定义首页（09-04 OPS-03，D-07/D-08 one-way 公开契约，P2 D-15 同纪律）：
+	index        string // D-07：--index 自定义首页路径（空串 = 未配置内建页现状；启动一次读入内存，运行期零磁盘依赖，改文件需重启生效）
+	indexMaxSize int    // D-08：自定义首页读入上限（字节，默认 16MiB；TOML 纯配置键 index-max-size 可调——无 CLI flag，P7 D-03 纪律的明示例外）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -133,7 +137,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 30 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 31 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -154,7 +158,10 @@ func (v *exitEmptyValue) Set(s string) error {
 // 归 validateStartup）、--open（07-05 D-26 启动后自动开浏览器，headless 跳过
 // 不阻断，--socket×--open 组合矛盾归 validateStartup）、
 // --config（07-06 OPS-09 D-01 显式指定 TOML 配置文件——仅预扫显式路径，
-// 零隐式默认路径搜索，裸启动行为零漂移）。
+// 零隐式默认路径搜索，裸启动行为零漂移）；
+// Phase 9：--index（09-04 D-07 自定义首页整页替换，ttyd -i 同款——启动一次
+// 读入；stat 级预检与读入校验归 validateStartup/loadCustomIndex，index-max-size
+// 纯配置键无 flag——D-08）。
 // 配置文件两阶段合并（07-06 OPS-09，D-01..D-07，07-RESEARCH Pattern 4）：
 // prescanConfigPath 预扫 --config 路径 → loadFileConfig 严格加载铺底（文件级
 // 错误 exit 2 现状通道，D-06；D-07 权限警告加载期 stderr 打印）→ fileConfig
@@ -226,6 +233,10 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	uidDefault := -1
 	gidDefault := -1
 	openDefault := false
+	// 09-04 D-07/D-08：--index 默认空串（未配置内建页现状）；index-max-size
+	// 默认 16MiB（纯配置键默认值，直接赋值不经 flag 注册——D-08）。
+	indexDefault := ""
+	indexMaxSizeDefault := 16 * 1024 * 1024
 	if fc != nil {
 		if fc.Port != nil {
 			portDefault = *fc.Port
@@ -300,6 +311,14 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		}
 		if fc.Open != nil {
 			openDefault = *fc.Open
+		}
+		// 09-04：index 键换算 flag 注册默认值（配置铺底、CLI 覆盖）；index-max-size
+		// 纯配置键直接落默认值变量（无 flag 注册——D-08 明示例外形态）。
+		if fc.Index != nil {
+			indexDefault = *fc.Index
+		}
+		if fc.IndexMaxSize != nil {
+			indexMaxSizeDefault = *fc.IndexMaxSize
 		}
 	}
 	fs := flag.NewFlagSet("wesh", flag.ContinueOnError)
@@ -453,6 +472,18 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 桌面便利功能）；Windows 不做（PROJECT Out of Scope）。--socket×--open
 	// 组合矛盾归 validateStartup（unix socket 无 http URL 可开，OQ1）。
 	fs.BoolVar(&cfg.open, "open", openDefault, "open the share link in a browser after startup (rw link when --writable, otherwise ro)")
+	// D-07：--index 自定义首页（09-04 OPS-03，one-way 公开契约——ttyd -i 同款
+	// 整页替换语义）：用户 HTML 完全替代内建终端页，/ 与 /s/{token}/ 全通道
+	// 统一伺服（D-06）；终端功能由用户页自行实现（WS 端点照旧暴露，wesh 零
+	// 注入零模板 D-05）。启动一次读入内存——运行期零磁盘依赖，改文件需重启
+	// 生效（与 embed 静态伺服同语义）。校验分层：stat 级预检（不存在/非常规）
+	// 归 validateStartup，读入与不可读/超限拒绝归 loadCustomIndex（run() 启动序，
+	// exit 2 配置矩阵同语义）。
+	fs.StringVar(&cfg.index, "index", indexDefault, "custom index HTML file served in place of the built-in page (full-page replacement; share links serve it too)")
+	// D-08：index-max-size 纯配置键（TOML 整数字节，无对应 CLI flag——P2 D-15
+	// flag 面紧缩与「设上限就必须可配置」用户裁决的调和形态，P7 D-03 纪律的
+	// 明示例外，README 写明防蔓延）——默认值直接赋值，不经 flag 注册。
+	cfg.indexMaxSize = indexMaxSizeDefault
 	// D-01：--config TOML 配置文件（07-06 OPS-09，one-way 公开契约）——仅显式
 	// 指定路径，零隐式默认路径搜索（裸启动行为零漂移）；函数首部
 	// prescanConfigPath 已消费其值加载铺底，此处正式注册保持 help 可见与
@@ -935,6 +966,25 @@ func validateStartup(cfg config) (warn string, err error) {
 			return "", fmt.Errorf("invalid --cwd %q: not an existing directory", cfg.cwd)
 		}
 	}
+	// D-07 预检（09-04，--cwd 行同位——纯配置有效性与 bind 安全形态无关，
+	// loopback 早退之前判定）：--index 非空时 os.Stat 只读探测（纯函数纪律
+	// 允许只读探测，见函数头注释）——不存在或非常规文件（目录/设备/socket
+	// 同归此类）即拒（spawn 前零资源占用，loadCustomIndex 读入前的第一闸）。
+	// 错误行只含路径与原因类别，绝不含文件内容任何字节（D-08 红线——自定义页
+	// 可能含 operator 私有信息；路径非敏感可回显，--cwd 同纪律）。
+	if cfg.index != "" {
+		if fi, serr := os.Stat(cfg.index); serr != nil {
+			return "", fmt.Errorf("invalid --index %q: file does not exist", cfg.index)
+		} else if !fi.Mode().IsRegular() {
+			return "", fmt.Errorf("invalid --index %q: not a regular file", cfg.index)
+		}
+	}
+	// D-08：index-max-size 纯配置键数值校验（TOML 整数字节，无 CLI flag）——
+	// ≤0 拒绝（0/负值使 LimitReader 读入上限失义；「显式」哲学：给的键值无效
+	// 即 fail-fast）。配置键名入文案合法（键名非值）。
+	if cfg.indexMaxSize <= 0 {
+		return "", errors.New("invalid index-max-size: must be positive")
+	}
 	// D-24 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
 	// bind 安全形态无关，loopback 早退之前判定）：--uid/--gid 成对强制——只给
 	// 一个 = 配置矛盾零窗口暴露（降权半配置静默放行 = 子进程以原权运行，
@@ -1067,6 +1117,33 @@ func listenSocket(path string, mode os.FileMode, uid, gid int) (net.Listener, er
 	return ln, nil
 }
 
+// loadCustomIndex 是 --index 自定义首页的启动读入（09-04，D-07/D-08；run()
+// 上方的纯 helper——listenSocket 同位纪律）：io.LimitReader(max+1) 读入后按
+// len(data) > max 判定超限（+1 使恰顶文件可读全、超顶文件多读一字节即拒——
+// 防 io.ReadAll 无顶读入把误指的巨大文件吃光内存，Pitfall 9/T-09-04b）。
+// 错误行只含路径 + 原因类别 + 上限数值，绝不含文件内容任何字节（D-08 红线：
+// 自定义页可能含 operator 私有信息，超限/不可读场景尤其不得回显文件头字节，
+// P3/P4 启动面红线延伸——测试以内容探针串反断言）。0 字节文件合法（D-07
+// 拒绝列表 = 不存在/不可读/非常规/超限，不含空文件——伺服空白页是用户明示
+// 的整页替换语义，「验证为主」纪律不过度校验）。
+func loadCustomIndex(path string, max int) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --index %q: cannot read", path)
+	}
+	defer func() { _ = f.Close() }()
+	data, rerr := io.ReadAll(io.LimitReader(f, int64(max)+1))
+	if rerr != nil {
+		// ReadAll 失败（生产路径不可达——stat 预检已过且目录已被拒；防御性
+		// 归并 cannot read 类别，不透传 OS 错误文本）。
+		return nil, fmt.Errorf("invalid --index %q: cannot read", path)
+	}
+	if len(data) > max {
+		return nil, fmt.Errorf("invalid --index %q: exceeds index-max-size (%d bytes)", path, max)
+	}
+	return data, nil
+}
+
 func run(args []string) int {
 	cfg, argv, err := parseArgs(args)
 	if err != nil {
@@ -1105,6 +1182,20 @@ func run(args []string) int {
 			return 1
 		}
 	}
+	// D-07 启动读入（09-04）：--index 给定时 loadCustomIndex 一次读入内存——
+	// validateStartup warn 打印之后、pty.Start 之前（零资源占用拒绝纪律与
+	// TLS 预检同位；exit 2 与校验矩阵同语义，spawn 前失败零资源占用）。
+	// 未配置 --index 时 customIndex 保持 nil（Options 零值兜底——内建页伺服
+	// 现状逐字节一致）。运行期零磁盘依赖：读入字节常驻内存经 Options 透传
+	// 伺服层，改文件需重启生效。
+	var customIndex []byte
+	if cfg.index != "" {
+		customIndex, err = loadCustomIndex(cfg.index, cfg.indexMaxSize)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
+			return 2
+		}
+	}
 	// D-21/D-24 接线（07-04）：--cwd/--term 落 StartOptions Dir/Term；--uid/--gid
 	// 落 Uid/Gid（-1 哨兵 = 不降权，Task 3 完成 flag 注册与成对校验）。
 	sess, err := pty.Start(argv, pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid})
@@ -1139,7 +1230,7 @@ func run(args []string) int {
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version})
+	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version, CustomIndex: customIndex})
 	// shareURLRO/shareURLRW 拼串单一事实源（07-01 D-14 既定注释）：启动打印与
 	// 07-05 --open 两消费点共用（两消费点不得各自重拼）；socket 分支保持零值
 	// 空串（该形态 --open 已被 validateStartup 拒绝，下方消费点结构性不可达）。

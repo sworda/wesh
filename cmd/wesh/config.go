@@ -6,10 +6,12 @@
 //     flag 注册前手工预扫出路径）。
 //   - D-03：TOML 形状 = 平铺 key = value，键名 = flag 名——fileConfig 的 toml
 //     tag 与 flag 名逐字一致；拒绝分组 sections。
-//   - D-04：覆盖面 = 26 个长期运行 flag + command exec 数组 = 27 键；
-//     no-auth/insecure-http/version/help/config 五逃生门键不入 fileConfig——
-//     严格模式（未知键拒绝）将其自然拒绝（逃生门必须显式说出口，配置文件里
-//     写出来等于没说）。
+//   - D-04：覆盖面 = 27 个长期运行 flag 同名键 + command exec 数组
+//   - index-max-size 纯配置键 = 29 键（09-04 D-07 index 随 flag 面；
+//     index-max-size 无对应 flag 是 D-08 裁决的明示例外——P7 D-03 纪律的
+//     首个纯配置键，防例外蔓延 README 写明）；no-auth/insecure-http/version/
+//     help/config 五逃生门键不入 fileConfig——严格模式（未知键拒绝）将其
+//     自然拒绝（逃生门必须显式说出口，配置文件里写出来等于没说）。
 //   - D-06：加载失败与未知键 = exit 2 fail-fast 严格模式（文件不存在 / TOML
 //     解析失败 / 未知键均拒绝——错误经返回值上抛，exit 2 由调用方 parseArgs
 //     现状通道落地）。
@@ -37,7 +39,8 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// fileConfig 是配置文件的解码目标：27 键 = 26 flag 同名 + command。
+// fileConfig 是配置文件的解码目标：29 键 = 27 flag 同名 + command +
+// index-max-size 纯配置键（D-04 覆盖面 27→29，09-04）。
 // 标量全指针（键缺席 = nil，见文件头「合并前提」）；列表 nil = 键缺席，
 // 非 nil 空数组按缺席语义处理（与 CLI `--` 空 argv 同档，plan flagged_assumptions）。
 type fileConfig struct {
@@ -68,6 +71,12 @@ type fileConfig struct {
 	Gid           *int     `toml:"gid"`
 	Open          *bool    `toml:"open"`
 	Command       []string `toml:"command"` // D-04：exec 数组；CLI `--` 后 argv 非空则覆盖
+	// 09-04 D-07/D-08（OPS-03 自定义首页）：index 为 --index flag 同名键（配置
+	// 铺底、CLI 覆盖）；index-max-size 为整数字节纯配置键（无对应 CLI flag——
+	// D-08 裁决，P7 D-03 纪律的明示例外；默认 16MiB 在 main.go parseArgs 铺底，
+	// ≤0 经 validateStartup 拒绝）。
+	Index        *string `toml:"index"`
+	IndexMaxSize *int    `toml:"index-max-size"` // 整数字节（OQ1 推荐形态，max-clients 整数先例同型零新解析；字符串形态由 go-toml 类型不符自然拒绝）
 	// D-04 排除项不在结构体：no-auth/insecure-http/version/help/config
 	// → 严格模式以「未知键」拒绝（逃生门必须显式说出口）。
 }

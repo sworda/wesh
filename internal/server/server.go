@@ -272,6 +272,12 @@ type Options struct {
 	// "dev"）。消费点 = /metrics 的 wesh_build_info{version} 单 label
 	//（escLabel 转义，metrics.go）。
 	Version string
+	// CustomIndex 为生产直传字段（09-04 OPS-03，D-05..D-08）：main --index
+	// 启动一次读入的自定义首页字节原样透传（[]byte，nil = 未配置——New 不做
+	// 任何兜底改写，Handler() 按零值装配与现状逐字节一致；伺服字节与读入字节
+	// byte-identity，wesh 零注入零模板零校验 D-05）。伺服装配（gzip 预压装饰）
+	// 见 Handler()。
+	CustomIndex []byte
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
