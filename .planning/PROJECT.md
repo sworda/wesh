@@ -47,27 +47,13 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ /healthz 健康检查端点（免认证唯一窄例外 D-07，四字段键集白名单、draining 两态、503 摘流观测）— Phase 8（OPS-06；TestHealthz/TestHealthzDraining + phase08.mjs S1/S4 + 实机 systemctl restart 轮询 200→503×15→000）
 - ✓ /metrics 监控端点（17 条 wesh_* series 零身份 label、build_info 转义、basic_auth 闸跟随、快照锁序防死锁）— Phase 8（OPS-07；TestMetricsExposition/TestMetricsAuth/TestMetricsSnapshotRace + phase08.mjs S2/S3 + Prometheus 2.55.1 实机 scrape 17 series 全入库）
 - ✓ 结构化审计日志（slog JSON 单行事件 stderr 输出、auth_failed 无用户名红线、C0/C1 注入剥离、journald+jq 检索示例可用）— Phase 8（OPS-08/SEC-01；TestAuthFailedNoUsername/TestRemoteSanitize + phase08.mjs S5/S6 + 实机 sg systemd-journal 双示例 jq 零 parse error）
+- ✓ 自定义首页 HTML（--index 整页替换零注入零模板 + TOML index/index-max-size 双键 + 启动四拒绝错误行零内容字节 + gzip/Vary 双通道 byte-identity + 认证面不变）— Phase 9（OPS-03；TestCustomIndex -race + phase09.mjs 18/18 含 SEC 红线自净）
+- ✓ 单静态二进制四平台发布（goreleaser linux/darwin × amd64/arm64 全静态 CGO_ENABLED=0 + 前端单 HTML embed + checksums.txt + release.sh 单命令发布链 + release.yml CI 全链）— Phase 9（OPS-10；v1.0.0 实发布：GitHub Release 五资产核验 sha256 全 OK + linux_amd64 --version 实跑 wesh 1.0.0）
+- ✓ 修复源码核实的全部 ttyd 缺陷（预认证崩溃/内存放大/凭据日志/Origin/TLS/env 泄露/关闭码/健康检查缺失等 Context 节清单项，?arg= 经裁决 v1 砍掉）— 跨 Phase 1-9（44/44 需求里程碑收口，各 phase VERIFICATION/SECURITY 独立复演）
 
 ### Active
 
-**核心终端（对标 ttyd）**
-（Phase 1-6 已全部闭合，见 Validated）
-
-**安全（改进 ttyd 限制 #3 + 源码核实的新发现）**
-（Phase 3 已全部闭合，见 Validated）
-
-**资源控制（改进 ttyd 限制 #4/#5）**
-（Phase 5 已全部闭合，见 Validated）
-
-**部署与集成**
-（监听配置/反代子路径/子进程环境/降权/配置文件 Phase 7 已全部闭合，见 Validated）
-- [ ] 自定义首页（Phase 9）
-
-**可观测性**
-（/healthz、/metrics、结构化日志 Phase 8 已全部闭合，见 Validated）
-
-**质量底线**
-- [ ] 修复源码核实的全部 ttyd 缺陷（见 Context 节清单）
+（milestone v1 全部 44/44 需求闭合——见 Validated；后续需求见 v2 规划）
 
 ### Out of Scope
 
@@ -127,7 +113,7 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | 项目名 wesh | web + shell；原名 stow 与 GNU Stow 严重撞名 | ✓ 落地 github.com/sworda/wesh（Phase 1） |
-| 单静态二进制分发 | 保持 ttyd 核心优势 | — Pending（Phase 9 goreleaser 验证） |
+| 单静态二进制分发 | 保持 ttyd 核心优势 | ✓ Phase 9 v1.0.0 实发布（2026-08-30）：四平台 tar.gz + checksums.txt 上架 GitHub Release，sha256 核验全 OK，linux_amd64 产物 --version 实跑 wesh 1.0.0 |
 | 全新 CLI 设计，不兼容 ttyd 参数 | 不背兼容包袱，怎么合理怎么设计 | ✓ Phase 1 CLI 契约落地（`--` 透传/默认 0.0.0.0:7681/无命令 usage 退 2/--version） |
 | v1 不做会话保持 | 用户以 tmux/herdr 覆盖断线保活需求，自研性价比不足；架构上仍需为 v2 留出演进空间 | — Pending |
 | 多客户端共享写入权限可配置 | 同时覆盖协作排障（全员可写）与演示教学（主写旁观） | — Pending（Phase 5） |
@@ -149,6 +135,8 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 | unix socket 存活/残留以活性探测再分（类型闸不可区分） | Lstat 类型闸后无条件 Remove 会让第二实例 unlink 存活 socket（静默赢者孤儿化前者）；net.Dial 连通即拒（EADDRINUSE 同形态文案 exit 1），TOCTOU 两向安全降级 | ✓ Phase 7 G-07-3 闭合：main.go:1038 + 存活竞争子测 + b1b5 7/7 |
 | --auth-header 收窄为服务端审计归因（不进子进程环境） | ttyd -H per-connection spawn 模型在 GoTTY 共享进程模型下结构性不成立（PTY 启动时无 HTTP 请求在手，env 一次性快照写谁都错） | ✓ Phase 7 D-17/D-18 落地；README 模型差异段防误用预期 |
 | opener 子进程 goroutine Wait + 非零退出 stderr 警告行 | fire-and-forget 使桌面异常不可观测且每次 --open 驻留一个僵尸；Wait err 仅 exit status N 结构性保证警告行不含 URL（token 红线） | ✓ Phase 7 G-07-8 闭合（选项 A）：main.go:1282 + b6 7/7 |
+| v1.0.0 发布链形态：release.sh 单命令全链（四闸→race 全量→build→fuzz 2×10min→负载矩阵→确认闸→tag push）+ goreleaser/release.yml CI 侧接管 | 发布前操作整合单一脚本一次跑完，崩溃即中止（语料自动落 testdata 进回归）；CI 侧 pnpm build 先于 goreleaser 防 dist 陈旧 | ✓ Phase 9 首证（2026-08-30）：第一轮中止于 fuzz 断言误报（见下条）修复后第二轮全链绿，v1.0.0 上架 |
+| FuzzDecodeFileConfig 值红线断言的键名回显豁免口径 | fuzzer 可把探针搬进键名位置（表头 ["FUZZ_PROBE_SECRET"] 语料实证），全文字面断言误判合法键名回显；stripKeyNameEcho 剥除 configErr 单写口仅有的两处键名上下文后再断，值透传形态仍 FAIL（fail-closed）+ 六形态行为锁 | ✓ 发布长跑实证修复（7850bc4，2026-08-30）：产品代码零改动（值剥离经「只取 Key()」实现本就正确） |
 
 ## Evolution
 
@@ -168,4 +156,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-28 after Phase 8（可观测性闭合：/healthz + /metrics + slog JSON 审计日志；UAT 3/3 闭合（A1 Prometheus 实机 scrape / A2 journald+jq 检索含 G-08-2 修复复测 / A3 draining 窗口观测）+ VERIFICATION 28/28 passed + SECURITY 26/26 closed + phase08.mjs 21 断言全绿）*
+*Last updated: 2026-08-31 after Phase 9（发布与打磨闭合：v1.0.0 实发布上架 GitHub Release（四平台产物 + checksums 核验全 OK + linux_amd64 --version 实跑）+ 自定义首页 --index 全链 + 负载标定回填 + 五部署配方；UAT 2/2 pass（含发布链 fuzz 断言误报修复插曲 7850bc4）+ VERIFICATION 3/3 SC + SECURITY 35/35 closed + TestResize CI flake 观察登记；milestone v1 44/44 全量收口）*

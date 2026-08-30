@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 09
-current_phase_name: release-polish
-status: verifying
-stopped_at: Completed 09-10-PLAN.md (Phase 9 收口——publish-later 裁决, 70/70 plans)
-last_updated: "2026-08-30T10:39:37.547Z"
-last_activity: 2026-08-30
-last_activity_desc: Phase 09 execution complete (70/70 plans, publish-later release deferral)
+status: completed
+stopped_at: Phase 09 complete — v1.0.0 released, milestone v1 44/44 closed (70/70 plans)
+last_updated: "2026-08-30T16:33:19.695Z"
+last_activity: 2026-08-31
+last_activity_desc: Phase 09 complete
 progress:
   total_phases: 9
   completed_phases: 9
   total_plans: 70
   completed_plans: 70
+current_phase_name: release-polish
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -21,17 +21,17 @@ state_head: 2137d0ca7425674ae4da32db3497184a05636602
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-28)
+See: .planning/PROJECT.md (updated 2026-08-31)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 09 — release-polish
+**Current focus:** Milestone v1.0 complete — 44/44 requirements shipped, v1.0.0 released
 
 ## Current Position
 
-Phase: 09 (release-polish) — EXECUTING
-Plan: 10 of 10
-Status: Phase complete — ready for verification
-Last activity: 2026-08-30 — Phase 09 execution complete (publish-later 发布裁决收口)
+Phase: 09
+Plan: Not started
+Status: All phases complete
+Last activity: 2026-08-31 — Phase 09 complete
 
 Progress: [██████████] 100%
 
@@ -39,7 +39,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 60
+- Total plans completed: 70
 - Average duration: -
 - Total execution time: -
 
@@ -55,6 +55,7 @@ Progress: [██████████] 100%
 | 06 | 7 | - | - |
 | 07 | 10 | - | - |
 | 08 | 6 | - | - |
+| 09 | 10 | - | - |
 
 **Recent Trend:**
 
@@ -303,6 +304,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 09-09]: D-13 标定表回填走验证结论形态——09-06 三断言全量现值成立零证伪，常量默认值零改动（git diff 零 .go 文件），README 12 行全量清单负载敏感项附 09-06 LOADDATA 数据摘要、时序项「行为测试已锁 + 一阶依据复核成立」；实测日期取 2026-08-29（09-06 实跑日）保数据可溯源
 - [Phase ?]: [Phase 09-09]: release.sh 干跑步骤清单取描述性措辞（验收 grep 机械纪律第七次沿用）——fuzztime=10m/-tags=load/git push origin 命令字面只在执行段单次出现满足 ==N 计数；好树干跑态利用脚本未入库窗口期（mv /tmp 副本对仓跑），闸序钉死（形态/已存在先于脏树闸）是各态独立可触发前提；shellcheck 缺席以 bash -n + 四态行为自证
 - [Phase ?]: [Phase 09-10]: 发布闸（Task 2 checkpoint:decision blocking）用户裁决 publish-later（2026-08-30）——v1.0.0 择机自行发布，单命令 ./scripts/release.sh v1.0.0（前置：工作树干净、与远端同步；脚本自带全量测试/长 fuzz×2/负载矩阵/确认闸→tag push 触发 release.yml）；phase 以能力交付收尾，release.yml 真实全链首证留待发布时（snapshot 已证形状——RESEARCH Pitfall 12 既定取舍）
+- [Phase 09]: [UAT 收口]: publish-later 裁决于同日 verify-work 会话升级为"现在发布"（用户授权 push 触发 CI darwin 证据 + 授权全链发布）——v1.0.0 于 2026-08-30T16:29Z 实发布上架（四平台产物 + checksums 核验全 OK + linux_amd64 --version 实跑 wesh 1.0.0）
+- [Phase 09]: [发布链插曲]: FuzzDecodeFileConfig 值红线断言的键名回显豁免口径（7850bc4）——发布长跑语料 ["FUZZ_PROBE_SECRET"] 表头把探针搬进键名位置，全文字面断言误判合法键名回显（config.go 单写口既定行为 + fuzz_test 头注释明示"键名回显不在断言面"）；stripKeyNameEcho 剥除两处键名上下文后断言（值透传仍 FAIL fail-closed）+ TestStripKeyNameEcho 六形态行为锁；产品代码零改动
 
 ### Pending Todos
 
@@ -314,6 +317,8 @@ None yet.
 - [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5——**已闭环（2026-08-30）**：WR-01/WR-02 于 05-13 修复闭合；标定由 09-06 负载矩阵全量现值零证伪（fanout {1,4,16,32} kicks=0/outbox 峰值 99.8% 精确转信用/Alloc 19.8MiB ≤ 64MiB）+ 09-09 README 标定表 12 行全量回填（负载敏感项附实测数据出处可溯源）
 - [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9——**已闭环（2026-08-30）**：EXIT 2s 在 09-09 README 标定表 12 行全量清单内（时序项——行为测试已锁 + 一阶依据复核成立），09-06 三断言现值成立零证伪、常量默认值零改动
 - [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md——**已由 09-03 全数闭环（2026-08-30，D-18 清零路由终点）**：1001 hint 条件句式化（C-10）/ #status role="alert" / pre-onopen 1001 按码分派；jsdom 行为锁 D11a/D12/D13 全绿 + dist 产物重建（登记文件保持历史原貌，闭合记录见 09-03-SUMMARY.md）
+- [Phase 9]: TestResize 时序 flake（CI 观察一次，非产品缺陷）——重载 CI runner 上 sh 调度延迟超 150ms 夹具窗，首 stty 落在 TIOCSWINSZ 后（产品语义反向证实）；同 sha 五次运行仅 CI 一次红；处置路由：随 09-REVIEW WR 清单一并择机修（轮询替代固定 sleep）
+- [Phase 9]: README.md:96 「及其 `.gz`」Phase 1 遗留文档债（09-REVIEW WR-03，非 Phase 9 引入）——随 09-REVIEW WR 清单一并择机处置
 
 ## Deferred Items
 
@@ -323,6 +328,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-30T10:39:37.518Z
-Stopped at: Completed 09-10-PLAN.md (Phase 9 收口——publish-later 裁决, 70/70 plans)
+Last session: 2026-08-31
+Stopped at: Phase 09 complete — v1.0.0 released and verified end-to-end, milestone v1 44/44 closed (70/70 plans)
 Resume file: None
