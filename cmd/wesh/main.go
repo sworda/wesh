@@ -985,6 +985,15 @@ func validateStartup(cfg config) (warn string, err error) {
 	if cfg.indexMaxSize <= 0 {
 		return "", errors.New("invalid index-max-size: must be positive")
 	}
+	// 09-review WR-05：上限上界钳制（2GiB 硬顶，与 ≤0 拒绝同位 fail-fast）——
+	// MaxInt64 一类「实际无限大」笔误会使 loadCustomIndex 的 int64(max)+1 回绕
+	// 为负，LimitReader 对 N≤0 立即 EOF → ReadAll 得 0 字节、len(data)>max 不
+	// 成立 → wesh 正常启动并对全部页通道伺服 200 空 body（无任何错误行的
+	// 静默失败，最难排查形态）。2GiB 为自定义页合理尺寸的远上界（默认 16MiB
+	// 的 128 倍），兼防无界读入；键名与上限数值入文案合法（非值）。
+	if cfg.indexMaxSize > 1<<31-1 {
+		return "", errors.New("invalid index-max-size: exceeds 2GiB cap")
+	}
 	// D-24 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
 	// bind 安全形态无关，loopback 早退之前判定）：--uid/--gid 成对强制——只给
 	// 一个 = 配置矛盾零窗口暴露（降权半配置静默放行 = 子进程以原权运行，

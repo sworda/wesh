@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"net"
 	"os"
 	"os/user"
@@ -763,6 +764,11 @@ func TestStartupMatrix(t *testing.T) {
 		// 来源，config_test 配置源行锁定显式 0 不被默认吞掉；键名入文案合法，
 		// 键名非值）。
 		{"index-max-size zero refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 0}, "invalid index-max-size", "", ""},
+		// 09-review WR-05：index-max-size 上界钳制——MaxInt64「实际无限大」笔误
+		// 使 loadCustomIndex 的 int64(max)+1 回绕为负 → LimitReader 立即 EOF →
+		// 0 字节「合法」data → 空白页静默伺服；>2GiB 硬顶拒绝（与 ≤0 行同位
+		// fail-fast）。
+		{"index-max-size over 2GiB cap refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: math.MaxInt64}, "invalid index-max-size", "exceeds 2GiB cap", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
