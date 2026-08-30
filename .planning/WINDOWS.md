@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 21
+open_count: 22
 waived_count: 0
 fixed_count: 3
-total_count: 24
-last_updated: 2026-08-30T03:53:54.769Z
+total_count: 25
+last_updated: 2026-08-30T04:14:53.268Z
 ---
 
 # Broken Windows Ledger
@@ -39,6 +39,7 @@ last_updated: 2026-08-30T03:53:54.769Z
 | 22 | 07 | unrun-verify | web/uat/phase07.mjs |  | S8c 真实弹浏览器拉起与标签页观感 skipped（headless 硬约束豁免——真实 GUI 属 Windows 工作站人工层，CODEBUDDY.md 平台原生行为豁免条款）；协议层等价物 S8a（headless 跳过）+ S8b（fake xdg-open argv 全等）已覆盖，人工复核项见 07-08 plan | open |  | 2026-08-26T06:30:42.875Z |  |
 | 23 | 09 | deviation | .planning/phases/09-release-polish/09-01-PLAN.md | 118 | 09-01 plan verify 块 goreleaser 产物目录路径（dist/<os>_<arch>/）与 v2.18.0 实证布局（dist/wesh_<os>_<arch>_<variant>/）不符——执行已按实证路径，断言全绿；PLAN 文档字面未改（历史产物） | fixed |  | 2026-08-29T13:45:46.256Z | 2026-08-29T13:46:51.606Z |
 | 24 | 09 | deviation | web/uat/pw/phase09-caddy-ctl.sh | 26 | 09-08: Caddyfile 站点地址 http://0.0.0.0:10014 系字面 Host 匹配（仅 Host: 0.0.0.0 命中，真实主机名落空走兜底空 200）——Task 1『外部 Host 照常被服务』结论系 proto-verify 探针 curl 0.0.0.0 自身的假绿，Windows 首跑 0/2 捕获；改裸 :10014（绑定全网卡+匹配任意 Host）三层复验全绿：LAN IP 矩阵 + proto 7/7 + Windows 4/4（28ae2f2） | fixed |  | 2026-08-30T03:53:43.425Z | 2026-08-30T03:53:54.769Z |
+| 25 | 09 | deviation | web/uat/phase06-dom.mjs |  | 09-03: D13 夹具形态替换——plan 括注建议『hold 或不发 Hello 使 opened 保持 false』两形态结构性不可达（fetch hold 期间 WS 未构造无 socket 可驱动；opened 在 WS onopen 即置位先于 Hello 发送），改黑洞 TCP 伺服器夹具（accept-never-upgrade + SpyWebSocket URL 端口改写）确定性构造 pre-onopen 驻留；断言面与 plan 行为逐字一致（D13a RED 复现 WARNING#3 后 GREEN） | open |  | 2026-08-30T04:14:53.268Z |  |
 
 ````json
 [
@@ -329,6 +330,18 @@ last_updated: 2026-08-30T03:53:54.769Z
     "reason": "",
     "recorded_at": "2026-08-30T03:53:43.425Z",
     "resolved_at": "2026-08-30T03:53:54.769Z"
+  },
+  {
+    "id": 25,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "web/uat/phase06-dom.mjs",
+    "line": null,
+    "description": "09-03: D13 夹具形态替换——plan 括注建议『hold 或不发 Hello 使 opened 保持 false』两形态结构性不可达（fetch hold 期间 WS 未构造无 socket 可驱动；opened 在 WS onopen 即置位先于 Hello 发送），改黑洞 TCP 伺服器夹具（accept-never-upgrade + SpyWebSocket URL 端口改写）确定性构造 pre-onopen 驻留；断言面与 plan 行为逐字一致（D13a RED 复现 WARNING#3 后 GREEN）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-30T04:14:53.268Z",
+    "resolved_at": null
   }
 ]
 ````

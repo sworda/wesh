@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 09
 current_phase_name: release-polish
 status: executing
-stopped_at: Completed 09-08-PLAN.md
-last_updated: "2026-08-30T03:54:31.785Z"
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-08-30T04:15:15.097Z"
 last_activity: 2026-08-29
 last_activity_desc: Phase 09 execution started
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 70
-  completed_plans: 65
+  completed_plans: 66
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-08-28)
 ## Current Position
 
 Phase: 09 (release-polish) — EXECUTING
-Plan: 6 of 10
+Plan: 7 of 10
 Status: Ready to execute
 Last activity: 2026-08-29 — Phase 09 execution started
 
-Progress: [█████████░] 93%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -129,6 +129,7 @@ Progress: [█████████░] 93%
 | Phase 09 P06 | 20min | 2 tasks | 1 files |
 | Phase 09 P07 | 28min | 2 tasks tasks | 3 files files |
 | Phase 09 P08 | 55min | 3 tasks | 3 files |
+| Phase 09 P03 | 13min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -288,6 +289,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 09-08]: Caddy 三行为面实证锁定（09-09 README Caddy 节「实证 2026-08-30，Caddy v2.11.4」素材）：reverse_proxy 默认原样透传 Host（Origin 同源校验天然过，零 Host 行）；WS upgrade 内建自动；hijack 后无默认 WS idle 超时（65s 空闲存活双机实测）
 - [Phase ?]: [Phase 09-08]: Task 1 首证「外部 Host 照常被服务」结论勘误为假绿——proto-verify 就绪探针 curl 0.0.0.0 自身使 Host 字面命中站点地址；外部 Host 行为面断言必须以真实主机名/LAN IP 为请求目标（探针目标与断言语义正交纪律）
 - [Phase ?]: [Phase 09-08]: pw t1 认证形态与 phase07-a2 关键差异——Caddy 无认证层走 authedContext 预置 Authorization（避开 wesh 401→recordFail→429 节流 1s 窗口），裸 context 负面对照 + sleep 1.2s pacing 消解（05-09/07-07 纪律）
+- [Phase ?]: 09-03: D-18 三项 as-locked 落地——HINT_SHUTDOWN C-10 条件句式常量 + showShutdown 单写口（pre-onopen 分派与稳态 case 1001 唯一调用形态）；case 1001 在分派序修订后实际不可达但按 plan 字面保留为防回归纵深（单写口使两处零文案漂移）
+- [Phase ?]: 09-03: D13 夹具取黑洞 TCP 伺服器（accept-never-upgrade + SpyWebSocket URL 端口改写经 loadTerminal opts.blackholePort 注入）——plan 括注的 hold/不发 Hello 两形态结构性不可达（fetch hold 期 WS 未构造；opened 在 onopen 即置位先于 Hello），黑洞形态使 onopen 永不触发、opened 恒 false 零事件竞态
+- [Phase ?]: 09-03: dist 产物指纹断言以 grep -o 计出现次数（esbuild 单行 bundle 下 grep -c 计行数恒 1 失真）；esbuild 不去重字符串字面量实证（旧 hint 改前产物 2 处→改后恰 1 处）；TDD RED 先证——更新断言对旧 dist 三 FAIL 恰复现三项 WARNING bug 形态后重建转 GREEN（09-02 task 级 tdd 先例第二次沿用）
 
 ### Pending Todos
 
@@ -298,7 +302,7 @@ None yet.
 - [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
 - [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5
 - [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9
-- [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md（1001 hint 与 systemd 自重启形态不匹配 / #status 面板族缺 role="alert" / pre-onopen 1001 落错文案竞态低危）——ship 后清零路由
+- [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md——**已由 09-03 全数闭环（2026-08-30，D-18 清零路由终点）**：1001 hint 条件句式化（C-10）/ #status role="alert" / pre-onopen 1001 按码分派；jsdom 行为锁 D11a/D12/D13 全绿 + dist 产物重建（登记文件保持历史原貌，闭合记录见 09-03-SUMMARY.md）
 
 ## Deferred Items
 
@@ -308,6 +312,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-30T03:54:31.755Z
-Stopped at: Completed 09-08-PLAN.md
+Last session: 2026-08-30T04:15:15.067Z
+Stopped at: Completed 09-03-PLAN.md
 Resume file: None
