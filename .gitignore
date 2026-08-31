@@ -10,6 +10,7 @@ web/dist/*.gz
 /.opencodereview/
 /.planning/debug/
 /.planning/research/.cache/
+/.planning/tmp/
 
 # UAT 浏览器实测层运行产物（截图/结构化结果）
 /web/uat/pw/screenshots/
