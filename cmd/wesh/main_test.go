@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"net"
 	"os"
 	"os/user"
@@ -109,7 +110,10 @@ func TestParseArgs(t *testing.T) {
 		// P7：D-26 --open 断言位（零值 = 期望 false 默认不开——既存行经此扩展
 		// 零值断言覆盖，命名字段扩展纪律 03-04 先例）。
 		wantOpen bool // D-26：--open 默认 false
-		wantArgv []string
+		// P9：D-07 --index 断言位（零值 = 期望空串未配置——内建页伺服现状，
+		// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
+		wantIndex string // D-07：--index 自定义首页路径原样入 cfg
+		wantArgv  []string
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -177,6 +181,10 @@ func TestParseArgs(t *testing.T) {
 		// D-26：--open 布尔 flag 原样入 cfg（--socket×--open 组合矛盾归
 		// validateStartup，TestStartupMatrix 锁定）；默认 false 由零值语义统一断言。
 		{name: "open flag", args: []string{"--open", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantOpen: true, wantArgv: []string{"bash"}},
+		// D-07：--index 自定义首页路径原样入 cfg（stat 预检与读入归
+		// validateStartup/loadCustomIndex，TestStartupMatrix 与 TestLoadCustomIndex
+		// 锁定）；默认空串由零值语义统一断言。
+		{name: "index flag", args: []string{"--index", "/tmp/custom.html", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantIndex: "/tmp/custom.html", wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -322,6 +330,17 @@ func TestParseArgs(t *testing.T) {
 			// D-26：--open 原样解析（零值 = false 默认不开，既存行零值断言覆盖）。
 			if cfg.open != tt.wantOpen {
 				t.Errorf("open = %v, want %v", cfg.open, tt.wantOpen)
+			}
+			// D-07：--index 原样解析（零值 = 空串未配置——内建页伺服现状，既存行
+			// 零值断言覆盖）。
+			if cfg.index != tt.wantIndex {
+				t.Errorf("index = %q, want %q", cfg.index, tt.wantIndex)
+			}
+			// D-08：index-max-size 无 CLI flag（纯配置键——P7 D-03 纪律的明示例外），
+			// 默认 16MiB 全行恒定（CLI 面结构性不存在该 flag 的行为锁；配置键经 TOML
+			// 生效由 config_test 锁定）。
+			if cfg.indexMaxSize != 16*1024*1024 {
+				t.Errorf("indexMaxSize = %d, want %d (默认 16MiB，D-08 纯配置键无 CLI flag)", cfg.indexMaxSize, 16*1024*1024)
 			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
@@ -631,6 +650,12 @@ func TestNoCommandError(t *testing.T) {
 // 占用，纯配置有效性 loopback 也不豁免）；真实目录放行（t.TempDir 材料）。
 // 07-04 新增：D-24 --uid/--gid 成对强制三行——单给拒绝（双 flag 名进文案，
 // 纯配置矛盾 loopback 不豁免）；成对给出放行。
+// 09-04 新增：D-07 --index stat 预检三行（不存在/目录拒绝 + 合法文件放行——
+// --cwd 行同位，spawn 前零资源占用）+ D-08 index-max-size ≤0 拒绝一行（纯配置
+// 键数值校验，错误行含键名不含值）。既有行基线同步：validateStartup 新增
+// index-max-size ≤0 拒绝后，直接构造的 config 零值 indexMaxSize 会被误拒——
+// 全部既有行注入 16MiB 基值（生产路径 parseArgs 恒注入默认，直接构造是测试
+// 形态；maxClients 32 基线同步先例同款，wantErr/wantWarn 断言语义不变）。
 func TestStartupMatrix(t *testing.T) {
 	cred, err := server.ParseCredential("matrix-user:matrix-secret-7d1f")
 	if err != nil {
@@ -640,6 +665,12 @@ func TestStartupMatrix(t *testing.T) {
 	// 07-04 D-21：--cwd 合法放行行的运行时材料（t.TempDir 真实存在目录——stat
 	// 预检放行分支需要一个真实目录路径）。
 	cwdOK := t.TempDir()
+	// 09-04 D-07：--index 合法放行行的运行时材料（真实常规文件——stat 预检放行
+	// 分支只需存在与常规性，内容不作断言面）。
+	indexOK := filepath.Join(t.TempDir(), "index.html")
+	if werr := os.WriteFile(indexOK, []byte("<!doctype html><title>ok</title>"), 0o600); werr != nil {
+		t.Fatalf("write index fixture: %v", werr)
+	}
 	tests := []struct {
 		name        string
 		cfg         config
@@ -648,79 +679,96 @@ func TestStartupMatrix(t *testing.T) {
 		wantWarnSub string // 非空 = 放行但 stderr 醒目警告须含此子串（逃生门 flag 名）
 	}{
 		// loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05 现状保持）。
-		{"loopback no creds plaintext", config{bind: "127.0.0.1", maxClients: 32}, "", "", ""},
-		{"loopback creds plaintext", config{bind: "127.0.0.1", maxClients: 32, credentials: creds}, "", "", ""},
-		{"loopback creds TLS", config{bind: "localhost", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
+		{"loopback no creds plaintext", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20}, "", "", ""},
+		{"loopback creds plaintext", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, credentials: creds}, "", "", ""},
+		{"loopback creds TLS", config{bind: "localhost", maxClients: 32, indexMaxSize: 16 << 20, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
 		// WR-01：IPv6 loopback（::1）与 IPv4 loopback 同等待遇——无凭据明文放行免警告。
-		{"loopback ipv6 no creds plaintext", config{bind: "::1", maxClients: 32}, "", "", ""},
+		{"loopback ipv6 no creds plaintext", config{bind: "::1", maxClients: 32, indexMaxSize: 16 << 20}, "", "", ""},
 		// 非 loopback + 无凭据：拒绝（D-03 逐字文案），TLS 不救无凭据。
-		{"non-loopback no creds refused", config{bind: "0.0.0.0", maxClients: 32}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", "", ""},
-		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", maxClients: 32, noAuth: true}, "", "", "--no-auth"},
+		{"non-loopback no creds refused", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20}, "refusing to listen on non-loopback address without credentials; pass --no-auth to disable authentication", "", ""},
+		{"non-loopback no creds no-auth escape", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, noAuth: true}, "", "", "--no-auth"},
 		// 非 loopback + 凭据 + 明文：拒绝（D-05 逐字文案）；逃生门放行 + 醒目警告。
-		{"non-loopback creds plaintext refused", config{bind: "0.0.0.0", maxClients: 32, credentials: creds}, "refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key", "", ""},
-		{"non-loopback creds plaintext insecure-http escape", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, insecureHTTP: true}, "", "", "--insecure-http"},
+		{"non-loopback creds plaintext refused", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, credentials: creds}, "refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key", "", ""},
+		{"non-loopback creds plaintext insecure-http escape", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, credentials: creds, insecureHTTP: true}, "", "", "--insecure-http"},
 		// 非 loopback + 凭据 + TLS：最强形态免警告。
-		{"non-loopback creds TLS", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
+		{"non-loopback creds TLS", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem"}, "", "", ""},
 		// 05-03 D-05 组合校验：显式 write-policy 无 --writable → 拒绝（配置矛盾
 		// fail-fast，文案须含双 flag 名；loopback 安全形态也不豁免——纯配置矛盾
 		// 与 bind 无关）；默认 owner 未显式设置 + 无 --writable → 纯 ro 会话放行。
-		{"explicit write-policy without writable refused", config{bind: "127.0.0.1", maxClients: 32, writePolicy: "all", writePolicySet: true}, "--write-policy", "--writable", ""},
-		{"default owner without writable allowed", config{bind: "127.0.0.1", maxClients: 32, writePolicy: "owner"}, "", "", ""},
+		{"explicit write-policy without writable refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writePolicy: "all", writePolicySet: true}, "--write-policy", "--writable", ""},
+		{"default owner without writable allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writePolicy: "owner"}, "", "", ""},
 		// 05-07 D-08 数值校验：--max-clients ≤0 → 拒绝（容量必须为正；bind
 		// 127.0.0.1 隔离其他校验维度——纯配置有效性 loopback 也不豁免）。
-		{"max-clients zero refused", config{bind: "127.0.0.1", maxClients: 0}, "--max-clients", "", ""},
-		{"max-clients negative refused", config{bind: "127.0.0.1", maxClients: -1}, "--max-clients", "", ""},
+		{"max-clients zero refused", config{bind: "127.0.0.1", maxClients: 0, indexMaxSize: 16 << 20}, "--max-clients", "", ""},
+		{"max-clients negative refused", config{bind: "127.0.0.1", maxClients: -1, indexMaxSize: 16 << 20}, "--max-clients", "", ""},
 		// 06-04 D-12 组合校验：--once × 显式矛盾值 → 拒绝（双 flag 名进文案）；
 		// --once × 显式一致值 = 一致冗余放行。bind 127.0.0.1 隔离其他校验维度
 		//（max-clients 拒绝行同款）；放行行注入 maxClients: 32 基值避开 ≤0 维度。
-		{"once with explicit max-clients=2 refused", config{bind: "127.0.0.1", once: true, maxClients: 2, maxClientsSet: true}, "--once", "--max-clients", ""},
-		{"once with explicit exit-when-empty grace refused", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true, grace: 5 * time.Second}}, "--once", "--exit-when-empty", ""},
-		{"once with explicit max-clients=1 allowed", config{bind: "127.0.0.1", once: true, maxClients: 1, maxClientsSet: true}, "", "", ""},
-		{"once with explicit bare exit-when-empty allowed", config{bind: "127.0.0.1", once: true, maxClients: 32, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true}}, "", "", ""},
+		{"once with explicit max-clients=2 refused", config{bind: "127.0.0.1", maxClients: 2, indexMaxSize: 16 << 20, once: true, maxClientsSet: true}, "--once", "--max-clients", ""},
+		{"once with explicit exit-when-empty grace refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, once: true, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true, grace: 5 * time.Second}}, "--once", "--exit-when-empty", ""},
+		{"once with explicit max-clients=1 allowed", config{bind: "127.0.0.1", maxClients: 1, indexMaxSize: 16 << 20, once: true, maxClientsSet: true}, "", "", ""},
+		{"once with explicit bare exit-when-empty allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, once: true, exitEmptySet: true, exitEmpty: exitEmptyValue{set: true}}, "", "", ""},
 		// 07-02 D-08 互斥：--socket × 显式 --port/--bind 同给即拒（双 flag 名进
 		// 文案；显式位锚定——下方 D-11 跳过行的 socket + 默认 port/bind 不误判
 		// 即其行为锁）。
-		{"socket with explicit port refused", config{socket: "/run/wesh.sock", maxClients: 32, port: 7682, portSet: true}, "--socket", "--port", ""},
-		{"socket with explicit bind refused", config{socket: "/run/wesh.sock", maxClients: 32, bind: "127.0.0.1", bindSet: true}, "--socket", "--bind", ""},
+		{"socket with explicit port refused", config{socket: "/run/wesh.sock", maxClients: 32, indexMaxSize: 16 << 20, port: 7682, portSet: true}, "--socket", "--port", ""},
+		{"socket with explicit bind refused", config{socket: "/run/wesh.sock", maxClients: 32, indexMaxSize: 16 << 20, bind: "127.0.0.1", bindSet: true}, "--socket", "--bind", ""},
 		// 07-02 D-09 单给矛盾：--socket-mode/--socket-owner 仅随 --socket 有意义，
 		// 单独给出 = 配置矛盾（bind 127.0.0.1 隔离其他校验维度）。
-		{"socket-mode without socket refused", config{bind: "127.0.0.1", maxClients: 32, socketModeSet: true}, "--socket-mode", "--socket", ""},
-		{"socket-owner without socket refused", config{bind: "127.0.0.1", maxClients: 32, socketOwnerSet: true}, "--socket-owner", "--socket", ""},
+		{"socket-mode without socket refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, socketModeSet: true}, "--socket-mode", "--socket", ""},
+		{"socket-owner without socket refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, socketOwnerSet: true}, "--socket-owner", "--socket", ""},
 		// 07-02 D-11 跳过：unix 形态下 bind 安全矩阵不可达——config 零值 bind ""
 		// 按非 loopback 保守判定，无凭据本应收 D-03 拒绝；socket 给定时不拒不警告。
-		{"socket skips bind matrix (D-11)", config{socket: "/run/wesh.sock", maxClients: 32}, "", "", ""},
+		{"socket skips bind matrix (D-11)", config{socket: "/run/wesh.sock", maxClients: 32, indexMaxSize: 16 << 20}, "", "", ""},
 		// 07-03 D-16 暴露面警告：--auth-header 非空 + bind 非 loopback + 无凭据
 		//（--no-auth 放行形态）→ wesh: warning: 前缀警告含 --auth-header flag 名
 		//（文案不含任何头值）；无 --no-auth 时 D-03 拒绝照旧（auth-header 不削弱
 		// 拒绝语义）；loopback + auth-header 与 非 loopback + 凭据 + TLS +
 		// auth-header 不触发（矩阵其余行语义不变）；socket 形态 bind 矩阵已跳过，
 		// 同行跳过本警告（unix socket 信任边界同 D-11 逻辑）。
-		{"auth-header non-loopback no creds warns (D-16)", config{bind: "0.0.0.0", maxClients: 32, noAuth: true, authHeader: "X-Remote-User"}, "", "", "--auth-header"},
-		{"auth-header does not bypass D-03 refusal", config{bind: "0.0.0.0", maxClients: 32, authHeader: "X-Remote-User"}, "refusing to listen on non-loopback address without credentials", "", ""},
-		{"auth-header loopback silent", config{bind: "127.0.0.1", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
-		{"auth-header non-loopback creds TLS silent", config{bind: "0.0.0.0", maxClients: 32, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem", authHeader: "X-Remote-User"}, "", "", ""},
-		{"socket skips auth-header warning (D-16/D-11)", config{socket: "/run/wesh.sock", maxClients: 32, authHeader: "X-Remote-User"}, "", "", ""},
+		{"auth-header non-loopback no creds warns (D-16)", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, noAuth: true, authHeader: "X-Remote-User"}, "", "", "--auth-header"},
+		{"auth-header does not bypass D-03 refusal", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, authHeader: "X-Remote-User"}, "refusing to listen on non-loopback address without credentials", "", ""},
+		{"auth-header loopback silent", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, authHeader: "X-Remote-User"}, "", "", ""},
+		{"auth-header non-loopback creds TLS silent", config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, credentials: creds, tlsCert: "/tmp/c.pem", tlsKey: "/tmp/k.pem", authHeader: "X-Remote-User"}, "", "", ""},
+		{"socket skips auth-header warning (D-16/D-11)", config{socket: "/run/wesh.sock", maxClients: 32, indexMaxSize: 16 << 20, authHeader: "X-Remote-User"}, "", "", ""},
 		// 07-04 D-21 预检：--cwd 非空且 stat 失败（不存在）即拒（fail-fast spawn
 		// 前零资源占用——spawn 后才发现 ENOENT 是资源已占用且错误面到客户端；
 		// 值非敏感可回显路径）。纯配置有效性与 bind 安全形态无关，loopback 早退
 		// 之前判定（write-policy 行同位）；合法目录放行（bind 127.0.0.1 隔离
 		// 其他校验维度）。
-		{"cwd nonexistent refused", config{bind: "127.0.0.1", maxClients: 32, cwd: "/nonexistent-wesh-07-04/x"}, "--cwd", "", ""},
-		{"cwd existing allowed", config{bind: "127.0.0.1", maxClients: 32, cwd: cwdOK}, "", "", ""},
+		{"cwd nonexistent refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, cwd: "/nonexistent-wesh-07-04/x"}, "--cwd", "", ""},
+		{"cwd existing allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, cwd: cwdOK}, "", "", ""},
 		// 07-04 D-24 成对强制：--uid/--gid 只给一个 = 配置矛盾零窗口暴露（降权
 		// 半配置静默放行 = 子进程以原权运行，T-07-04b；exit 2 而非降级运行），
 		// 双 flag 名进文案；纯配置矛盾 loopback 也不豁免（write-policy 行同位）。
 		// 成对给出放行（bind 127.0.0.1 隔离其他校验维度）。
-		{"uid without gid refused", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: -1}, "--uid", "--gid", ""},
-		{"gid without uid refused", config{bind: "127.0.0.1", maxClients: 32, uid: -1, gid: 1000}, "--uid", "--gid", ""},
-		{"uid gid pair allowed", config{bind: "127.0.0.1", maxClients: 32, uid: 1000, gid: 1000}, "", "", ""},
+		{"uid without gid refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, uid: 1000, gid: -1}, "--uid", "--gid", ""},
+		{"gid without uid refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, uid: -1, gid: 1000}, "--uid", "--gid", ""},
+		{"uid gid pair allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, uid: 1000, gid: 1000}, "", "", ""},
 		// 07-05 D-26/OQ1 组合校验：--socket × --open 同给即拒（unix socket 无
 		// host:port 可拼——D-12 分享链接已退化为提示行，--open 需要 http(s) URL；
 		// 给了无法兑现的 flag 组合 = 配置错误，「显式」哲学一贯性，双 flag 名进
 		// 文案；纯配置矛盾在 D-11 socket 早退之前判定，socket 形态不豁免）。
 		// --open 单独给（TCP 形态）放行（bind 127.0.0.1 隔离其他校验维度）。
-		{"socket with open refused", config{socket: "/run/wesh.sock", maxClients: 32, open: true}, "--open", "--socket", ""},
-		{"open without socket allowed", config{bind: "127.0.0.1", maxClients: 32, open: true}, "", "", ""},
+		{"socket with open refused", config{socket: "/run/wesh.sock", maxClients: 32, indexMaxSize: 16 << 20, open: true}, "--open", "--socket", ""},
+		{"open without socket allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, open: true}, "", "", ""},
+		// 09-04 D-07 预检：--index 非空时 stat 只读探测——不存在拒绝（fail-fast
+		// spawn 前零资源占用，--cwd 行同位）；目录拒绝（非常规文件——目录/设备/
+		// socket 同归此类）；合法常规文件放行。错误行只含路径与原因类别（D-08
+		// 红线：绝不含文件内容字节——超限场景的 stderr 零探针断言在
+		// TestLoadCustomIndex 与 TestStartupRefusalNoResource）。
+		{"index nonexistent refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, index: "/nonexistent-wesh-09-04/x.html"}, "invalid --index", "file does not exist", ""},
+		{"index directory refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, index: t.TempDir()}, "invalid --index", "not a regular file", ""},
+		{"index regular file allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, index: indexOK}, "", "", ""},
+		// 09-04 D-08 数值校验：index-max-size ≤0 拒绝（纯配置键——TOML 唯一
+		// 来源，config_test 配置源行锁定显式 0 不被默认吞掉；键名入文案合法，
+		// 键名非值）。
+		{"index-max-size zero refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 0}, "invalid index-max-size", "", ""},
+		// 09-review WR-05：index-max-size 上界钳制——MaxInt64「实际无限大」笔误
+		// 使 loadCustomIndex 的 int64(max)+1 回绕为负 → LimitReader 立即 EOF →
+		// 0 字节「合法」data → 空白页静默伺服；>2GiB 硬顶拒绝（与 ≤0 行同位
+		// fail-fast）。
+		{"index-max-size over 2GiB cap refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: math.MaxInt64}, "invalid index-max-size", "exceeds 2GiB cap", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -760,6 +808,83 @@ func TestStartupMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLoadCustomIndex（09-04 D-07/D-08 启动读入矩阵）：不可读拒绝（chmod 000
+// 非 root）/ 超限拒绝（含上限数值 + 错误文本零内容探针——D-08 红线）/ 恰顶放行 /
+// 0 字节放行（D-07 拒绝列表不含空文件——伺服空白页是用户明示的整页替换语义）。
+// max 参数化使超限/恰顶边界无需 17MiB 真实文件（小 max 同构覆盖 LimitReader(max+1)
+// 读入与 len>max 判定；默认 16MiB 顶的 run() 级端到端在 TestStartupRefusalNoResource）。
+// 启动一次读入语义（改文件需重启）为结构性保证：读入产物 []byte 常驻内存，
+// 伺服期无路径消费——无独立断言面。
+func TestLoadCustomIndex(t *testing.T) {
+	t.Run("unreadable refused (non-root)", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root 无视 chmod 000（不可读分支结构性不可达，非 root 限定）")
+		}
+		path := filepath.Join(t.TempDir(), "unreadable.html")
+		if err := os.WriteFile(path, []byte("<html>probe-unreadable</html>"), 0o000); err != nil {
+			t.Fatalf("write unreadable fixture: %v", err)
+		}
+		_, err := loadCustomIndex(path, 16<<20)
+		if err == nil {
+			t.Fatal("loadCustomIndex(chmod 000) = nil error, want cannot read 拒绝（D-07 四拒绝之一）")
+		}
+		if !strings.Contains(err.Error(), "invalid --index") || !strings.Contains(err.Error(), "cannot read") {
+			t.Errorf("err = %q, want 类别 invalid --index + cannot read", err)
+		}
+		if strings.Contains(err.Error(), "probe-unreadable") {
+			t.Errorf("err = %q, must not contain 内容探针（D-08 红线）", err)
+		}
+	})
+	t.Run("over limit refused with limit value, zero content bytes", func(t *testing.T) {
+		// 超限文件内容含唯一探针串——错误文本只含路径+类别+上限数值（D-08 红线：
+		// 超限场景尤其不得回显文件头字节，Pitfall 9）。
+		path := filepath.Join(t.TempDir(), "over.html")
+		probe := "CUSTOM-INDEX-PROBE-7f4a"
+		content := append([]byte(probe), bytes.Repeat([]byte("x"), 24)...) // 24+len(probe)=45 > 32
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("write over-limit fixture: %v", err)
+		}
+		_, err := loadCustomIndex(path, 32)
+		if err == nil {
+			t.Fatal("loadCustomIndex(45B, max 32) = nil error, want 超限拒绝")
+		}
+		if !strings.Contains(err.Error(), "invalid --index") || !strings.Contains(err.Error(), "exceeds index-max-size (32 bytes)") {
+			t.Errorf("err = %q, want 类别 + 上限数值", err)
+		}
+		if strings.Contains(err.Error(), probe) || strings.Contains(err.Error(), "xxx") {
+			t.Errorf("err = %q, must not contain 内容字节（D-08 红线）", err)
+		}
+	})
+	t.Run("exactly at limit allowed", func(t *testing.T) {
+		// 恰顶放行：len == max 是合法边界（LimitReader(max+1) 读全 max 字节，
+		// len>max 判定不含等值——超限测试行 45>32 与本行 32==32 共同锁定边界两侧）。
+		path := filepath.Join(t.TempDir(), "exact.html")
+		if err := os.WriteFile(path, bytes.Repeat([]byte("a"), 32), 0o600); err != nil {
+			t.Fatalf("write at-limit fixture: %v", err)
+		}
+		data, err := loadCustomIndex(path, 32)
+		if err != nil {
+			t.Fatalf("loadCustomIndex(32B, max 32): %v (恰顶放行)", err)
+		}
+		if len(data) != 32 {
+			t.Errorf("len(data) = %d, want 32（读全恰顶字节）", len(data))
+		}
+	})
+	t.Run("empty file allowed", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "empty.html")
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatalf("write empty fixture: %v", err)
+		}
+		data, err := loadCustomIndex(path, 16<<20)
+		if err != nil {
+			t.Fatalf("loadCustomIndex(empty): %v (0 字节合法)", err)
+		}
+		if len(data) != 0 {
+			t.Errorf("len(data) = %d, want 0", len(data))
+		}
+	})
 }
 
 // TestStartupRefusalNoResource（D-03 拒绝路径零资源占用）：默认 bind 0.0.0.0 无
@@ -816,6 +941,30 @@ func TestStartupRefusalNoResource(t *testing.T) {
 		}
 		if !strings.Contains(out, "invalid --auth-header") {
 			t.Errorf("stderr = %q, want containing %q", out, "invalid --auth-header")
+		}
+	})
+	// 09-04 D-07/D-08：--index 超限（默认 16MiB 顶）exit 2（loadCustomIndex
+	// 读入闸——validateStartup stat 预检放行后的第二闸）；错误行含路径与上限
+	// 数值、零内容字节（D-08 红线端到端：超限场景尤其不得回显文件头字节，
+	// Pitfall 9）。即时返回即证明先于 pty.Start/listen 零资源占用。
+	t.Run("index over default limit exit 2, stderr zero probe", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "over.html")
+		probe := "CUSTOM-INDEX-PROBE-7f4a"
+		content := append([]byte(probe), bytes.Repeat([]byte("x"), 17<<20)...) // 17MiB+ > 默认 16MiB
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatalf("write over-limit fixture: %v", err)
+		}
+		code, out := captureFd(t, &os.Stderr, func() int {
+			return run([]string{"--bind", "127.0.0.1", "--index", path, "--", "true"})
+		})
+		if code != 2 {
+			t.Errorf("run(--index over-limit) = %d, want 2 (loadCustomIndex 超限拒绝)", code)
+		}
+		if !strings.Contains(out, "exceeds index-max-size") || !strings.Contains(out, "(16777216 bytes)") {
+			t.Errorf("stderr = %q, want 超限类别 + 上限数值", out)
+		}
+		if strings.Contains(out, probe) || strings.Contains(out, "xxx") {
+			t.Errorf("stderr = %q, must not contain 内容探针（D-08 红线）", out)
 		}
 	})
 }

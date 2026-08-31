@@ -60,7 +60,12 @@
   <body>
     <!-- 页面共三个顶层元素：#terminal（始终存在）、#status（默认 hidden）、#resize-overlay（默认 hidden，FE-06） -->
     <div id="terminal"></div>
-    <div id="status" hidden>
+    <!-- R2（D-18②）：#status 容器加 alert 角色单属性——隐含 aria-live=assertive +
+         aria-atomic=true，hidden 移除时整个面板内容向辅助技术播报（C-1..C-10 与
+         Reconnecting 全族一次获得，非逐面板属性）；零视觉影响零 CSS 改动。Reconnecting
+         1Hz 倒计时更新在 assertive 语义下的重读边界见 09-UI-SPEC §D-18 ② 已知边界
+         登记（真实 AT 播报/节流行为属平台原生豁免面） -->
+    <div id="status" role="alert" hidden>
       <div class="status-panel">
         <div class="status-title" id="status-title"></div>
         <div class="status-body" id="status-body"></div>

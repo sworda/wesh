@@ -1,0 +1,29 @@
+# wesh systemd unit 模板（D-17：Restart/LimitNOFILE/EnvironmentFile 600 全配）
+# 安装：cp deploy/wesh.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now wesh
+[Unit]
+Description=wesh — share terminal over web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 凭据通道：chmod 600，内容 WESH_CREDENTIAL=user:pass（- 前缀 = 文件缺席不拒绝启动；
+# unit 本体零秘密——unit 文件 world-readable，凭据绝不写进本文件）
+EnvironmentFile=-/etc/wesh/credentials
+ExecStart=/usr/local/bin/wesh --config /etc/wesh/wesh.toml
+# 255 交互与 Restart 选型理由：wesh 优雅关停（SIGTERM）与会话终结（--once/
+# --exit-when-empty）恒以 255 退出——on-failure 把非零分类为 failure，故自主终结
+# 会重启（服务形态期望：崩溃与自终结均自愈）；systemctl stop 永不触发重启
+#（systemd 知道自己发起的停止）。若期望「会话完即停」语义，改 Restart=no。
+Restart=on-failure
+RestartSec=2
+# 覆盖优雅下线全程上界：1001 广播 + stall 客户端 Close 内建 5s+5s 余量
+TimeoutStopSec=15s
+LimitNOFILE=65536
+# KillSignal 默认 SIGTERM 即正确（挂 wesh 优雅下线 Shutdown 序列，勿改）。
+# 加固张力说明：wesh 的本职是 spawn 用户 shell——systemd 的家目录隔离、根文件系统
+# 只读化等加固指令会破坏 shell 工作流（用户登录后读写家目录是正常用途），故本模板
+# 不做默认加固；operator 了解取舍后可自行叠加（NoNewPrivileges=yes 是安全的叠加项）。
+
+[Install]
+WantedBy=multi-user.target

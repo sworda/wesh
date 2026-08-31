@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 9
-current_phase_name: 发布与打磨
-status: planning
-stopped_at: Completed 08-06-PLAN.md
-last_updated: "2026-08-28T14:56:25.423Z"
-last_activity: 2026-08-28
-last_activity_desc: Phase 08 execution started
+current_phase: 09
+status: completed
+stopped_at: Phase 09 complete — v1.0.0 released, milestone v1 44/44 closed (70/70 plans)
+last_updated: "2026-08-30T16:33:19.695Z"
+last_activity: 2026-08-31
+last_activity_desc: Phase 09 complete
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 60
-  completed_plans: 60
+  total_phases: 9
+  completed_phases: 9
+  total_plans: 70
+  completed_plans: 70
+current_phase_name: release-polish
 state_head: 2137d0ca7425674ae4da32db3497184a05636602
 ---
 
@@ -21,17 +21,17 @@ state_head: 2137d0ca7425674ae4da32db3497184a05636602
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-28)
+See: .planning/PROJECT.md (updated 2026-08-31)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 9 — 发布与打磨
+**Current focus:** Milestone v1.0 complete — 44/44 requirements shipped, v1.0.0 released
 
 ## Current Position
 
-Phase: 9 — 发布与打磨
+Phase: 09
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-08-28 — Phase 08 complete, transitioned to Phase 9
+Status: All phases complete
+Last activity: 2026-08-31 — Phase 09 complete
 
 Progress: [██████████] 100%
 
@@ -39,7 +39,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 60
+- Total plans completed: 70
 - Average duration: -
 - Total execution time: -
 
@@ -55,6 +55,7 @@ Progress: [██████████] 100%
 | 06 | 7 | - | - |
 | 07 | 10 | - | - |
 | 08 | 6 | - | - |
+| 09 | 10 | - | - |
 
 **Recent Trend:**
 
@@ -124,6 +125,16 @@ Progress: [██████████] 100%
 | Phase 08 P04 | 48min | 2 tasks | 6 files |
 | Phase 08 P05 | 49min | 3 tasks | 6 files |
 | Phase 08 P06 | 9min | 2 tasks | 2 files |
+| Phase 09 P01 | 19min | 2 tasks | 2 files |
+| Phase 09 P02 | 21min | 2 tasks | 4 files |
+| Phase 09 P06 | 20min | 2 tasks | 1 files |
+| Phase 09 P07 | 28min | 2 tasks tasks | 3 files files |
+| Phase 09 P08 | 55min | 3 tasks | 3 files |
+| Phase 09 P03 | 13min | 2 tasks | 4 files |
+| Phase 09 P04 | 28min | 2 tasks | 7 files |
+| Phase 09 P05 | 25min | 2 tasks | 1 files |
+| Phase 09 P09 | 19min | 2 tasks | 2 files |
+| Phase 09 P10 | 40min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -269,6 +280,32 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 08-05]: phase05-dom D5 踢出检测迁移 detach reason=kick 字段断言——08-02 D-21 折入的漏检消费者（dom 变体不在 08-01..08-04 回归集），本 plan 全量 14 脚本回归捕获；回归集含全量变体是迁移类变更漏检的最终防线
 - [Phase ?]: [Phase 08-05]: GOROOT gofmt 清零 multi_test/slowclient_test 既有漂移（07 deferred-items 既定路由终点，纯排版独立 style 提交先例第五次沿用）
 - [Phase ?]: [Phase 08-06]: G-08-2 闭合取 README 侧修复——两则 journald 示例统一 grep '^{' 预滤 + 合流机理说明（systemd 默认 StandardOutput=journal 使 stdout 横幅与 stderr JSON 合流），wesh 源码零改动（D-14/D-15/D-16 锁定推论）；新增 phase08-journal.mjs 合流模拟夹具（负对照自证不空转），进程收口取 child 'close' 事件防 exit 先于流 flush 竞态
+- [Phase ?]: [Phase 09-01]: goreleaser v2.18.0 构建目录实为 dist/wesh_<os>_<arch>_<variant>/（09-01 plan verify 块按 dist/<os>_<arch>/ 书写——按实证路径执行，断言面零变化）
+- [Phase ?]: [Phase 09-01]: 验收 grep 机械纪律第四次沿用——.goreleaser.yml 头注释登记 Pitfall 2 时避免字面引用模板串（注释提及同样计数）；YAML 静态审查通道 = ephemeral docker python+pyyaml（宿主无解析器，容器即弃零污染）
+- [Phase ?]: [Phase 09-02]: proto fuzz 直挂既有导出函数零改造（plan must_have 既定）——RED 种子即 PASS 为设计内回归门性质，按 TDD fail-fast 规则调查后继续；plan type=execute 不适用 plan 级 RED/GREEN 门序列，task 级 tdd 以 test→feat 提交拆分兑现
+- [Phase ?]: [Phase 09-02]: ci.yml fuzz job 注释避开 fuzztime=60s / go test -race 字面（验收 grep 机械纪律第五次沿用）；YAML 静态审查 ephemeral docker pyyaml 通道第二次沿用并强化为全结构断言
+- [Phase ?]: [Phase 09-06]: 负载矩阵标定通道落地——//go:build load 首行硬纪律 + 触发式洪水（bash read 闸消 pre-attach 不确定量）+ 尾闸 sleep 1 消 EXIT/1000 广播对 outbox 残余的截断竞态（首跑实测 32 端格缺 22428 字节，严格字节相等断言结构性恢复）
+- [Phase ?]: [Phase 09-06]: D-12 三断言全量实测现值成立零证伪——fanout 1/4/16/32 kicks=0 逐字节一致；legit-slow 400KB/s 读者 kicks=0；32 端 Alloc 峰值 19.8MB<=64MiB；信用门 6 次/16.7s=0.36/s 不震颤；defunct 三面 200 轮 goroutine/fd 精确回基线零 Z 态
+- [Phase ?]: [Phase 09-06]: go list 排除证据取 TestGoFiles+XTestGoFiles 双清单（server_test 外部包文件在 XTestGoFiles，plan 字面单清单为弱证据按意图升级）
+- [Phase ?]: [Phase 09-07]: Dockerfile ADD 远程 URL 制品必须 --chmod=755——默认落 0600 无执行位，scratch 零 RUN 无法补救（RESEARCH 定稿缺失，/tini permission denied exit 126 实测命中）；与 ADD --checksum=sha256 同行是供应链钉死+执行位的唯一形态
+- [Phase ?]: [Phase 09-07]: 实机 systemctl 通道 = systemd --user（08-05 先例单元 wesh-uat.service 即 user manager，plan『08-05 同通道』字面对应物）；两个 systemd 通道断言纪律——ExecMainStatus 须在 auto-restart 窗口内捕获（新进程启动归零）；停窗口夹具须 trap TERM+HUP（KillMode=control-group 使 systemctl stop 直 TERM 全 cgroup，只 trap HUP 结构性失效 0.4ms 瞬杀实测）
+- [Phase ?]: [Phase 09-07]: 验收 grep 机械纪律第六次沿用——unit 加固张力注释以散文说明（家目录隔离/根文件系统只读化），不写 ProtectHome/ProtectSystem 字面（注释提及同样计数，验收 ==0 是源码级机械检查）；systemd 239 纹理记录：manual stop 下 wesh 退出 255 → ActiveState=failed 但绝不复活（09-09 README 说明素材）
+- [Phase ?]: [Phase 09-08]: Caddyfile LAN 监听站点地址须裸 :PORT（28ae2f2 勘误）——http://0.0.0.0:PORT 在 Caddy 是字面 Host 匹配（仅 Host: 0.0.0.0 命中，真实主机名落空走兜底空 200），与 nginx 监听语义相反；两平台配方互抄必错第二实证点（Pitfall 6）
+- [Phase ?]: [Phase 09-08]: Caddy 三行为面实证锁定（09-09 README Caddy 节「实证 2026-08-30，Caddy v2.11.4」素材）：reverse_proxy 默认原样透传 Host（Origin 同源校验天然过，零 Host 行）；WS upgrade 内建自动；hijack 后无默认 WS idle 超时（65s 空闲存活双机实测）
+- [Phase ?]: [Phase 09-08]: Task 1 首证「外部 Host 照常被服务」结论勘误为假绿——proto-verify 就绪探针 curl 0.0.0.0 自身使 Host 字面命中站点地址；外部 Host 行为面断言必须以真实主机名/LAN IP 为请求目标（探针目标与断言语义正交纪律）
+- [Phase ?]: [Phase 09-08]: pw t1 认证形态与 phase07-a2 关键差异——Caddy 无认证层走 authedContext 预置 Authorization（避开 wesh 401→recordFail→429 节流 1s 窗口），裸 context 负面对照 + sleep 1.2s pacing 消解（05-09/07-07 纪律）
+- [Phase ?]: 09-03: D-18 三项 as-locked 落地——HINT_SHUTDOWN C-10 条件句式常量 + showShutdown 单写口（pre-onopen 分派与稳态 case 1001 唯一调用形态）；case 1001 在分派序修订后实际不可达但按 plan 字面保留为防回归纵深（单写口使两处零文案漂移）
+- [Phase ?]: 09-03: D13 夹具取黑洞 TCP 伺服器（accept-never-upgrade + SpyWebSocket URL 端口改写经 loadTerminal opts.blackholePort 注入）——plan 括注的 hold/不发 Hello 两形态结构性不可达（fetch hold 期 WS 未构造；opened 在 onopen 即置位先于 Hello），黑洞形态使 onopen 永不触发、opened 恒 false 零事件竞态
+- [Phase ?]: 09-03: dist 产物指纹断言以 grep -o 计出现次数（esbuild 单行 bundle 下 grep -c 计行数恒 1 失真）；esbuild 不去重字符串字面量实证（旧 hint 改前产物 2 处→改后恰 1 处）；TDD RED 先证——更新断言对旧 dist 三 FAIL 恰复现三项 WARNING bug 形态后重建转 GREEN（09-02 task 级 tdd 先例第二次沿用）
+- [Phase ?]: 09-04: D-05..D-08 确认门 as-locked（用户 2026-08-30 裁决）——--index 整页替换（ttyd -i 同款零模板注入面）+ 全通道统一（/ 与 /s/{token}/ 经 wh 单点装饰同一字节源，sharetoken.go 零改动）+ 启动一次读入（LimitReader(max+1) 四拒绝 exit 2，错误行零内容字节）+ index-max-size 纯配置键（16MiB 默认，无 CLI flag——P7 D-03 纪律明示例外）
+- [Phase ?]: 09-04: Options.CustomIndex 字段提前至 Task 2（Rule 3 最小跨文件必要——Task 2 验收 grep 要求 Options 字面量透传，字段缺失包不可编译）；TestStartupMatrix 既有行 indexMaxSize 16MiB 基线注入（maxClients 基线同步先例同款）
+- [Phase ?]: 09-05: undici fetch 自动 accept-encoding + Content-Encoding 透明解压使自定义页明文伺服态结构性不可观测——phase09.mjs 以 node:http rawFetch 原始请求通道（不注入头/不透明解压/5s 护栏）直证 gzip/明文双态与头面（09-04 Go transport 显式编码适配的 JS 侧对偶）
+- [Phase ?]: 09-05: UAT 脚本 task 级 tdd RED 形态——被测实现属先序 plan（09-04），RED 以 git archive 09-03 HEAD 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1）后 GREEN 18/18；plan 单 test 提交字面保持（09-02 先例第三次沿用）
+- [Phase ?]: [Phase 09-09]: D-13 标定表回填走验证结论形态——09-06 三断言全量现值成立零证伪，常量默认值零改动（git diff 零 .go 文件），README 12 行全量清单负载敏感项附 09-06 LOADDATA 数据摘要、时序项「行为测试已锁 + 一阶依据复核成立」；实测日期取 2026-08-29（09-06 实跑日）保数据可溯源
+- [Phase ?]: [Phase 09-09]: release.sh 干跑步骤清单取描述性措辞（验收 grep 机械纪律第七次沿用）——fuzztime=10m/-tags=load/git push origin 命令字面只在执行段单次出现满足 ==N 计数；好树干跑态利用脚本未入库窗口期（mv /tmp 副本对仓跑），闸序钉死（形态/已存在先于脏树闸）是各态独立可触发前提；shellcheck 缺席以 bash -n + 四态行为自证
+- [Phase ?]: [Phase 09-10]: 发布闸（Task 2 checkpoint:decision blocking）用户裁决 publish-later（2026-08-30）——v1.0.0 择机自行发布，单命令 ./scripts/release.sh v1.0.0（前置：工作树干净、与远端同步；脚本自带全量测试/长 fuzz×2/负载矩阵/确认闸→tag push 触发 release.yml）；phase 以能力交付收尾，release.yml 真实全链首证留待发布时（snapshot 已证形状——RESEARCH Pitfall 12 既定取舍）
+- [Phase 09]: [UAT 收口]: publish-later 裁决于同日 verify-work 会话升级为"现在发布"（用户授权 push 触发 CI darwin 证据 + 授权全链发布）——v1.0.0 于 2026-08-30T16:29Z 实发布上架（四平台产物 + checksums 核验全 OK + linux_amd64 --version 实跑 wesh 1.0.0）
+- [Phase 09]: [发布链插曲]: FuzzDecodeFileConfig 值红线断言的键名回显豁免口径（7850bc4）——发布长跑语料 ["FUZZ_PROBE_SECRET"] 表头把探针搬进键名位置，全文字面断言误判合法键名回显（config.go 单写口既定行为 + fuzz_test 头注释明示"键名回显不在断言面"）；stripKeyNameEcho 剥除两处键名上下文后断言（值透传仍 FAIL fail-closed）+ TestStripKeyNameEcho 六形态行为锁；产品代码零改动
 
 ### Pending Todos
 
@@ -277,9 +314,11 @@ None yet.
 ### Blockers/Concerns
 
 - [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
-- [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5
-- [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9
-- [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md（1001 hint 与 systemd 自重启形态不匹配 / #status 面板族缺 role="alert" / pre-onopen 1001 落错文案竞态低危）——ship 后清零路由
+- [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5——**已闭环（2026-08-30）**：WR-01/WR-02 于 05-13 修复闭合；标定由 09-06 负载矩阵全量现值零证伪（fanout {1,4,16,32} kicks=0/outbox 峰值 99.8% 精确转信用/Alloc 19.8MiB ≤ 64MiB）+ 09-09 README 标定表 12 行全量回填（负载敏感项附实测数据出处可溯源）
+- [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9——**已闭环（2026-08-30）**：EXIT 2s 在 09-09 README 标定表 12 行全量清单内（时序项——行为测试已锁 + 一阶依据复核成立），09-06 三断言现值成立零证伪、常量默认值零改动
+- [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md——**已由 09-03 全数闭环（2026-08-30，D-18 清零路由终点）**：1001 hint 条件句式化（C-10）/ #status role="alert" / pre-onopen 1001 按码分派；jsdom 行为锁 D11a/D12/D13 全绿 + dist 产物重建（登记文件保持历史原貌，闭合记录见 09-03-SUMMARY.md）
+- [Phase 9]: TestResize 时序 flake（CI 观察一次，非产品缺陷）——重载 CI runner 上 sh 调度延迟超 150ms 夹具窗，首 stty 落在 TIOCSWINSZ 后（产品语义反向证实）；同 sha 五次运行仅 CI 一次红；处置路由：随 09-REVIEW WR 清单一并择机修（轮询替代固定 sleep）
+- [Phase 9]: README.md:96 「及其 `.gz`」Phase 1 遗留文档债（09-REVIEW WR-03，非 Phase 9 引入）——随 09-REVIEW WR 清单一并择机处置
 
 ## Deferred Items
 
@@ -289,6 +328,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-28T14:56:25.423Z
-Stopped at: Phase 8 complete (UAT 3/3 + verification passed + security verified), ready to plan Phase 9
+Last session: 2026-08-31
+Stopped at: Phase 09 complete — v1.0.0 released and verified end-to-end, milestone v1 44/44 closed (70/70 plans)
 Resume file: None

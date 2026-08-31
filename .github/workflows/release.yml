@@ -1,0 +1,40 @@
+# wesh 发布 workflow（OPS-10）——09-CONTEXT 锁定决策落点：
+#   D-01：推 v* tag 触发，版本号起点 v1.0.0——版本史与 git tag 同源
+#   D-03：前端产物显式编排——pnpm install+build 先于 goreleaser（不用 goreleaser before
+#         hooks 环境隐式；不用入库 dist 防发布产物滞后 web/src 未构建提交）
+# 纪律：本文件不设 CGO 开关——该变量只属于 .goreleaser.yml builds.env 单侧持有（ci.yml:15 同款纪律）
+name: release
+on:
+  push:
+    tags: ["v*"] # D-01：v* tag 触发，起点 v1.0.0
+
+permissions:
+  contents: write # GITHUB_TOKEN 创建 Release 最小授权（goreleaser-action 官方 README 形态）
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1 # 与 ci.yml 同钉版
+        with:
+          fetch-depth: 0 # Pitfall 11：changelog/tag 推断前提（默认浅克隆无 tag 历史）
+      # D-03 显式编排：pnpm 先于 goreleaser（与 ci.yml web leg 同钉版）
+      - uses: pnpm/action-setup@v6.0.10
+        with:
+          # web/package.json 无 packageManager 字段，显式钉版（ci.yml:24 同款）
+          version: 11.21.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm -C web install --frozen-lockfile
+      - run: pnpm -C web build # tsc && vite build && gzip -k9（web/package.json 实证；dist 真实产物经 go:embed 进入发布二进制）
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2.18.0"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

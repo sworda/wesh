@@ -431,6 +431,11 @@ const UNREACHABLE_BODY =
 // C-6 共用提示行前缀（1008/1009/1011 三条单写口防漂移，R3）——服务端不再随断开退出，
 // "先重启服务端"不再是首要建议；Session ended (1000) 的提示行语义仍精确为真，不在此列
 const HINT_RESTART = 'If the problem persists, restart wesh from your shell, then';
+// C-10 关停面板 hint 前缀（D-18① 逐字定稿，09-UI-SPEC §D-18 Contract ①/C-10）：
+// 条件句式通吃 systemd Restart= 自重启与非自重启两部署形态——条件为假（systemd 已
+// 自动拉起）时不构成错误指引、reload 链接即唯一所需动作；为真时指引精确为真。静态
+// 文案替换非运行时分支——前端结构上无法探测 systemd 配置（07-UI-REVIEW 建议原文采纳）
+const HINT_SHUTDOWN = 'If wesh is not restarted for you, start it again from your shell, then';
 
 // C-9 Reconnecting 面板文案（06-UI-SPEC §Copywriting 逐字契约，D-03/D-11）——
 // 三处同源单写口纪律（05-08 C-4/C-6 常量化先例）：scheduleAttempt 初显 /
@@ -472,6 +477,13 @@ function showStatus(title: string, body: string, hintPrefix: string, action?: { 
   hint.appendChild(a);
   hint.appendChild(document.createTextNode('.'));
   document.getElementById('status')!.hidden = false;
+}
+
+// 1001 关停面板单写口（R1/R3，D-18 ①③）：稳态 case 1001 与 pre-onopen 分派唯一调用
+// 形态——title/body 逐字不变（07-UI-REVIEW 判定 house-legal），hint 走上方 C-10 常量；
+// 文案不得复制第二份（05-08 常量化纪律第三次沿用）
+function showShutdown(): void {
+  showStatus('Server shutting down', 'The wesh server is shutting down. The session has ended.', HINT_SHUTDOWN);
 }
 
 // 认证感知连接流程（D-02 前端半侧）：fetch POST /api/attach 取一次性 ticket →
@@ -878,6 +890,15 @@ async function connect(): Promise<void> {
     if (reconnecting) {
       stopReconnect();
     }
+    // D-18③（R3）：1001 先按码分派再进 !opened 截流——握手未完成时服务端优雅关停
+    // 不再误述为 C-4「refusing new connections」，落与稳态 case 1001 同一 showShutdown
+    // 单写口专版（title/body/hint 同源）。位置在上方 reconnecting 两块之后：重连上下文
+    // 收 1001 仍先经 stopReconnect 清循环再落面板（D11c 行为零漂移）；pre-onopen 1001
+    // 与稳态同样不在 CORE-05 触发集（仅 1006——07-05 回归锁 D11b 不受影响）
+    if (ev.code === 1001) {
+      showShutdown();
+      return;
+    }
     if (!opened) {
       showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
       return;
@@ -896,12 +917,10 @@ async function connect(): Promise<void> {
         // Shutdown + reason server_shutting_down）。与 1000 的语义边界：进程退出 vs 服务
         // 关停（子进程由服务端 stop-signal 序列终结）。1001 不在 CORE-05 触发集（仅
         // 1006——systemd restart 场景看终态面板，而非重连循环打一个正在重启的服务，
-        // D-23 UX 闭环）；不调用 startReconnect（prohibition 回归锁）
-        showStatus(
-          'Server shutting down',
-          'The wesh server is shutting down. The session has ended.',
-          'Start wesh again from your shell, then',
-        );
+        // D-23 UX 闭环）；不调用 startReconnect（prohibition 回归锁）。面板经 showShutdown
+        // 单写口（hint 前缀 D-18① 条件句式）；上方 pre-onopen 分派先行 return 后本
+        // case 实际不可达——保留为分派序防回归纵深（单写口使两处落点零文案漂移）
+        showShutdown();
         break;
       case 1008: // 策略违反（version_mismatch 等）——Error 帧 message 优先展示（D-07）
         showStatus(

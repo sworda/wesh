@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[\"FUZZ_PROBE_SECRET\"]")

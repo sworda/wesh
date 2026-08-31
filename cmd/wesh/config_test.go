@@ -329,6 +329,46 @@ command = ["bash", "-l"]
 			t.Errorf("warn = %q, want empty (无 credential 键不触发 D-07)", warn)
 		}
 	})
+	t.Run("index keys decode and absent nil", func(t *testing.T) {
+		// 09-04 D-07/D-08：index（字符串路径）与 index-max-size（TOML 整数字节
+		//——OQ1 推荐形态，与 max-clients 整数先例同型零新解析）两键解码；键缺席
+		// = 指针 nil（fileConfig 覆盖面 29 键组成部分的缺席锚）。
+		path := writeToml(t, "index = \"/tmp/custom.html\"\nindex-max-size = 33554432\n", 0o600)
+		fc, _, err := loadFileConfig(path)
+		if err != nil {
+			t.Fatalf("loadFileConfig: %v", err)
+		}
+		if fc.Index == nil || *fc.Index != "/tmp/custom.html" {
+			t.Errorf("Index = %v, want /tmp/custom.html", fc.Index)
+		}
+		if fc.IndexMaxSize == nil || *fc.IndexMaxSize != 33554432 {
+			t.Errorf("IndexMaxSize = %v, want 33554432", fc.IndexMaxSize)
+		}
+		path2 := writeToml(t, "port = 1\n", 0o600)
+		fc2, _, err := loadFileConfig(path2)
+		if err != nil {
+			t.Fatalf("loadFileConfig: %v", err)
+		}
+		if fc2.Index != nil || fc2.IndexMaxSize != nil {
+			t.Errorf("absent index keys must stay nil, got Index=%v IndexMaxSize=%v", fc2.Index, fc2.IndexMaxSize)
+		}
+	})
+	t.Run("index-max-size string form rejected, value stripped", func(t *testing.T) {
+		// D-08 整数字节形态：字符串形态（如 "16MiB"）由 go-toml 类型不符自然
+		// 拒绝（OQ1——零单位解析依赖，Don't Hand-Roll 表既定）；错误文案只含
+		// 键名与行号，禁含值。
+		path := writeToml(t, "index-max-size = \"16MiB-probe\"\n", 0o600)
+		_, _, err := loadFileConfig(path)
+		if err == nil {
+			t.Fatal("loadFileConfig with string index-max-size = nil error, want 类型不符拒绝")
+		}
+		if !strings.Contains(err.Error(), "index-max-size") {
+			t.Errorf("error = %q, want containing key name", err)
+		}
+		if strings.Contains(err.Error(), "16MiB-probe") {
+			t.Errorf("error = %q, must not contain value probe", err)
+		}
+	})
 }
 
 // TestPrescanConfigPath（D-01 装配前提）：手工扫描 `--config=<v>` 与 `--config <v>`
@@ -716,6 +756,51 @@ func TestConfigMerge(t *testing.T) {
 			t.Errorf("validateStartup = warn %q err %v, want clean（D-11 socket 跳过矩阵）", warn, verr)
 		}
 	})
+	// 09-04 D-07/D-08：index 键两阶段合并（配置铺底 + CLI 覆盖——flag > 配置 >
+	// 默认）与 index-max-size 纯配置键（整数字节生效；显式 0 不被默认吞掉——
+	// 指针标量纪律，validateStartup ≤0 拒绝消费）。
+	t.Run("index from config", func(t *testing.T) {
+		cfg, _, err := parseConfigArgs(t, "index = \"/tmp/x.html\"\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		if cfg.index != "/tmp/x.html" {
+			t.Errorf("index = %q, want /tmp/x.html (config 铺底)", cfg.index)
+		}
+	})
+	t.Run("index CLI overrides config", func(t *testing.T) {
+		cfg, _, err := parseConfigArgs(t, "index = \"/tmp/x.html\"\n", []string{"--index", "/tmp/y.html"}, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		if cfg.index != "/tmp/y.html" {
+			t.Errorf("index = %q, want /tmp/y.html (flag > config)", cfg.index)
+		}
+	})
+	t.Run("index-max-size from config", func(t *testing.T) {
+		cfg, _, err := parseConfigArgs(t, "index-max-size = 33554432\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		if cfg.indexMaxSize != 33554432 {
+			t.Errorf("indexMaxSize = %d, want 33554432 (config 生效)", cfg.indexMaxSize)
+		}
+	})
+	t.Run("index-max-size zero from config refused at startup", func(t *testing.T) {
+		// D-08：显式 0 经指针标量不被默认 16MiB 吞掉，validateStartup ≤0 拒绝
+		//（TestStartupMatrix 直构行 + 本配置源行双锁——TOML 0 值合并语义）。
+		cfg, _, err := parseConfigArgs(t, "index-max-size = 0\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		_, verr := validateStartup(cfg)
+		if verr == nil {
+			t.Fatal("validateStartup = nil, want index-max-size ≤0 拒绝（显式零值不被默认吞掉）")
+		}
+		if !strings.Contains(verr.Error(), "index-max-size") {
+			t.Errorf("err = %q, want containing 键名", verr)
+		}
+	})
 }
 
 // TestConfigPrecedence（D-05 优先级链）：flag > env > 配置文件 > 内置默认。
@@ -894,12 +979,12 @@ func TestConfigRedLines(t *testing.T) {
 			{"write-policy enum", "write-policy = \"sometimes\"\n", "must be owner or all"},
 			{"base-path strict", "base-path = \"wesh\"\n", "invalid --base-path"},
 			{"tls pair", "tls-cert = \"/tmp/c.pem\"\n", "both --tls-cert and --tls-key"},
-		// 07-review CR-03：配置来源的凭据载体头名与 CLI 同闸拒绝（配置即
-		// 破线的结构性缺口——审查发现场景正是配置文件通道）。
-		{"auth-header credential header", "auth-header = \"Authorization\"\n", "invalid --auth-header"},
-		// 08-review WR-02：配置来源 ping-interval 负值经默认值替换机制落同一
-		// 终值，与 CLI 同闸拒绝（一闸双覆盖——负值检查是唯一闸）。
-		{"ping-interval negative", "ping-interval = \"-5s\"\n", "invalid --ping-interval"},
+			// 07-review CR-03：配置来源的凭据载体头名与 CLI 同闸拒绝（配置即
+			// 破线的结构性缺口——审查发现场景正是配置文件通道）。
+			{"auth-header credential header", "auth-header = \"Authorization\"\n", "invalid --auth-header"},
+			// 08-review WR-02：配置来源 ping-interval 负值经默认值替换机制落同一
+			// 终值，与 CLI 同闸拒绝（一闸双覆盖——负值检查是唯一闸）。
+			{"ping-interval negative", "ping-interval = \"-5s\"\n", "invalid --ping-interval"},
 		} {
 			t.Run(row.name, func(t *testing.T) {
 				_, _, err := parseConfigArgs(t, row.toml, nil, "--", "bash")

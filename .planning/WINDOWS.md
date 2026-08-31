@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 21
+open_count: 24
 waived_count: 0
-fixed_count: 1
-total_count: 22
-last_updated: 2026-08-26T06:30:42.875Z
+fixed_count: 3
+total_count: 27
+last_updated: 2026-08-30T07:57:44.432Z
 ---
 
 # Broken Windows Ledger
@@ -37,6 +37,11 @@ last_updated: 2026-08-26T06:30:42.875Z
 | 20 | 07 | deviation | web/dist/index.html |  | 07-01 Rule 3 验收闸适配：dist 升级前缀 grep 改引号无关心形态（esbuild 反引号模板字面量发射，字面量未重命名，断言面守恒，4f1fc8e） | open |  | 2026-08-26T00:47:54.121Z |  |
 | 21 | 07 | deviation | web/uat/phase07.mjs |  | 07-07: S4c NEL 探针改线形等价物构造（undici latin1 编码实证——朴素 'ali\\u0085ce' 上线单字节 0x85 复现不了剥离路径，'ali\\u00C2\\u0085ce' 双码点 = UTF-8 NEL 等价线形） | open |  | 2026-08-26T06:30:22.013Z |  |
 | 22 | 07 | unrun-verify | web/uat/phase07.mjs |  | S8c 真实弹浏览器拉起与标签页观感 skipped（headless 硬约束豁免——真实 GUI 属 Windows 工作站人工层，CODEBUDDY.md 平台原生行为豁免条款）；协议层等价物 S8a（headless 跳过）+ S8b（fake xdg-open argv 全等）已覆盖，人工复核项见 07-08 plan | open |  | 2026-08-26T06:30:42.875Z |  |
+| 23 | 09 | deviation | .planning/phases/09-release-polish/09-01-PLAN.md | 118 | 09-01 plan verify 块 goreleaser 产物目录路径（dist/<os>_<arch>/）与 v2.18.0 实证布局（dist/wesh_<os>_<arch>_<variant>/）不符——执行已按实证路径，断言全绿；PLAN 文档字面未改（历史产物） | fixed |  | 2026-08-29T13:45:46.256Z | 2026-08-29T13:46:51.606Z |
+| 24 | 09 | deviation | web/uat/pw/phase09-caddy-ctl.sh | 26 | 09-08: Caddyfile 站点地址 http://0.0.0.0:10014 系字面 Host 匹配（仅 Host: 0.0.0.0 命中，真实主机名落空走兜底空 200）——Task 1『外部 Host 照常被服务』结论系 proto-verify 探针 curl 0.0.0.0 自身的假绿，Windows 首跑 0/2 捕获；改裸 :10014（绑定全网卡+匹配任意 Host）三层复验全绿：LAN IP 矩阵 + proto 7/7 + Windows 4/4（28ae2f2） | fixed |  | 2026-08-30T03:53:43.425Z | 2026-08-30T03:53:54.769Z |
+| 25 | 09 | deviation | web/uat/phase06-dom.mjs |  | 09-03: D13 夹具形态替换——plan 括注建议『hold 或不发 Hello 使 opened 保持 false』两形态结构性不可达（fetch hold 期间 WS 未构造无 socket 可驱动；opened 在 WS onopen 即置位先于 Hello 发送），改黑洞 TCP 伺服器夹具（accept-never-upgrade + SpyWebSocket URL 端口改写）确定性构造 pre-onopen 驻留；断言面与 plan 行为逐字一致（D13a RED 复现 WARNING#3 后 GREEN） | open |  | 2026-08-30T04:14:53.268Z |  |
+| 26 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: task 级 tdd RED 形态裁决——被测实现属先序 plan（09-04 已落地），failing-first 提交结构性不可达（交付物即测试脚本）；RED 以 git archive 49ed5b2 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1），GREEN 当前二进制 18/18 exit 0（1649639） | open |  | 2026-08-30T07:57:33.918Z |  |
+| 27 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: Task 2 回归里程碑取 --allow-empty 提交——plan 指定提交语但 verification-only 任务零文件改动，裸 git commit 必失败；空提交保持 per-task 原子提交协议（四脚本 18+28+40+34 断言零 FAIL 证据入提交信息，95f06f0） | open |  | 2026-08-30T07:57:44.432Z |  |
 
 ````json
 [
@@ -302,6 +307,66 @@ last_updated: 2026-08-26T06:30:42.875Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-26T06:30:42.875Z",
+    "resolved_at": null
+  },
+  {
+    "id": 23,
+    "kind": "deviation",
+    "phase": "09",
+    "file": ".planning/phases/09-release-polish/09-01-PLAN.md",
+    "line": 118,
+    "description": "09-01 plan verify 块 goreleaser 产物目录路径（dist/<os>_<arch>/）与 v2.18.0 实证布局（dist/wesh_<os>_<arch>_<variant>/）不符——执行已按实证路径，断言全绿；PLAN 文档字面未改（历史产物）",
+    "status": "fixed",
+    "reason": "",
+    "recorded_at": "2026-08-29T13:45:46.256Z",
+    "resolved_at": "2026-08-29T13:46:51.606Z"
+  },
+  {
+    "id": 24,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "web/uat/pw/phase09-caddy-ctl.sh",
+    "line": 26,
+    "description": "09-08: Caddyfile 站点地址 http://0.0.0.0:10014 系字面 Host 匹配（仅 Host: 0.0.0.0 命中，真实主机名落空走兜底空 200）——Task 1『外部 Host 照常被服务』结论系 proto-verify 探针 curl 0.0.0.0 自身的假绿，Windows 首跑 0/2 捕获；改裸 :10014（绑定全网卡+匹配任意 Host）三层复验全绿：LAN IP 矩阵 + proto 7/7 + Windows 4/4（28ae2f2）",
+    "status": "fixed",
+    "reason": "",
+    "recorded_at": "2026-08-30T03:53:43.425Z",
+    "resolved_at": "2026-08-30T03:53:54.769Z"
+  },
+  {
+    "id": 25,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "web/uat/phase06-dom.mjs",
+    "line": null,
+    "description": "09-03: D13 夹具形态替换——plan 括注建议『hold 或不发 Hello 使 opened 保持 false』两形态结构性不可达（fetch hold 期间 WS 未构造无 socket 可驱动；opened 在 WS onopen 即置位先于 Hello 发送），改黑洞 TCP 伺服器夹具（accept-never-upgrade + SpyWebSocket URL 端口改写）确定性构造 pre-onopen 驻留；断言面与 plan 行为逐字一致（D13a RED 复现 WARNING#3 后 GREEN）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-30T04:14:53.268Z",
+    "resolved_at": null
+  },
+  {
+    "id": 26,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "web/uat/phase09.mjs",
+    "line": null,
+    "description": "09-05: task 级 tdd RED 形态裁决——被测实现属先序 plan（09-04 已落地），failing-first 提交结构性不可达（交付物即测试脚本）；RED 以 git archive 49ed5b2 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1），GREEN 当前二进制 18/18 exit 0（1649639）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-30T07:57:33.918Z",
+    "resolved_at": null
+  },
+  {
+    "id": 27,
+    "kind": "deviation",
+    "phase": "09",
+    "file": "web/uat/phase09.mjs",
+    "line": null,
+    "description": "09-05: Task 2 回归里程碑取 --allow-empty 提交——plan 指定提交语但 verification-only 任务零文件改动，裸 git commit 必失败；空提交保持 per-task 原子提交协议（四脚本 18+28+40+34 断言零 FAIL 证据入提交信息，95f06f0）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-30T07:57:44.432Z",
     "resolved_at": null
   }
 ]

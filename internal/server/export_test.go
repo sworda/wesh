@@ -13,9 +13,9 @@ func LockStderr() func() {
 }
 
 // ShrinkOutboxForTest 把 attachSeq 对应客户端的 outbox 容量改写为 newCap
-//（08-review WR-01 回归夹具，emptyexit_test.go TestExitWhenEmptyPromoteKickOnce）：
+// （08-review WR-01 回归夹具，emptyexit_test.go TestExitWhenEmptyPromoteKickOnce）：
 // newCap 小于升格 Welcome 帧长时 promoteNextLocked 的 trySend 结构性必败
-//（bytes≥0 ⇒ bytes+len(frame) > cap 恒成立）——「递补者 stalled 到 outbox 连升格
+// （bytes≥0 ⇒ bytes+len(frame) > cap 恒成立）——「递补者 stalled 到 outbox 连升格
 // 通知都写不进」的确定性等价注入。不用真实字节填充的理由：writer 的 drain 是
 // 整批 swap 语义，填充与 drain 竞态下「填满」状态会在填充返回后、promote 前被
 // 一次 drain 清空（实测）；改写 cap 无此窗口，且与 TCP 吸收带/平台缓冲无关。

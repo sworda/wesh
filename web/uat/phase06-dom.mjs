@@ -15,6 +15,10 @@
 //   D10 CR-01 代际守卫 fetch 半侧（双在飞 attempt 较旧链迟到成功不踩占健康连接）
 //   D11 1001 优雅下线（07-05 D-23：'Server shutting down' 终态面板 + 不进重连循环；
 //      重连上下文中收 1001 → 循环终止 + 面板分派，既有 L862-868 形态自然覆盖）
+//   D12 #status 面板族 alert 角色标注（09-03 D-18②/R2：role 属性 jsdom 断言面 + 真实
+//      AT 播报/节流行为平台豁免 skip 行——09-UI-SPEC §D-18 ② 已知边界）
+//   D13 pre-onopen 1001 分派（09-03 D-18③/R3：握手未完成（opened=false）收 1001 →
+//      C-10 专版而非 C-4 'Unable to connect' 误述；黑洞 TCP 夹具使 onopen 永不触发）
 //
 // 本文件夹具（phase05-dom.mjs loadTerminal 形态逐字复用 + 两件延伸）：
 //   - SpyWebSocket.synthClose(code)：合成 CloseEvent 驱动 onclose 分派（06-RESEARCH A2
@@ -38,6 +42,7 @@
 //
 // 运行：node web/uat/phase06-dom.mjs [wesh 二进制路径]（默认 /tmp/wesh-uat/wesh）
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
@@ -142,9 +147,18 @@ async function loadTerminal(srv, opts = {}) {
       return Object.assign(new window.Event('close'), { code });
     }
   };
+  // D13 黑洞端口改写（opts.blackholePort）：WS 连接被黑洞 TCP 伺服器接受但永不完成
+  // 升级——onopen 结构性永不触发（pre-onopen 窗口无限驻留，opened 恒 false 且无原生
+  // close/error 事件竞争断言面）；fetch /api/attach 不受影响仍走真实实例
+  const blackholePort = opts.blackholePort ?? 0;
   window.WebSocket = class extends WebSocket {
-    constructor(...a) {
-      super(...a);
+    constructor(url, ...a) {
+      if (blackholePort !== 0) {
+        const u = new URL(String(url));
+        u.port = String(blackholePort);
+        url = u.href;
+      }
+      super(url, ...a);
       constructed++; // 模块级构造计数——「零新连接/立即 attempt」断言材料
       this.binaryType = 'arraybuffer';
       this._savedClose = null; // synthClose 留存的 onclose 处理器副本（D6 二次驱动用）
@@ -605,9 +619,9 @@ async function d11Shutdown1001NoReconnect() {
       const q = panel(ctx.document);
       return q.visible && q.title === 'Server shutting down' ? q : null;
     }, 'Server shutting down 面板');
-    check('D11a', "1001 → 'Server shutting down' 终态面板（D-23 逐字文案：body + hint）",
+    check('D11a', "1001 → 'Server shutting down' 终态面板（D-23 逐字文案：body + hint——hint 前缀 09-03 D-18① C-10 条件句式）",
       p.body === 'The wesh server is shutting down. The session has ended.'
-      && p.hint.includes('Start wesh again from your shell, then'),
+      && p.hint.includes('If wesh is not restarted for you, start it again from your shell, then'),
       `body=${JSON.stringify(p.body)}`);
     // 2.5s 守候窗（容差论证同 D2b）：窗内零构造 = 1001 不进重连循环（prohibition
     // 回归锁——若误入循环，首个 attempt ~1s 退避点必构造新连接）
@@ -653,6 +667,59 @@ async function d11Shutdown1001NoReconnect() {
   }
 }
 
+// ═══════════════════ D12：#status alert 角色标注（09-03 D-18②/R2 jsdom 断言面） ═══════════════════
+async function d12StatusRoleAlert() {
+  console.log('D12: #status 面板族 alert 角色标注（role 属性 jsdom 断言面 + 真实 AT 豁免 skip）');
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+  try {
+    check('D12a', "#status 容器 alert 角色属性在场（面板族 assertive 播报语义，D-18②/R2）",
+      ctx.document.getElementById('status')?.getAttribute('role') === 'alert',
+      `role=${JSON.stringify(ctx.document.getElementById('status')?.getAttribute('role'))}`);
+    skip('D12b', '真实屏幕阅读器播报与节流行为（含 Reconnecting 1Hz 倒计时 assertive 重读边界）',
+      '平台原生豁免面——真实 AT 栈按分层测试策略豁免（CODEBUDDY.md），jsdom 仅断言 role 属性在场；已知边界登记见 09-UI-SPEC §D-18 ②');
+  } finally {
+    await cleanup(ctx, inst);
+  }
+}
+
+// ═══════════════════ D13：pre-onopen 1001 分派（09-03 D-18③/R3） ═══════════════════
+// 修复前形态：握手未完成（opened=false）收 1001 → !opened 截流误落 C-4 'Unable to
+// connect'（误述优雅关停为拒绝服务）；修复后 1001 先按码分派，落与稳态 D11a 同一
+// showShutdown 单写口 C-10 专版。夹具：黑洞 TCP 伺服器（接受连接永不完成 WS 升级）
+// ——onopen 结构性永不触发，opened 恒 false 且无原生 close/error 事件竞争断言面
+//（fetch /api/attach 仍走真实 wesh 实例 404 探测直连链路，端口改写只作用于 WS）。
+async function d13PreOnOpen1001Dispatch() {
+  console.log('D13: pre-onopen 1001 分派（opened=false 收 1001 → C-10 专版非 C-4 误述 + 守候窗零新连接）');
+  const blackhole = createServer(() => { /* 接受后永不应答——WS 升级永不完成 */ });
+  await new Promise((r) => blackhole.listen(0, '127.0.0.1', r));
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const base = constructed;
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port }, { blackholePort: blackhole.address().port });
+  try {
+    // socket 构造与 onclose 注册同在 fetch resolve 后的同一同步段（connect() 该区间
+    // 无 await）——观测到 sockets 非空时 handler 必已就位；黑洞链路 onopen 永不触发
+    await waitFor(() => ctx.sockets.length >= 1, 'WS 构造（黑洞链路，握手悬置）');
+    ctx.sockets[ctx.sockets.length - 1].synthClose(1001);
+    const p = await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible ? q : null;
+    }, 'pre-onopen 1001 → 面板出现');
+    check('D13a', "握手未完成收 1001 → 'Server shutting down' C-10 专版（非 'Unable to connect' 误述，D-18③/R3）",
+      p.title === 'Server shutting down' && p.title !== 'Unable to connect'
+      && p.body === 'The wesh server is shutting down. The session has ended.'
+      && p.hint.includes('If wesh is not restarted for you, start it again from your shell, then'),
+      `title=${JSON.stringify(p.title)}`);
+    const atPanel = constructed;
+    await sleep(2500); // 守候窗容差论证同 D2b/D11b：窗内零构造 = 不触发重连
+    check('D13b', '2.5s 守候窗内零新连接构造（pre-onopen 1001 不在 CORE-05 触发集——仅 1006）',
+      constructed === atPanel && constructed === base + 1, `构造=${constructed - base}`);
+  } finally {
+    await cleanup(ctx, inst);
+    blackhole.close();
+  }
+}
+
 // ═══════════════════ D9：真实断网栈豁免（headless 硬约束，人工清单指针） ═══════════════════
 function d9RealNetworkStackExempt() {
   skip('D9', '真实 OS 断网栈与浏览器原生 online/offline 事件时序',
@@ -669,7 +736,7 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d11Shutdown1001NoReconnect, d9RealNetworkStackExempt];
+const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d11Shutdown1001NoReconnect, d12StatusRoleAlert, d13PreOnOpen1001Dispatch, d9RealNetworkStackExempt];
 let failed = 0;
 for (const s of scenarios) {
   try {

@@ -293,7 +293,7 @@ func TestExitWhenEmptyTimerAfterLifecycle(t *testing.T) {
 //
 // 夹具论证（WR-01 触发条件叠加的确定性构造）：
 //   - /bin/cat 无 INPUT 即静默——onChunk 不触发，B 不会被 onChunk 路径先踢
-//    （ro 满即踢的唯一触发点是 trySend 失败的 chunk 到达，kickOrCreditLocked）；
+//     （ro 满即踢的唯一触发点是 trySend 失败的 chunk 到达，kickOrCreditLocked）；
 //   - Options.PingInterval 零值 → pinger 禁用（New 对 PingInterval 无兜底直传 0，
 //     pinger interval<=0 直接返回）——保活路径全程不介入本场景；
 //   - B 的「outbox 满到连升格 Welcome 都写不进」由白盒出口 ShrinkOutboxForTest

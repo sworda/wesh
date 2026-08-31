@@ -46,6 +46,14 @@ node web/uat/pw/phase06-pw.mjs t1
 
 产物：`results.json`（结构化结果）、`screenshots/`（观感留档，gitignore）。
 
+## 载具登记
+
+| 载具 | 形态 | 运行 |
+|------|------|------|
+| `phase06-pw.mjs` | 断网重连/观感全链（经本机 TCP 转发器 kill/restore） | `pnpm -C web/uat/pw uat:06` |
+| `phase07-a2-pw.mjs` + `phase07-a2-ctl.sh` | 真 nginx 反代子路径双机全链（G-07-2 实证锚点） | `node web/uat/pw/phase07-a2-pw.mjs` |
+| `phase09-caddy-pw.mjs` + `phase09-caddy-ctl.sh` | Caddy 反代双机全链（09-08 D-15：Host 默认透传/WS upgrade 内建/无默认 idle 超时实证面；LAN :10014 → loopback :17682） | `node web/uat/pw/phase09-caddy-pw.mjs` |
+
 ## 新 phase 复用
 
 新建 `phaseNN-pw.mjs`，复用 `lib/` 四件套：

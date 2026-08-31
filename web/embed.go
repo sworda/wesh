@@ -6,6 +6,8 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
 	"embed"
 	"io/fs"
 	"mime"
@@ -69,4 +71,53 @@ func acceptsGzip(h string) bool {
 		return true // 裸 "gzip" 无 q 参数 = 接受
 	}
 	return false
+}
+
+// WithCustomIndex 装饰静态 handler，落 --index 自定义首页的整页替换契约
+// （09-04 OPS-03，D-05/D-06/D-07，09-UI-SPEC §Custom Index Contract + §4
+// 定稿采纳预压）：index.html 路径（含空路径回落）返回启动读入的自定义字节
+// （byte-identity——wesh 零注入零模板零校验，D-05；伺服字节与读入字节恒等），
+// 其余一切路径照旧委托原 handler（FileServerFS——自定义页引用的相对路径资源
+// → 404 是契约语义，T-09-04e）。装饰层在 sharePage 委托上游——/ 与
+// /s/{token}/ 两通道经同一装饰实例单点统一（D-06，server.go Handler() 唯一
+// 调用点）；不加 Cache-Control 新头（sharePage 注释既定纪律延伸，§6）。
+//
+// gzip 预压（§4）：装饰期对定长 page 预压一次缓存（compress/gzip
+// BestCompression——stdlib 零新依赖；16MiB 上限下明文+压缩双份内存可接受），
+// 运行期零压缩开销；Accept-Encoding 显式含 gzip → Content-Encoding: gzip
+// 发预压体，否则明文 page；Vary: Accept-Encoding 恒发（Handler 同款纪律——
+// 同一 URL 两表示，防中间缓存键不完整）；解析复用 acceptsGzip（零第二份
+// Accept-Encoding 解析器）。Content-Type 按 .html 扩展名推断同款
+// （mime.TypeByExtension——Handler 的 .gz 旁路同形态）。
+func WithCustomIndex(h http.Handler, page []byte) http.Handler {
+	var gzBuf bytes.Buffer
+	// BestCompression（§4 定稿）；常量恒合法使 err 分支结构性不可达——防御性
+	// 回落 NewWriter（默认级）保持预压不变量（gzBody 非 nil 可伺服）。
+	zw, werr := gzip.NewWriterLevel(&gzBuf, gzip.BestCompression)
+	if werr != nil {
+		zw = gzip.NewWriter(&gzBuf)
+	}
+	_, _ = zw.Write(page) // bytes.Buffer 写入结构性不失败
+	_ = zw.Close()        // 同上；预压产物定长缓存，运行期只读
+	gzBody := gzBuf.Bytes()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name == "" {
+			name = "index.html"
+		}
+		if name != "index.html" {
+			h.ServeHTTP(w, r) // 其余一切路径照旧（相对资源 404 契约语义）
+			return
+		}
+		w.Header().Set("Vary", "Accept-Encoding")
+		if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Write(gzBody)
+			return
+		}
+		w.Write(page)
+	})
 }
