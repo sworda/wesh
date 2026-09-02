@@ -1318,6 +1318,17 @@ func run(args []string) int {
 			return pty.StartWithSize(argv, startOpts, cols, rows)
 		}
 	}
+	// 10-01 PC-01：装配契约 fail-fast——ValidateOptions 前移至资源获取之前
+	//（10-review WR-02：两输入 cfg.sessionMode 与分岔产物 spawnFunc 在分岔块
+	// 尾部即已完全确定，校验只读该两字段，最小字面量与完整 opts 语义等价）。
+	// 守卫触发时零资源占用——spawn/listen 均未发生，无 sess/ln 可回滚，与
+	// validateStartup「拒绝路径零资源占用」纪律同构（原位调用在 pty.Start 与
+	// listen 之后，失败分支既无 sess.Close 也无 ln.Close，违反其注释自引
+	// 纪律）。失败经 validateStartup 同款 exit 2 通道形态。
+	if verr := server.ValidateOptions(server.Options{SessionMode: cfg.sessionMode, SpawnFunc: spawnFunc}); verr != nil {
+		fmt.Fprintf(os.Stderr, "wesh: %v\n", verr)
+		return 2
+	}
 	// D-21/D-24 接线（07-04）：--cwd/--term 落 StartOptions Dir/Term；--uid/--gid
 	// 落 Uid/Gid（-1 哨兵 = 不降权，Task 3 完成 flag 注册与成对校验）。
 	sess, err := pty.Start(argv, pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid})
@@ -1353,15 +1364,10 @@ func run(args []string) int {
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
 	// 10-01 PC-01：字面量尾部只追加 SessionMode/SpawnFunc 两键（既有键序
-	// 不重排——shared 路径逐字节零回归）；提取为命名 opts 供 New 前
-	// ValidateOptions 装配契约校验。
+	// 不重排——shared 路径逐字节零回归）；提取为命名 opts 供 New 消费。
+	// 装配契约校验已前移至 pty.Start 之前（10-review WR-02——守卫触发时
+	// 零资源占用），此处不再重复调用。
 	opts := server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version, CustomIndex: customIndex, SessionMode: cfg.sessionMode, SpawnFunc: spawnFunc}
-	// 10-01 PC-01：装配契约 fail-fast——ValidateOptions 在 New 之前（包级
-	// 校验 option (b) 定案；失败经 validateStartup 同款 exit 2 通道形态）。
-	if verr := server.ValidateOptions(opts); verr != nil {
-		fmt.Fprintf(os.Stderr, "wesh: %v\n", verr)
-		return 2
-	}
 	srv := server.New(sess, os.Exit, opts)
 	// shareURLRO/shareURLRW 拼串单一事实源（07-01 D-14 既定注释）：启动打印与
 	// 07-05 --open 两消费点共用（两消费点不得各自重拼）；socket 分支保持零值
