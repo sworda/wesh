@@ -1,456 +1,561 @@
-# Architecture Research — Web 终端共享系统（wesh / ttyd-class）
+# Architecture Research — wesh v1.1 per-client 会话模式集成设计
 
-**Domain:** Web 终端共享工具（PTY over WebSocket，单静态二进制）
-**Researched:** 2026-08-13
-**Confidence:** HIGH（核心结论均经一手来源验证：ttyd 本地源码、coder Go 源码、Linux man page、GNU screen 手册、tokio/xterm.js 官方文档；个别系统内部细节为 MEDIUM，已逐条标注）
+**Domain:** Web 终端共享工具内部架构（Go 单二进制，PTY over WebSocket）
+**Researched:** 2026-09-01
+**Confidence:** HIGH（全部结论锚定 wesh 当前源码 file:line 实证 + v1.0 RESEARCH 已锁定的 ttyd per-connection 语义；本课题为内部集成设计，非生态系统调研——七个问题均为代码层裁决，外部检索无决策增量）
 
 ---
 
 ## 0. 先行结论（TL;DR）
 
-成熟系统解决"会话解耦 + 多客户端"存在一条清晰的能力光谱，wesh 的甜点位已经存在但被各占一半：
+per-client 模式的正确集成形态是**「装配期一次分岔，运行期零分岔」**：
 
-| 系统 | 会话存活于断连 | 多客户端 attach | 重连恢复手段 | 写权限模型 | 验证来源 |
-|---|---|---|---|---|---|
-| **tmux** | ✓（server 进程持有 pane/PTY） | ✓ | **服务端完整终端模拟**，按 grid 重渲染（精确） | 无细粒度（同 socket 属主） | HIGH（deepwiki 带源码行号） |
-| **GNU screen** | ✓ | ✓（`-x`） | 同上（服务端屏幕状态） | **ACL r/w/x 每用户每窗口 + writelock 单写者锁** | HIGH（官方手册镜像） |
-| **abduco / dtach** | ✓（每会话一个 detached 进程） | ✓ | **无**：不重放不模拟，靠应用自重绘（^L / dvtm） | `-r` 只读仅为客户端建议性，非安全特性 | HIGH（作者官网） |
-| **coder reconnectingpty** | ✓（无连接超时后 kill） | ✓（activeConns map） | **64KiB 内存 ring 原始字节重放**（官方自称 "buggy"，优先委托给 screen 后端） | 无 | HIGH（v2.36.0 源码精读） |
-| **Eternal Terminal** | ✓（etterminal 进程存活） | ✗（1:1） | **序号化可靠字节流**（BackedReader/Writer 重传丢失段） | — | MEDIUM-HIGH（deepwiki） |
-| **mosh** | ✓ | ✗ | 服务端终端模拟 + **状态 diff 同步**（UDP） | — | MEDIUM（训练知识+检索摘要） |
-| **shellhub** | ✗（活动会话不恢复，仅录像可回放） | ✗ | — | — | MEDIUM-HIGH（仓库分析） |
-| **k8s remotecommand** | ✗（断连即容器内进程结束） | ✗ | — | — | HIGH（client-go 官方 API 文档） |
-| **ttyd / gotty** | ✗（WS 关闭即 kill，源码已核实） | ✗ | 无 | 全局 `-W` 开关 | HIGH（ttyd 本地源码） |
-
-**wesh 的定位 = abduco 的简洁进程模型 + coder 的 ring 重放 + screen 的写权限语义，并修复 coder 已验证的 fan-out 缺陷。** 不需要 tmux/mosh 的服务端全量终端模拟（实现一个 VT 解析器是巨大表面，超出 v1 收益）；ring 重放 + resize 触发的 SIGWINCH 重绘是 coder 已趟平的"够用"方案，其已知近似性要写进文档。
-
-**ttyd 必须抛弃的三个结构性耦合（本地源码核实）：**
-1. **连接即进程**：`pss_tty`（每 WS 连接的 lws 状态）直接持有 `pss->process`，`LWS_CALLBACK_CLOSED` 里 `pty_kill`（protocol.c:366-384）。解耦的第一步就是把进程所有权从连接状态中拿出来。
-2. **持锁阻塞式 fan-out 的反面教材已在 coder 复现**：coder buffered.go 单读 goroutine 在**持有一把大锁**的情况下对每个 conn 做阻塞 `conn.Write`，代码内 TODO 自述应改为 channel-per-conn——一个慢客户端拖住所有人。ttyd 靠"一读一停"（read_cb 里 `uv_read_stop`，写完再 resume，pty.c:65-77）把问题变成了吞吐受限。
-3. **每进程一个 waitpid 线程**（pty.c:398-417, 483）：N 个会话 = N 个阻塞线程。pidfd/kqueue 可以零线程并入事件循环。
+1. **Server 结构**：保留 `sess *pty.Session`（shared 专用，零漂移），新增装配期固化三件套——`sessionMode`（不可变）、`spawnFn func(cols, rows int) (*pty.Session, error)`（会话工厂）、`pcSessions` 注册表（per-client 会话活性登记，hubMu 保护）。**不抽象 session 接口**——分支点仅 6 处且全部显式，接口泛化是过度设计（与 `proto.ValidClientOptionKey`「刻意直白 switch」同哲学）。
+2. **spawn 点**：attach 升档序列内、**ticket 核销之后、Welcome 组帧之前、hubMu 之外**。预认证 spawn 违反 SEC-08 红线；spawn 失败发既有 `Error{server_error}` 帧 + 1011 关闭（协议零改动，`proto.ErrServerError` 常量已备而从未启用）。
+3. **生命周期**：shared 的 `lifecycle()` 逐字不动；per-client 每会话一个 `sessionWatcher`（Wait → EXIT 私有化 → 关本端 WS）+ **一个 supervisor goroutine**（New 钉死）经既有 `termOnce/terminate` 单点收口 exitf——「exitf 唯一收口」纪律在新模式下的同构映射。
+4. **代码复用**：给 `client` 加 `inQ *inputQ` 间接字段使读循环 INPUT case **逐行不分支**；`inputWriter` 改为参数化（1 份代码 N 实例）；outbox/writer/pinger/mergeBatch/kick 机械**零改动复用**（arbiter 空集时 kick 链路天然安全）。两模式共享面 ≥90% 成立。
+5. **退出码规则**：`exitf(lastReapedExitCode)`——末次收割会话的退出码。--once 两模式下两种时序（先断后死 / 先死后断）均与 shared 逐位对齐（255 / 子进程码），证明见 §4.3。
+6. **maxClients 语义升级**：per-client 下从「客户端计数闸」升级为**硬进程帽**——spawn 点再闸 `pcActive >= maxClients → 1013 max_clients`（除既有 ③位/早闸外的第三道，专为昂贵资源而设）。
 
 ---
 
-## 1. Standard Architecture
+## 1. 现状锚点（集成点，file:line 实证）
 
-### 1.1 System Overview
+### 1.1 两模式共享、零改动的机制
 
-单进程、异步 IO、actor 模型。所有会话共享状态只被其 Session Actor 触碰，跨组件一律消息传递——从根上消灭 ttyd 的 pss 跨 lws/libuv 双域 UAF 风险类。
-
-```
-                        浏览器客户端 A(读写)  B(只读)  C(读写)
-                              │        │        │
-                              └────────┴────────┘
-                                 HTTPS + WSS
-                    (TLS 配置 / Origin 白名单 / per-IP 限流)
-┌────────────────────────────────── wesh 单进程 ──────────────────────────────────┐
-│                                                                                 │
-│  ┌──────────────────────────── Gateway ────────────────────────────┐            │
-│  │  HTTP: 内嵌前端 / /healthz / /metrics / POST /api/attach          │            │
-│  │  WS:   upgrade、子协议协商 wesh.v1、Hello 首帧校验、协议编解码       │            │
-│  └───────┬───────────────────────────────────────────────┬─────────┘            │
-│          │ 验票/签发(常量时间比较,失败节流)                  │ attach→(session,mode)│
-│  ┌───────▼────────┐                              ┌────────▼──────────┐           │
-│  │  Auth Service  │                              │ Session Registry  │           │
-│  │ 一次性 ticket  │                              │ id→Actor 句柄表    │           │
-│  │ (单次/短 TTL)  │                              │ 空闲回收/全局上限  │           │
-│  └────────────────┘                              └────────┬──────────┘           │
-│                                                           │ spawn/attach/detach  │
-│        ┌──────────────────────────────────────────────────┤                      │
-│        ▼                                                  ▼                      │
-│  ┌─────────── Session Actor #1（每 PTY 会话一个）──────────┐                       │
-│  │ 状态: master fd / pidfd / ring buffer / clients / size  │                       │
-│  │       / 写模式(all|owner|ro) / 退出墓碑(exit code)       │                       │
-│  │ 输入路由(权限检查) · 输出 fan-out · 重放 · resize 仲裁    │                       │
-│  └──┬───────────────┬───────────────┬─────────────────────┘                       │
-│     │ outbox mpsc   │               │                       （每个 Client Conn:     │
-│     ▼               ▼               ▼                        有界发件箱+专属 writer）│
-│  Conn A writer   Conn B writer   Conn C writer                                    │
-│                                                                                 │
-│  ┌──────────── PTY Engine ────────────┐   ┌────────── Observability ─────────┐  │
-│  │ forkpty/setsid · env 白名单 · cwd   │   │ 结构化日志 · metrics · 审计事件    │  │
-│  │ uid/gid 降权 · rlimits · TIOCSWINSZ │   │ (每客户端队列深度/lag 踢出/字节数) │  │
-│  │ pidfd(Linux)/kqueue(macOS) 退出监视 │   └───────────────────────────────────┘  │
-│  └───────────────┬────────────────────┘                                           │
-└──────────────────┼────────────────────────────────────────────────────────────────┘
-                   ▼ fork/exec（进程组）
-              子进程组: bash → vim/htop/...
-```
-
-### 1.2 Component Responsibilities（组件边界）
-
-| 组件 | 职责（拥有什么） | 不知道什么（边界） | 典型实现 |
-|---|---|---|---|
-| **Gateway** | TLS、HTTP 路由、WS upgrade、帧编解码、消息长度上限、认证超时(5s)、per-IP 连接上限 | PTY、会话内部状态 | axum/tokio-tungstenite 或 Go net/http + coder/websocket |
-| **Auth Service** | 凭据校验（时序安全比较）、一次性 ticket 签发/核销（单次使用、60s TTL、绑定会话与模式）、认证失败指数退避 | 会话内容 | 内存票表 + HMAC/随机 128bit |
-| **Session Registry** | session_id→Actor 句柄；create-or-attach 决策；空闲超时回收（无客户端计时器）；全局会话/连接上限 | 协议帧、PTY 系统调用 | 一张并发安全 map + 定时器 |
-| **Session Actor** | **每会话唯一权威**：PTY master fd、子进程 pid/pidfd、ring buffer、客户端集合及各自模式、窗口尺寸、写模式策略、退出墓碑 | HTTP/WS 细节（只见解码后的 typed message） | 单 task/goroutine + 邮箱（mpsc），内部零锁 |
-| **Client Conn（每连接）** | 有界 outbox + **唯一**碰 WS 写端的 writer task、输入权限门、心跳、detach 清理 | 其他客户端、ring 内部 | 每连接 2 个 task（reader/writer）+ bounded mpsc |
-| **Ring Buffer** | 每会话有界原始字节环（默认 256KiB–1MiB 可配；coder 用 64KiB 偏小），attach 时快照 | 谁在消费 | Vec+u64 写游标，O(1) append |
-| **PTY Engine** | forkpty/setsid/控制终端、env 白名单、cwd、uid/gid、rlimits、O_NONBLOCK/CLOEXEC、TIOCSWINSZ、进程组信号、**pidfd(Linux 5.3+)/kqueue(macOS) 退出监视** | 上层会话语义 | 平台抽象层，fd 注册进事件循环，零额外线程 |
-| **Observability** | 结构化日志、/healthz、metrics（会话数、每客户端 outbox 深度、lag 踢出数、字节吞吐） | 业务逻辑 | slog/zap/tracing + prometheus 或手写 /metrics |
-| **Frontend（内嵌）** | xterm.js + fit/unicode11/web-links/clipboard，重连状态机（带 session_id 重 attach），PAUSE/RESUME 客户端流控，重放批量写入 | 服务端实现 | ttyd 前端已验证，改造即可 |
-
-**边界规则：** Gateway↔Registry↔Actor 之间只传 typed message（Attach/Detach/Input/Resize/Output...）；PTY fd 不出 Actor；WS 写端只属于 Conn writer。这三条遵守后，并发 bug 的主战场（共享可变状态）在结构上不存在。
-
----
-
-## 2. 设计决策专题（问题 → 决策 → 证据）
-
-### 2.1 会话/进程解耦模型：控制面与数据面分离
-
-**决策：单进程内"Registry + 每会话 Actor"，而非 abduco 的"每会话一个 detached 进程"。**
-
-- abduco/dtach 的每会话一进程模型对 CLI 工具优雅（会话天然跨终端存活、socket 即句柄），但 wesh 的会话由本进程内嵌 HTTP/WS 服务暴露，没有必要再跨进程；进程内 Actor 获得同等解耦且省去 unix socket 权限/重建（abduco 需 SIGUSR1 重建 socket）的运维坑。
-- tmux 证明的关键点不是"另一个进程"，而是**会话状态有一个唯一属主、客户端是可替换的渲染端**。wesh 的 Actor=属主，WS 连接=渲染端。
-- **连接存活期间的行为全解耦**：WS 关闭只触发 `Actor.detach(conn)`；进程死活由会话策略决定（空闲超时、显式销毁、`--once` 类一次性会话）。
-- **退出墓碑**：借鉴 abduco——子进程退出后会话不立即消失，保留 exit code + ring 终态，迟到的重连者能看到最后输出与退出码（abduco 的 `+` 会话语义），墓碑 TTL 可配。
-
-### 2.2 PTY 生命周期管理
-
-**决策：forkpty + setsid 语义 + 进程组信号 + pidfd/kqueue 收割，全部并入事件循环。**
-
-- 创建：`forkpty()` 一把梭（内部完成 openpty+fork+子进程 setsid+控制终端），子进程 exec 前做 env 白名单注入/cwd/uid-gid/rlimits。ttyd 直接用 forkpty 是对的，但其 env 全继承是漏洞（pty.c:441-444 已核实）——wesh 用**白名单**（TERM、LANG/LC_*、PATH、HOME、USER、SHELL、COLORTERM 等可配）。
-- 尺寸：`ioctl(master, TIOCSWINSZ)`；**内核自动向前台进程组发 SIGWINCH**，无需手动 kill（这使"attach 时先设为接入者尺寸"同时成为全屏应用的重绘触发器——coder 正是这么做的）。
-- EOF 语义：子进程退出且 slave 侧无打开者后，master read 在 Linux 返回 **EIO**、在 BSD/macOS 返回 0/EOF——平台抽象层统一归一为 "Drain-到-EOF 后触发退出流程"，先读尽残余输出再宣告退出。
-- 销毁：向**进程组**发信号（`kill(-pgid, sig)`，ttyd 同样这么做，pty.c:165），可配 TERM→KILL 升级宽限。
-- 失败路径：spawn 失败必须能把**原因**经协议错误帧带回客户端（ttyd 做不到——协议无错误类型，且 pty_spawn 失败路径误 close(0) 已核实）。
-
-### 2.3 子进程收割：pidfd > SIGCHLD；macOS 用 kqueue
-
-**决策：Linux 用 pidfd_open+事件循环可读通知+waitid(P_PIDFD) 收割；macOS 用 kqueue EVFILT_PROC/NOTE_EXIT；消灭每进程一线程。**
-
-| 方案 | 结论 | 证据 |
+| 机制 | 位置 | per-client 下的形态 |
 |---|---|---|
-| **pidfd（Linux 5.3+）** | **采用**。fd 可 poll（子进程变 zombie→EPOLLIN），钉住 task 无 PID 复用竞态；`waitid(P_PIDFD)` 取退出码；`pidfd_send_signal` 无竞态 kill | HIGH：man7 官方手册（2026-02 版） |
-| kqueue EVFILT_PROC | **macOS/BSD 采用**（NOTE_EXIT），同源并入事件循环 | MEDIUM-HIGH：BSD 通用知识，macOS 目标平台需原型验证 |
-| SIGCHLD + self-pipe/signalfd | 兜底。信号不排队，必须 WNOHANG 循环 reap 全部；与运行时信号语义纠缠，能不用就不用 | HIGH（教科书级） |
-| ttyd 的每进程 waitpid 线程 | **禁止**。N 会话=N 线程，线程与事件循环间还要 uv_async 编组 | HIGH（ttyd pty.c 本地源码） |
+| HTTP 路由树/认证链/share token/Origin/安全头 | `server.go:462-585` Handler() | 原样 |
+| WS 守卫区 ⓪-③（Origin/子协议/半开/max-clients 503） | `server.go:749-798` | 原样（③位计数源 `registry.n`，per-client 同样注册） |
+| Hello 状态机/ticket 核销/checkTicket | `server.go:851-892`, `1101-1124` | 原样（spawn 在其后，§2.2） |
+| outbox + writer + pinger 三件套 | `clients.go:151-193`(outbox), `701-724`(writer), `server.go:1153-1192`(pinger) | **逐字复用**——per-client 客户端仍是 registry 成员 |
+| 输入限速器（mode 门 ro 丢 + AllowN） | `server.go:1036-1056` | 原样（mode 判定逻辑简化，门不变） |
+| kickSlowConsumerLocked 1013 踢出 | `clients.go:564-594` | 原样复用——arbiter 空集时 removeMember/recalcNow 天然 no-op（Go nil map delete 安全、arbitrate(0) 零值哨兵提前返回），owner 恒 nil 不触发 promote |
+| EXIT 帧组帧/直写纪律 | `proto.go:189-192`, `server.go:1335-1375` | 组帧函数复用；直写纪律复用（禁 outbox 异步，关闭帧超车防线） |
+| maybeExitWhenEmpty/宽限计时器/门闩 | `clients.go:852-913` | 框架复用，仅 stop-signal 目标分支（§4.2） |
+| stop-signal 序列（SignalGroup + stopTimeout AfterFunc KILL） | `clients.go:893-898` | 复用到「每会话」粒度 |
+| halfOpen/maxClients/audit logEvent/metrics 骨架 | `server.go:686-712`, `log.go`, `metrics.go` | 原样 |
+| pty.Session 全 API（Start/ReadLoop/Resize/SignalGroup/Wait/Drain/Close） | `pty/spawn.go`, `pty/io.go` | 原样 + 新增 StartWithSize（§6） |
+| darwin 共享 kqueue exit watcher | `pty/reap_darwin.go:24-119` | **天然 N 会话安全**——包级单例 watcher 设计即「N 会话共用」（注释逐字），awaitExit 每会话一 goroutine 形态与 per-client 完全兼容 |
 
-注意 man 页警告：pidfd 语义成立的前提是父进程未把 SIGCHLD 设为 SIG_IGN/SA_NOCLDWAIT 且未在别处 reap——PTY Engine 必须是子进程收割的**唯一**执行者。
+### 1.2 per-client 分支**不装配**的机制（milestone 硬约束）
 
-### 2.4 滚动缓冲（重放）：内存原始字节 ring，非磁盘、非全量 VT 模拟
-
-**决策：v1 采用每会话内存 ring（原始 PTY 字节流），attach 时 `reset + ring 快照 + 按需 WINCH 重绘`。**
-
-三条路线对比（全部有成熟系统背书）：
-
-| 路线 | 代表 | 优点 | 代价 | 结论 |
-|---|---|---|---|---|
-| 原始字节 ring | coder（64KiB circbuf） | 实现 ~100 行；滚动历史自然保留；同时是**慢客户端重同步**机制 | 全屏应用(vim/htop)重放是近似的；**断连期间尺寸变化后重放会按旧宽度排版**（coder 文档自称 "buggy" 的主因） | **v1 采用**（默认 256KiB–1MiB 可配） |
-| 服务端 VT 模拟 | tmux(grid/screen)、mosh(Terminal::Display) | 任意尺寸重渲染，精确 | 自写 VT 解析器是巨大攻击面/工作量 | v2+ 候选 |
-| 折中：headless xterm | @xterm/headless + addon-serialize（官方 typings 已核实：serialize() 可还原行列/光标/modes/scrollback） | 精确且不用自写解析器 | 需要内嵌 JS 运行时，与单静态二进制约束冲突 | 排除（除非未来有原生 VT 库；Rust `vt100` crate 是 v2 选项） |
-| 磁盘 ring | — | 服务重启后仍可重放 | 项目明确不做重启恢复（CRIU 类 out of scope）；纯磁盘无收益 | 排除 |
-
-**缓解近似性的工程手段**（coder 模式 + 增强）：
-1. attach 流程：**先**把 PTY 尺寸设为接入者尺寸（内核自动 SIGWINCH，全屏应用自重绘），**再**重放 ring。尺寸变化场景下 ring 内容供滚动参考，当前屏由应用重绘修正。
-2. 协议提供 REPLAY_BEGIN/END 帧，前端 `term.reset()` 后批量写入、避免逐帧闪烁，并可提示"已恢复 N KiB 历史"。
-3. 文档明示近似性；重度全屏用户可自行 `wesh -- tmux`（不依赖、但兼容）。
-
-### 2.5 IO fan-out：每客户端有界 outbox + 专属 writer（actor 不碰 socket）
-
-**决策：Session Actor 读 PTY → append ring → 对每个客户端 `try_send` 到其有界 outbox；每条连接一个专属 writer task 做唯一的 WS 写端。**
-
-- **反面教材（源码实证）**：coder buffered.go 在持有全局锁的读循环里逐 conn 阻塞写，TODO 自述应改 channel-per-conn——这就是行头阻塞，一个慢客户端冻结所有订阅者并卡住 ring 写入。ttyd 的"一读一停"则是另一个极端：每块数据 3-4 次拷贝、64KB 定缓冲读后即停，吞吐受限。
-- tokio 官方文档佐证原语选择：`broadcast` 的 Lagged(n) 会**静默丢数据**（对有序字节流即客户端画面损坏），只适合"Lagged 即触发全量重同步"的用法；`mpsc`-per-client 才是有界、可观测、按客户端隔离的正解。
-- 内存上界可预计算：`会话数 × (ring + 客户端数 × outbox容量)`，对齐 PROJECT.md 的资源控制要求。
-- 写合并：PTY 读按 chunk（16–64KiB，可配），writer 从 outbox 批量 drain 合并成单帧，减少帧数与小包。
-
-### 2.6 背压：有序流语义 → 慢客户端"踢出+重同步"，绝不丢字节
-
-**决策：终端输出是有序 delta 流，丢帧=客户端画面静默损坏。慢消费者策略 = 有界 outbox 满 → 以 close code 1013 踢出该客户端 → 前端自动重连 → ring 重放完成重同步。ring 因此一鱼两吃（重连恢复 + 慢客户端重同步）。**
-
-证据与细则（异步背压专文 + coder 缺陷 + tokio 文档三方互证）：
-- 绝不在广播循环里 `await send`（最慢者拖住全部）；也绝不 `spawn(send)` 无界派发（内存放大至 OOM——ttyd 的预认证分片重组无上限同属此类，protocol.c:288-296 已核实）。
-- 80% 高水位预警 + 成功即清零的 strikes 宽限，避免网络抖动误杀。
-- **全局信用**：当**所有**可写客户端都阻塞时，Actor 停止读 PTY（master 不读 → 子进程写满 64KiB 管道缓冲自然阻塞）——这是唯一合法的"反压到生产者"。
-- 客户端→服务端方向保留 ttyd 的 PAUSE/RESUME 语义（前端写缓冲水位触发），服务端对应停读 PTY/恢复。
-- metrics 暴露每客户端 outbox 深度与踢出计数（运维可观测，PROJECT.md 明确要求 metrics）。
-
-### 2.7 事件循环模型：单进程异步，单线程即够；actor 模型与运行时无关
-
-- 参照系：tmux 单线程 libevent + 命令队列串行化全部变更——**串行化所有者**思想在十年前就被验证；个人运维场景并发量级是"几十连接 × 突发高吞吐"，瓶颈在拷贝与帧数，不在核数。
-- Rust/tokio：current_thread 或 multi_thread(2) 均可；actor=task，邮箱=mpsc，fd 用 AsyncFd。Go：goroutine-per-session/conn + channel，等价自然。**组件结构与运行时选择正交**——语言决策留给 STACK.md，两种语言下本文组件映射都成立。
-- 真正要避免的是 ttyd 的"裸 C 回调跨 lws/libuv 双域、靠标志位防 UAF"模型——高级框架（tokio/Go runtime）+ actor 所有权从结构上消除该类 bug。
-
-### 2.8 WS 协议设计：版本化子协议 + 类型化帧 + 握手期认证 + 合规关闭码
-
-**帧格式：数据面二进制 1 字节类型前缀（ttyd 已验证的零解析开销方案），控制面 JSON 文本帧。**
-
-| 方向 | 帧 | 说明 |
+| 机制 | 位置 | 不装配的安全性论证 |
 |---|---|---|
-| C→S | Hello（首帧，JSON） | `{version, ticket, attach: {session_id?|new, mode}, caps, cols, rows}`；**握手期认证**：ticket 核销成功前不分配任何会话资源，5s 超时，per-IP 未认证连接上限 |
-| S→C | Welcome / Error(JSON) | Welcome `{version, session_id, mode, cols, rows}`；Error 带**类型化 code**（auth_failed/session_gone/permission_denied/spawn_failed/oversized...）后按码关闭 |
-| S→C | OUTPUT(0x30+) / REPLAY_BEGIN / REPLAY_END | 重放段显式包裹，前端批量写入 |
-| C→S | INPUT / RESIZE{cols,rows} / PAUSE / RESUME | 沿用 ttyd 语义；INPUT 经写权限门 |
-| S→C | EXIT{code} / SIZE_NOTICE / TITLE / PREFS | EXIT 后按 1000 正常关闭；SIZE_NOTICE 广播他端尺寸变更 |
-| 双向 | WS 原生 ping/pong | 应用层不再造心跳 |
-
-要点与证据：
-- **版本化**：子协议协商 `wesh.v1`（k8s remotecommand 的 `v5.channel.k8s.io` 是同款先例，官方 client-go 文档已核实 WebSocket 为主、SPDY 回落的演进史）；Hello 内再带 semver 便于次版本能力协商。
-- **认证并入握手**：浏览器 `new WebSocket()` 只能带 URL+子协议，**无法设 Authorization 头**（websocket.org 指南，HIGH）。方案：先经已认证 HTTP `POST /api/attach`（Basic/Bearer，时序安全比较）换取**一次性 ticket**（随机 128bit、单次使用、60s TTL、绑定会话与模式），WS Hello 携带核销。这直接修复 ttyd `/token` 把长期凭据明文下发且 AuthToken 与 Basic 凭据复用的设计缺陷。失败节流：per-IP 指数退避。
-- ticket 不走 URL query（会进访问日志/历史）；也不塞子协议头（非标癖好）——Hello 首帧 + 严苛的未认证资源上限是规范与安全的平衡点。
-- **合规关闭码**：1000 正常 / 1008 策略违反(认证、权限) / 1011 服务端错误 / 1013 慢客户端踢出(可重试)。**1006 永远不上线**（ttyd protocol.c:90,105 把 1006 写进 close frame 违反 RFC6455，已核实）。
-- **长度上限**：所有帧设上限（C→S 默认 16KiB；S→C 按读块），分片重组缓冲设硬顶且**认证通过前禁用任何累积**——修复 ttyd 两个预认证漏洞（空消息空指针、分片内存放大）。
-
-### 2.9 多客户端写权限与 resize 仲裁
-
-**决策：会话级写模式 `owner|all|ro`（创建时定，默认 ro 对标 ttyd 默认只读）；输入路由在 Actor 内做权限门；resize 跟随写权限。**
-
-- GNU screen 的多用户语义（手册核实）：权限位 r/w/x 按用户×窗口×命令粒度，**writelock 单写者锁**——auto 模式下先敲键盘者持锁，离开窗口释放。screen 用"任意时刻只有一个写者"回答多人同时输入的行内交错混乱。
-- abduco 的 resize 仲裁（官网核实）：只接受"最近接入的非只读客户端"的尺寸请求。
-- wesh v1 落地：`all` 模式全员可写（协作排障，文档注明行内交错的固有问题）；`owner` 模式仅创建者可写（演示教学，其余旁观）；`ro` 全员只读。resize：仅可写客户端可发起，last-wins，广播 SIZE_NOTICE；owner 模式下跟随 owner 尺寸。writelock-auto 记为 v2 增强（screen 已验证其价值）。
-- ticket 绑定 mode：旁观链接与可写链接可以分别签发（分享场景：把 ro 链接发给围观者）。
+| resize 仲裁器（initArbiter/sizes/timer） | `resize.go:59-80`, `server.go:426` | 跳过 initArbiter：arbiter 零值（sizes nil map）下 removeMember/recalcNow/reportResize 全部安全 no-op，kick/detach 的既有调用点零守护即可运行 |
+| owner 递补/promoteNextLocked | `clients.go:630-658` | `registry.owner` 恒 nil（decideModeLocked 不调用，无人置位） |
+| write-policy 判定矩阵 decideModeLocked | `clients.go:353-364` | per-client 用单行门：`writable && ticketMode==rw → rw else ro` |
+| fan-out hub onChunk + 全局信用门 hubCond.Wait | `clients.go:385-422` | 全局 ReadLoop 不启动；hubCond 仍构造（Broadcast 是 supervisor 的挂点，成本为零） |
+| 共享 inputQ + 全局 inputWriter | `server.go:371-372,436` | per-client 每会话各自实例（§3.3） |
+| lifecycle goroutine | `server.go:1301-1383` | 不启动；由 sessionWatcher + supervisor 替代（§4.1） |
+| SignalForegroundGroup（attach 强制重绘） | `server.go:1012`, `pty/io.go:50-61` | 不调用——子进程以正确尺寸 spawn，无「重绘既有画面」需求 |
 
 ---
 
-## 3. Recommended Project Structure
+## 2. Server 结构形态（问题 1）
 
-语言中立模块图（Rust 形状示意；Go 下为同构 package。最终以 STACK.md 选型为准）：
+### 2.1 决策：单 sess 字段保留 + 工厂/注册表新增，不抽象接口
 
+```go
+type Server struct {
+    sess  *pty.Session   // shared 模式唯一会话；per-client 恒 nil
+    exitf func(code int)
+    // ……（既有全部字段逐字保留，零漂移）
+
+    // v1.1 新增（New 装配期固化、运行期只读）：
+    sessionMode string                                    // "shared"(默认) | "per-client"
+    spawnFn     func(cols, rows int) (*pty.Session, error) // per-client 必填，shared 恒 nil
+
+    // v1.1 新增（per-client 运行期状态，全部 hubMu 保护）：
+    pcSessions      map[*pcSession]struct{} // 活体会话登记（≠ registry：客户端断开后会话仍可存活至收割）
+    pcActive        int                     // len(pcSessions) 的冗余？不——直接 len() 即可，不冗余记账
+    pcExitReq       bool                    // 退出请求门闩（exit-when-empty 置位；Shutdown 经既有 exiting 位表达）
+    pcLastExitCode  int                     // 末次收割会话退出码（supervisor exitf 数据源）
+    pcHasExitCode   bool                    // pcLastExitCode 有效位（零会话 edge 的哨兵）
+}
+
+// pcSession 是 per-client 模式单客户端会话的全部服务端状态。
+// 写一次发生在 attach 升档（registerLocked 之前），此后读者仅为该会话自有
+// goroutine 群（ReadLoop 闭包/inputWriter/sessionWatcher）与 hubMu 内读者
+// （Shutdown 遍历/metrics 快照）——happens-before 由 goroutine 启动与 hubMu 建立。
+type pcSession struct {
+    sess      *pty.Session
+    inQ       *inputQ        // 每会话独享（defaultInputQueueBytes 同容量）
+    inputDone chan struct{}  // watcher 收口信号（shared 的 s.inputDone 同构）
+    startedAt time.Time      // session_end duration_seconds 数据源（shared startedAt 同构）
+    exitCode  int            // watcher 收割后写（hubMu 保护——supervisor 同锁读）
+}
 ```
-src/
-├── main.rs              # CLI 解析 + 配置文件加载 + 组件装配（组合根）
-├── gateway/             # HTTP/WS 前门
-│   ├── http.rs          # 静态资源(内嵌前端)、/healthz、/metrics、POST /api/attach
-│   ├── ws.rs            # upgrade、子协议协商、Hello/Welcome、帧编解码
-│   └── limits.rs        # per-IP 限流、未认证超时、消息长度上限
-├── auth/                # 凭据校验(时序安全)、一次性 ticket、失败节流
-├── session/
-│   ├── registry.rs      # id→actor 句柄、空闲回收、全局上限
-│   ├── actor.rs         # 会话状态机 + 邮箱循环（核心）
-│   ├── client.rs        # 每连接 outbox + writer/reader task
-│   └── ring.rs          # 有界字节环 + 快照
-├── pty/
-│   ├── spawn.rs         # forkpty、env 白名单、cwd、uid/gid、rlimits
-│   ├── io.rs            # master fd 非阻塞读写、TIOCSWINSZ、EIO/EOF 归一
-│   └── reaper.rs        # pidfd(Linux)/kqueue(macOS) 平台抽象
-├── proto/               # 帧类型、版本、错误码、close code 常量（单一事实源）
-├── observe/             # 结构化日志、metrics 注册表、审计事件
-└── config/              # flag + 配置文件 + 校验
+
+**client 结构增量**（`clients.go:81-146` 追加两字段）：
+
+```go
+type client struct {
+    // ……既有字段逐字保留
+    inQ *inputQ    // 输入队列挂点：shared = s.inputQ；per-client = pc.inQ（读循环零分支的关键，§3.3）
+    pc  *pcSession // per-client 会话绑定；shared 恒 nil
+}
 ```
 
-**结构理由：** `session/` 与 `pty/` 分离 = 会话语义与操作系统细节分离（2.1 的控制面/数据面）；`proto/` 独立成单一事实源，gateway 与前端共用一份类型定义；`gateway/limits.rs` 把所有"预认证资源上限"收拢到一处，安全审计只看一个文件。
+**Options 增量**：
+
+```go
+SessionMode string // "" / "shared"（默认零值 = shared 现状逐字节一致）| "per-client"
+SpawnFunc   func(cols, rows int) (*pty.Session, error) // per-client 必填；main 闭包捕获 argv+StartOptions
+```
+
+**New 的互斥校验**（装配期 fail-fast，程序错误 panic——与 testability 硬约束同档）：shared 要求 `sess != nil && SpawnFunc == nil`；per-client 要求 `sess == nil && SpawnFunc != nil`。New 尾部 goroutine 钉死点（`server.go:435-437`）模式分岔：
+
+```go
+if s.sessionMode == "per-client" {
+    go s.pcSupervisor()            // exitf 唯一收口的 per-client 形态（§4.1）
+} else {
+    go sess.ReadLoop(s.onChunk)    // 现状三件套逐字不动
+    go s.inputWriter(s.sess, s.inputQ, s.inputDone)
+    go s.lifecycle()
+}
+```
+
+**为何拒绝接口抽象**：`SessionRunner interface{ ... }` 会把 6 个分支点压成隐式分派，但 shared 路径的每一行现状注释（D-10/D-12/P5-7 等论证链）都锚定具体字段，抽象化等于重写全部论证；显式 `if perClient` 分支使「shared 零回归」可由代码评审逐行核对。分支点清单（全部）：① New goroutine 拓扑；② Attach 升档（spawn vs 仲裁登记）；③ INPUT 队列（已被 inQ 间接**消除**）；④ RESIZE 处理；⑤ 输出回调（每会话闭包 vs 全局 onChunk）；⑥ 终结路径（watcher+supervisor vs lifecycle）；⑦ stop-signal 目标（maybeExitWhenEmpty/Shutdown 内）。⑦处分支每处 ≤10 行。
+
+### 2.2 组件图（per-client 模式装配态）
+
+```mermaid
+graph TD
+    FE[浏览器前端<br/>零改动]
+
+    subgraph internal/server
+        ATTACH[Attach 握手状态机<br/>守卫区/Hello/核销 原样]
+        SPAWN[升档 per-client 分支<br/>容量再闸 → spawnFn → Welcome 回显]
+        REG[registry 客户端注册表<br/>hubMu · 503 计数 · Shutdown 快照]
+        PCS[pcSessions 会话注册表<br/>hubMu · 活性 = 未收割]
+        SUP[pcSupervisor<br/>exitReq/exiting && active==0 → terminate]
+    end
+
+    subgraph 每客户端会话实例 ×N
+        CL[client<br/>outbox+writer+pinger 三件套]
+        PUMP[pcSession<br/>ReadLoop 闭包 · inputWriter · sessionWatcher]
+    end
+
+    subgraph internal/pty
+        SESS1[pty.Session #1]
+        SESSN[pty.Session #N]
+    end
+
+    FE -->|WS wesh.v1| ATTACH
+    ATTACH --> SPAWN
+    SPAWN -->|成功| REG
+    SPAWN -->|登记| PCS
+    SPAWN -->|失败| FE1011[Error server_error + 1011]
+    REG --- CL
+    CL --- PUMP
+    PUMP --- SESS1
+    PUMP --- SESSN
+    PUMP -->|EXIT 仅本端 + 1000| CL
+    PCS --> SUP
+    SUP -->|termOnce| EXITF[exitf last-reaped code]
+```
 
 ---
 
-## 4. Architectural Patterns
+## 3. Attach 流程与 spawn 点（问题 2）
 
-### Pattern 1: Session Actor（会话唯一属主）
+### 3.1 时序决策
 
-**What:** 每会话一个串行执行体，拥有全部会话可变状态；外界只通过邮箱发消息。
-**When:** 任何"多客户端共享一份有状态资源"的场景。
-**Trade-offs:** 杜绝锁与数据竞争；代价是单会话吞吐受单 task 限制——终端场景远够（瓶颈在 WS 写出，已外移到各 Conn writer）。
+```mermaid
+sequenceDiagram
+    participant FE as 浏览器
+    participant AT as Attach (server.go)
+    participant SP as spawnFn (perclient.go)
+    participant HUB as hubMu 临界区
+    participant GO as 会话 goroutine 群
 
-```rust
-// 伪代码：所有共享状态只在 actor 循环内被触碰
-loop {
-    select! {
-        chunk = pty.read_chunk() => { ring.append(chunk); fanout(chunk); }
-        msg = mailbox.recv() => match msg {
-            Attach(conn)  => { replay(&conn, ring.snapshot()); clients.insert(conn); }
-            Detach(id)    => { clients.remove(id); arm_idle_timer_if_empty(); }
-            Input(id, b)  => { if writable(id) { pty.write(b); } }
-            Resize(id,s)  => { if writable(id) { pty.set_winsize(s); broadcast_size(s); } }
-            Kill          => { pty.signal_group(SIGTERM); }
-        },
-        () = &mut exit_future => { drain_pty(); broadcast_exit(reap()); tombstone(); }
+    FE->>AT: WS upgrade + Hello{version,cols,rows,ticket}
+    Note over AT: 守卫区⓪-③ / 4KiB档 / 5s超时 —— 原样
+    AT->>AT: checkTicket 核销（SEC-08：此前零会话资源）
+    AT->>AT: close(helloDone) + release() 半开名额
+    AT->>AT: mode = (writable && ticketMode==rw) ? rw : ro
+    AT->>SP: 容量再闸 len(pcSessions) >= maxClients ?
+    SP-->>FE: 满 → Error{server_error} + Close(1013,"max_clients")
+    AT->>SP: spawnFn(clamp后cols, rows) —— hubMu 之外（阻塞 syscall）
+    SP-->>FE: 失败 → Error{server_error} + Close(1011,"server_error")<br/>+ logEvent spawn_failed
+    SP-->>AT: *pty.Session（Hello 尺寸出生即正确）
+    AT->>HUB: Lock：构造 client{inQ: pc.inQ, pc} → Welcome{mode,cols,rows}<br/>入 outbox 首条 → registerLocked → pcSessions 登记
+    HUB-->>FE: Welcome（cols/rows = 本端 Hello 钳制后尺寸，协议零改动）
+    AT->>AT: SetReadLimit(16KiB) + emit attach/session_start 事件
+    AT->>GO: go writer · pinger · ReadLoop闭包 · inputWriter · sessionWatcher
+    Note over AT: 读循环稳态——INPUT/RESIZE case 见 §3.3/§3.4
+```
+
+**四个刚性约束的落点**：
+
+1. **SEC-08 预认证零资源**：spawn 严格在 checkTicket 成功之后。半开名额在 spawn 前已 release（`server.go:922` 既有升档点），预认证面零扩大。
+2. **Welcome 恒 S→C 首帧**：Welcome 入队先于 registerLocked、ReadLoop goroutine 在注册后启动——输出帧不可能夹入 Welcome 之前（shared 的 P2 D-02 时序纪律同构成立）。spawn 到 ReadLoop 启动间的子进程输出由 64KiB 内核缓冲承接。
+3. **Welcome cols/rows 回显本端 Hello 尺寸**：spawn 以 ClampDim 后的 Hello cols/rows 为初始尺寸（新增 `pty.StartWithSize`，§6），Welcome 组帧取同一对值——与 PTY 实际尺寸同源（shared 的 sessionDimsLocked 同源论证在 per-client 退化为恒等式）。前端零改动：G-05-1 契约「Welcome 恒携会话尺寸」自然满足。
+4. **spawn 失败类型化 surfacing**：复用 `proto.ErrServerError`（`proto.go:61`——常量与「Error 帧 + 1011」语义文档已备，v1.0 至今未启用，正是为此类场景预留）：
+   - wire：`_ = c.Write(ctx, MessageBinary, proto.ErrorFrame(proto.ErrServerError, "failed to start process"))` → `_ = c.Close(websocket.StatusInternalError, "server_error")`（D-07 code 与 reason 同名机器串；1011 在既有合规码集 {1000,1001,1002,1008,1009,1011,1013} 内）
+   - 日志：`logEvent(remote, websocket.StatusInternalError, "spawn_failed", remoteUser)`——事件名细化分辨率，wire 面复用既有机器串（协议零改动红线）
+   - message 不含 OS 错误细节（不回显系统内部信息；细节在 stderr 事件侧亦仅类别——与启动面值剥离纪律同档）
+   - 失败点在注册之前：无 client 构造、无注册表项、无会话登记——收口 = 关连接，零残留
+
+### 3.2 容量再闸（maxClients 进程帽语义）
+
+既有两道闸（③位 503 与 /api/attach 早闸，`server.go:793`, `server.go:648`）计数源是 `registry.n`，存在已文档化的并发超编窗口（RESEARCH A5 裁决接受，≤半开帽 8）。shared 模式下超编仅多一个廉价连接；per-client 模式下每个超编连接 = 一个子进程 + 一套 goroutine，**昂贵资源需要硬不变量**：spawn 前取 hubMu 读 `len(s.pcSessions)`，满则拒（1013 try-again 语义 + reason `max_clients`，1013 在合规码集内）。不变量：**并发子进程数 ≤ maxClients**（注册表计数可以瞬时超编，进程数不可以）。
+
+### 3.3 INPUT 路径（零分支复用）
+
+读循环 INPUT case（`server.go:1036-1064`）唯一改动点：`s.inputQ.tryEnqueue` → `cl.inQ.tryEnqueue`。`cl.inQ` 在升档构造时赋值（shared → `s.inputQ`；per-client → 会话独享 `newInputQ(defaultInputQueueBytes)`）。mode 门（ro 静默丢）与限速器（AllowN + inputDrops 计数）逐字不动。CR-01 纪律（读循环零同步 Master.Write）在 per-client 下由「每会话单 input-writer」保持——**绝不**为「省一个 goroutine」在 per-client 读循环里直写 master（慢子进程 stdin 反堵读循环的同一缺陷类）。
+
+### 3.4 RESIZE 路径（直通）
+
+```go
+case proto.Resize:
+    if cl == nil || cl.mode.Load() == proto.ModeRO { continue }  // ro 第二闸原样
+    if cols, rows, ok := proto.DecodeResize(data[1:]); ok {
+        if cl.pc != nil {                    // per-client：直通自己的 PTY
+            _ = cl.pc.sess.Resize(cols, rows) // 仅取 sess.fdMu——不持 hubMu（§5 锁序）
+        } else {                             // shared：现状仲裁路径逐字不动
+            s.hubMu.Lock(); s.reportResize(cl, cols, rows); s.hubMu.Unlock()
+        }
     }
-}
 ```
 
-### Pattern 2: 每连接有界 Outbox + 专属 Writer
+per-client 下无 'W' 帧回推：会话尺寸 = 本端最后一次上报尺寸，客户端天然已知（shared 的 W 推送是为他端约束视口，per-client 无他端）。
 
-**What:** fan-out 时 Actor 只做 `try_send`；每条连接独立 writer 任务独占 WS 写端。
-**When:** 一对多流式分发，且各消费者速度不均。
-**Trade-offs:** 每连接少量常驻内存；换来严格内存上界与慢客户端隔离。coder 的持锁遍历写是反例（源码 TODO 自述）。
+### 3.5 输出路径（每会话闭包，P5-1 别名红线保持）
 
-```rust
-match outbox.try_send(frame) {
-    Err(Full(_)) => { metrics.lag_kicks.inc(); ws.close(1013, "slow consumer"); }
-    Ok(_) => {}
-}
+```go
+// perclient.go：升档尾部启动，替代全局 onChunk
+go pc.sess.ReadLoop(func(chunk []byte) {
+    select { case <-cl.done: return; default: } // detach 后不做无谓组帧（SIGHUP→死亡的窗口期）
+    s.mc.ptyOutputBytes.Add(int64(len(chunk)))  // 同一计数器（聚合口径不变）
+    frame := make([]byte, 1+len(chunk))         // 每帧 make+copy——ReadLoop 缓冲复用（pty/io.go:14）
+    frame[0] = proto.Output; copy(frame[1:], chunk)
+    if !cl.outbox.trySend(frame) {
+        s.hubMu.Lock(); s.kickSlowConsumerLocked(cl); s.hubMu.Unlock() // 1013，§1.1 安全性论证
+    }
+})
 ```
 
-### Pattern 3: Ring 重放 + WINCH 重绘（近似重连恢复）
-
-**What:** attach 时先设尺寸（触发内核 SIGWINCH→全屏应用重绘）→ REPLAY_BEGIN + ring 快照 + REPLAY_END → 进入实时流。
-**When:** 不做服务端 VT 模拟时的最佳近似。
-**Trade-offs:** 全屏应用依赖其 SIGWINCH 重绘（bash/readline/vim/htop 主流均支持）；纯滚动输出场景完全精确。coder 生产环境在用，官方注明 buffer 后端 "buggy"——我们把尺寸变更场景写进已知限制。
-
-### Pattern 4: 一次性 Ticket 握手认证
-
-**What:** 已认证 HTTP 端点换单次短 TTL ticket → WS Hello 核销 → 通过前零会话资源。
-**When:** 浏览器 WS 无法带 Authorization 头（平台约束，非选择）。
-**Trade-offs:** 比 ttyd `/token` 明文下发长期凭据暴露面小一个量级；需要前端多一次往返（毫秒级）。
-
-### Pattern 5: pidfd/kqueue 退出监视（零线程收割）
-
-**What:** fork 后立即 `pidfd_open`，fd 注册进事件循环；EPOLLIN→`waitid(P_PIDFD)` 取退出码。
-**When:** 需要精确退出码且不想为每个子进程开线程。
-**Trade-offs:** Linux 5.3+（2019 年后的内核，目标场景全覆盖）；macOS 走 kqueue 分支，平台抽象层消化差异。
+**慢客户端策略决策（kick-on-full，非阻塞反压）**：outbox 满 → 1013 踢出。理由：① 复用既有 kick 机械零新并发面（阻塞变体需要 outbox 新增 notFull 条件 + ReadLoop 逃逸通道，是 v1.1 不应承担的新机制）；② 与 shared 模式 ro 端规则产品语义一致；③ 单消费者场景「满」几乎必然意味着真死/真慢。备选（ttyd 式阻塞反压，零丢失但无看门狗）登记为 Open Question 供裁决。
 
 ---
 
-## 5. Data Flow
+## 4. 生命周期分裂（问题 3）与 --once/exit-when-empty/Shutdown（问题 4）
 
-### 5.1 Attach 流程（重连同路径）
+### 4.1 终结拓扑
 
+**shared：逐字不动。** `lifecycle()`（`server.go:1301`）→ EXIT 广播 → 1000 → `terminate(code)` → termOnce → exitf。
+
+**per-client：每会话 watcher + 单 supervisor。**
+
+```go
+// sessionWatcher：每会话一个，子进程死亡的唯一感知者（cmd.Wait 唯一收割者纪律
+// 在「每会话」粒度保持；darwin 共享 kqueue watcher 天然 N 安全，reap_darwin.go:24）
+func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
+    err := pc.sess.Wait()
+    code := exitCodeOf(err)                       // exitmsg.go 既有提取逻辑复用
+    s.hubMu.Lock()
+    pc.exitCode = code
+    s.pcLastExitCode, s.pcHasExitCode = code, true
+    delete(s.pcSessions, pc)
+    s.hubCond.Broadcast()                          // supervisor 重估挂点
+    s.hubMu.Unlock()
+    // session_end 事件（per-client 粒度：+ client_id；exit_code/duration/signal 同 shared schema）
+    emitSessionEnd(cl, pc, err, code)
+    pc.sess.Drain(200 * time.Millisecond)          // 带时限 drain（Pitfall 4 同款）
+    close(pc.inputDone)                            // inputWriter 收口（shared close(s.inputDone) 同构）
+    // EXIT 私有化：直写（2s ctx）→ Close(1000)——组帧一次、禁 outbox 异步（lifecycle 同款纪律）
+    exitFrame := proto.ExitFrame(code, exitMessage(err, code))
+    wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+    _ = cl.conn.Write(wctx, websocket.MessageBinary, exitFrame)
+    cancel()
+    _ = cl.conn.Close(websocket.StatusNormalClosure, "")
+    // 之后：对端 reader 终结 → detach（幂等——ws 关闭引发的 detach 不重复 SIGHUP，§4.2）
+}
+
+// pcSupervisor：New 钉死（per-client 唯一全局 goroutine），exitf 唯一收口的映射
+func (s *Server) pcSupervisor() {
+    s.hubMu.Lock()
+    for !((s.pcExitReq || s.exiting) && len(s.pcSessions) == 0) {
+        s.hubCond.Wait()
+    }
+    code := 0
+    if s.pcHasExitCode { code = s.pcLastExitCode }
+    s.hubMu.Unlock()
+    s.terminate(code) // termOnce 单点——与 shared 同一收口件
+}
 ```
-浏览器                     Gateway              Auth        Registry        Session Actor      PTY
-  │  POST /api/attach        │                   │             │                 │               │
-  │─────────────────────────>│ 校验 Basic/Bearer  │             │                 │               │
-  │                          │───────────────────>│ 时序安全比较  │                 │               │
-  │  {ticket, session_id,    │<── ticket(单次,60s) │             │                 │               │
-  │   ws_url, mode}          │                   │             │                 │               │
-  │  WSS upgrade (wesh.v1)   │                   │             │                 │               │
-  │─────────────────────────>│ Origin 白名单/限流  │             │                 │               │
-  │  Hello{ticket,caps,size} │                   │             │                 │               │
-  │─────────────────────────>│ 核销(5s 超时)       │             │                 │               │
-  │                          │────────────────────────────────>│ attach→actor    │               │
-  │                          │                                 │────────────────>│ 设尺寸(WINCH)  │──> 应用重绘
-  │  Welcome                 │<────────────────────────────────┼─────────────────│               │
-  │  REPLAY_BEGIN+ring+END   │<── Conn writer(批量)             │                 │               │
-  │  OUTPUT 实时流 ...       │<────────────────────────────────┼── fan-out ──────│<── read ──────│
+
+**exitf 语义分裂**（问题 3 核心）：shared = 子进程退出即服务终结（exitf 由 lifecycle 触发）；per-client = 子进程退出仅关本端 WS（watcher 触发 Close(1000)，server 续跑），exitf 仅由两路到达——① exit-when-empty/--once 空触发（`pcExitReq`）；② SIGTERM/SIGINT → Shutdown（既有 `exiting` 位）。**`terminate`/`termOnce` 逐字复用**（`server.go:1388-1392`），「exitf 恰好一次、唯一收口」硬约束零漂移。
+
+### 4.2 客户端断开 → SIGHUP（per-client 新增挂点）
+
+milestone 语义「client disconnect → SIGHUP child process group」的挂点 = **注册表移除点**（detach 与 kick 两处，`clients.go:761`, `clients.go:564`），与 maybeExitWhenEmptyLocked 同位同款：
+
+```go
+// detach / kickSlowConsumerLocked 内 removeLocked 返回 true 之后（per-client 分支）：
+if cl.pc != nil {
+    cl.pc.sess.SignalGroup(s.stopSignal) // 默认 HUP = milestone 字面语义；OPS-04 可配面自然继承
+    if s.stopTimeout > 0 {
+        time.AfterFunc(s.stopTimeout, func() { cl.pc.sess.SignalGroup(syscall.SIGKILL) })
+    }   // stopChildLocked（clients.go:893）同形态每会话化；SignalGroup 不取 fdMu，hubMu 内安全
+}
 ```
 
-### 5.2 输出 fan-out（数据流向单一：PTY→Actor→各 Conn，无反向写）
+断开后的会话进入「待收割」态：watcher 的 Wait 随子进程死亡返回 → pcSessions 移除。重连 = 全新 spawn（ttyd 语义），旧会话若忽略 HUP 且 stopTimeout=0 则留存至自然死亡——pcSessions 持续登记，Shutdown 会覆盖它（§4.4），文档明示。
 
-```
-PTY master ──read(16–64KiB)──> Session Actor ──append──> Ring
-                                  │
-                    try_send ┌────┼────┐ (Full→1013 踢出+metrics)
-                             ▼    ▼    ▼
-                          outboxA outboxB outboxC      （各自有界）
-                             │    │    │
-                          writerA writerB writerC      （独占各自 WS 写端，批量 drain 合并帧）
-                             ▼    ▼    ▼
-                             WS   WS   WS
-```
+### 4.3 --once / exitWhenEmpty 语义适配
 
-### 5.3 输入 / resize / detach / exit
+CLI 层 **零改动**：`--once ≡ --max-clients=1 --exit-when-empty=0` 展开（`main.go:593-601`）与 validateStartup 矩阵原样——服务端无 --once 概念的既定分层保持。服务端侧唯一分支在 `maybeExitWhenEmptyLocked`（`clients.go:852`）：
 
-1. **输入：** WS INPUT → Gateway 解码 → Actor 权限门（ro 丢弃；owner 模式仅 owner）→ 写 master。多写者交错不做排序承诺（screen 同款语义，v2 可加 writelock）。
-2. **resize：** 可写客户端 RESIZE → Actor last-wins → TIOCSWINSZ（内核自动 SIGWINCH）→ SIZE_NOTICE 广播 → 其他前端 fit。
-3. **detach：** WS 关闭 → Actor 移除 Conn → 归零则启动空闲计时器 → 超时向进程组发可配信号 → 收割 → 墓碑。
-4. **exit：** pidfd EPOLLIN → waitid 收割 → master 读至 EOF（EIO 归一）→ ring 收尾 → EXIT{code} 广播 → 客户端 1000 关闭 → 墓碑保留至 TTL（迟到重连可见终态与退出码，abduco 语义）。
+| 形态 | shared（现状） | per-client（新分支） |
+|---|---|---|
+| grace==0 立即 | `stopChildLocked()` 发 stop-signal → lifecycle 收口 | `s.pcExitReq = true; s.hubCond.Broadcast()`（末端断开已 SIGHUP 其会话，无需再发信号） |
+| grace>0 宽限 | AfterFunc 到期复查仍空 → 同上 | 同上（同一计时器机械，回调内分支） |
+| 宽限取消 | cancelExitEmptyTimerLocked 原样 | 原样（registry 机制两模式共享） |
+
+**退出码 last-reaped 规则的 --once 逐位对齐证明**：
+
+| 时序 | shared --once | per-client --once（本设计） |
+|---|---|---|
+| 子进程先死（exit 0） | lifecycle Wait→exitf(0) → **exit 0** | watcher 收割 code=0 → EXIT→1000→detach→pcExitReq → active==0 → exitf(0) → **exit 0** ✓ |
+| 客户端先断 | detach→HUP→子死(-1)→lifecycle exitf(-1) → **255**（OQ1 accept-255） | detach→pcExitReq+HUP→watcher 收割(-1)→active==0→exitf(-1) → **255** ✓ |
+
+两模式四种组合全部同码——SESS-01/SESS-02 的既定 UAT 断言（进程退出 255 / exit 42 透传）在 per-client 下原样成立。
+
+### 4.4 Shutdown（1001 优雅下线）适配
+
+`Shutdown()`（`server.go:1421-1455`）两处分支：
+
+1. **1001 广播**：注册表快照段原样（per-client 客户端同在 registry）——广播引发的 detach 经 §4.2 各自 SIGHUP 其会话。
+2. **stop-signal 段**：shared 对 `s.sess` 单发；per-client 对 `pcSessions` 快照逐会话发（覆盖「客户端已断开但会话待收割」的残留者——这是 pcSessions 独立于 registry 存在的核心理由）。随后 `exiting=true`（既有置位点）+ 补 `hubCond.Broadcast()`（新增一行——supervisor 重估挂点）。
+3. **exitf 路径**：Shutdown 仍不调 exitf（P1 纪律保持）——信号 → 各会话死亡 → watcher 收割清零 pcSessions → supervisor 经 termOnce 收口。退出码 = 末次收割码（信号终止恒 -1 → 255，与 shared 的 accept-255 一致）。
+
+`/healthz` 的 draining 翻转（`health.go:32`）与 `draining` 置位点原样。
 
 ---
 
-## 6. Scaling Considerations
+## 5. 并发纪律（问题 6）
 
-个人运维工具定位，真实量级是个位数会话、几十连接。**先优化每会话吞吐与内存上界，而非并发数。**
+**锁序（无新锁类型，全序保持）**：
 
-| 规模 | 调整 |
+```
+hubMu  >  outbox.mu        （R-07 既有，不动）
+hubMu  >  sess.fdMu        （resize.go:8-9 既有，不动）
+outbox.mu 与 sess.fdMu 无序（从不同持）
+```
+
+**per-client 新增三条规则**：
+
+1. **hubMu 绝不横跨 spawn**。spawnFn 是阻塞 syscall（fork/exec ~ms 级），持锁执行会冻结全部控制面（fan-out/detach/metrics 快照同锁）。升档序列：容量再闸（取锁）→ 放锁 → spawn → 再取锁注册。竞态窗口（两并发升档同时过闸）由 pcSessions 硬帽在注册点自然兜底——超编者已 spawn 成功也无害（进程帽语义是上限非精确值，与 ③位 A5 裁决同档）；如需严格，注册点复检并 SignalGroup(HUP)+Drain 回收多余者（建议实现，≤5 行）。
+2. **per-client RESIZE 只取 sess.fdMu，不持 hubMu**（§3.4）。`pty.Session` 的 fdMu 本就为 Resize↔Close 互斥而设（`spawn.go:25-31`），watcher 的 Drain→Close 与读循环 Resize 的并发由该锁消化——跨 goroutine 安全是 pty 包既有契约，无新增面。
+3. **双注册表所有权分工**：`registry`（hubMu）= WS 连接活性（detach/kick 移除）；`pcSessions`（hubMu）= 会话活性（watcher 收割唯一移除点）。client.pc 写一次于升档（registerLocked 前），读者为该会话 goroutine 群与 hubMu 内读者——happens-before 由 goroutine 启动 + hubMu 建立（client.remote/remoteUser 既有 plain 字段先例同形态）。pc.exitCode/pcLastExitCode/pcExitReq/pcHasExitCode 全部 hubMu 保护（pinger pongTimedOut「置位取 hubMu 写、detach 同锁读」先例同形态）。
+
+**goroutine 拓扑对比**：
+
+| goroutine | shared | per-client |
+|---|---|---|
+| 全局 | ReadLoop + inputWriter + lifecycle（New 钉死 3 个） | pcSupervisor（New 钉死 1 个） |
+| 每客户端 | reader + writer + pinger（3 个） | reader + writer + pinger + ReadLoop闭包 + inputWriter + sessionWatcher（6 个） |
+| maxClients=32 上界 | 3 + 96 = 99 | 1 + 192 = 193（wesh_goroutines 既有 series 可观测） |
+
+**终结恰好一次**：EXIT→1000 由 watcher 单点发出；detach 与 kick 的互斥由 removeLocked 成员判定既有机械保持（`clients.go:320`）；watcher 的 Close(1000) 与 Shutdown 的 Close(1001) 竞态由库 Close 幂等承接（`server.go:1411-1415` 既有 1001×EXIT 竞态论证同形态）；terminate 的 termOnce 兜底一切 exitf 路径交汇。
+
+---
+
+## 6. pty 包增量
+
+```go
+// StartWithSize 以指定初始尺寸 spawn（per-client 出生即正确尺寸，免首帧窗口）。
+// Start 委托本函数（SpawnCols×SpawnRows）——80x24 单一事实源纪律（spawn.go:34-41）保持，
+// shared 路径逐字节零漂移。
+func StartWithSize(argv []string, opts StartOptions, cols, rows int) (*Session, error)
+```
+
+env 白名单/降权/setsid/进程组语义不变（whitelistEnv 每 spawn 重算，os.Environ 逐次读取无共享态）。平台收割零改动：Linux `cmd.Wait()` 每会话一 goroutine（pidfd 自动，`reap_linux.go:13`）；darwin 共享 kqueue watcher 设计上即 N 会话（`reap_darwin.go:24-27` 注释逐字「N 会话共用」）。
+
+---
+
+## 7. 审计日志与 metrics 粒度（问题 7）
+
+### 7.1 审计事件（emitEvent/logEvent 零改动，挂点新增）
+
+| 事件 | shared（现状） | per-client（新） |
+|---|---|---|
+| session_start | New 尾部 emit（pid，`server.go:431`） | 每次 spawn 成功 emit：pid + **client_id** + startedAt 记 pc.startedAt |
+| session_end | lifecycle（exit_code/duration/signal） | 每 watcher emit：同 schema + **client_id**（关联检索经 client_id 与 attach/detach 事件闭环，08-02 D-20 纪律延伸） |
+| attach/detach | 现状 | 原样（client_id 关联键天然可用） |
+| spawn_failed | — | `logEvent(remote, 1011, "spawn_failed", remoteUser)` |
+| exit_when_empty* | 现状 | 原样（事件点不变，仅内部动作分支） |
+
+红线保持：token/ticket/凭据永不入参；per-client 的 pid/client_id 非敏感。
+
+### 7.2 metrics（metrics.go）
+
+| series | shared 语义 | per-client 语义（分支取值，series 名不变） |
+|---|---|---|
+| wesh_session_active | 0/1（sessionAlive） | **活会话计数** = len(pcSessions)（快照内读） |
+| wesh_clients_connected / _total | registry.n / clientsTotal | 原样（registry 共享） |
+| wesh_pty_output_bytes_total | 全局 ReadLoop 单计 | Σ 各会话 ReadLoop 闭包同点递增（同一 atomic，口径不变） |
+| wesh_input_queue_dropped_total | s.inputQ.droppedInputs | **已关闭会话累计 + 活会话 Σ**：watcher 收口时把 pc.inQ.droppedInputs 累入 `mc.inputQueueDroppedClosed`（新 atomic），快照 = closed + Σ registry 活端 inQ |
+| wesh_input_rate_dropped_total / ws_sent / ws_recv / kicks / credit_gate / auth_* | 现状 | 原样（credit_gate 在 per-client 恒 0——机制不装配，计数自然为零，series 保留不摘） |
+| wesh_goroutines | 现状 | 原样（per-client 基线上涨即 §5 拓扑表，负载标定观测点） |
+
+healthz（`health.go:29`）：四字段键集不变（红线 D-10）。`session_active` per-client 语义建议 = **恒 true**（「会话服务可用」——单会话死亡终结态在 per-client 不存在）；备选「有活会话 = true」。登记 Open Question 待裁决。
+
+---
+
+## 8. Architectural Patterns（本课题沉淀）
+
+### Pattern 1: 装配期模式固化（Assembly-time mode pinning）
+**What:** 模式在 New 内一次定型为不可变字段 + goroutine 拓扑分岔，运行期路径上无模式判定。
+**When:** 双形态共享大部的单二进制工具。
+**Trade-offs:** 运行期零分支开销与零「模式串台」面；代价是 New 变长——以互斥校验 + 逐字段注释纪律约束。
+
+### Pattern 2: 间接字段消除热路径分支（cl.inQ）
+**What:** 升档时把「模式相关的目标对象」解析为 client 上的直接字段，读循环逐行不分支。
+**When:** 每击键热路径；两模式仅「目标」不同而「动作」全同。
+**Trade-offs:** 一个指针字段换读循环零 if——shared 回归测试原样绿。
+
+### Pattern 3: 参数化泵函数（1 份代码 N 实例）
+**What:** `inputWriter(sess, q, done)` 参数化，shared 装配 1 次、per-client 每会话 1 次。
+**When:** 同一段 goroutine 逻辑生命周期挂点不同（全局 vs 每实体）。
+**Trade-offs:** 签名加参数；好过复制出第二份近乎相同的循环（分叉即漂移）。
+
+### Pattern 4: 单 supervisor + termOnce（exitf 收口的模式映射）
+**What:** 新模式不新增 exitf 触发源，而是新增一个 cond 等待者复用既有 termOnce/terminate。
+**When:** 「恰好一次」硬约束跨模式保持。
+**Trade-offs:** 多一个常驻 goroutine；换「exitf 触发点恒一」的可评审性。
+
+### Pattern 5: last-reaped-code 退出码规则
+**What:** 多子进程模型下 exitf 取末次收割者退出码。
+**When:** N 个子进程、单退出码进程模型。
+**Trade-offs:** 单会话（--once）场景与 shared 逐位对齐（§4.3 证明）；多会话场景码值取「最后一个」有任意性——文档明示，接受（信号驱动场景恒 -1→255，确定性仍在）。
+
+## 9. Anti-Patterns（本课题红线）
+
+### Anti-Pattern 1: hubMu 内 spawn
+**What people do:** 升档临界区里顺手 spawn。
+**Why it's wrong:** fork/exec 阻塞冻结全控制面（detach/metrics/fan-out 同锁等待）。
+**Do this instead:** 闸内读计数 → 放锁 spawn → 再取锁注册（§5 规则 1）。
+
+### Anti-Pattern 2: 复制泵三件套
+**What people do:** per-client 分支另写一套 outbox/writer/pinger/ReadLoop。
+**Why it's wrong:** 双写漂移；P5-1 别名红线、WR-02 补发、mergeBatch 控制帧纪律等论证链全部要维护两份。
+**Do this instead:** 三件套零改动复用（§3.5 闭包直接喂既有 outbox）。
+
+### Anti-Pattern 3: 预认证 spawn
+**What people do:** Accept 后/Hello 前就 spawn（ttyd 式急切）。
+**Why it's wrong:** 直接击穿 SEC-08——任何人匿名 fork 炸弹。
+**Do this instead:** checkTicket 成功是唯一 spawn 前置（§3.1）。
+
+### Anti-Pattern 4: Server 泛化出 Session 接口
+**What people do:** `type SessionIface interface{...}`，shared/per-client 各一实现。
+**Why it's wrong:** 6 个分支点换一层隐式分派；shared 现状全部行内论证（D-10/D-12/P5-7）锚定具体字段，抽象化 = 重写论证 + 回归风险。
+**Do this instead:** 显式字段 + 显式分支（§2.1）。
+
+### Anti-Pattern 5: per-client 读循环直写 master
+**What people do:** 「每客户端一个会话，inputQ 多余」而在 INPUT case 同步 Master.Write。
+**Why it's wrong:** CR-01 同一缺陷类——慢子进程 stdin 反堵该连接读循环，pong 处理停摆被误杀。
+**Do this instead:** 每会话 inputQ + inputWriter（§3.3）。
+
+### Anti-Pattern 6: EXIT 帧经 outbox 异步入队
+**What people do:** watcher 里 `cl.outbox.trySend(exitFrame)`。
+**Why it's wrong:** writer drain 与 Close 关闭帧竞态超车——客户端收 1000 却无退出码（RESEARCH Pitfall 1 既有纪律）。
+**Do this instead:** 同步直写（2s ctx）→ Close(1000)（§4.1 watcher）。
+
+### Anti-Pattern 7: 断开不 SIGHUP（或 SIGHUP 挂错点）
+**What people do:** 只在 WS Close 帧正常到达时杀子进程；或挂在 reader 循环任意错误出口。
+**Why it's wrong:** 1006 异常断开漏杀 → 孤儿 shell 常驻；挂错点则 kick 路径漏杀。
+**Do this instead:** 挂注册表移除点（detach/kick 两处 removeLocked true 之后，§4.2）——与 maybeExitWhenEmpty 同位，覆盖一切断开形态。
+
+---
+
+## 10. 资源标定（Scaling）
+
+| 关切 | shared（现状） | per-client（新增账） |
+|---|---|---|
+| 子进程 | 恒 1 | ≤ maxClients（spawn 硬帽，§3.2） |
+| fd | 2（master+slave 侧） | ~2×N + pidfd（Linux 内部） |
+| goroutine | 3+3N | 1+6N（§5 表） |
+| 内存/会话 | outbox 512KiB × N 客户端 | 每会话 ≈ outbox 512KiB + inputQ 256KiB + PTY 内核缓冲 + 子进程自身 |
+| 默认 maxClients=32 | 围观/教学区间 | **32 个并发 shell 是重负载**——个人运维 per-client 典型是 1-4 端；文档建议按部署调低，Phase 4 负载矩阵实测回填 |
+
+**第一瓶颈**：并发进程数（fd/内存/ fork 成本）——由 maxClients 硬帽 + 文档义务收口。
+**第二瓶颈**：单会话高吞吐输出 ×N 会话并发——每会话独立 ReadLoop/outbox，无共享扇出锁竞争（hubMu 仅 kick 冷路径触达），天然优于 shared 扇出形态。
+
+---
+
+## 11. 新增 vs 修改文件清单（显式）
+
+### 新增
+
+| 文件 | 内容 |
 |---|---|
-| 1–10 连接（单人） | 默认参数即可；单线程运行时足够 |
-| 10–100 连接（团队围观/教学） | 关注每客户端 outbox 深度分布与 1013 踢出率；调大 ring 与 outbox；metrics 定位慢网客户端 |
-| 100+ / 多租户 | **明确不支持**（PROJECT.md out of scope）。天然上限：全局连接数/会话数硬顶 + per-IP 限流兜底 |
+| `internal/server/perclient.go` | pcSession 结构、SpawnFunc 类型、升档 per-client 分支（容量再闸/spawn/失败帧）、ReadLoop 闭包构造、sessionWatcher、pcSupervisor、pcSessions 登记、RESIZE 直通 helper、每会话 stop-signal helper |
+| `internal/server/perclient_test.go` | 模式互斥校验/spawn 失败 1011/EXIT 私有化/断开 SIGHUP/进程帽/--once 两时序退出码/双端双 pid 逐字节一致 |
+| `web/uat/phaseNN.mjs`（编号随 roadmap） | 协议层 UAT（phase02-09 先例）：双端各得独立会话、EXIT 不串台、resize 隔离、ro 丢输入、--once 退出 255 |
 
-**Scaling priorities：**
-1. **第一瓶颈：单会话高吞吐输出**（`cat` 大文件）。手段：读块合并、writer 批量 drain、零/少拷贝管道（读缓冲复用，禁止 ttyd 式每块 3–4 次拷贝）。
-2. **第二瓶颈：慢客户端。** 手段见 2.6；永远不能让一个弱网客户端反压 PTY 影响其他客户端。
+### 修改
 
----
+| 文件 | 改动面 |
+|---|---|
+| `internal/pty/spawn.go` | +StartWithSize（Start 委托，零漂移） |
+| `internal/server/server.go` | Server 五字段（sessionMode/spawnFn/pcSessions/pcExitReq/pcLastExitCode/pcHasExitCode）、Options 两键、New 互斥校验 + goroutine 拓扑分岔、Attach 升档序列模式分支、Shutdown stop-signal 段分支（+Broadcast 一行）、RESIZE case 分支 |
+| `internal/server/clients.go` | client 两字段（inQ/pc）、INPUT case 换 cl.inQ（一行）、inputWriter 参数化签名、detach/kick 各 +per-client SIGHUP 挂点（§4.2）、maybeExitWhenEmptyLocked 模式分支（§4.3） |
+| `internal/server/metrics.go` | session_active 模式分支、input_queue_dropped 聚合（+closed 累计 atomic） |
+| `internal/server/health.go` | session_active 模式分支（待 OQ 裁决） |
+| `internal/server/export_test.go` | 新内部件的测试暴露（既有先例形态） |
+| `cmd/wesh/main.go` | --session-mode flag（parse 期枚举校验）、run() 分岔：shared=pty.Start 直传 / per-client=SpawnFunc 闭包（捕获 argv+StartOptions）、validateStartup +per-client 行（exec.LookPath(argv[0]) 预检——只读探测纪律内，保住 shared「spawn 失败启动期暴露」的近似 UX） |
+| `cmd/wesh/config.go` | fileConfig +`session-mode` 键（指针 string，29→30 键） |
+| `docs/ARCHITECTURE.md`、`README.md`、`docs/CONFIGURATION.md` | 双模式架构段、flag/配置文档、per-client 资源义务段 |
 
-## 7. Anti-Patterns
+### 零改动（红线确认）
 
-### Anti-Pattern 1: 连接即进程（ttyd/gotty 模型）
-**What people do:** WS 连接状态直接持有子进程，断开即 kill。
-**Why it's wrong:** 会话保持与多客户端在结构上永远不可能；ttyd 官方只能让用户套 tmux。
-**Do this instead:** 进程归 Session Actor 所有，连接只是可替换的渲染端（2.1）。
-
-### Anti-Pattern 2: 持锁（或 await）遍历写做 fan-out
-**What people do:** 读循环里逐连接阻塞写（coder buffered.go，源码 TODO 自述）。
-**Why it's wrong:** 最慢客户端行头阻塞所有人，还卡住 ring 追加。
-**Do this instead:** 每客户端有界 outbox + `try_send` + 专属 writer（Pattern 2）。
-
-### Anti-Pattern 3: 对有序字节流静默丢帧
-**What people do:** 用 tokio broadcast 之类"慢者丢数据"原语直接扇出终端字节。
-**Why it's wrong:** 丢一段转义序列 = 客户端画面持久损坏且无任何信号。
-**Do this instead:** 丢帧即破坏 → 踢出(1013)+重连重放；若用 broadcast，Lagged 必须触发全量重同步而非继续。
-
-### Anti-Pattern 4: 认证前分配可增长资源
-**What people do:** ttyd 在认证检查之前做分片 `realloc` 累积（protocol.c:288-296，预认证内存放大漏洞）。
-**Why it's wrong:** 任何人匿名打爆内存。
-**Do this instead:** 未认证连接只有定长小状态 + 5s 超时 + per-IP 上限；一切缓冲分配发生在票据核销之后。
-
-### Anti-Pattern 5: 每进程一个收割线程
-**What people do:** ttyd 每 PTY 一个阻塞 waitpid 线程 + uv_async 编组回事件循环。
-**Why it's wrong:** 线程数随会话线性增长，编组路径是 UAF 温床。
-**Do this instead:** pidfd/kqueue 并入事件循环（Pattern 5）。
-
-### Anti-Pattern 6: v1 就上服务端全量终端模拟
-**What people do:** 为了重连画面精确，自写 VT 解析器/grid。
-**Why it's wrong:** tmux/mosh 的核心资产就是这块，工作量与攻击面巨大；coder 的教训说明 ring 已覆盖主要痛点。
-**Do this instead:** ring + WINCH 重绘（Pattern 3），把"精确重渲染"留作 v2 选项（Rust 可考虑 vt100 crate）。
+`internal/proto/proto.go`（复用 ErrServerError，无新常量）、`web/` 全部前端、resize.go（仲裁器不装配，文件本体不动）、tickets.go/throttle.go/sharetoken.go/auth.go/origin.go/proxy.go/tls.go/headers.go/log.go、web/embed.go。
 
 ---
 
-## 8. Integration Points
+## 12. 建议构建顺序（供 roadmap 分阶段）
 
-### Internal Boundaries
-
-| 边界 | 通信方式 | 注意事项 |
-|---|---|---|
-| Gateway ↔ Auth | 进程内同步调用（核销为 O(1) 查表+删除） | 核销必须原子（单次使用）；失败计数写入节流派 |
-| Gateway ↔ Registry | typed message（Attach/Detach） | Gateway 不持有 Actor 内部状态，只拿 Conn 句柄 |
-| Registry ↔ Session Actor | actor 邮箱（mpsc） | Registry 只存句柄与元信息；空闲计时器归 Actor 自己 |
-| Session Actor ↔ Client Conn | outbox mpsc（数据）+ 控制消息 | Actor 永远不直接写 WS |
-| Session Actor ↔ PTY Engine | fd 事件 + exit future（同一事件循环） | PTY fd 不出 Actor；收割唯一入口在 Engine |
-| 全部 ↔ Observability | metrics handle（无锁计数器） | 每客户端队列深度必须可导出 |
-
-### External Services
-
-| 外部依赖 | 集成方式 | 坑 |
-|---|---|---|
-| 前端 xterm.js 生态 | 构建期打包内嵌（gzip 直发，ttyd 同款） | addon 版本矩阵（webgl/unicode11/fit/serialize）需在 UI 阶段锁定 |
-| 系统 PTY/内核 | forkpty/ioctl/pidfd/kqueue | Linux EIO vs macOS EOF 差异；内核 <5.3 无 pidfd（可放弃支持并文档化） |
-| TLS 证书 | 用户提供的 cert/key 或自签 | cipher/协议下限与安全响应头集中在一处配置（修复 ttyd 缺陷） |
-
----
-
-## 9. 构建顺序建议（供 roadmap 分阶段）
-
-依赖链：`PTY Engine ≺ Session Actor ≺ {Ring 重放, 多客户端 fan-out}`；`协议/认证 ≺ 多客户端权限`；`Conn outbox 结构 ≺ 背压策略`。
+依赖链：`装配阀门 ≺ attach spawn 主链 ≺ 终结语义 ≺ 标定/UAT`。每阶段以「shared 全量测试原样绿」为收口闸。
 
 | 建议阶段 | 内容 | 依赖与理由 |
 |---|---|---|
-| **P1 行走骨架** | Gateway(裸 WS+静态页) + PTY Engine + 单客户端 Session + 最小协议(OUTPUT/INPUT/RESIZE) + xterm.js 前端接通 | 无依赖。最先验证语言/运行时与 e2e 管道；达到"ttyd 核心 parity（无认证）" |
-| **P2 协议与安全基线** | proto/ 类型化帧与版本协商、错误帧、合规关闭码、长度上限；Auth(ticket+时序安全+节流)、Origin 白名单、TLS 配置 | 依赖 P1 的管道。**必须先于共享功能**：多客户端权限需要身份概念 |
-| **P3 会话解耦（跨越 #1）** | Registry + Session Actor 化 + detach/reattach + Ring 重放 + 空闲回收 + 退出墓碑 + 前端重连状态机 | 依赖 P1/P2。Actor 化时**就把 Conn 建成 outbox+writer 结构**（单客户端也如此），P4 零返工 |
-| **P4 多客户端（跨越 #2）** | fan-out、慢客户端 1013+重同步、写模式 owner/all/ro、resize 仲裁、SIZE_NOTICE、按模式分别签发票据 | 依赖 P3 的 Actor/outbox 与 P2 的身份。coder/screen/abduco 语义在此落地 |
-| **P5 资源控制与可运维** | 全局连接/会话上限、每客户端限速、/healthz、metrics、结构化日志、配置文件、env 白名单、降权、rlimits | 依赖 P3/P4 结构稳定后铺面；部分(env 白名单/降权)可提前并入 P1 的 PTY Engine |
-| **P6 打磨与发布** | base-path、自定义首页、客户端偏好下发、打包单二进制、模糊/负载测试（重点：高吞吐 fan-out 与慢客户端矩阵） | 收尾；负载测试数据回填 P4/P5 的默认参数 |
+| **PC-1 装配与阀门** | pty.StartWithSize；--session-mode flag + TOML 键 + parse 枚举校验；Options.SessionMode/SpawnFunc + New 互斥校验；validateStartup per-client 行（LookPath 预检） | 无依赖。全部 inert（默认 shared 零回归）；先锁定公开契约面（one-way flag 纪律） |
+| **PC-2 attach spawn 主链** | client.inQ/pc 两字段；升档 per-client 分支（容量再闸→spawn→失败 1011→Welcome 回显→注册）；五 goroutine 装配（ReadLoop 闭包/inputWriter 参数化/writer/pinger/sessionWatcher）；EXIT 私有化；INPUT/RESIZE 两 case；detach/kick SIGHUP 挂点 | 依赖 PC-1 的工厂与模式字段。本阶段结束 = 核心 E2E 成立（双端双 pid、逐字节一致、ro 门、resize 隔离、断开杀进程） |
+| **PC-3 终结与运维语义** | pcSupervisor + termOnce 收口；exit-when-empty/--once 分支；Shutdown 全 pcSessions stop-signal + Broadcast；last-reaped-code 规则；session_start/end per-client 粒度 + spawn_failed 事件；metrics/healthz 模式分支 | 依赖 PC-2 的 watcher/pcSessions。终结语义是独立可切片——PC-2 可先行人工验证主链 |
+| **PC-4 标定与 UAT** | 并发进程负载矩阵（1/4/16/32 会话：内存/fd/goroutine/吞吐）；协议层 UAT phaseNN.mjs；herdr 场景端到端（is_foreground + per-client area 渲染实测）；README/ARCHITECTURE/CONFIGURATION 文档；macOS CI 全量 | 依赖 PC-2/PC-3 功能完整。负载数据回填 maxClients 默认建议值与文档义务段 |
 
 **Research flags：**
-- P1：macOS kqueue 退出监视需要早期原型验证（MEDIUM-HIGH 置信，有平台差异风险）。
-- P3：ring 默认容量与"尺寸变更后重放"体验需要实测调参（coder 64KiB 仅作下界参考）。
-- P4：默认 outbox 容量/水位/strikes 需负载测试标定。
-- 其余为标准模式，无需追加研究。
+- PC-2：标准模式，无需追加研究（全部机制为既有件复用/实例化）。
+- PC-4：并发进程资源曲线需实测（唯一 MEDIUM 置信面——32 会话内存/fd 账面推算，无实机数据）。
 
 ---
 
-## 10. Sources
+## 13. Open Questions（留 milestone 裁决）
+
+1. **healthz session_active per-client 语义**：恒 true（服务可用，推荐）vs 有活会话=true。前者语义诚实（per-client 无「会话死亡=服务终结」态），后者保留字段字面。
+2. **wesh_session_active 双语义**：同 series 名按模式出 0/1 vs 计数（推荐——无身份 label 红线不破，HELP 文案按模式生成）；或新增 wesh_sessions_active 另起 series。
+3. **慢客户端 outbox 满**：1013 踢出（推荐，零新机制）vs ttyd 式阻塞反压（零丢失、无看门狗、需 outbox 新增阻塞原语）。
+4. **spawn 失败 wire 面**：复用 server_error/1011（推荐，协议零改动）vs 新增 spawn_failed 机器串（需动 proto 常量——本里程碑红线外）。
+5. **--auth-header 进子进程 env**：per-client 模型使 SEC-07 D-18 的结构性障碍消失（spawn 时 HTTP 请求在手）。本里程碑不做（既定裁决），登记 v2 重评估候选。
+
+---
+
+## 14. Sources
 
 | 来源 | 用途 | 置信度 |
 |---|---|---|
-| ttyd 1.7.7 本地源码（protocol.c / pty.c，行号见文内） | 重写基线与缺陷实证 | HIGH（一手源码） |
-| coder/coder v2.36.0 `agent/reconnectingpty/`（pkg.go.dev 文档 + buffered.go 源码精读，2026-08 发布） | 重连 PTY、ring 重放、fan-out 反例、超时回收 | HIGH（一手源码） |
-| tmux deepwiki（带 tmux.h 行号引用） | client-server、服务端屏幕状态、命令队列串行化 | HIGH |
-| abduco 作者官网（brain-dump.org/projects/abduco） | 极简 detach 模型、只读 attach、resize 仲裁、退出状态保留 | HIGH |
-| GNU screen 手册 multiuser 章节（aperiodic.net 镜像） | ACL rwx、writelock 单写者锁 | HIGH |
-| man7 pidfd_open(2)（man-pages 6.18，2026-02） | pidfd 收割语义与前置条件 | HIGH |
-| websocket.org 认证指南（2026-03） | 浏览器 WS 认证约束、ticket/首帧/续期模式 | HIGH |
-| async-concurrency.com 慢消费者背压专文（2026-06） | 有界队列/踢出策略/水位/metrics | HIGH（与 coder 源码、tokio 文档三方互证） |
-| tokio 官方文档（Context7） | broadcast Lagged 语义、mpsc 背压 | HIGH（官方文档） |
-| xterm.js 官方 typings/文档（Context7） | addon-serialize、@xterm/headless、scrollback 默认 | HIGH（官方文档） |
-| k8s client-go remotecommand pkg.go.dev | 版本化子协议、WebSocket 主 SPDY 回落、TerminalSizeQueue | HIGH（渠道编号细节 MEDIUM，来自训练知识） |
-| EternalTerminal deepwiki | etserver/etterminal 进程模型、ID/passkey 重连、序号化重传 | MEDIUM-HIGH |
-| shellhub 仓库 README 分析 | 网关型会话不持久（仅录像持久） | MEDIUM-HIGH |
-| mosh 官网/GitHub 摘要 + 训练知识 | 状态 diff 同步路线对照 | MEDIUM |
-| gotty（yudai）模型描述 | Go 版 ttyd 同模型佐证 | MEDIUM（repo 抓取失败，取自检索摘要+训练知识） |
+| wesh 当前源码逐行分析（server.go:33-1455 / clients.go:1-913 / resize.go:1-207 / pty/spawn.go / pty/io.go / pty/reap_*.go / proto.go / metrics.go / health.go / cmd/wesh/main.go / config.go，行号见文内） | 全部集成点、锁序、goroutine 拓扑、退出码论证 | HIGH（一手源码） |
+| .planning/research/ARCHITECTURE.md（v1.0，2026-08-13） | ttyd per-connection 模型反例与「连接即进程」结构性耦合结论（本文设计正是该结论的另一极兑现） | HIGH |
+| .planning/PROJECT.md milestone 上下文（2026-09-01） | 需求边界：不装配清单/两模式共享清单/wire 协议零改动红线/ttyd 语义锚定 | HIGH（用户既定裁决） |
+| docs/ARCHITECTURE.md（v1.0 落地架构，2026-08-31） | 组件图/数据流/并发纪律的现状描述对照 | HIGH |
+| creack/pty StartWithSize 用法（spawn.go:88 既有调用点） | 自定义初始尺寸 spawn 可行性——同函数不同 Winsize 参数，无新依赖 | HIGH（既有生产调用点实证） |
+
+**外部检索说明：** 本课题七个问题均为 wesh 内部代码层集成裁决（结构形态/spawn 点/生命周期分裂/复用面/锁序/可观测粒度），ttyd per-connection 语义在 v1.0 RESEARCH 与 milestone 上下文中已双重锁定——无生态系统/docs 类问题，未触发 research-plan seam 外部取数（取数无决策增量）。唯一 MEDIUM 置信面 = §10 资源账面推算，已挂 PC-4 实测标定。
 
 ---
-*Architecture research for: web 终端共享工具（wesh，ttyd 重写）*
-*Researched: 2026-08-13*
+*Architecture research for: wesh v1.1 per-client 会话模式*
+*Researched: 2026-09-01*
