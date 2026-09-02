@@ -3,16 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 10
+current_phase_name: mode-assembly
 status: executing
-stopped_at: Phase 10 context gathered
-last_updated: "2026-09-02T10:13:25.995Z"
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-09-02T11:55:25.242Z"
 last_activity: 2026-09-02
 last_activity_desc: v1.1 roadmap created（15/15 需求映射 Phase 10-15）
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 4
-  completed_plans: 0
+  completed_plans: 1
 ---
 
 # Project State
@@ -22,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-01)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Milestone v1.1 roadmap created — Phase 10 模式装配与接缝 ready to plan
+**Current focus:** Phase 10 — mode-assembly
 
 ## Current Position
 
-Phase: 10 of 15（模式装配与接缝，v1.1 首阶段）
-Plan: —
+Phase: 10 (mode-assembly) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-09-02 — v1.1 roadmap created（15/15 需求映射 Phase 10-15）
+Last activity: 2026-09-02 — Phase 10 execution started
 
-Progress: [░░░░░░░░░░] 0%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [███░░░░░░░] 25%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -52,6 +53,11 @@ Progress: [░░░░░░░░░░] 0%（v1.1；v1.0 已 9/9 阶段 70/70
 | 05 | 13 | | |
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 10 P01 | 32min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -64,6 +70,8 @@ Recent decisions affecting current work:
 - [Roadmap v1.1]: 六阶段沿研究骨架与依赖链——装配阀门(10) ≺ 生命周期主干(11) ≺ 交互背压(12) ≺ 资源防线(13) ≺ 终结语义/观测面(14) ≺ 标定/UAT(15)；13/14 互不依赖均只依赖 11，建议 13 先行（churn 防护缺失会使 15 压测失真）
 - [Research v1.1]: 零新增依赖；「装配期一次分岔、运行期零分岔」不抽象 session 接口（6-7 显式分支点）；最大风险=破坏既有不变量而不自知（D-10 唯一终结/D-13 零新 exitf/唯一收割者/Welcome 恒首帧/零身份 label）
 - [Requirements v1.1]: D5 裁决落定——SEC-09 per-client 下 WESH_REMOTE_USER 注入子进程 env（D-15 收窄理由结构性消失），shared 保持收窄语义；反特性五条入 Out of Scope（reattach/linger/运行期切模式/默认 per-client/ro 共享进程）
+- [Phase ?]: [Phase 10-01] run() 两模式均经启动期 pty.Start（sess=nil 与 New 体 sess.Cmd.Process.Pid 取引用冲突，归 Phase 11）；SpawnFunc 闭包 inert 零调用方
+- [Phase ?]: [Phase 10-01] ValidateOptions 包级互斥校验 option (b) 落地：per-client×SpawnFunc=nil / shared×SpawnFunc≠nil fail-fast，零值归一 shared 与 New 兜底同口径
 
 ### Pending Todos
 
@@ -84,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-02T07:53:47.474Z
-Stopped at: Phase 10 context gathered
-Resume file: .planning/phases/10-mode-assembly/10-CONTEXT.md
+Last session: 2026-09-02T11:55:25.230Z
+Stopped at: Completed 10-01-PLAN.md
+Resume file: None

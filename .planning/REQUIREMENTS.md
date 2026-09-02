@@ -77,7 +77,7 @@
 
 ### 会话模式（PC）
 
-- [ ] **PC-01**: 用户可通过 `--session-mode=shared|per-client` flag（或 TOML `session_mode` 键）选择会话模式；缺省 shared，v1.0 全部行为逐字节不变
+- [x] **PC-01**: 用户可通过 `--session-mode=shared|per-client` flag（或 TOML `session_mode` 键）选择会话模式；缺省 shared，v1.0 全部行为逐字节不变
 - [ ] **PC-02**: per-client 模式下每个 WS 客户端 attach 认证通过后独立 spawn 自己的 PTY 子进程（Hello cols/rows 经钳制后作初始 winsize）；spawn 失败时该客户端收类型化 Error 帧并以 1011 关闭，服务端与其他客户端不受影响
 - [ ] **PC-03**: per-client 客户端断开（含异常）后其子进程进程组立即收 SIGHUP（随 `--stop-signal` 可配），无宽限；信号发送与收割序列化，杜绝 kill-after-reap 误杀复用 pgid
 - [ ] **PC-04**: per-client 子进程退出后仅该客户端收私有 EXIT 帧（含 exit_code，信号死亡 -1）并以 1000 关闭；服务端与其他客户端继续运行
@@ -188,7 +188,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-09 | Phase 7 | Complete |
 | OPS-10 | Phase 9 | Complete |
 | OPS-11 | Phase 7 | Complete |
-| PC-01 | Phase 10 | Pending |
+| PC-01 | Phase 10 | Complete |
 | PC-02 | Phase 11 | Pending |
 | PC-03 | Phase 11 | Pending |
 | PC-04 | Phase 11 | Pending |

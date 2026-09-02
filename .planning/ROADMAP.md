@@ -419,10 +419,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. CLI flag > env > TOML > 默认的既定优先级链对 session_mode 成立（CLI 显式覆盖配置文件值）
   4. per-client 模式下启动预检（exec.LookPath 等 validateStartup 行）把命令缺失等配置错误暴露在启动期，而非推迟到首个客户端 attach 才失败
 
-**Plans**: 4 plans
+**Plans**: 1/4 plans executed
 **Wave 1**
 
-- [ ] 10-01-PLAN.md — 模式阀门 tracer：--session-mode 全链装配（flag/TOML 键/枚举闸/Options.SessionMode+SpawnFunc/ValidateOptions/run() 分岔/StartWithSize）+ CLI 契约测试（PC-01，D-03/D-04）
+- [x] 10-01-PLAN.md — 模式阀门 tracer：--session-mode 全链装配（flag/TOML 键/枚举闸/Options.SessionMode+SpawnFunc/ValidateOptions/run() 分岔/StartWithSize）+ CLI 契约测试（PC-01，D-03/D-04）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -534,7 +534,7 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 7. 部署与配置 | v1.0 | 10/10 | Complete | 2026-08-27 |
 | 8. 可观测性 | v1.0 | 6/6 | Complete | 2026-08-28 |
 | 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
-| 10. 模式装配与接缝 | v1.1 | 0/4 | Not started | - |
+| 10. 模式装配与接缝 | v1.1 | 1/4 | In Progress|  |
 | 11. per-client 生命周期主干 | v1.1 | 0/? | Not started | - |
 | 12. per-client 交互与背压语义 | v1.1 | 0/? | Not started | - |
 | 13. 资源与容量防线 | v1.1 | 0/? | Not started | - |
