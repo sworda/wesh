@@ -71,6 +71,34 @@
 - [x] **OPS-10**: 单静态二进制发布（linux/darwin × amd64/arm64），前端 embed 内嵌为单 HTML
 - [x] **OPS-11**: 可选启动后自动打开浏览器
 
+## v1.1 Requirements（per-client 会话模式）
+
+> 来源：2026-09-02 生态研究（.planning/research/FEATURES.md）——per-connection spawn 为品类标准答案（ttyd/GoTTY/wetty/shellinabox 全部如此），wesh shared 模型为差异化本体保持默认。T1–T11 table stakes 整组纳入；D4/D5/D6 经用户裁决纳入；D5 = 重开 D-15（per-client 下 attach 后 spawn，HTTP 上下文在手，收窄理由结构性消失）。
+
+### 会话模式（PC）
+
+- [ ] **PC-01**: 用户可通过 `--session-mode=shared|per-client` flag（或 TOML `session_mode` 键）选择会话模式；缺省 shared，v1.0 全部行为逐字节不变
+- [ ] **PC-02**: per-client 模式下每个 WS 客户端 attach 认证通过后独立 spawn 自己的 PTY 子进程（Hello cols/rows 经钳制后作初始 winsize）；spawn 失败时该客户端收类型化 Error 帧并以 1011 关闭，服务端与其他客户端不受影响
+- [ ] **PC-03**: per-client 客户端断开（含异常）后其子进程进程组立即收 SIGHUP（随 `--stop-signal` 可配），无宽限；信号发送与收割序列化，杜绝 kill-after-reap 误杀复用 pgid
+- [ ] **PC-04**: per-client 子进程退出后仅该客户端收私有 EXIT 帧（含 exit_code，信号死亡 -1）并以 1000 关闭；服务端与其他客户端继续运行
+- [ ] **PC-05**: per-client 模式下 RESIZE 直通本会话 TIOCSWINSZ（钳制 [1,1000] 与 50ms 防抖保留），无仲裁器、无 'W' 约束帧
+- [ ] **PC-06**: per-client 模式下断线重连成功即获得全新进程；前端按 Welcome 下发的模式位在重连分支执行 terminal.reset() 清屏（旧屏残留对新进程无意义）
+- [ ] **PC-07**: ro 客户端在 per-client 模式下照常 spawn 独立进程，其 INPUT 被服务端丢弃（ro=自有进程输入门控）；每客户端输入限速保留
+- [ ] **PC-08**: per-client 模式下 `--max-clients` 兼任并发进程上限：握手 503 闸保留 + spawn 前 hubMu 内复检计数（防 ttyd 式 == 闸 + 异步 spawn 窗口的并发超编）；并发子进程数 ≤ max-clients 为硬不变量
+- [ ] **PC-09**: `--once` / `--exit-when-empty` / 优雅关停语义适配：触发条件（计数归零）不变，终结目标为全部存活 per-client 进程组各执行一遍 stop-signal 序列；注册表空迁移存在显式第二终结源（无子进程可等时仍能退出）
+- [ ] **PC-10**: per-client 慢客户端保护：每客户端有界 outbox 写满 1013 踢出（无全局信用门；自然反压为停读该 PTY→内核缓冲满→子进程写阻塞）
+- [ ] **PC-11**: per-PTY 停读/续读背压（ttyd pty_pause/resume parity）：慢客户端先停读其 PTY 而非立即踢出，恢复后自动续读；持续过载仍按 PC-10 踢出
+- [ ] **PC-12**: 模式语义文档：README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 时经多路复用汇聚）；修正 v1.0「GoTTY 式共享进程模型」误记（GoTTY 实为 per-connection spawn，源码已核实）
+- [ ] **PC-13**: herdr/tmux 等多路复用应用场景下多客户端互不干扰：移动端 attach 不再压缩其他客户端面板尺寸（herdr is_foreground + per-client area 仲裁恢复生效）；协议层 UAT 断言进程独立/尺寸互不干扰 + Windows Playwright 全链观感断言
+
+### 安全（SEC 续）
+
+- [ ] **SEC-09**: per-client 模式下 `--auth-header` 透传的用户名注入该客户端子进程环境变量（`WESH_REMOTE_USER`；键名白名单固定、值沿用 SEC-07 sanitize 清洗）；shared 模式保持 D-15 收窄语义（仅审计归因）不变
+
+### 部署运维（OPS 续）
+
+- [ ] **OPS-12**: /metrics 与审计日志 per-client 粒度：活跃会话数 gauge、spawn/kill 计数器、会话生命周期事件带 pid 归因；零身份 label 红线保持
+
 ## v2 Requirements
 
 ### 文件传输与渲染增强
@@ -104,6 +132,11 @@
 | ttyd CLI 参数兼容 | 用户明确决策：全新设计，不背兼容包袱 |
 | 服务端重启后会话恢复 | 需 CRIU 类技术，复杂度与收益不匹配；断线保活已覆盖主要痛点 |
 | 依赖外部 tmux 实现会话保持 | 破坏单二进制零依赖承诺；原生实现 |
+| per-client 重连 reattach（sessionKey + 服务端输出缓冲） | v1.1 反特性 A1/A4：等于把 V2-SESSION 偷渡进 per-client；持久性由子进程侧 herdr/tmux 承接（per-client 模式的存在意义） |
+| per-client 断开后 linger 宽限再杀进程 | v1.1 反特性 A2：半吊子会话保持，宽限窗内进程占资源且收割竞态面增大；ttyd/wetty 均立即杀 |
+| 运行期/按 URL 切换会话模式 | v1.1 反特性 A3：?arg= 注入面前车之鉴；运行期切模式使生命周期不变量双份化；替代=起两个实例不同端口 |
+| per-client 设为默认模式 | v1.1 反特性 A5：违背 v1.0 零回归承诺；shared（真·多人同屏）是差异化本体，per-client 显式 opt-in |
+| ro 访客共享单个进程省资源 | v1.1 反特性 A7：直接重新引入 driving bug（移动端 attach 缩小所有人面板）；进程开销由 PC-08 上限管控 |
 
 ## Traceability
 
@@ -155,13 +188,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-09 | Phase 7 | Complete |
 | OPS-10 | Phase 9 | Complete |
 | OPS-11 | Phase 7 | Complete |
+| PC-01 | — | Pending roadmap |
+| PC-02 | — | Pending roadmap |
+| PC-03 | — | Pending roadmap |
+| PC-04 | — | Pending roadmap |
+| PC-05 | — | Pending roadmap |
+| PC-06 | — | Pending roadmap |
+| PC-07 | — | Pending roadmap |
+| PC-08 | — | Pending roadmap |
+| PC-09 | — | Pending roadmap |
+| PC-10 | — | Pending roadmap |
+| PC-11 | — | Pending roadmap |
+| PC-12 | — | Pending roadmap |
+| PC-13 | — | Pending roadmap |
+| SEC-09 | — | Pending roadmap |
+| OPS-12 | — | Pending roadmap |
 
 **Coverage:**
 
-- v1 requirements: 44 total（原写 42，按实际条目数修正：CORE 6 + FE 7 + SESS 3 + MULTI 5 + SEC 8 + RES 4 + OPS 11）
-- Mapped to phases: 44
-- Unmapped: 0 ✓
+- v1 requirements: 44 total（原写 42，按实际条目数修正：CORE 6 + FE 7 + SESS 3 + MULTI 5 + SEC 8 + RES 4 + OPS 11）— 全部 Complete
+- v1.1 requirements: 15 total（PC 13 + SEC 1 + OPS 1）
+- Mapped to phases: 44 (v1) + 0 (v1.1 pending roadmap)
+- Unmapped: 15（待 v1.1 roadmap 填充）
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-08-13 after roadmap creation（traceability 填充；Core Value 与 PROJECT.md 对齐——v1 不做会话保持，"断线不丢"改为"可多人共享"）*
+*Last updated: 2026-09-02 — milestone v1.1（per-client 会话模式）需求定义：PC-01..13 + SEC-09 + OPS-12 共 15 条；Out of Scope 增补 v1.1 反特性五条（reattach/linger/运行期切模式/默认 per-client/ro 共享进程）*
