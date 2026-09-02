@@ -93,6 +93,8 @@ share read-only:  http://127.0.0.1:7681/s/<ro-token>/
 ./wesh --writable --write-policy all --credential alice:密码 --tls-cert cert.pem --tls-key key.pem -- bash
 ```
 
+`--session-mode=shared|per-client` 选择会话模式（默认 `shared`；`per-client` 行为装配中，当前版本与 `shared` 等价）。
+
 ## 安全默认值
 
 `wesh` 提供的是一个以你身份运行的 shell，默认配置拒绝裸奔：
