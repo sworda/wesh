@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 // testGuard 是全部用例的统一超时护栏：任何 Wait/drain 挂死必须在 10s 内翻车，
@@ -343,4 +345,61 @@ func TestWhitelistEnvDropUnknownUid(t *testing.T) {
 	if !slices.Contains(envNoDrop, "HOME=/wesh-host-home") {
 		t.Errorf("不降权路径 HOME 按名继承丢失: %v", envNoDrop)
 	}
+}
+
+// TestStartWithSizeDelegation（10-02 PC-01 接缝行为锁，TestStartZeroValueParity
+// 同文件同夹具）：
+//   - 委托等价面：Start(argv, opts) ≡ StartWithSize(argv, opts, SpawnCols,
+//     SpawnRows)——cmd.Env 经 slices.Equal 逐项相等、cmd.Dir 相等、SysProcAttr
+//     同 nil（Uid -1 不降权）；80×24 单一事实源纪律（SpawnCols/SpawnRows
+//     常量同源，G-05-1）。两会话各自 awaitSession 正常退出。
+//   - 尺寸功能面：StartWithSize 自定义 132x43 真实到达 TIOCSWINSZ
+//     （creack/pty GetsizeFull 读回——80×24 之外的第二数据点，防「尺寸参数
+//     被忽略回落默认」的静默失效）。
+func TestStartWithSizeDelegation(t *testing.T) {
+	t.Run("delegation parity", func(t *testing.T) {
+		argv := []string{"/usr/bin/env"}
+		opts := StartOptions{Uid: -1, Gid: -1}
+		sessA, err := Start(argv, opts)
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		sessB, err := StartWithSize(argv, opts, SpawnCols, SpawnRows)
+		if err != nil {
+			t.Fatalf("StartWithSize: %v", err)
+		}
+		if !slices.Equal(sessA.Cmd.Env, sessB.Cmd.Env) {
+			t.Fatalf("cmd.Env 不等价:\n Start         = %v\n StartWithSize = %v", sessA.Cmd.Env, sessB.Cmd.Env)
+		}
+		if sessA.Cmd.Dir != sessB.Cmd.Dir {
+			t.Fatalf("cmd.Dir = %q vs %q, want 相等", sessA.Cmd.Dir, sessB.Cmd.Dir)
+		}
+		if (sessA.Cmd.SysProcAttr == nil) != (sessB.Cmd.SysProcAttr == nil) {
+			t.Fatalf("SysProcAttr nil 性分叉: %v vs %v（Uid -1 不降权）", sessA.Cmd.SysProcAttr, sessB.Cmd.SysProcAttr)
+		}
+		if _, werr := awaitSession(t, sessA, startCollect(sessA)); werr != nil {
+			t.Fatalf("Start 会话 env 退出异常: %v", werr)
+		}
+		if _, werr := awaitSession(t, sessB, startCollect(sessB)); werr != nil {
+			t.Fatalf("StartWithSize 会话 env 退出异常: %v", werr)
+		}
+	})
+	t.Run("custom size reaches TIOCSWINSZ", func(t *testing.T) {
+		sess, err := StartWithSize([]string{"/usr/bin/env"}, StartOptions{Uid: -1, Gid: -1}, 132, 43)
+		if err != nil {
+			t.Fatalf("StartWithSize: %v", err)
+		}
+		// 尺寸读回在 startCollect/awaitSession 之前——GetsizeFull 裸取 Fd() 不过
+		// fdMu（Setsize 同款），与 ReadLoop/Close 并发是 fd 竞态面（02-02 先例）。
+		ws, gerr := pty.GetsizeFull(sess.Master)
+		if gerr != nil {
+			t.Fatalf("GetsizeFull: %v", gerr)
+		}
+		if ws.Cols != 132 || ws.Rows != 43 {
+			t.Fatalf("TIOCSWINSZ 读回 = %dx%d, want 132x43（尺寸参数真实到达）", ws.Cols, ws.Rows)
+		}
+		if _, werr := awaitSession(t, sess, startCollect(sess)); werr != nil {
+			t.Fatalf("env 退出异常: %v", werr)
+		}
+	})
 }
