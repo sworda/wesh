@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 09
-status: completed
-stopped_at: Phase 09 complete — v1.0.0 released, milestone v1 44/44 closed (70/70 plans)
-last_updated: "2026-08-30T16:33:19.695Z"
-last_activity: 2026-08-31
-last_activity_desc: Phase 09 complete
+milestone: v1.1
+milestone_name: per-client 会话模式
+status: planning
+last_updated: "2026-09-01T13:52:17.564Z"
+last_activity: 2026-09-01
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 70
-  completed_plans: 70
-current_phase_name: release-polish
-state_head: 2137d0ca7425674ae4da32db3497184a05636602
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-08-31)
 
 ## Current Position
 
-Phase: 09
-Plan: Not started
-Status: All phases complete
-Last activity: 2026-08-31 — Phase 09 complete
-
-Progress: [██████████] 100%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-09-01 — Milestone v1.1 started
 
 ## Performance Metrics
 

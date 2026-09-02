@@ -10,6 +10,18 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 
 **浏览器里获得一个可靠、安全、可多人共享的远程终端。** 其他一切（文件传输、会话保持、Sixel）都可以后续迭代，但"打开页面就有可用的安全终端、能方便地分享给别人看/操作"必须成立。
 
+## Current Milestone: v1.1 per-client 会话模式
+
+**Goal:** wesh 支持 ttyd 式 per-connection spawn——每个 WebSocket 客户端独立 PTY 子进程，使 herdr 等自带多客户端仲裁（is_foreground + per-client area 渲染）的应用在 wesh 下恢复正确行为；shared 共享模式保持默认、零回归。
+
+**Target features:**
+- `--session-mode=shared|per-client` flag + TOML 配置键（默认 shared）
+- per-client 生命周期：attach spawn / 断开 SIGHUP 杀进程 / EXIT 帧私有化 / 重连=全新进程（ttyd 语义）
+- per-client resize 直通（无仲裁）+ ro 输入门控 + 限速保留；resize 仲裁/owner 递补/fan-out/信用门在 per-client 分支不装配
+- `--once` / `--exit-when-empty` / maxClients 语义适配与并发进程资源标定
+- 审计日志 / metrics per-client 粒度
+- herdr 场景端到端 UAT 验证
+
 ## Requirements
 
 ### Validated
@@ -53,7 +65,7 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 
 ### Active
 
-（milestone v1 全部 44/44 需求闭合——见 Validated；后续需求见 v2 规划）
+（milestone v1 全部 44/44 需求闭合——见 Validated；v1.1 per-client 会话模式需求定义中——见 REQUIREMENTS.md）
 
 ### Out of Scope
 
@@ -156,4 +168,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-31 after Phase 9（发布与打磨闭合：v1.0.0 实发布上架 GitHub Release（四平台产物 + checksums 核验全 OK + linux_amd64 --version 实跑）+ 自定义首页 --index 全链 + 负载标定回填 + 五部署配方；UAT 2/2 pass（含发布链 fuzz 断言误报修复插曲 7850bc4）+ VERIFICATION 3/3 SC + SECURITY 35/35 closed + TestResize CI flake 观察登记；milestone v1 44/44 全量收口）*
+*Last updated: 2026-09-01 — milestone v1.1（per-client 会话模式）启动；v1.0 于 2026-08-31 全量收口（44/44 需求，v1.0.0 已发布上架）*
