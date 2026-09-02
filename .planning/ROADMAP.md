@@ -4,6 +4,13 @@
 
 从 PTY 核心管道出发（行走骨架），先把 WS 协议层一次性设计到位（类型化帧、三层上限、合规关闭码——事后补洞要动协议），再建立认证与 TLS 安全基线（多客户端权限需要身份概念先行）；随后补齐前端体验至 ttyd 基线对等，交付核心差异化能力——多客户端共享（fan-out、ro/rw 权限、背压、resize 仲裁），完善会话生命周期与断线重连，最后铺面部署配置与可观测性，以单静态二进制四平台发布收尾。v1 不做会话保持（用户以 tmux/herdr 覆盖），采用 GoTTY 共享进程模型：PTY 进程随服务端启动创建、多客户端共享，进程退出以类型化终结帧通知全部客户端；outbox/fan-out 结构为多客户端保留。
 
+**v1.1（per-client 会话模式）**：在 shared 模型默认零回归前提下新增 ttyd 式 per-connection spawn 第二路径——每 WS 客户端独立 PTY 子进程，使 herdr 等自带多客户端仲裁（is_foreground + per-client area 渲染）的应用恢复正确行为。骨架接缝先行（模式阀门一次装配、全部 inert），随后打通 attach spawn / 断开即杀进程组 / EXIT 私有化的生命周期主链，补齐 resize 直通、ro 门控、重连 reset、慢客户端停读续读与 1013 踢出的交互语义；再筑资源防线（maxClients 兼任进程硬顶、spawn 双令牌桶、KILL 兜底、关停覆盖 N 进程组）与终结语义（--once/exit-when-empty 第二终结源、metrics/审计 per-client 粒度、WESH_REMOTE_USER 注入）；最后以双模式 -race 门、协议层 UAT 与 Windows Playwright herdr 全链收口，负载矩阵实测回填标定与双模式文档。架构形态：装配期一次分岔、运行期零分岔，不抽象 session 接口，两模式共享面 ≥90%。
+
+## Milestones
+
+- ✅ **v1.0** — Phases 1-9（shipped 2026-08-31，v1.0.0 四平台发布上架，44/44 需求收口）
+- 🚧 **v1.1 per-client 会话模式** — Phases 10-15（roadmap created 2026-09-02）
+
 ## Phases
 
 **Phase Numbering:**
@@ -18,12 +25,21 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: 认证与传输安全** - 一次性 ticket、时序安全比较、失败节流、Origin 白名单、TLS 加固 (completed 2026-08-18)
 - [x] **Phase 4: 前端体验** - CJK/IME、超链接、现代剪贴板、标题同步、服务端偏好下发 (completed 2026-08-19)
 - [x] **Phase 5: 多客户端共享** - fan-out、ro/rw 权限、慢客户端背压踢出、resize 仲裁、ro/rw 分享链接 (completed 2026-08-22)
-- [x] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程 (completed 2026-08-24)
+- [x] **Phase 6: 会话生命周期与重连** - --once/无人退出/类型化终结帧、断线重连接回同一进程 (completed 2026-08-24)
 - [x] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传 (completed 2026-08-27)
 - [x] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志 (completed 2026-08-28)
 - [x] **Phase 9: 发布与打磨** - 单静态二进制四平台发布、自定义首页、负载/模糊测试回填默认参数 (completed 2026-08-31)
+- [ ] **Phase 10: 模式装配与接缝** - --session-mode flag + TOML 键 + Options/StartWithSize 接缝，全部 inert 零回归
+- [ ] **Phase 11: per-client 生命周期主干** - attach spawn / 断开即杀进程组 / EXIT 私有化 / teardown 恰好一次
+- [ ] **Phase 12: per-client 交互与背压语义** - resize 直通 / ro 门控 / 重连 reset / 停读续读 / 1013 踢出
+- [ ] **Phase 13: 资源与容量防线** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组
+- [ ] **Phase 14: 终结语义与观测面适配** - 第二终结源 / 退出码对齐 / metrics 审计 per-client 粒度 / WESH_REMOTE_USER
+- [ ] **Phase 15: 双模式验证矩阵、标定与 herdr UAT** - 双模式 -race 门 / 协议层 + Playwright UAT / 负载矩阵回填 / 模式文档
 
 ## Phase Details
+
+<details>
+<summary>✅ v1.0（Phases 1-9）— SHIPPED 2026-08-31（44/44 需求收口，v1.0.0 已发布）</summary>
 
 ### Phase 1: 行走骨架（核心 PTY 管道）
 
@@ -387,19 +403,128 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **UI hint**: yes
 
+</details>
+
+**Milestone v1.1 Goal:** wesh 支持 ttyd 式 per-connection spawn——每个 WebSocket 客户端独立 PTY 子进程，使 herdr 等自带多客户端仲裁（is_foreground + per-client area 渲染）的应用在 wesh 下恢复正确行为；shared 共享模式保持默认、零回归。架构形态锁定「装配期一次分岔，运行期零分岔」：不抽象 session 接口（6-7 个显式分支点），两模式共享面 ≥90%。
+
+### Phase 10: 模式装配与接缝
+
+**Goal**: 会话模式阀门与全部接缝一次装配到位（全部 inert）——`--session-mode` 公开契约锁定，默认 shared 逐字节零回归，per-client 分支挂点唯一化防散点 if/else 腐化
+**Depends on**: Nothing（v1.1 首阶段；基线 = v1.0 已发布全绿）
+**Requirements**: PC-01
+**Success Criteria** (what must be TRUE):
+
+  1. 用户以 `--session-mode=per-client`（或 TOML `session_mode = "per-client"`）启动被接受；缺省/显式 shared 启动后 v1.0 全量 Go 测试与既有协议 UAT 原样全绿、行为逐字节不变
+  2. 非法模式值（CLI 或 TOML）在 parse 期被拒绝（exit 2），错误文案不泄露用户输入值内容（启动面红线保持）
+  3. CLI flag > env > TOML > 默认的既定优先级链对 session_mode 成立（CLI 显式覆盖配置文件值）
+  4. per-client 模式下启动预检（exec.LookPath 等 validateStartup 行）把命令缺失等配置错误暴露在启动期，而非推迟到首个客户端 attach 才失败
+
+**Plans**: TBD
+
+含：pty.StartWithSize（Start 委托、80x24 单一事实源纪律保持）、Options.SessionMode/SpawnFunc + New 互斥校验 fail-fast、配置 fuzz 语料扩展（session_mode 键入白名单 + 非法值 parse 拒绝同 PR）、write-policy=owner × per-client 组合的 validateStartup 处置（warn 或拒绝，规划期裁决——静默永不接受）。本阶段结束时不存在任何 per-client 运行期行为，接缝全部 inert；先锁定公开契约面（one-way flag 纪律）。
+
+### Phase 11: per-client 生命周期主干
+
+**Goal**: per-client 模式下每个浏览器客户端 attach 即获得独立 PTY 子进程，其生死只影响自己——核心 E2E 最长链成立
+**Depends on**: Phase 10
+**Requirements**: PC-02, PC-03, PC-04
+**Success Criteria** (what must be TRUE):
+
+  1. 两个客户端 attach 后各自获得独立 shell（协议层可观测两个不同 pid，各端输出即自身进程输出、互不串台）；首帧 winsize = Hello 上报尺寸经钳制（无 80x24 中间态闪烁）
+  2. spawn 失败（命令不可执行/资源耗尽）时该客户端收到类型化 Error 帧（通用文案，绝不拼 err.Error() 回显路径/errno）并以 1011 关闭；服务端与其他在线客户端不受影响
+  3. 客户端断开（正常关闭或异常 1006）后其子进程进程组立即收到 SIGHUP（随 --stop-signal 可配），无宽限、无僵尸残留；信号与收割锁内序列化，pgid 复用窗口内不误杀无关进程组
+  4. 子进程退出（exit 42 或信号死亡）后仅该客户端收到私有 EXIT 帧（含 exit_code，信号死亡 -1）并以 1000 关闭；服务端与其他客户端继续运行
+
+**Plans**: TBD
+
+含：client.inQ/pc 字段、升档 per-client 分支（容量再闸 → hubMu 外 spawn → 失败 Error+1011 → Welcome 回显 → 注册+登记）、五 goroutine 装配（ReadLoop 闭包 / inputWriter 参数化 / writer / pinger / sessionWatcher）、EXIT 私有化直写、detach/kick SIGHUP 挂点（注册表移除点覆盖一切断开形态）、每会话 teardown sync.Once 固定序列 + reaped 栅栏、darwin watcher dup-watch fail-closed 防御。Welcome 恒首帧、exitf 恰好一次（termOnce 复用）、唯一收割者纪律三大不变量保持。
+
+### Phase 12: per-client 交互与背压语义
+
+**Goal**: per-client 模式下尺寸、输入、重连、慢客户端四类交互语义各归各会话——无仲裁、无串扰、重连即全新
+**Depends on**: Phase 11
+**Requirements**: PC-05, PC-06, PC-07, PC-10, PC-11
+**Success Criteria** (what must be TRUE):
+
+  1. 客户端 resize 直通自身 PTY 的 TIOCSWINSZ（[1,1000] 钳制与 50ms 防抖保留）；其他客户端尺寸不受影响，线上无 'W' 约束帧，resize 仲裁/owner 递补/fan-out/信用门在 per-client 分支不装配
+  2. ro 客户端 attach 后照常获得自己的独立进程，其键盘输入被服务端丢弃（对自身进程同样无效，ro=自有进程输入门控）；每客户端输入限速保留
+  3. 客户端异常断线（1006）重连后获得全新进程（新 pid），浏览器旧屏残留经 terminal.reset() 清除——用户看到干净的新会话而非旧屏残影
+  4. 慢客户端停止消费时其 PTY 先被停读（输出积压于内核缓冲、子进程写阻塞而非丢数据），恢复消费后自动续读（ttyd pty_pause/resume parity）
+  5. 持续过载的慢客户端 outbox 写满后以 1013 被踢出，服务端与其他客户端不受影响
+
+**Plans**: TBD
+
+含：INPUT 零分支 / RESIZE 直通两 case、每会话 resize 防抖（共用 debouncer 组件防双写漂移）、前端重连分支按 Welcome 模式位执行 terminal.reset() + dist 重建（本里程碑唯一前端改动）、per-PTY 停读/续读状态机。
+
+### Phase 13: 资源与容量防线
+
+**Goal**: per-client 模式下并发进程有硬顶、已认证 churn 打不垮服务端、HUP 免疫进程必被收割、关停覆盖全部存活进程组
+**Depends on**: Phase 11（spawn 路径与 pcSessions 注册表）；与 Phase 14 互不依赖（建议先行——churn 防护缺失会使 Phase 15 压测失真）
+**Requirements**: PC-08
+**Success Criteria** (what must be TRUE):
+
+  1. 满员时第 max-clients+1 个客户端握手即收 503（既有闸保留）；并发 attach 竞态下「并发子进程数 ≤ max-clients」硬不变量始终成立（spawn 前 hubMu 内复检计数，无 ttyd 式 == 闸 + 异步 spawn 窗口超编）
+  2. 已认证客户端高频断开重连（churn）被 spawn 双令牌桶（全局防惊群 + per-IP 防单点 churn）限速，取不到令牌在 spawn 前拒绝且关闭码避开 1006（前端不进入自动重连放大循环）；churn 负载下 RSS/goroutine/fd 有界
+  3. SIGHUP 免疫的子进程在 stop-timeout 到期后被 SIGKILL 兜底收割、不泄漏（per-client 下 stop-timeout 默认值重议经用户裁决落地——公开契约变更）
+  4. 优雅关停（SIGTERM/SIGINT）时全部存活 per-client 进程组各执行一遍 stop-signal 序列，有界 join 后退出（不等 D-state，不丢 session_end 事件）
+
+**Plans**: TBD
+
+含：spawn-intent 容量预占/回滚记账（或超编 ≤8 显式裁决登记并写进 README——规划期裁决项）、churn 负载测试（合法票据 10rps × 30s，断言 RSS/goroutine/fd 有界）。准则 2/3/4 为研究锁定防线（PITFALLS #4 fork bomb / #8 HUP 免疫泄漏 ×N / #10 Shutdown 面），是 PC-08 硬不变量在 churn 与关停语境下的操作化。
+
+### Phase 14: 终结语义与观测面适配
+
+**Goal**: per-client 模式下 --once/--exit-when-empty 触发语义与退出码规则成立（含注册表空迁移第二终结源），metrics/审计达 per-client 粒度，反代身份注入子进程环境
+**Depends on**: Phase 11（watcher/pcSessions/teardown）；与 Phase 13 互不依赖
+**Requirements**: PC-09, SEC-09, OPS-12
+**Success Criteria** (what must be TRUE):
+
+  1. --once 下唯一客户端断开后服务端退出；--exit-when-empty 在全部客户端断开后触发退出——含「注册表已空且无子进程可等」形态下第二终结源生效（不会永不退出），退出状态 255 与 shared 语义对齐（第二终结源登记 Key Decisions）
+  2. 「先断后死」「先死后断」两种时序下 wesh 退出码规则与 shared 模式逐位对齐（255 / 子进程退出码透传，last-reaped-code 规则）
+  3. 运维者从 /metrics 读到 per-client 粒度指标（活跃会话 gauge、spawn 成功/失败与 kill 计数器），全部 series 保持零身份 label 红线；/healthz 的 session_alive 语义在 per-client 下按裁决落地
+  4. 审计日志会话生命周期事件（session_start/session_end/spawn_failed）携带 pid 归因与 client_id 关联键，可串联单个 per-client 会话全生命周期；spawn_failed 事件零敏感值
+  5. per-client 模式下 --auth-header 透传的用户名经 SEC-07 sanitize 后作为 WESH_REMOTE_USER 出现在该客户端子进程环境中（Web shell 内 env 可见，键名白名单固定）；shared 模式不注入（D-15 收窄语义不变）
+
+**Plans**: TBD
+
+含：pcSupervisor 单例（hubCond 等 `(pcExitReq||exiting) && active==0`，termOnce/terminate 单点收口——「exitf 唯一收口」per-client 同构映射）、healthz/metrics 四个 OQ 逐项裁决落地（规划期确认门）、metricsSeries17 镜像扩展 + 零身份 label 红线扩到新 series。
+
+### Phase 15: 双模式验证矩阵、标定与 herdr UAT
+
+**Goal**: 双模式零回归双证据收口；herdr/tmux driving scenario 端到端恢复正确行为；并发进程资源标定与双模式文档义务落地
+**Depends on**: Phase 13, Phase 14
+**Requirements**: PC-12, PC-13
+**Success Criteria** (what must be TRUE):
+
+  1. -race 双模式全量 Go 测试 CI 全绿（mode-agnostic 同断言 / mode-mapped 断言分叉表 / mode-exclusive 不装配三维归类落地）；phase02-09 既有协议 UAT 以默认 shared 模式零修改重跑全过（零回归双证据）
+  2. 协议层 UAT（Linux 开发机，web/uat/phaseNN.mjs 模式）断言 per-client 全链：双端双 pid、EXIT 不串台、resize 隔离、ro 门控、--once 退 255、spawn 失败 1011
+  3. herdr（或 tmux）下 per-client 模式多客户端 attach：移动端小屏 attach 后桌面端面板尺寸不再被压缩（herdr is_foreground + per-client area 仲裁恢复生效）；Windows 工作站 Playwright 全链观感断言通过
+  4. 并发进程负载矩阵（1/4/16/32 会话）实测内存/fd/goroutine/吞吐有界，数据回填 maxClients 默认建议值与 README 资源义务段
+  5. README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 经多路复用汇聚）；v1.0「GoTTY 式共享进程模型」误记已修正（GoTTY 实为 per-connection spawn，源码已核实）
+
+**Plans**: TBD
+
+**Research flag**: 32 会话资源曲线为账面推算（唯一 MEDIUM 置信面），负载矩阵实测回填；herdr 端到端断言设计依赖外部子程序行为，需实测标定——建议 `/gsd-plan-phase --research-phase 15`。测试拓扑遵循双机分工（CODEBUDDY.md）：协议层 UAT 在 Linux 开发机（headless，禁浏览器），Playwright 浏览器全链在 Windows 工作站（经 TCP 转发器 kill/restore 模拟断网）。
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9
+Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 → 12 → 13 → 14 → 15（v1.1；13/14 互不依赖可并行，建议 13 先行——churn 防护缺失会使 15 压测失真）
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. 行走骨架（核心 PTY 管道） | 5/5 | Complete    | 2026-08-14 |
-| 2. 协议基线 | 6/6 | Complete    | 2026-08-15 |
-| 3. 认证与传输安全 | 7/7 | Complete    | 2026-08-18 |
-| 4. 前端体验 | 6/6 | Complete    | 2026-08-19 |
-| 5. 多客户端共享 | 13/13 | Complete    | 2026-08-22 |
-| 6. 会话生命周期与重连 | 7/7 | Complete    | 2026-08-24 |
-| 7. 部署与配置 | 10/10 | Complete    | 2026-08-27 |
-| 8. 可观测性 | 6/6 | Complete    | 2026-08-28 |
-| 9. 发布与打磨 | 10/10 | Complete    | 2026-08-31 |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. 行走骨架（核心 PTY 管道） | v1.0 | 5/5 | Complete | 2026-08-14 |
+| 2. 协议基线 | v1.0 | 6/6 | Complete | 2026-08-15 |
+| 3. 认证与传输安全 | v1.0 | 7/7 | Complete | 2026-08-18 |
+| 4. 前端体验 | v1.0 | 6/6 | Complete | 2026-08-19 |
+| 5. 多客户端共享 | v1.0 | 13/13 | Complete | 2026-08-22 |
+| 6. 会话生命周期与重连 | v1.0 | 7/7 | Complete | 2026-08-24 |
+| 7. 部署与配置 | v1.0 | 10/10 | Complete | 2026-08-27 |
+| 8. 可观测性 | v1.0 | 6/6 | Complete | 2026-08-28 |
+| 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
+| 10. 模式装配与接缝 | v1.1 | 0/? | Not started | - |
+| 11. per-client 生命周期主干 | v1.1 | 0/? | Not started | - |
+| 12. per-client 交互与背压语义 | v1.1 | 0/? | Not started | - |
+| 13. 资源与容量防线 | v1.1 | 0/? | Not started | - |
+| 14. 终结语义与观测面适配 | v1.1 | 0/? | Not started | - |
+| 15. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |

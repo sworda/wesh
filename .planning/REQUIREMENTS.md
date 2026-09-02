@@ -188,29 +188,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-09 | Phase 7 | Complete |
 | OPS-10 | Phase 9 | Complete |
 | OPS-11 | Phase 7 | Complete |
-| PC-01 | — | Pending roadmap |
-| PC-02 | — | Pending roadmap |
-| PC-03 | — | Pending roadmap |
-| PC-04 | — | Pending roadmap |
-| PC-05 | — | Pending roadmap |
-| PC-06 | — | Pending roadmap |
-| PC-07 | — | Pending roadmap |
-| PC-08 | — | Pending roadmap |
-| PC-09 | — | Pending roadmap |
-| PC-10 | — | Pending roadmap |
-| PC-11 | — | Pending roadmap |
-| PC-12 | — | Pending roadmap |
-| PC-13 | — | Pending roadmap |
-| SEC-09 | — | Pending roadmap |
-| OPS-12 | — | Pending roadmap |
+| PC-01 | Phase 10 | Pending |
+| PC-02 | Phase 11 | Pending |
+| PC-03 | Phase 11 | Pending |
+| PC-04 | Phase 11 | Pending |
+| PC-05 | Phase 12 | Pending |
+| PC-06 | Phase 12 | Pending |
+| PC-07 | Phase 12 | Pending |
+| PC-08 | Phase 13 | Pending |
+| PC-09 | Phase 14 | Pending |
+| PC-10 | Phase 12 | Pending |
+| PC-11 | Phase 12 | Pending |
+| PC-12 | Phase 15 | Pending |
+| PC-13 | Phase 15 | Pending |
+| SEC-09 | Phase 14 | Pending |
+| OPS-12 | Phase 14 | Pending |
 
 **Coverage:**
 
 - v1 requirements: 44 total（原写 42，按实际条目数修正：CORE 6 + FE 7 + SESS 3 + MULTI 5 + SEC 8 + RES 4 + OPS 11）— 全部 Complete
 - v1.1 requirements: 15 total（PC 13 + SEC 1 + OPS 1）
-- Mapped to phases: 44 (v1) + 0 (v1.1 pending roadmap)
-- Unmapped: 15（待 v1.1 roadmap 填充）
+- Mapped to phases: 44 (v1) + 15 (v1.1)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-09-02 — milestone v1.1（per-client 会话模式）需求定义：PC-01..13 + SEC-09 + OPS-12 共 15 条；Out of Scope 增补 v1.1 反特性五条（reattach/linger/运行期切模式/默认 per-client/ro 共享进程）*
+*Last updated: 2026-09-02 — v1.1 roadmap 落地：15 条需求全量映射 Phase 10-15（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12；PC-08→13；PC-09/SEC-09/OPS-12→14；PC-12/13→15），覆盖 15/15 无孤儿*
