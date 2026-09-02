@@ -977,6 +977,31 @@ func validateStartup(cfg config) (warn string, err error) {
 	if cfg.writePolicySet && !cfg.writable {
 		return "", errors.New("--write-policy is set but --writable is not; write policy only applies when client input is enabled")
 	}
+	// D-01/D-02 组合 warn（10-02，放行但 stderr 醒目警告——静默永不接受，
+	// ROADMAP 锁定）：writePolicySet 显式设置位（owner|all 任一，CLI/TOML
+	// 双源经 07-06 显式位机制同档置位）× sessionMode=per-client → owner/all
+	// 仲裁与递补语义在 per-client 下不装配（ro/rw 权限级别仍按 ticket 生效
+	// ——D-01 否决 exit 2 的理据），警告行含双 flag 名。锚定模式终值而非
+	// sessionModeSet——终值判定即双源覆盖。本 warn 在 socket/loopback 早退
+	// 也可达（纯配置语义与 bind 安全形态无关），故以累积变量 + 各透出点
+	// 拼接落地（合并形态保证下方既有非 loopback 安全警告不被遮蔽——两类
+	// 文案均达 stderr，安全警告在前显著性优先；既有 warn 文案逐字未动）。
+	var modeWarns []string
+	if cfg.writePolicySet && cfg.sessionMode == server.SessionModePerClient {
+		modeWarns = append(modeWarns, "wesh: warning: --write-policy has no effect with --session-mode=per-client; owner/all arbitration and succession are not assembled in per-client mode (ro/rw permission levels still apply per ticket)")
+	}
+	// mergeWarn 把累积 modeWarns 拼到各透出点：sec 为既有安全警告原文
+	//（在前，显著性优先）；sec 为空（socket/loopback/最强形态早退）时透出
+	// 累积 warn；两者皆空返回 ""（零漂移——strings.Join(nil) == ""）。
+	mergeWarn := func(sec string) string {
+		if sec == "" {
+			return strings.Join(modeWarns, "\n")
+		}
+		if len(modeWarns) == 0 {
+			return sec
+		}
+		return sec + "\n" + strings.Join(modeWarns, "\n")
+	}
 	// D-12 组合校验（配置矛盾 fail-fast，write-policy 行同位——纯配置矛盾与
 	// bind 安全形态无关，loopback 早退之前判定）：--once 与显式矛盾值同给即拒，
 	// 双 flag 名进文案。判定锚定显式设置位而非展开后终值（review #3 吸收——
@@ -1005,6 +1030,19 @@ func validateStartup(cfg config) (warn string, err error) {
 	if cfg.cwd != "" {
 		if fi, serr := os.Stat(cfg.cwd); serr != nil || !fi.IsDir() {
 			return "", fmt.Errorf("invalid --cwd %q: not an existing directory", cfg.cwd)
+		}
+	}
+	// SC4 预检（10-02，--cwd 行同位——纯配置有效性与 bind 安全形态无关，
+	// loopback 早退之前判定；exec.LookPath 为 PATH 只读解析，零资源占用，
+	// 纯函数纪律内——os.Stat 只读探测先例）：per-client 把 spawn 推迟到首个
+	// 客户端 attach（Phase 11），命令缺失若不在启动期暴露则推迟为 attach 期
+	// 故障——启动期 fail-fast 是其结构性补偿。仅 per-client × argv0 非空
+	// 触发：shared（含零值模式）与 argv0 空串不预检——shared 启动行为零漂移
+	//（spawn 失败仍走 pty.Start exit 1 现状通道）。命令名非敏感可 %q 回显
+	//（--cwd 路径回显先例，非 SEC-01 面）。
+	if cfg.sessionMode == server.SessionModePerClient && cfg.argv0 != "" {
+		if _, lerr := exec.LookPath(cfg.argv0); lerr != nil {
+			return "", fmt.Errorf("invalid command %q: not found in PATH (per-client startup preflight)", cfg.argv0)
 		}
 	}
 	// D-07 预检（09-04，--cwd 行同位——纯配置有效性与 bind 安全形态无关，
@@ -1069,10 +1107,10 @@ func validateStartup(cfg config) (warn string, err error) {
 	// 文件系统权限即认证边界，--socket-mode/--socket-owner 就是访问控制，
 	// loopback 早退同款信任档位；流量不出机，有无凭据/TLS 均放行免警告。
 	if cfg.socket != "" {
-		return "", nil
+		return mergeWarn(""), nil
 	}
 	if isLoopbackBind(cfg.bind) {
-		return "", nil // loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05）
+		return mergeWarn(""), nil // loopback：流量不出机，有无凭据/TLS 均放行免警告（D-03/D-05）
 	}
 	if len(cfg.credentials) == 0 {
 		if !cfg.noAuth {
@@ -1085,17 +1123,17 @@ func validateStartup(cfg config) (warn string, err error) {
 		// 矩阵已跳过（上方 D-11 早退），同行跳过本警告——unix socket 信任边界
 		// 同 D-11 逻辑。无凭据裸奔语义（--no-auth）随同行保持不丢。
 		if cfg.authHeader != "" {
-			return "wesh: warning: listening on non-loopback address with NO authentication (--no-auth) and --auth-header enabled; anyone who can reach this port gets a terminal, and directly connecting clients can forge the auth header — ensure wesh is not directly exposed (front it with a reverse proxy that sets the header)", nil
+			return mergeWarn("wesh: warning: listening on non-loopback address with NO authentication (--no-auth) and --auth-header enabled; anyone who can reach this port gets a terminal, and directly connecting clients can forge the auth header — ensure wesh is not directly exposed (front it with a reverse proxy that sets the header)"), nil
 		}
-		return "wesh: warning: listening on non-loopback address with NO authentication (--no-auth); anyone who can reach this port gets a terminal", nil
+		return mergeWarn("wesh: warning: listening on non-loopback address with NO authentication (--no-auth); anyone who can reach this port gets a terminal"), nil
 	}
 	if cfg.tlsCert == "" {
 		if !cfg.insecureHTTP {
 			return "", errors.New("refusing to serve credentials over plaintext HTTP on non-loopback address; pass --insecure-http or provide --tls-cert/--tls-key") // D-05
 		}
-		return "wesh: warning: serving credentials over plaintext HTTP on non-loopback address (--insecure-http); prefer --tls-cert/--tls-key or a TLS-terminating reverse proxy", nil
+		return mergeWarn("wesh: warning: serving credentials over plaintext HTTP on non-loopback address (--insecure-http); prefer --tls-cert/--tls-key or a TLS-terminating reverse proxy"), nil
 	}
-	return "", nil // 非 loopback + 凭据 + TLS：最强形态免警告
+	return mergeWarn(""), nil // 非 loopback + 凭据 + TLS：最强形态免警告
 }
 
 // listenSocket 是 --socket 形态的 unix socket listen 序列（D-08/D-09/D-10；

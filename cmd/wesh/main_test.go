@@ -794,6 +794,25 @@ func TestStartupMatrix(t *testing.T) {
 		// 0 字节「合法」data → 空白页静默伺服；>2GiB 硬顶拒绝（与 ≤0 行同位
 		// fail-fast）。
 		{"index-max-size over 2GiB cap refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: math.MaxInt64}, "invalid index-max-size", "exceeds 2GiB cap", ""},
+		// 10-02 D-01/D-02 组合 warn：writePolicySet 显式设置位（owner|all 任一，
+		// CLI/TOML 双源同档）× sessionMode=per-client → 放行但警告（静默永不
+		// 接受），双 flag 名进文案（下两行成对锁定）；未显式 write-policy 的
+		// per-client 与显式 write-policy 的 shared 均不触发（零漂移两形态）。
+		// writable: true 基值避开 write-policy×writable fail-fast 维度（bind
+		// 127.0.0.1 隔离其他校验维度同上）。
+		{"write-policy owner x per-client warns (D-01/D-02)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "owner", writePolicySet: true, sessionMode: server.SessionModePerClient}, "", "", "--write-policy"},
+		{"write-policy all x per-client warns (D-02 same tier)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModePerClient}, "", "", "--session-mode"},
+		{"per-client without explicit write-policy silent", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, sessionMode: server.SessionModePerClient}, "", "", ""},
+		{"write-policy x shared no new warn", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModeShared}, "", "", ""},
+		// 10-02 SC4 预检：per-client × argv0 不可执行 → 启动期 fail-fast
+		//（spawn 推迟到 attach 的结构性补偿，命令缺失不推迟为 attach 期故障）；
+		// 文案含命令名 %q 回显（非敏感豁免面）与 not found 语义（两行分锁）。
+		// per-client × 可执行命令放行；shared × 不可执行命令不预检（sessionMode
+		// 零值行——spawn 失败仍走 pty.Start exit 1 现状通道，零漂移）。
+		{"per-client missing command refused (SC4)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "wesh-no-such-cmd-7f3a"}, "not found in PATH", "", ""},
+		{"per-client missing command refusal echoes name", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "wesh-no-such-cmd-7f3a"}, "wesh-no-such-cmd-7f3a", "", ""},
+		{"per-client existing command allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "sh"}, "", "", ""},
+		{"shared missing command no preflight (zero drift)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, argv0: "wesh-no-such-cmd-7f3a"}, "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -833,6 +852,35 @@ func TestStartupMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateStartupWarnMerge（10-02 D-01/D-16 合并形态锁，TestClientOptionError
+// 分函数先例——组合面与主矩阵断言形态不同，独立小函数）：组合 warn 与既有非
+// loopback 安全警告同现时两类文案均达 stderr（合并拼接不遮蔽，T-10-02d）——
+// 非 loopback 形态 warn 同时含 --no-auth（既有安全警告逐字未动的在场合证据）与
+// --write-policy/--session-mode（新 warn 未吞）；socket 形态（D-11 bind 矩阵
+// 早退）同样透出累积 warn（早退不吞）。
+func TestValidateStartupWarnMerge(t *testing.T) {
+	t.Run("non-loopback merge keeps both warnings", func(t *testing.T) {
+		warn, err := validateStartup(config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, noAuth: true, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModePerClient})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil（warn 明示放行的 D-01 语义）", err)
+		}
+		for _, sub := range []string{"--no-auth", "--write-policy", "--session-mode"} {
+			if !strings.Contains(warn, sub) {
+				t.Errorf("warn = %q, want containing %q（合并不遮蔽）", warn, sub)
+			}
+		}
+	})
+	t.Run("socket early return passes accumulated warn through", func(t *testing.T) {
+		warn, err := validateStartup(config{socket: "/run/wesh.sock", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModePerClient})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil", err)
+		}
+		if !strings.Contains(warn, "--write-policy") {
+			t.Errorf("warn = %q, want containing %q（socket 早退透出锁）", warn, "--write-policy")
+		}
+	})
 }
 
 // TestLoadCustomIndex（09-04 D-07/D-08 启动读入矩阵）：不可读拒绝（chmod 000
