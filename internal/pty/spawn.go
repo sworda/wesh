@@ -61,7 +61,19 @@ type StartOptions struct {
 // Start 以 exec 数组形式 spawn argv（绝不经 shell，D-02/D-15），替换式注入 env
 // 白名单（SEC-06），初始尺寸 80x24（SpawnCols×SpawnRows；首个客户端 RESIZE 到达
 // 即纠正，PITFALLS C10 首帧窗口可接受）。可配面见 StartOptions（07-04 选项化）。
+//
+// 10-01：Start 缩为 StartWithSize 的单行委托——80×24 字面量零第二副本
+//（SpawnCols/SpawnRows 单一事实源纪律，上方 :34-41 注释预言的形态）。
 func Start(argv []string, opts StartOptions) (*Session, error) {
+	return StartWithSize(argv, opts, SpawnCols, SpawnRows)
+}
+
+// StartWithSize 承载 Start 的全部逻辑 + 初始尺寸参数化（10-01 PC-01 导出——
+// Phase 11 attach 期 per-client spawn 的消费点，经 server.Options.SpawnFunc
+// 闭包挂接）。调用方契约：cols/rows 为已钳制尺寸——ClampDim [1,1000] 钳制归
+// Phase 12 调用侧（Hello 尺寸登记路径），本函数不做二次钳制；uint16 转换在
+// creack/pty 边界（Winsize 字段类型）。
+func StartWithSize(argv []string, opts StartOptions, cols, rows int) (*Session, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("pty: empty argv")
 	}
@@ -85,7 +97,7 @@ func Start(argv []string, opts StartOptions) (*Session, error) {
 		// 附加组零提权面。
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(opts.Uid), Gid: uint32(opts.Gid), NoSetGroups: os.Geteuid() != 0}}
 	}
-	master, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: SpawnRows, Cols: SpawnCols})
+	master, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 	if err != nil {
 		// creack/pty 失败路径只关自己打开的 fd（Pitfall 1，实测 fd 0/1/2 完好）；
 		// 本包遵守"只关成功打开且登记在册的 fd"纪律。

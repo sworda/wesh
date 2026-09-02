@@ -76,6 +76,20 @@ const (
 	WritePolicyAll   = "all"
 )
 
+// SessionMode 取值（10-01 PC-01 公开 CLI 契约——--session-mode=shared|per-client，
+// 全名无短选项 P2 D-15；main.go parse 期枚举校验与 server Options 消费共用同一
+// 对常量，防双写漂移）：
+// shared = 全部客户端共享同一 PTY 会话（默认——REQUIREMENTS 反特性 A5：默认
+// 永不翻转为 per-client）；
+// per-client = 每客户端独立 PTY 子进程（v1.1 里程碑装配中——10-01 全部接缝
+// inert，当前版本行为与 shared 等价，10-CONTEXT D-05 注记；生命周期/交互语义
+// 归 Phase 11-14）。
+const (
+	SessionModeShared = "shared" // 默认（REQUIREMENTS 反特性 A5）
+	// per-client：生命周期/交互语义归 Phase 11-14 装配（当前与 shared 等价）。
+	SessionModePerClient = "per-client"
+)
+
 // client 是一个已注册 WS 客户端的全部服务端状态。writer goroutine 是该连接全程
 // 唯一 WS 写端（pinger 的控制帧经库 writeFrameMu 与数据写串行化，既有 02-04 纪律）。
 type client struct {

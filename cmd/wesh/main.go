@@ -87,6 +87,10 @@ type config struct {
 	// Phase 9 自定义首页（09-04 OPS-03，D-07/D-08 one-way 公开契约，P2 D-15 同纪律）：
 	index        string // D-07：--index 自定义首页路径（空串 = 未配置内建页现状；启动一次读入内存，运行期零磁盘依赖，改文件需重启生效）
 	indexMaxSize int    // D-08：自定义首页读入上限（字节，默认 16MiB；TOML 纯配置键 index-max-size 可调——无 CLI flag，P7 D-03 纪律的明示例外）
+	// Phase 10 会话模式（10-01 PC-01，one-way 公开契约，P2 D-15 同纪律）：
+	sessionMode    string // --session-mode=shared|per-client（默认 shared——REQUIREMENTS 反特性 A5；per-client 装配中，当前版本与 shared 等价，10-CONTEXT D-05）
+	sessionModeSet bool   // --session-mode 是否被显式设置（parseArgs 经 fs.Visit 填充；D-02 双源机制采集备用，write-policy×per-client warn 锚定归 10-02 消费）
+	argv0          string // argv[0] 落定副本（validateStartup per-client LookPath 预检数据源，10-02 消费）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -137,7 +141,7 @@ func (v *exitEmptyValue) Set(s string) error {
 	return nil
 }
 
-// parseArgs 解析 flags。全名无短选项（P2 D-15），共 31 个：
+// parseArgs 解析 flags。全名无短选项（P2 D-15），共 32 个：
 // Phase 1/2：--port/--bind/--version/--writable（D-15）/--ping-interval（D-16）；
 // Phase 3：--credential（D-01 可重复）、--tls-cert/--tls-key（D-04 成对）、
 // --no-auth（D-03 逃生门）、--insecure-http（D-05 逃生门）、--origin（D-12 可重复）；
@@ -161,15 +165,20 @@ func (v *exitEmptyValue) Set(s string) error {
 // 零隐式默认路径搜索，裸启动行为零漂移）；
 // Phase 9：--index（09-04 D-07 自定义首页整页替换，ttyd -i 同款——启动一次
 // 读入；stat 级预检与读入校验归 validateStartup/loadCustomIndex，index-max-size
-// 纯配置键无 flag——D-08）。
+// 纯配置键无 flag——D-08）；
+// Phase 10：--session-mode（10-01 PC-01，shared|per-client 默认 shared
+//——REQUIREMENTS 反特性 A5；parse 期枚举校验 D-04 文案；per-client 装配中，
+// 当前版本行为与 shared 等价——10-CONTEXT D-05 注记）。
 // 配置文件两阶段合并（07-06 OPS-09，D-01..D-07，07-RESEARCH Pattern 4）：
 // prescanConfigPath 预扫 --config 路径 → loadFileConfig 严格加载铺底（文件级
 // 错误 exit 2 现状通道，D-06；D-07 权限警告加载期 stderr 打印）→ fileConfig
 // 标量键换算为 flag 注册默认值（CLI 未给自然落配置值、CLI 给则覆盖；内置
 // 默认仅在配置键缺席时出现——flag > 配置 > 默认两档由默认值替换机制天然
 // 成立）→ fs.Parse → fs.Visit 显式位 → 配置键存在即「已给定」补置
-// portSet/bindSet/socketModeSet/socketOwnerSet/writePolicySet（socket 族
-// 互斥/单给与 write-policy×writable 矩阵对配置来源值同档生效）→ 配置
+// portSet/bindSet/socketModeSet/socketOwnerSet/writePolicySet/sessionModeSet
+// （socket 族
+// 互斥/单给与 write-policy×writable 矩阵对配置来源值同档生效；sessionModeSet
+// 为 D-02 双源采集位，本阶段备用、消费归 10-02）→ 配置
 // exit-when-empty（exitEmptyValue.Set 单一解析路径，OQ4；在 --once 展开之前
 // 应用——配置不算显式，展开覆盖配置值）→ 列表合并（credential/origin/
 // client-option：CLI 给出则替换整个列表，D-02；CLI 未给则 env 夹层先行、
@@ -216,6 +225,7 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	writableDefault := false
 	pingIntervalDefault := 5 * time.Second
 	writePolicyDefault := server.WritePolicyOwner
+	sessionModeDefault := server.SessionModeShared
 	maxClientsDefault := 32
 	onceDefault := false
 	osc52Default := false
@@ -256,6 +266,9 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		}
 		if fc.WritePolicy != nil {
 			writePolicyDefault = *fc.WritePolicy
+		}
+		if fc.SessionMode != nil {
+			sessionModeDefault = *fc.SessionMode
 		}
 		if fc.MaxClients != nil {
 			maxClientsDefault = *fc.MaxClients
@@ -332,6 +345,12 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// validateStartup）。parse 期枚举校验在 Parse 返回处（值非敏感，直接 return
 	// error 即可——client-option 的记录式上报仅用于值含敏感内容的场景）。
 	fs.StringVar(&cfg.writePolicy, "write-policy", writePolicyDefault, "write policy when --writable is on: owner|all (default owner)")
+	// 10-01 PC-01：会话模式（one-way 公开契约，P2 D-15 同纪律）——shared 为
+	// 内置默认（REQUIREMENTS 反特性 A5：默认永不翻转）；per-client 装配中，
+	// 当前版本行为与 shared 等价（10-CONTEXT D-05 注记随 help 文案同 PR——
+	// 防用户开了发现无新行为误以为 bug）。parse 期枚举校验在 Parse 返回处
+	//（write-policy 同位先例——值非敏感，直接 return error 即可）。
+	fs.StringVar(&cfg.sessionMode, "session-mode", sessionModeDefault, "session mode: shared|per-client (default shared; per-client is being assembled and currently behaves as shared)")
 	// D-08：最大并发客户端数（one-way 公开契约——容量策略是部署关切开 flag，
 	// 与 P2 D-10 攻击面上限常量不同类）。默认 32（ARCHITECTURE §6『10–100 连接
 	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小），Phase 9 负载
@@ -505,6 +524,11 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		if f.Name == "write-policy" {
 			cfg.writePolicySet = true
 		}
+		// 10-01 PC-01：--session-mode 显式设置位（D-02 双源机制——本阶段采集
+		// 备用，write-policy×per-client warn 锚定消费归 10-02）。
+		if f.Name == "session-mode" {
+			cfg.sessionModeSet = true
+		}
 		// D-12/D-14：--once 展开与 validateStartup 冲突校验消费的显式设置判定
 		//（write-policy 同款形态——Visit 只遍历已设置 flag）。
 		if f.Name == "max-clients" {
@@ -530,10 +554,12 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	})
 	// D-08/D-09 + write-policy 配置来源显式位（07-06 合并收尾第一档）：配置键
 	// 存在即「已给定」——fc.Port/fc.Bind/fc.SocketMode/fc.SocketOwner/
-	// fc.WritePolicy 非 nil 即置对应显式位，07-02 落地的互斥/单给校验矩阵与
+	// fc.WritePolicy/fc.SessionMode 非 nil 即置对应显式位，07-02 落地的
+	// 互斥/单给校验矩阵与
 	// write-policy×writable 组合校验对配置驱动与 CLI 驱动同档生效（不置位
 	// 则配置同时写 socket+port 或单写 socket-mode 会静默绕过 D-08/D-09
-	// fail-fast；write-policy 扩展同款模式）。
+	// fail-fast；write-policy 扩展同款模式；session-mode 置位为 D-02 双源
+	// 采集位，消费归 10-02）。
 	if fc != nil {
 		if fc.Port != nil {
 			cfg.portSet = true
@@ -549,6 +575,9 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		}
 		if fc.WritePolicy != nil {
 			cfg.writePolicySet = true
+		}
+		if fc.SessionMode != nil {
+			cfg.sessionModeSet = true
 		}
 	}
 	// 配置内部矛盾检测（07-review WR-02，D-06 严格模式哲学）：fc.Once 为真时
@@ -617,6 +646,15 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 该形态仅用于值含敏感内容的 --client-option）。
 	if cfg.writePolicy != server.WritePolicyOwner && cfg.writePolicy != server.WritePolicyAll {
 		return cfg, nil, fmt.Errorf("invalid --write-policy %q: must be owner or all", cfg.writePolicy)
+	}
+	// 10-01 PC-01：--session-mode parse 期枚举校验（插入点同 write-policy
+	// 先例——showVersion 早退之后；D-04 定案文案回显值——枚举值非敏感豁免
+	// 面，凭据/token/文件内容红线保持；精确匹配两枚举常量，绝不宽容归一
+	// 大小写/空白近形值——输入与生效模式分叉是配置漂移隐蔽源）。TOML 源
+	// 非法值经默认值替换机制落 cfg.sessionMode 同一终值——一闸双覆盖
+	//（pingInterval 负值闸注释同款机制）。
+	if cfg.sessionMode != server.SessionModeShared && cfg.sessionMode != server.SessionModePerClient {
+		return cfg, nil, fmt.Errorf("invalid --session-mode %q: must be shared or per-client", cfg.sessionMode)
 	}
 	// D-18 安全闸（07-review CR-03，SEC-01 值剥离红线族）：--auth-header
 	// 凭据载体头名拒绝——配置即裸信任该头（D-16），其值逐 attach 事件进
@@ -801,6 +839,9 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	if len(argv) == 0 {
 		return cfg, nil, errors.New("missing command")
 	}
+	// 10-01 PC-01：argv0 落定副本（CLI/配置 command 两源汇合后的最终
+	// argv[0]——validateStartup per-client LookPath 预检数据源，10-02 消费）。
+	cfg.argv0 = argv[0]
 	return cfg, argv, nil
 }
 
@@ -1205,6 +1246,24 @@ func run(args []string) int {
 			return 2
 		}
 	}
+	// 10-01 PC-01 装配期一次分岔：per-client 模式装配 SpawnFunc 闭包（捕获
+	// argv+StartOptions，函数体为 pty.StartWithSize 直通——Phase 11 attach 期
+	// spawn 的装配挂点，本阶段零调用方 inert，T-10-01c；闭包内 StartOptions
+	// 字面量与下方 pty.Start 内联字面量为 Phase 11 重写前的临时重复形态，
+	// 切换 sess=nil + attach 期 spawn 时收编）。shared 模式 spawnFunc 保持
+	// 零值 nil（ValidateOptions 互斥契约锚定）。
+	// planner 裁定（10-01-PLAN Task 1 ⑥，executor 不得回改）：两模式本阶段
+	// 均经启动期 pty.Start 创建 sess——PATTERNS §3「sess = nil」建议与 New
+	// 体 server.go session_start emit 的 sess.Cmd.Process.Pid 取引用冲突
+	//（nil 即 panic），且违反 D-05「与 shared 等价」注记与全部 inert 约束；
+	// sess=nil 形态归 Phase 11 生命周期主干。
+	var spawnFunc func(cols, rows int) (*pty.Session, error)
+	if cfg.sessionMode == server.SessionModePerClient {
+		startOpts := pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid}
+		spawnFunc = func(cols, rows int) (*pty.Session, error) {
+			return pty.StartWithSize(argv, startOpts, cols, rows)
+		}
+	}
 	// D-21/D-24 接线（07-04）：--cwd/--term 落 StartOptions Dir/Term；--uid/--gid
 	// 落 Uid/Gid（-1 哨兵 = 不降权，Task 3 完成 flag 注册与成对校验）。
 	sess, err := pty.Start(argv, pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid})
@@ -1239,7 +1298,17 @@ func run(args []string) int {
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。
-	srv := server.New(sess, os.Exit, server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version, CustomIndex: customIndex})
+	// 10-01 PC-01：字面量尾部只追加 SessionMode/SpawnFunc 两键（既有键序
+	// 不重排——shared 路径逐字节零回归）；提取为命名 opts 供 New 前
+	// ValidateOptions 装配契约校验。
+	opts := server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version, CustomIndex: customIndex, SessionMode: cfg.sessionMode, SpawnFunc: spawnFunc}
+	// 10-01 PC-01：装配契约 fail-fast——ValidateOptions 在 New 之前（包级
+	// 校验 option (b) 定案；失败经 validateStartup 同款 exit 2 通道形态）。
+	if verr := server.ValidateOptions(opts); verr != nil {
+		fmt.Fprintf(os.Stderr, "wesh: %v\n", verr)
+		return 2
+	}
+	srv := server.New(sess, os.Exit, opts)
 	// shareURLRO/shareURLRW 拼串单一事实源（07-01 D-14 既定注释）：启动打印与
 	// 07-05 --open 两消费点共用（两消费点不得各自重拼）；socket 分支保持零值
 	// 空串（该形态 --open 已被 validateStartup 拒绝，下方消费点结构性不可达）。
