@@ -39,6 +39,9 @@ import (
 // --socket-owner parse 期解析为 self 数字对；非法 mode/owner 拒绝断言同在错误表）；
 // D-21 --cwd/--term（原样入 cfg；--term="" 空串值按未配置处理；--cwd stat 预检
 // 归 TestStartupMatrix）。
+// Phase 10：PC-01 --session-mode（shared|per-client 原样解析；默认 shared 由
+// 零值语义统一断言；非法枚举值拒绝断言在 TestTLSKeyPairError 错误表——parse
+// 期拒绝既定归属）。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
@@ -114,6 +117,10 @@ func TestParseArgs(t *testing.T) {
 		// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
 		wantIndex string // D-07：--index 自定义首页路径原样入 cfg
 		wantArgv  []string
+		// P10：PC-01 --session-mode 断言位（零值 = 期望默认 shared——D-03
+		// 内置默认，wantWritePolicy 零值语义同款，既存行经此扩展零值断言
+		// 覆盖，命名字段扩展纪律 03-04 先例）。
+		wantSessionMode string // PC-01：--session-mode 原样入 cfg
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -185,6 +192,10 @@ func TestParseArgs(t *testing.T) {
 		// validateStartup/loadCustomIndex，TestStartupMatrix 与 TestLoadCustomIndex
 		// 锁定）；默认空串由零值语义统一断言。
 		{name: "index flag", args: []string{"--index", "/tmp/custom.html", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantIndex: "/tmp/custom.html", wantArgv: []string{"bash"}},
+		// 10-01 PC-01：--session-mode 显式传值原样解析（默认值由零值语义统一
+		// 断言 = shared——含全部既存行）。
+		{name: "session-mode per-client", args: []string{"--session-mode", "per-client", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSessionMode: "per-client", wantArgv: []string{"bash"}},
+		{name: "session-mode shared explicit", args: []string{"--session-mode", "shared", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSessionMode: "shared", wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -342,6 +353,15 @@ func TestParseArgs(t *testing.T) {
 			if cfg.indexMaxSize != 16*1024*1024 {
 				t.Errorf("indexMaxSize = %d, want %d (默认 16MiB，D-08 纯配置键无 CLI flag)", cfg.indexMaxSize, 16*1024*1024)
 			}
+			// 10-01 PC-01：零值 wantSessionMode = 期望默认 shared（wantWritePolicy
+			// 零值语义同款——含全部既存行；server 包常量单点防双写漂移）。
+			wantSessionMode := tt.wantSessionMode
+			if wantSessionMode == "" {
+				wantSessionMode = server.SessionModeShared
+			}
+			if cfg.sessionMode != wantSessionMode {
+				t.Errorf("sessionMode = %q, want %q", cfg.sessionMode, wantSessionMode)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -460,6 +480,11 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"auth-header proxy-authorization rejected", []string{"--auth-header", "Proxy-Authorization", "--", "bash"}, "invalid --auth-header", ""},
 		{"auth-header cookie rejected", []string{"--auth-header", "Cookie", "--", "bash"}, "invalid --auth-header", ""},
 		{"auth-header set-cookie rejected", []string{"--auth-header", "Set-Cookie", "--", "bash"}, "invalid --auth-header", ""},
+		// 10-01 PC-01：--session-mode 非法枚举值 parse 期拒绝（D-04 定案文案
+		// 回显口径的行为锁——wantSub 取全文，Contains 一次性锁定 flag 名/回显
+		// 值/枚举名单三要素；forbiddenSub 置空——枚举值非敏感豁免面，本行是
+		// 回显口径锁，不是值剥离面）。
+		{"malformed session-mode", []string{"--session-mode", "banana", "--", "bash"}, `invalid --session-mode "banana": must be shared or per-client`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
