@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1033,15 +1034,30 @@ func validateStartup(cfg config) (warn string, err error) {
 		}
 	}
 	// SC4 预检（10-02，--cwd 行同位——纯配置有效性与 bind 安全形态无关，
-	// loopback 早退之前判定；exec.LookPath 为 PATH 只读解析，零资源占用，
+	// loopback 早退之前判定；exec.LookPath/os.Stat 为只读探测，零资源占用，
 	// 纯函数纪律内——os.Stat 只读探测先例）：per-client 把 spawn 推迟到首个
 	// 客户端 attach（Phase 11），命令缺失若不在启动期暴露则推迟为 attach 期
 	// 故障——启动期 fail-fast 是其结构性补偿。仅 per-client × argv0 非空
 	// 触发：shared（含零值模式）与 argv0 空串不预检——shared 启动行为零漂移
 	//（spawn 失败仍走 pty.Start exit 1 现状通道）。命令名非敏感可 %q 回显
 	//（--cwd 路径回显先例，非 SEC-01 面）。
+	// 10-review WR-01：预检与 spawn 语义对齐——argv0 含 '/' 时不经 PATH
+	// 解析（child 在 chdir(cfg.cwd) 之后 execve，相对路径按 --cwd 解析，
+	// spawn.go cmd.Dir 注释同款语义；LookPath 在服务端进程 cwd 下解析且对
+	// 相对 slash 路径返回 ErrDot，双向发散），改为 --cwd 感知的可执行 stat
+	// 探测（不存在/目录/无执行位同归「not executable」——带斜杠路径不经
+	// PATH，文案不再称 not found in PATH）；不含 '/' 才走 LookPath（PATH
+	// 解析与父子进程 cwd 无关，无 cwd 错位面）。
 	if cfg.sessionMode == server.SessionModePerClient && cfg.argv0 != "" {
-		if _, lerr := exec.LookPath(cfg.argv0); lerr != nil {
+		probe := cfg.argv0
+		if strings.ContainsRune(probe, '/') && cfg.cwd != "" && !filepath.IsAbs(probe) {
+			probe = filepath.Join(cfg.cwd, probe) // 与 child chdir 后 execve 的解析对齐
+		}
+		if strings.ContainsRune(probe, '/') {
+			if fi, serr := os.Stat(probe); serr != nil || fi.IsDir() || fi.Mode()&0o111 == 0 {
+				return "", fmt.Errorf("invalid command %q: not executable (per-client startup preflight)", cfg.argv0)
+			}
+		} else if _, lerr := exec.LookPath(probe); lerr != nil {
 			return "", fmt.Errorf("invalid command %q: not found in PATH (per-client startup preflight)", cfg.argv0)
 		}
 	}

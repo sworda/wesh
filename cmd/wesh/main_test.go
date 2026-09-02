@@ -696,6 +696,16 @@ func TestStartupMatrix(t *testing.T) {
 	if werr := os.WriteFile(indexOK, []byte("<!doctype html><title>ok</title>"), 0o600); werr != nil {
 		t.Fatalf("write index fixture: %v", werr)
 	}
+	// 10-review WR-01：per-client × --cwd × 相对路径 argv0 行的运行时材料——
+	// cwdCmdDir 内含可执行 run.sh（stat 探测放行分支需真实可执行文件）与无
+	// 执行位 noexec.sh（拒绝分支材料——存在但不可执行须同拒）。
+	cwdCmdDir := t.TempDir()
+	if werr := os.WriteFile(filepath.Join(cwdCmdDir, "run.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); werr != nil {
+		t.Fatalf("write cwd-cmd fixture: %v", werr)
+	}
+	if werr := os.WriteFile(filepath.Join(cwdCmdDir, "noexec.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o644); werr != nil {
+		t.Fatalf("write cwd-cmd noexec fixture: %v", werr)
+	}
 	tests := []struct {
 		name        string
 		cfg         config
@@ -813,6 +823,15 @@ func TestStartupMatrix(t *testing.T) {
 		{"per-client missing command refusal echoes name", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "wesh-no-such-cmd-7f3a"}, "wesh-no-such-cmd-7f3a", "", ""},
 		{"per-client existing command allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "sh"}, "", "", ""},
 		{"shared missing command no preflight (zero drift)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, argv0: "wesh-no-such-cmd-7f3a"}, "", "", ""},
+		// 10-review WR-01：SC4 预检与 spawn 语义对齐——argv0 含 '/' 时不经
+		// PATH 解析（child chdir(cfg.cwd) 后 execve 按 --cwd 解析相对路径），
+		// 改为 --cwd 感知的可执行 stat 探测：cwd 下可执行放行（shared 下合法
+		// 的「--cwd + 相对命令」部署形态不得被 per-client 预检结构性误拒——
+		// 修复前 LookPath 在服务端 cwd 下解析 exit 2 误拒）；cwd 下缺失与
+		// 无执行位同拒（误放反向锁——预检存在意义不推迟为 attach 期故障）。
+		{"per-client cwd-relative executable allowed (WR-01)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, cwd: cwdCmdDir, argv0: "./run.sh"}, "", "", ""},
+		{"per-client cwd-relative missing refused (WR-01)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, cwd: cwdCmdDir, argv0: "./no-such-cmd-7f3a.sh"}, "not executable", "", ""},
+		{"per-client cwd-relative non-executable refused (WR-01)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, cwd: cwdCmdDir, argv0: "./noexec.sh"}, "not executable", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
