@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/sworda/wesh/internal/server"
 )
 
 // writeToml 在 t.TempDir 落 TOML 配置文件并显式 Chmod 到目标权限
@@ -801,6 +803,31 @@ func TestConfigMerge(t *testing.T) {
 			t.Errorf("err = %q, want containing 键名", verr)
 		}
 	})
+	t.Run("session-mode scalar from config only", func(t *testing.T) {
+		// 10-03 PC-01：TOML session-mode 键铺底生效——fc.SessionMode 非 nil →
+		// 默认值换算；且 sessionModeSet 置位（D-02 显式位合并面证据——配置
+		// 来源与 CLI 同档，07-06 合并收尾先例）。
+		cfg, _, err := parseConfigArgs(t, "session-mode = \"per-client\"\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		if cfg.sessionMode != server.SessionModePerClient {
+			t.Errorf("sessionMode = %q, want %q (config 铺底)", cfg.sessionMode, server.SessionModePerClient)
+		}
+		if !cfg.sessionModeSet {
+			t.Error("sessionModeSet = false, want true（fc.SessionMode 非 nil 显式位置位，D-02 warn 锚定机制的配置来源同档）")
+		}
+	})
+	t.Run("session-mode CLI overrides config", func(t *testing.T) {
+		// 10-03 PC-01：flag > 配置——配置 per-client + flag shared → shared。
+		cfg, _, err := parseConfigArgs(t, "session-mode = \"per-client\"\n", []string{"--session-mode", "shared"}, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		if cfg.sessionMode != server.SessionModeShared {
+			t.Errorf("sessionMode = %q, want %q (flag > config)", cfg.sessionMode, server.SessionModeShared)
+		}
+	})
 }
 
 // TestConfigPrecedence（D-05 优先级链）：flag > env > 配置文件 > 内置默认。
@@ -853,6 +880,32 @@ func TestConfigPrecedence(t *testing.T) {
 		}
 		if cfg.port != 7681 || cfg.maxClients != 32 || cfg.pingInterval != 5*time.Second {
 			t.Errorf("port/maxClients/pingInterval = %d/%d/%v, want 7681/32/5s（配置键缺席才落内置默认）", cfg.port, cfg.maxClients, cfg.pingInterval)
+		}
+	})
+	t.Run("session-mode precedence chain", func(t *testing.T) {
+		// 10-03 PC-01（D-03 三层链合一——env 层真空成立不断言，无
+		// WESH_SESSION_MODE）：(a) flag > TOML；(b) TOML > 内置默认；
+		// (c) 键缺席 → 内置默认 shared 且显式位不置位。
+		cfg, _, err := parseConfigArgs(t, "session-mode = \"per-client\"\n", []string{"--session-mode", "shared"}, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs (a): %v", err)
+		}
+		if cfg.sessionMode != server.SessionModeShared {
+			t.Errorf("(a) flag > TOML：sessionMode = %q, want %q", cfg.sessionMode, server.SessionModeShared)
+		}
+		cfg, _, err = parseConfigArgs(t, "session-mode = \"per-client\"\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs (b): %v", err)
+		}
+		if cfg.sessionMode != server.SessionModePerClient {
+			t.Errorf("(b) TOML > 内置默认：sessionMode = %q, want %q", cfg.sessionMode, server.SessionModePerClient)
+		}
+		cfg, _, err = parseConfigArgs(t, "bind = \"127.0.0.1\"\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs (c): %v", err)
+		}
+		if cfg.sessionMode != server.SessionModeShared || cfg.sessionModeSet {
+			t.Errorf("(c) 键缺席内置默认：sessionMode/sessionModeSet = %q/%v, want shared/false（D-03 内置默认 + 显式位零值）", cfg.sessionMode, cfg.sessionModeSet)
 		}
 	})
 }
@@ -1037,6 +1090,43 @@ func TestConfigRedLines(t *testing.T) {
 		}
 		if !strings.Contains(out, "invalid config file") {
 			t.Errorf("stderr = %q, want configErr 包装文案", out)
+		}
+	})
+	t.Run("session_mode underscore key rejected as unknown", func(t *testing.T) {
+		// 10-03 PC-01（D-03 键名修正的行为锁）：TOML 平铺键 = flag 名连字符
+		// 形态——下划线 session_mode 按未知键结构性拒绝（DisallowUnknownFields，
+		// no-auth 逃生门键同通道先例）；键名入文案合法（键名非值）。
+		_, _, err := parseConfigArgs(t, "session_mode = \"shared\"\n", nil, "--", "bash")
+		if err == nil {
+			t.Fatal("parseArgs = nil error, want 未知键拒绝（D-06 严格模式）")
+		}
+		if !strings.Contains(err.Error(), "unknown keys") || !strings.Contains(err.Error(), "session_mode") {
+			t.Errorf("err = %q, want 未知键类别 + session_mode 键名", err)
+		}
+	})
+	t.Run("session-mode invalid enum from config, same gate as CLI", func(t *testing.T) {
+		// 10-03 PC-01（D-04 一闸双覆盖锁）：TOML 源非法枚举经默认值替换机制
+		// 落 cfg.sessionMode 同一终值，parseArgs 枚举闸单写口拒绝——与 CLI
+		// 同文案全文断言（零第二校验行的行为证据；枚举值回显为 D-04 非敏感
+		// 豁免面）。
+		_, _, err := parseConfigArgs(t, "session-mode = \"banana\"\n", nil, "--", "bash")
+		if err == nil {
+			t.Fatal("parseArgs = nil error, want 枚举闸拒绝")
+		}
+		if !strings.Contains(err.Error(), `invalid --session-mode "banana": must be shared or per-client`) {
+			t.Errorf("err = %q, want 与 CLI 同文案全文（一闸双覆盖）", err)
+		}
+	})
+	t.Run("session-mode non-string type rejected", func(t *testing.T) {
+		// 10-03 PC-01：类型不符经 go-toml DecodeError 的 invalid toml 分支拒绝
+		//（不经枚举闸）；断言语义限键名与类别（值非敏感不禁言，exit-when-empty
+		// bool 形态子测同纪律）。
+		_, _, err := parseConfigArgs(t, "session-mode = 1\n", nil, "--", "bash")
+		if err == nil {
+			t.Fatal("parseArgs = nil error, want 类型不符拒绝")
+		}
+		if !strings.Contains(err.Error(), "invalid toml") || !strings.Contains(err.Error(), `key "session-mode"`) {
+			t.Errorf("err = %q, want invalid toml 类别 + key \"session-mode\" 键名上下文", err)
 		}
 	})
 }
