@@ -24,6 +24,7 @@ import (
 	"golang.org/x/time/rate" // 钉版 v0.15.0 防版本漂移：rate API 自 2015 年签名稳定（rate.go:100-117），升级经 go.sum 审计链显式进行（review MEDIUM 处置）
 
 	"github.com/sworda/wesh/internal/proto"
+	"github.com/sworda/wesh/internal/pty"
 )
 
 // 多客户端五个测试可覆写参数的默认常量（R-01 初值；P2 D-10 常量纪律——一律常量
@@ -146,6 +147,19 @@ type client struct {
 	// hubMu，-race 防线；禁止 plain 字段跨 goroutine 传递）。pong_timeout 不再
 	// 单独打事件行，折入 detach reason=pong_timeout（code 1006）。
 	pongTimedOut bool
+
+	// 11-01（PC-02，Pattern 2 间接字段——读循环零分支的关键）：inQ 为输入
+	// 队列挂点，shared 升档赋 s.inputQ、per-client 升档赋 pc.inQ（server.go
+	// INPUT case 入队目标经本字段逐行不分支）。写一次于升档 client 构造
+	//（registerLocked 之前），此后只读——并发读写面与 remote/remoteUser
+	// 既有形态相同（全部读者在其后启动的 writer/pinger/读循环 goroutine 内，
+	// happens-before 由 goroutine 启动建立；plain 字段无锁安全，-race 全量
+	// 回归锁）。
+	inQ *inputQ
+	// 11-01（PC-02）：pc 为 per-client 会话绑定——shared 恒 nil（detach/kick
+	// 的 teardown 触发以 pc != nil 为门，perclient.go teardownPCLocked）。
+	// 写一次纪律与 inQ 同款（升档构造赋值，registerLocked 之前）。
+	pc *pcSession
 
 	// creditBlocked 信用门阻塞位（hubMu 保护）：仅可写端参与信用集，ro 客户端
 	// 此位恒 false——ro 满即踢永不持信用（R-08 分工表）。kickOrCreditLocked 置位、
@@ -596,6 +610,15 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	if s.registry.owner == c {
 		s.promoteNextLocked()
 	}
+	// 11-01（PC-02，Anti-Pattern 7）：per-client 会话终结挂点之二——挂注册表
+	// 移除点覆盖一切断开形态（1013 踢出即断开形态之一，该端会话同样经
+	// teardown 序列 SIGHUP 终结；removeLocked 返回 true 之后、
+	// maybeExitWhenEmptyLocked 同位——与 detach 调用点同位同款注释纪律）。
+	// 恰好一次由 teardownOnce 保证（watcher 子死路径可能先触发——先到者执行，
+	// 后到者空转）。
+	if c.pc != nil {
+		s.teardownPCLocked(c.pc)
+	}
 	// 注册表空触发断开退出（06-02，SESS-01/02）：非空→空迁移事件挂点之二——
 	// kick 移除路径同挂点（removeLocked 返回 true 之后、hubCond.Broadcast 之前，
 	// 与 detach 调用点同位同款注释纪律）。
@@ -737,26 +760,33 @@ func (s *Server) writer(c *client) {
 	}
 }
 
-// inputWriter 是会话级单 input-writer goroutine（CR-01 完整背压修复核心，
+// inputWriter 是单 input-writer goroutine（CR-01 完整背压修复核心，
 // RESEARCH Pattern 8）：独占 sess.Master.Write——阻塞等队列信号 → 顺序出队 →
 // 逐 payload 写 master。Attach 读循环内的同步 Master.Write 彻底消失（读循环
 // 零同步写，must_haves；禁止为输入方向恢复任何形式的读循环内同步 Master.Write
 // 或给读路径加 deadline——prohibitions，Pitfall 2/CR-01 老路禁止回潮）。
 //
-// 生命周期挂服务端：New 内启动（与 ReadLoop/lifecycle 同批装配）；终结 =
-// lifecycle 子进程退出路径 close(inputDone)——sess.Drain→Close 先关闭 master
-// fd，经 runtime poller 解除本 goroutine 的在途写阻塞（与 Read 同机制，既有
-// D-12 语义），写失败即 return（子进程退出路径由 lifecycle 收口）；select 收
-// inputDone 亦 return。队列残余随会话消亡（子进程已退出，输入无意义）。
-func (s *Server) inputWriter() {
+// 11-01（PC-02，Pattern 3 参数化泵函数——1 份代码 N 实例）：由 (s *Server)
+// 方法改包级函数 inputWriter(sess, q, done)，函数体逐字保留仅三处引用
+// 参数化；shared 在 New 内装配一次（s.sess/s.inputQ/s.inputDone——与
+// ReadLoop/lifecycle 同批），per-client 每会话装配一次（pc.sess/pc.inQ/
+// pc.inputDone——perclient.go startSessionGoroutines）。
+//
+// 生命周期挂点：shared 终结 = lifecycle 子进程退出路径 close(inputDone)——
+// sess.Drain→Close 先关闭 master fd，经 runtime poller 解除本 goroutine 的
+// 在途写阻塞（与 Read 同机制，既有 D-12 语义），写失败即 return（子进程退出
+// 路径由 lifecycle 收口）；per-client 同构（sessionWatcher 在 teardown 落定后
+// close(pc.inputDone)）。select 收 done 亦 return。队列残余随会话消亡（子进程
+// 已退出，输入无意义）。
+func inputWriter(sess *pty.Session, q *inputQ, done chan struct{}) {
 	for {
 		select {
-		case <-s.inputDone:
+		case <-done:
 			return
-		case <-s.inputQ.notEmpty:
+		case <-q.notEmpty:
 		}
-		for _, p := range s.inputQ.dequeue() {
-			if _, err := s.sess.Master.Write(p); err != nil {
+		for _, p := range q.dequeue() {
+			if _, err := sess.Master.Write(p); err != nil {
 				return // 子进程退出/master 已关——终结由 lifecycle 收口（D-12 同款）
 			}
 		}
@@ -806,6 +836,15 @@ func (s *Server) detach(c *client) {
 	// hubMu 持有内同步完成——晋升必然先于该 owner 任何重连的 registerLocked。
 	if s.registry.owner == c {
 		s.promoteNextLocked()
+	}
+	// 11-01（PC-02，Anti-Pattern 7）：per-client 会话终结挂点之一——挂注册表
+	// 移除点覆盖一切断开形态（正常关闭/reader 错误/pong 超时/Shutdown 1001
+	// 广播引发的 detach 全部经此；removeLocked 返回 true 之后、
+	// maybeExitWhenEmptyLocked 同位——与 kick 调用点同位同款注释纪律）。
+	// 恰好一次由 teardownOnce 保证（watcher 子死路径可能先触发——先到者执行，
+	// 后到者空转）。
+	if c.pc != nil {
+		s.teardownPCLocked(c.pc)
 	}
 	// 注册表空触发断开退出（06-02，SESS-01/02）：非空→空迁移事件挂点之一——
 	// removeLocked 返回 true 之后、hubCond.Broadcast 之前（与 kick 调用点同位
@@ -867,6 +906,13 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 // logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
 // （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
 func (s *Server) maybeExitWhenEmptyLocked(c *client) {
+	// 11-01（PC-02）per-client 早退守卫：per-client 下 --once/--exit-when-empty
+	// 本阶段永不退出（已知中间态明示接受——第二终结源 pcSupervisor/pcExitReq
+	// 归 Phase 13，Pitfall 1 窗口期）；本守卫同时是 s.sess 恒 nil 下
+	// stopChildLocked 的 nil-deref 防线（PATTERNS 已标记陷阱）。
+	if s.sessionMode == SessionModePerClient {
+		return
+	}
 	if !s.exitWhenEmpty || s.exiting || len(s.registry.set) != 0 || s.exitEmptySignaled {
 		return
 	}
