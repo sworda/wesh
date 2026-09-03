@@ -517,6 +517,17 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	if err := fs.Parse(args); err != nil {
 		return cfg, nil, err
 	}
+	// D-01 交叉校验（10-review CR-01）：预扫路径必须被正式 Parse 确认为
+	// --config flag 值——Go flag 包在首个非 flag 参数处即停止解析（其后全部
+	// 落 fs.Args() 子命令 argv），而 prescanConfigPath 只停于字面量 `--`，
+	// 两扫描边界结构性分叉：`wesh true --config x.toml` 形态预扫会命中落在
+	// 子命令 argv 位的 --config（正式 Parse 永不消费它，CLI 契约下属子命令
+	// 参数），`--credential --config x.toml` 形态命中他 flag 值位。两通道值
+	// 不一致即越界命中——拒绝启动（「绝不为子命令/他 flag 参数加载配置文件」
+	// 不变量，D-01 公开契约）；last-wins 双给等一致形态两通道同值自然放行。
+	if configPath != configFileFlag {
+		return cfg, nil, errors.New("invalid --config: must be given as a wesh flag before the command")
+	}
 	// D-05：fs.Visit 判定 --write-policy 是否被显式设置（Visit 只遍历已设置
 	// flag）——validateStartup 组合校验消费：显式设置却未开 --writable 总闸
 	// 属配置矛盾 fail-fast；默认 owner 未显式设置 + 无 --writable 是纯 ro

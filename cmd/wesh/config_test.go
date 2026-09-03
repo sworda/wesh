@@ -1067,6 +1067,33 @@ func TestConfigRedLines(t *testing.T) {
 			t.Errorf("stderr = %q, must not contain credential 值探针", out)
 		}
 	})
+	t.Run("config flag after positional arg rejected", func(t *testing.T) {
+		// 10-review CR-01：预扫只停于字面量 `--`，会命中落在子命令 argv 位的
+		// --config（Go flag 在首个非 flag 参数处即停止解析，CLI 契约下其属子命令
+		// 参数）——正式 Parse 交叉校验拒绝（绝不为子命令参数加载配置文件，D-01
+		// 公开契约不变量）。
+		path := writeToml(t, "port = 9999\n", 0o600)
+		_, _, err := parseArgs([]string{"true", "--config", path})
+		if err == nil {
+			t.Fatal("parseArgs = nil error, want CR-01 交叉校验拒绝（子命令 argv 位 --config）")
+		}
+		if !strings.Contains(err.Error(), "invalid --config") {
+			t.Errorf("err = %q, want invalid --config 类别文案", err)
+		}
+	})
+	t.Run("config last-wins double-given passes cross-check", func(t *testing.T) {
+		// 10-review CR-01 交叉校验不误伤一致形态：last-wins 双给两通道同值放行，
+		// 后者铺底（预扫与正式 Parse 同为 last-wins 语义）。
+		pathA := writeToml(t, "port = 9998\n", 0o600)
+		pathB := writeToml(t, "port = 9999\n", 0o600)
+		cfg, _, err := parseArgs([]string{"--config", pathA, "--config", pathB, "--", "bash"})
+		if err != nil {
+			t.Fatalf("parseArgs: %v（last-wins 一致形态应放行）", err)
+		}
+		if cfg.port != 9999 {
+			t.Errorf("port = %d, want 9999（last-wins 后者铺底）", cfg.port)
+		}
+	})
 	t.Run("config refusal exit 2 end-to-end", func(t *testing.T) {
 		// run() 通道：未知键拒绝 exit 2（D-06 与启动校验矩阵同档）。
 		path := writeToml(t, "no-auth = true\n", 0o600)
