@@ -4,16 +4,16 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 11
 current_phase_name: per-client 生命周期主干
-status: planning
+status: "Phase 10 shipped — PR #14"
 stopped_at: Phase 10 UAT complete (22/22 passed), ready to plan Phase 11
-last_updated: "2026-09-03T10:05:00.000Z"
+last_updated: "2026-09-03T11:12:30.495Z"
 last_activity: 2026-09-03
-last_activity_desc: Phase 10 UAT/VALIDATION/SECURITY complete, transitioned
 progress:
   total_phases: 1
   completed_phases: 1
   total_plans: 5
   completed_plans: 5
+last_activity_desc: Phase 10 UAT/VALIDATION/SECURITY complete, transitioned
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 
 Phase: 11 — per-client 生命周期主干
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-03 — Phase 10 complete, transitioned to Phase 11
+Status: Phase 10 shipped — PR #14
+Last activity: 2026-09-03
 
 Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
