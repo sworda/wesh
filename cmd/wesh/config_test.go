@@ -331,6 +331,19 @@ command = ["bash", "-l"]
 			t.Errorf("warn = %q, want empty (无 credential 键不触发 D-07)", warn)
 		}
 	})
+	t.Run("D-07 silent on empty credential array", func(t *testing.T) {
+		// 10-review WR-01：显式空数组 credential = [] 经 go-toml 解码为非 nil
+		// 零长切片——与键缺席同档按「无凭据」处理（合并层零迭代同语义），
+		// 0644 权限不得误报含凭据警告。
+		path := writeToml(t, "credential = []\n", 0o644)
+		_, warn, err := loadFileConfig(path)
+		if err != nil {
+			t.Fatalf("loadFileConfig: %v", err)
+		}
+		if warn != "" {
+			t.Errorf("warn = %q, want empty (空数组无凭据不触发 D-07)", warn)
+		}
+	})
 	t.Run("index keys decode and absent nil", func(t *testing.T) {
 		// 09-04 D-07/D-08：index（字符串路径）与 index-max-size（TOML 整数字节
 		//——OQ1 推荐形态，与 max-clients 整数先例同型零新解析）两键解码；键缺席

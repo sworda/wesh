@@ -142,7 +142,7 @@ func decodeFileConfig(path string, r io.Reader) (*fileConfig, error) {
 // D-07 权限警告；错误分类第一分支：
 //   - 文件不存在/不可读 → cannot read（OS 错误只含路径与系统类别，非配置值）。
 //
-// D-07：fc.Credential != nil 且 os.Stat(path).Mode().Perm() 非 0600/0400 →
+// D-07：len(fc.Credential) > 0 且 os.Stat(path).Mode().Perm() 非 0600/0400 →
 // 返回 warn 串（警告形态照 validateStartup 的 `wesh: warning:` 前缀先例，
 // main.go:691,693,699），警告串不含凭据值；Stat 失败不升级（加载已成功，
 // 权限检查是提醒而非闸门）。Stat 仍按 path（委托只持 reader，权限语义属文件）。
@@ -156,8 +156,12 @@ func loadFileConfig(path string) (fc *fileConfig, warn string, err error) {
 	if derr != nil {
 		return nil, "", derr
 	}
-	// D-07：含 credential 键且权限非 600/400 → stderr 警告放行（不阻断）。
-	if decoded.Credential != nil {
+	// D-07：含非空 credential 数组且权限非 600/400 → stderr 警告放行（不阻断）。
+	// 判定取 len > 0 而非 != nil（10-review WR-01）：go-toml 把显式空数组
+	// credential = [] 解码为非 nil 零长切片，与键缺席同档按「无凭据」处理
+	//（合并层零迭代同语义，见 fileConfig 头注）——空数组 + 0644 不得误报
+	// 含凭据警告。
+	if len(decoded.Credential) > 0 {
 		if info, serr := os.Stat(path); serr == nil {
 			perm := info.Mode().Perm()
 			if perm != 0o600 && perm != 0o400 {
