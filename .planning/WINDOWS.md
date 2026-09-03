@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 26
+open_count: 28
 waived_count: 0
 fixed_count: 3
-total_count: 29
-last_updated: 2026-09-03T18:27:12.817Z
+total_count: 31
+last_updated: 2026-09-03T18:55:25.878Z
 ---
 
 # Broken Windows Ledger
@@ -44,6 +44,8 @@ last_updated: 2026-09-03T18:27:12.817Z
 | 27 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: Task 2 回归里程碑取 --allow-empty 提交——plan 指定提交语但 verification-only 任务零文件改动，裸 git commit 必失败；空提交保持 per-task 原子提交协议（四脚本 18+28+40+34 断言零 FAIL 证据入提交信息，95f06f0） | open |  | 2026-08-30T07:57:44.432Z |  |
 | 28 | 11 | deviation | internal/server/perclient_test.go |  | plan 文本 package server 与 helper 同包复用矛盾——裁决落 package server_test（详见 11-01-SUMMARY Deviations #1） | open |  | 2026-09-03T17:02:56.654Z |  |
 | 29 | 11 | deviation | internal/server/perclient_test.go |  | 11-04 执行期勘误：plan 文本 kill -TERM $$ 对交互 shell 不致死（交互 shell 无 trap 忽略 SIGTERM），实测修正为 kill -HUP $$（exit_test.go 信号夹具同款），断言面不变——已修复并锁定，非遗留缺陷 | open |  | 2026-09-03T18:27:12.817Z |  |
+| 30 | 11 | deviation | web/uat/phase11.mjs |  | 11-05: S5d 自杀信号 plan 文本 kill -TERM $$ 勘误为 kill -HUP $$（交互 shell 无 trap 忽略 SIGTERM——11-04 实测先例 + STATE 裁决「后续 plan 信号夹具直接用 HUP/trap」；断言面 -1+大写 SIGHUP+1000 不变） | open |  | 2026-09-03T18:55:25.713Z |  |
+| 31 | 11 | unrun-verify | web/uat/phase11.mjs |  | 11-05: S4b 1006 真实异常断开形态 skipped+reason（CODEBUDDY.md §5 平台豁免——OS 断网时序 + Node 原生 WebSocket 无 TCP 层强杀面）；协议层等价物 S4a（正常关闭→ESRCH）+ 11-01 挂点覆盖论证 + 11-04 竞态注入测已覆盖 | open |  | 2026-09-03T18:55:25.878Z |  |
 
 ````json
 [
@@ -393,6 +395,30 @@ last_updated: 2026-09-03T18:27:12.817Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-03T18:27:12.817Z",
+    "resolved_at": null
+  },
+  {
+    "id": 30,
+    "kind": "deviation",
+    "phase": "11",
+    "file": "web/uat/phase11.mjs",
+    "line": null,
+    "description": "11-05: S5d 自杀信号 plan 文本 kill -TERM $$ 勘误为 kill -HUP $$（交互 shell 无 trap 忽略 SIGTERM——11-04 实测先例 + STATE 裁决「后续 plan 信号夹具直接用 HUP/trap」；断言面 -1+大写 SIGHUP+1000 不变）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:55:25.713Z",
+    "resolved_at": null
+  },
+  {
+    "id": 31,
+    "kind": "unrun-verify",
+    "phase": "11",
+    "file": "web/uat/phase11.mjs",
+    "line": null,
+    "description": "11-05: S4b 1006 真实异常断开形态 skipped+reason（CODEBUDDY.md §5 平台豁免——OS 断网时序 + Node 原生 WebSocket 无 TCP 层强杀面）；协议层等价物 S4a（正常关闭→ESRCH）+ 11-01 挂点覆盖论证 + 11-04 竞态注入测已覆盖",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:55:25.878Z",
     "resolved_at": null
   }
 ]
