@@ -196,13 +196,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PC-06 | Phase 12 | Pending |
 | PC-07 | Phase 12 | Pending |
 | PC-08 | Phase 13 | Pending |
-| PC-09 | Phase 14 | Pending |
+| PC-09 | Phase 13 | Pending |
 | PC-10 | Phase 12 | Pending |
 | PC-11 | Phase 12 | Pending |
-| PC-12 | Phase 15 | Pending |
-| PC-13 | Phase 15 | Pending |
-| SEC-09 | Phase 14 | Pending |
-| OPS-12 | Phase 14 | Pending |
+| PC-12 | Phase 14 | Pending |
+| PC-13 | Phase 14 | Pending |
+| SEC-09 | Phase 13 | Pending |
+| OPS-12 | Phase 13 | Pending |
 
 **Coverage:**
 
@@ -213,4 +213,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-09-02 — v1.1 roadmap 落地：15 条需求全量映射 Phase 10-15（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12；PC-08→13；PC-09/SEC-09/OPS-12→14；PC-12/13→15），覆盖 15/15 无孤儿*
+*Last updated: 2026-09-03 — v1.1 原 Phase 13/14 合并、原 15 重编号 14：15 条需求全量映射 Phase 10-14（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12；PC-08/09+SEC-09+OPS-12→13；PC-12/13→14），覆盖 15/15 无孤儿*

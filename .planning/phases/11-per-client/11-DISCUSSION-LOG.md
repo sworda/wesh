@@ -50,12 +50,12 @@
 
 | Option | Description | Selected |
 |--------|-------------|----------|
-| 仅事件先行（推荐） | logEvent spawn_failed 单行事件（零敏感值）随失败路径同 PR——Pitfall 5 清理清单的测试锁定项；metrics 17 series 契约保持 Phase 14 一次性镜像扩展（本阶段不动 metrics.go） | ✓ |
-| 事件+counter 都先行 | spawn_failed 事件 + wesh_pty_spawn_failures_total counter 都本阶段装——EMFILE 级联立即可见；代价：metricsSeries17 镜像 Phase 11 就动（17→18），Phase 14 变增量 | |
-| 全归 Phase 14 | Phase 11 观测面零改动；窗口期 spawn 失败服务端无痕（仅客户端 1011 可见 + UAT 断言） | |
+| 仅事件先行（推荐） | logEvent spawn_failed 单行事件（零敏感值）随失败路径同 PR——Pitfall 5 清理清单的测试锁定项；metrics 17 series 契约保持 Phase 13 一次性镜像扩展（本阶段不动 metrics.go） | ✓ |
+| 事件+counter 都先行 | spawn_failed 事件 + wesh_pty_spawn_failures_total counter 都本阶段装——EMFILE 级联立即可见；代价：metricsSeries17 镜像 Phase 11 就动（17→18），Phase 13 变增量 | |
+| 全归 Phase 13 | Phase 11 观测面零改动；窗口期 spawn 失败服务端无痕（仅客户端 1011 可见 + UAT 断言） | |
 
 **User's choice:** 仅事件先行
-**Notes:** Phase 11→14 窗口期 per-client 会话生命周期审计空白（session_start/end 的 client_id 粒度归 Phase 14 一次补齐），已明示接受。
+**Notes:** Phase 11→13 窗口期 per-client 会话生命周期审计空白（session_start/end 的 client_id 粒度归 Phase 13 一次补齐），已明示接受。
 
 ---
 
@@ -65,8 +65,8 @@
 
 | Option | Description | Selected |
 |--------|-------------|----------|
-| 新增独立测试文件（推荐） | 新测试全部进 perclient_test.go（研究 §11 文件清单先例），per-client-only；既有 shared 测试零改动原样跑；参数化 harness 与三维归类表归 Phase 15——Phase 11 diff 不碰任何既有测试文件装配点 | ✓ |
-| 提前建参数化 harness | 本阶段建 newTestServer(t, mode)，新测试直接走参数化——Phase 15 归类前移；代价：动 shared 测试装配点（零回归风险面），harness 双模式价值 Phase 15 才兑现 | |
+| 新增独立测试文件（推荐） | 新测试全部进 perclient_test.go（研究 §11 文件清单先例），per-client-only；既有 shared 测试零改动原样跑；参数化 harness 与三维归类表归 Phase 14——Phase 11 diff 不碰任何既有测试文件装配点 | ✓ |
+| 提前建参数化 harness | 本阶段建 newTestServer(t, mode)，新测试直接走参数化——Phase 14 归类前移；代价：动 shared 测试装配点（零回归风险面），harness 双模式价值 Phase 14 才兑现 | |
 
 **User's choice:** 新增独立测试文件
 
@@ -88,10 +88,10 @@ pcSession 字段集与 pcSessions 临界区形态；升档分支精确落点行�
 
 ## Deferred Ideas
 
-- wesh_pty_spawn_failures_total counter → Phase 14（metricsSeries17 镜像一次性扩展）
-- per-client session_start/session_end 审计（client_id 关联键）→ Phase 14
+- wesh_pty_spawn_failures_total counter → Phase 13（metricsSeries17 镜像一次性扩展）
+- per-client session_start/session_end 审计（client_id 关联键）→ Phase 13
 - per-client stop-timeout 默认值重议（裁决项①）→ Phase 13（D-01 机制已就位，届时仅改默认值）
-- pcSupervisor / 第二终结源 / --once·exit-when-empty per-client 语义 → Phase 14（Pitfall 1）
-- newTestServer(t, mode) 参数化 harness 与三维归类表 → Phase 15
+- pcSupervisor / 第二终结源 / --once·exit-when-empty per-client 语义 → Phase 13（Pitfall 1）
+- newTestServer(t, mode) 参数化 harness 与三维归类表 → Phase 14
 - RESIZE 直通 / ro 断言 / 重连 reset / 停读续读 → Phase 12
 - spawn 双令牌桶 / Shutdown N 进程组快照 → Phase 13

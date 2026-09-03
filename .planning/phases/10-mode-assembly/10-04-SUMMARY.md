@@ -29,7 +29,7 @@ key-files:
     - README.md
 
 key-decisions:
-  - "D-05 最小明示口径三处同文：「per-client 行为装配中，当前版本与 shared 等价」（键表/默认值表/README；完整语义段归 Phase 15 PC-12）"
+  - "D-05 最小明示口径三处同文：「per-client 行为装配中，当前版本与 shared 等价」（键表/默认值表/README；完整语义段归 Phase 14 PC-12）"
 
 patterns-established: []
 
