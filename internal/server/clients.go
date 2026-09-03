@@ -76,6 +76,20 @@ const (
 	WritePolicyAll   = "all"
 )
 
+// SessionMode 取值（10-01 PC-01 公开 CLI 契约——--session-mode=shared|per-client，
+// 全名无短选项 P2 D-15；main.go parse 期枚举校验与 server Options 消费共用同一
+// 对常量，防双写漂移）：
+// shared = 全部客户端共享同一 PTY 会话（默认——REQUIREMENTS 反特性 A5：默认
+// 永不翻转为 per-client）；
+// per-client = 每客户端独立 PTY 子进程（v1.1 里程碑装配中——10-01 全部接缝
+// inert，当前版本行为与 shared 等价，10-CONTEXT D-05 注记；生命周期/交互语义
+// 归 Phase 11-14）。
+const (
+	SessionModeShared = "shared" // 默认（REQUIREMENTS 反特性 A5）
+	// per-client：生命周期/交互语义归 Phase 11-14 装配（当前与 shared 等价）。
+	SessionModePerClient = "per-client"
+)
+
 // client 是一个已注册 WS 客户端的全部服务端状态。writer goroutine 是该连接全程
 // 唯一 WS 写端（pinger 的控制帧经库 writeFrameMu 与数据写串行化，既有 02-04 纪律）。
 type client struct {
@@ -841,11 +855,14 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 // 子进程死亡 → sess.Wait 返回 → exitf 以子进程退出码收口，两模式零分支差异）。
 //
 // grace>0（宽限形态）：既有 timer 先 Stop（幂等重启——再次断开重新计时）→
-// AfterFunc 启动 exitEmptyTimer（回调捕获最后离开者 remote）→ logEvent
-// exit_when_empty_wait。回调到期取 hubMu 复查『仍空且未 exiting』才发
-// stop-signal 序列（RESEARCH Pitfall 4：复查是恰好一次的兜底——宽限内
-// attach 已由取消点 Stop+置 nil，本回调能进入临界区即取消点未覆盖的残余
-// 窗口）；信号幂等（kill 已死 pgid 收 ESRCH 静默忽略）；timer 随会话消亡。
+// AfterFunc 启动 exitEmptyTimer（回调捕获最后离开者 remote 与计时器身份 t）→
+// logEvent exit_when_empty_wait。回调到期取 hubMu 复查『计时器身份未易主且
+// 仍空且未 exiting』才发 stop-signal 序列（RESEARCH Pitfall 4：复查是恰好
+// 一次的兜底——宽限内 attach 已由取消点 Stop+置 nil；10-review WR-03：对
+// 已触发但尚未取得 hubMu 的回调，取消点 Stop 返回 false 无效——若该窗口内
+// 完成一轮 attach+detach，取消点置 nil 后新纪元已武装新计时器，身份比对
+// s.exitEmptyTimer != t 成为陈旧回调的唯一闸：不动作，新纪元的宽限不得被
+// 旧回调架空）；信号幂等（kill 已死 pgid 收 ESRCH 静默忽略）；timer 随会话消亡。
 //
 // logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
 // （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
@@ -866,18 +883,27 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 	// 回调捕获最后离开者对端与 remote_user——回调触发时 c 已随 detach 消亡
 	//（remoteUser 与 remote 同为 Attach 入口写一次的只读字段，捕获同值）。
 	remote, remoteUser := c.remote, c.remoteUser
-	s.exitEmptyTimer = time.AfterFunc(s.exitWhenEmptyGrace, func() {
+	// 自引用闭包预声明（:= 短声明作用域起始于声明结束之后，闭包内引用 t
+	// 将编译失败 undefined）——var 先声明、AfterFunc 后赋值；回调首句取
+	// hubMu（武装方持锁中），取锁成功时赋值必然已完成且可见（锁同步边）。
+	var t *time.Timer
+	t = time.AfterFunc(s.exitWhenEmptyGrace, func() {
 		s.hubMu.Lock()
 		defer s.hubMu.Unlock()
-		// 复查『仍空且未 exiting』（Pitfall 4 恰好一次兜底；arbiter timer 同款
-		// 取锁纪律，resize.go initArbiter 先例）。不调 exitf——零新 exitf 分支
-		//（D-13 硬约束）；信号幂等（已死 pgid ESRCH 静默）。
-		if s.exiting || len(s.registry.set) != 0 {
+		// 复查『计时器身份未易主且仍空且未 exiting』（Pitfall 4 恰好一次兜底；
+		// arbiter timer 同款取锁纪律，resize.go initArbiter 先例）。10-review
+		// WR-03：已触发回调被调度延迟/等 hubMu 期间若完成一轮 attach+detach，
+		// 取消点 Stop 对已触发计时器无效、exitEmptyTimer 已被新纪元重武装——
+		// 身份不等即陈旧回调，不动作（新纪元宽限不得被旧回调架空）。赋值与
+		// 比较均在 hubMu 内无窗口（武装方持锁，回调取锁后 t 已可见）。不调
+		// exitf——零新 exitf 分支（D-13 硬约束）；信号幂等（已死 pgid ESRCH 静默）。
+		if s.exitEmptyTimer != t || s.exiting || len(s.registry.set) != 0 {
 			return
 		}
 		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
 		s.stopChildLocked()
 	})
+	s.exitEmptyTimer = t
 	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait", c.remoteUser)
 }
 

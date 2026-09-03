@@ -39,6 +39,9 @@ import (
 // --socket-owner parse 期解析为 self 数字对；非法 mode/owner 拒绝断言同在错误表）；
 // D-21 --cwd/--term（原样入 cfg；--term="" 空串值按未配置处理；--cwd stat 预检
 // 归 TestStartupMatrix）。
+// Phase 10：PC-01 --session-mode（shared|per-client 原样解析；默认 shared 由
+// 零值语义统一断言；非法枚举值拒绝断言在 TestTLSKeyPairError 错误表——parse
+// 期拒绝既定归属）。
 // 表头 t.Setenv 清空 WESH_CREDENTIAL：隔离宿主环境，防宿主已设该变量时
 // D-01 env 兜底改变各行 credentials 计数（env 专属用例在 TestCredentialFlagEnv）。
 func TestParseArgs(t *testing.T) {
@@ -114,6 +117,10 @@ func TestParseArgs(t *testing.T) {
 		// 既存行经此扩展零值断言覆盖，命名字段扩展纪律 03-04 先例）。
 		wantIndex string // D-07：--index 自定义首页路径原样入 cfg
 		wantArgv  []string
+		// P10：PC-01 --session-mode 断言位（零值 = 期望默认 shared——D-03
+		// 内置默认，wantWritePolicy 零值语义同款，既存行经此扩展零值断言
+		// 覆盖，命名字段扩展纪律 03-04 先例）。
+		wantSessionMode string // PC-01：--session-mode 原样入 cfg
 	}{
 		{name: "defaults", args: []string{"--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantArgv: []string{"bash"}},
 		{name: "flags before dashdash", args: []string{"--port", "0", "--bind", "127.0.0.1", "--", "ls", "-la"}, wantBind: "127.0.0.1", wantPort: 0, wantPingInterval: 5 * time.Second, wantArgv: []string{"ls", "-la"}},
@@ -185,6 +192,10 @@ func TestParseArgs(t *testing.T) {
 		// validateStartup/loadCustomIndex，TestStartupMatrix 与 TestLoadCustomIndex
 		// 锁定）；默认空串由零值语义统一断言。
 		{name: "index flag", args: []string{"--index", "/tmp/custom.html", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantIndex: "/tmp/custom.html", wantArgv: []string{"bash"}},
+		// 10-01 PC-01：--session-mode 显式传值原样解析（默认值由零值语义统一
+		// 断言 = shared——含全部既存行）。
+		{name: "session-mode per-client", args: []string{"--session-mode", "per-client", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSessionMode: "per-client", wantArgv: []string{"bash"}},
+		{name: "session-mode shared explicit", args: []string{"--session-mode", "shared", "--", "bash"}, wantBind: "0.0.0.0", wantPort: 7681, wantPingInterval: 5 * time.Second, wantSessionMode: "shared", wantArgv: []string{"bash"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -342,6 +353,15 @@ func TestParseArgs(t *testing.T) {
 			if cfg.indexMaxSize != 16*1024*1024 {
 				t.Errorf("indexMaxSize = %d, want %d (默认 16MiB，D-08 纯配置键无 CLI flag)", cfg.indexMaxSize, 16*1024*1024)
 			}
+			// 10-01 PC-01：零值 wantSessionMode = 期望默认 shared（wantWritePolicy
+			// 零值语义同款——含全部既存行；server 包常量单点防双写漂移）。
+			wantSessionMode := tt.wantSessionMode
+			if wantSessionMode == "" {
+				wantSessionMode = server.SessionModeShared
+			}
+			if cfg.sessionMode != wantSessionMode {
+				t.Errorf("sessionMode = %q, want %q", cfg.sessionMode, wantSessionMode)
+			}
 			if !reflect.DeepEqual(argv, tt.wantArgv) {
 				t.Errorf("argv = %v, want %v", argv, tt.wantArgv)
 			}
@@ -460,6 +480,11 @@ func TestTLSKeyPairError(t *testing.T) {
 		{"auth-header proxy-authorization rejected", []string{"--auth-header", "Proxy-Authorization", "--", "bash"}, "invalid --auth-header", ""},
 		{"auth-header cookie rejected", []string{"--auth-header", "Cookie", "--", "bash"}, "invalid --auth-header", ""},
 		{"auth-header set-cookie rejected", []string{"--auth-header", "Set-Cookie", "--", "bash"}, "invalid --auth-header", ""},
+		// 10-01 PC-01：--session-mode 非法枚举值 parse 期拒绝（D-04 定案文案
+		// 回显口径的行为锁——wantSub 取全文，Contains 一次性锁定 flag 名/回显
+		// 值/枚举名单三要素；forbiddenSub 置空——枚举值非敏感豁免面，本行是
+		// 回显口径锁，不是值剥离面）。
+		{"malformed session-mode", []string{"--session-mode", "banana", "--", "bash"}, `invalid --session-mode "banana": must be shared or per-client`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -671,6 +696,16 @@ func TestStartupMatrix(t *testing.T) {
 	if werr := os.WriteFile(indexOK, []byte("<!doctype html><title>ok</title>"), 0o600); werr != nil {
 		t.Fatalf("write index fixture: %v", werr)
 	}
+	// 10-review WR-01：per-client × --cwd × 相对路径 argv0 行的运行时材料——
+	// cwdCmdDir 内含可执行 run.sh（stat 探测放行分支需真实可执行文件）与无
+	// 执行位 noexec.sh（拒绝分支材料——存在但不可执行须同拒）。
+	cwdCmdDir := t.TempDir()
+	if werr := os.WriteFile(filepath.Join(cwdCmdDir, "run.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); werr != nil {
+		t.Fatalf("write cwd-cmd fixture: %v", werr)
+	}
+	if werr := os.WriteFile(filepath.Join(cwdCmdDir, "noexec.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o644); werr != nil {
+		t.Fatalf("write cwd-cmd noexec fixture: %v", werr)
+	}
 	tests := []struct {
 		name        string
 		cfg         config
@@ -769,6 +804,34 @@ func TestStartupMatrix(t *testing.T) {
 		// 0 字节「合法」data → 空白页静默伺服；>2GiB 硬顶拒绝（与 ≤0 行同位
 		// fail-fast）。
 		{"index-max-size over 2GiB cap refused", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: math.MaxInt64}, "invalid index-max-size", "exceeds 2GiB cap", ""},
+		// 10-02 D-01/D-02 组合 warn：writePolicySet 显式设置位（owner|all 任一，
+		// CLI/TOML 双源同档）× sessionMode=per-client → 放行但警告（静默永不
+		// 接受），双 flag 名进文案（下两行成对锁定）；未显式 write-policy 的
+		// per-client 与显式 write-policy 的 shared 均不触发（零漂移两形态）。
+		// writable: true 基值避开 write-policy×writable fail-fast 维度（bind
+		// 127.0.0.1 隔离其他校验维度同上）。
+		{"write-policy owner x per-client warns (D-01/D-02)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "owner", writePolicySet: true, sessionMode: server.SessionModePerClient}, "", "", "--write-policy"},
+		{"write-policy all x per-client warns (D-02 same tier)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModePerClient}, "", "", "--session-mode"},
+		{"per-client without explicit write-policy silent", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, sessionMode: server.SessionModePerClient}, "", "", ""},
+		{"write-policy x shared no new warn", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModeShared}, "", "", ""},
+		// 10-02 SC4 预检：per-client × argv0 不可执行 → 启动期 fail-fast
+		//（spawn 推迟到 attach 的结构性补偿，命令缺失不推迟为 attach 期故障）；
+		// 文案含命令名 %q 回显（非敏感豁免面）与 not found 语义（两行分锁）。
+		// per-client × 可执行命令放行；shared × 不可执行命令不预检（sessionMode
+		// 零值行——spawn 失败仍走 pty.Start exit 1 现状通道，零漂移）。
+		{"per-client missing command refused (SC4)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "wesh-no-such-cmd-7f3a"}, "not found in PATH", "", ""},
+		{"per-client missing command refusal echoes name", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "wesh-no-such-cmd-7f3a"}, "wesh-no-such-cmd-7f3a", "", ""},
+		{"per-client existing command allowed", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, argv0: "sh"}, "", "", ""},
+		{"shared missing command no preflight (zero drift)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, argv0: "wesh-no-such-cmd-7f3a"}, "", "", ""},
+		// 10-review WR-01：SC4 预检与 spawn 语义对齐——argv0 含 '/' 时不经
+		// PATH 解析（child chdir(cfg.cwd) 后 execve 按 --cwd 解析相对路径），
+		// 改为 --cwd 感知的可执行 stat 探测：cwd 下可执行放行（shared 下合法
+		// 的「--cwd + 相对命令」部署形态不得被 per-client 预检结构性误拒——
+		// 修复前 LookPath 在服务端 cwd 下解析 exit 2 误拒）；cwd 下缺失与
+		// 无执行位同拒（误放反向锁——预检存在意义不推迟为 attach 期故障）。
+		{"per-client cwd-relative executable allowed (WR-01)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, cwd: cwdCmdDir, argv0: "./run.sh"}, "", "", ""},
+		{"per-client cwd-relative missing refused (WR-01)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, cwd: cwdCmdDir, argv0: "./no-such-cmd-7f3a.sh"}, "not executable", "", ""},
+		{"per-client cwd-relative non-executable refused (WR-01)", config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, cwd: cwdCmdDir, argv0: "./noexec.sh"}, "not executable", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -808,6 +871,35 @@ func TestStartupMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateStartupWarnMerge（10-02 D-01/D-16 合并形态锁，TestClientOptionError
+// 分函数先例——组合面与主矩阵断言形态不同，独立小函数）：组合 warn 与既有非
+// loopback 安全警告同现时两类文案均达 stderr（合并拼接不遮蔽，T-10-02d）——
+// 非 loopback 形态 warn 同时含 --no-auth（既有安全警告逐字未动的在场合证据）与
+// --write-policy/--session-mode（新 warn 未吞）；socket 形态（D-11 bind 矩阵
+// 早退）同样透出累积 warn（早退不吞）。
+func TestValidateStartupWarnMerge(t *testing.T) {
+	t.Run("non-loopback merge keeps both warnings", func(t *testing.T) {
+		warn, err := validateStartup(config{bind: "0.0.0.0", maxClients: 32, indexMaxSize: 16 << 20, noAuth: true, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModePerClient})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil（warn 明示放行的 D-01 语义）", err)
+		}
+		for _, sub := range []string{"--no-auth", "--write-policy", "--session-mode"} {
+			if !strings.Contains(warn, sub) {
+				t.Errorf("warn = %q, want containing %q（合并不遮蔽）", warn, sub)
+			}
+		}
+	})
+	t.Run("socket early return passes accumulated warn through", func(t *testing.T) {
+		warn, err := validateStartup(config{socket: "/run/wesh.sock", maxClients: 32, indexMaxSize: 16 << 20, writable: true, writePolicy: "all", writePolicySet: true, sessionMode: server.SessionModePerClient})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil", err)
+		}
+		if !strings.Contains(warn, "--write-policy") {
+			t.Errorf("warn = %q, want containing %q（socket 早退透出锁）", warn, "--write-policy")
+		}
+	})
 }
 
 // TestLoadCustomIndex（09-04 D-07/D-08 启动读入矩阵）：不可读拒绝（chmod 000

@@ -78,6 +78,15 @@ func FuzzDecodeFileConfig(f *testing.F) {
 	f.Add([]byte("unknown-key = 1\n"))                        // 未知键拒绝面（严格模式）
 	f.Add([]byte("port = \"not-a-number\"\n"))                // 类型不符面
 	f.Add([]byte{0xff, 0xfe, 0x00})                           // 非 UTF-8/二进制
+	// 10-03 PC-01（Pitfall 11「fuzz 语料/红线测试同 PR」纪律——session-mode
+	// 新键入白名单与非法值 parse 拒绝同阶段落地）：
+	f.Add([]byte("session-mode = \"shared\"\n"))     // 合法键——新键入白名单的 fuzz 面
+	f.Add([]byte("session-mode = \"per-client\"\n")) // 合法键
+	// 非法枚举：decodeFileConfig 层不报错（合法 string 类型），枚举拒绝归
+	// parseArgs 闸（10-01 一闸双覆盖）——本种子断言面 = 两不变量不破坏。
+	f.Add([]byte("session-mode = \"banana\"\n"))
+	f.Add([]byte("session_mode = \"shared\"\n")) // 下划线形态 → 未知键拒绝面（D-03 键名修正的行为锁）
+	f.Add([]byte("session-mode = 1\n"))          // 类型不符面（DecodeError 分支）
 	f.Fuzz(func(t *testing.T, data []byte) {
 		_, err := decodeFileConfig("fuzz.toml", bytes.NewReader(data))
 		if err == nil {

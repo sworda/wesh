@@ -170,6 +170,15 @@ type Server struct {
 	// 伺服字节与读入字节 byte-identity（wesh 零注入零模板零校验，D-05）。
 	customIndex []byte
 
+	// Phase 10 会话模式装配（10-01，PC-01）：sessionMode 为 New 装配期固化、
+	// 运行期只读的会话模式（shared|per-client，零值已在 New 兜底
+	// SessionModeShared）；spawnFunc 为 per-client attach 期 PTY spawn 闭包
+	//（10-01 inert 装配挂点——本阶段零调用方，消费归 Phase 11 attach
+	// spawn；shared 模式恒 nil，SessionMode×SpawnFunc 互斥契约由
+	// ValidateOptions 承载）。
+	sessionMode string
+	spawnFunc   func(cols, rows int) (*pty.Session, error)
+
 	// Phase 7 反代信任装配（07-03，SEC-07 D-15..D-20）：proxy 为 New 装配期
 	// 固化、运行期只读的信任配置（AuthHeader 非空 = 信任闸开——XFF 换键与
 	// remote_user 提取共用同一开关，D-20 零双轨；零值 = 不信任，行为与现状
@@ -284,6 +293,20 @@ type Options struct {
 	// byte-identity，wesh 零注入零模板零校验 D-05）。伺服装配（gzip 预压装饰）
 	// 见 Handler()。
 	CustomIndex []byte
+	// SessionMode 为生产直传字段（10-01 PC-01，main --session-mode flag 经
+	// parse 期枚举校验后原样透传——取值常量 SessionModeShared/
+	// SessionModePerClient 见 clients.go，WritePolicy 注释分档先例）：零值
+	// = shared，New 显式兜底 SessionModeShared（零值等价纪律：v1.0 逐字节
+	// 不变的结构性保证）。
+	SessionMode string
+	// SpawnFunc 为生产直传字段（10-01 PC-01 inert 装配挂点）：per-client
+	// 模式 attach 期 PTY spawn 闭包（run() 分岔处捕获 argv+StartOptions，
+	// 函数体为 pty.StartWithSize 直通；cols/rows 为 Phase 11 attach 期
+	// Hello 钳制尺寸）。消费归 Phase 11 attach spawn——本阶段零调用方
+	//（inert 纪律：SpawnFunc 被调用即未审计 spawn 路径提前暴露，
+	// T-10-01c）；SessionMode×SpawnFunc 互斥契约由 ValidateOptions
+	// fail-fast 承载（New 之前调用）。
+	SpawnFunc func(cols, rows int) (*pty.Session, error)
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -297,6 +320,32 @@ const defaultMaxHalfOpenPerIP = 8
 // 毫秒级，10s 极宽）。只有 pong 超时才允许断开连接；读路径恒无 deadline
 // （Pitfall 2），健康的长空闲会话永不因保活被误杀。
 const defaultPongTimeout = 10 * time.Second
+
+// ValidateOptions 校验 Options 的装配契约（10-01 PC-01——PATTERNS「No Analog
+// Found」option (b) 定案：New 现无 error 返回、包内零 panic 先例，包级校验
+// 函数由 main 在 New 前调用，与 validateStartup「拒绝路径零资源占用」纪律
+// 同构）。互斥规则（ROADMAP「含」锁定两条；sess 维度规则归 Phase 11 生命周期
+// 落地——本阶段不加第三规则防双写）：
+//   - SessionMode=per-client × SpawnFunc=nil → 拒绝（无 spawn 闭包的
+//     per-client 装配是程序错误，fail-fast 不得带病运行）；
+//   - SessionMode=shared × SpawnFunc≠nil → 拒绝（shared 模式不装配 spawn
+//     挂点——SpawnFunc 被调用即未审计 spawn 路径提前暴露，T-10-01c）。
+//
+// 零值归一：SessionMode 空串按 SessionModeShared 处理（与 New 零值兜底同
+// 口径——零值等价纪律）。文案只含公开枚举常量名，无敏感面。
+func ValidateOptions(opts Options) error {
+	mode := opts.SessionMode
+	if mode == "" {
+		mode = SessionModeShared
+	}
+	if mode == SessionModePerClient && opts.SpawnFunc == nil {
+		return errors.New("server: session-mode per-client requires SpawnFunc")
+	}
+	if mode == SessionModeShared && opts.SpawnFunc != nil {
+		return errors.New("server: session-mode shared must not set SpawnFunc")
+	}
+	return nil
+}
 
 // New 装配服务端并钉死三个 goroutine 的启动点：
 //   - sess.ReadLoop：自装配起持续 drain master（D-12），无客户端期间输出经 hub
@@ -337,6 +386,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	}
 	if opts.WritePolicy == "" {
 		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
+	}
+	// 10-01 PC-01：SessionMode 零值 = shared（WritePolicy 零值兜底同位先例——
+	// 零值等价纪律：v1.0 逐字节不变的结构性保证；REQUIREMENTS 反特性 A5）。
+	if opts.SessionMode == "" {
+		opts.SessionMode = SessionModeShared
 	}
 	// D-14 set/grace 分离：grace=0 是合法显式值（最后一个客户端断开立即退出），
 	// 禁止 <=0 零值兜底吞掉显式 0（PATTERNS §3 注意项）；负值无语义，防御性钳 0。
@@ -386,6 +440,10 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// New 装配直传（09-04，D-05..D-08；nil 零值 = 未配置，无兜底改写——
 		// Handler() 按零值装配与现状逐字节一致）。
 		customIndex: opts.CustomIndex,
+		// New 装配直传（10-01，PC-01；SessionMode 零值已在上方兜底
+		// SessionModeShared，SpawnFunc 本阶段 inert 零调用方）。
+		sessionMode: opts.SessionMode,
+		spawnFunc:   opts.SpawnFunc,
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键
 		// 与 remote_user 提取共用同一开关，零双轨）；空串 = 零值不信任。
 		proxy: proxyInfo{trust: opts.AuthHeader != "", userHeader: opts.AuthHeader},

@@ -30,7 +30,7 @@ EnvironmentFile=-/etc/wesh/credentials   # 内容为 WESH_CREDENTIAL=user:pass�
 
 经 `--config /path/to/wesh.toml` **显式指定**——零隐式默认路径搜索，裸 `wesh -- bash` 的行为与无配置文件时逐字节一致。
 
-形状为平铺 `key = value`（拒绝分组 section），**键名 = flag 名**（连字符形态）。共 29 键：27 个长期运行 flag 同名键 + `command` exec 数组 + `index-max-size` 纯配置键。
+形状为平铺 `key = value`（拒绝分组 section），**键名 = flag 名**（连字符形态）。共 30 键：28 个长期运行 flag 同名键 + `command` exec 数组 + `index-max-size` 纯配置键。
 
 ```toml
 # /etc/wesh/wesh.toml —— 含 credential 键时建议 chmod 600
@@ -46,7 +46,7 @@ exit-when-empty = "30s"              # "true"/"0"/"30s" 与 CLI 三形态同语�
 command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则覆盖
 ```
 
-### 全部 29 个配置键
+### 全部 30 个配置键
 
 | 键 | TOML 类型 | 默认值 | 说明 |
 |----|-----------|--------|------|
@@ -54,6 +54,7 @@ command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则
 | `bind` | 字符串 | `"0.0.0.0"` | 监听地址 |
 | `writable` | 布尔 | `false` | 客户端输入总闸（默认只读） |
 | `write-policy` | 字符串 | `"owner"` | `owner`（首写者独占，断线递补）或 `all`（全员可写）；仅 `writable` 开启时有意义 |
+| `session-mode` | 字符串 | `"shared"` | `shared`（多客户端共享同一进程，默认）或 `per-client`（每 WS 客户端独立 PTY 进程——行为装配中，当前版本与 `shared` 等价） |
 | `max-clients` | 整数 | `32` | 最大并发 attach 客户端数；满员新客户端收到 503 |
 | `once` | 布尔 | `false` | 只接受一个客户端并在其断开后退出（≡ `max-clients=1` + `exit-when-empty` 立即退出） |
 | `exit-when-empty` | 字符串 | 不开启 | 所有客户端断开后退出：`"true"`/`"0"` = 立即；`"30s"` = 重连宽限 |
@@ -97,7 +98,7 @@ command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则
 - **fail-fast**：文件不存在、TOML 解析失败、未知键均以 exit 2 拒绝启动。
 - **错误文案值剥离**：错误只含「类别 + 键名 + 行号」（如 `invalid config file /etc/wesh/wesh.toml: unknown keys (no-auth)`），**绝不回显配置值**——凭据不会落 stderr/journald。
 - **列表替换语义**：`credential`/`origin`/`client-option` 三列表键——CLI flag 给出则整个列表替换配置值（配置不应用、不校验）；CLI 未给且配置键存在时逐项经与 CLI 相同的校验。
-- **配置键显式位**：`port`/`bind`/`socket-mode`/`socket-owner`/`write-policy` 在配置文件中出现即视为「显式设置」，与 CLI 同档参与互斥/组合校验（如配置同时写 `socket` + `port` 会拒绝启动）。
+- **配置键显式位**：`port`/`bind`/`socket-mode`/`socket-owner`/`write-policy`/`session-mode` 在配置文件中出现即视为「显式设置」，与 CLI 同档参与互斥/组合校验（如配置同时写 `socket` + `port` 会拒绝启动）。
 - **文件内自相矛盾拒绝**：同一文件内 `once = true` 与 `max-clients ≠ 1` 或 `exit-when-empty` 宽限 ≠ 0 同给即拒。
 - **权限警告**：文件含 `credential` 键且权限非 600/400 时 stderr 警告放行（不阻断）；生产凭据首选 `WESH_CREDENTIAL` env，不写入配置文件。
 
@@ -121,13 +122,14 @@ wesh 采取「显式哲学」：绝大多数键可选且有默认值，以下情
 | `--index` 预检 | 文件不存在 / 非常规文件（目录、设备、socket） | invalid --index … |
 | `index-max-size` 值域 | ≤ 0 或 > 2GiB | invalid index-max-size … |
 | `--cwd` 预检 | 目录不存在 | invalid --cwd … |
-| 值域/枚举 | `--write-policy`/`--stop-signal` 枚举、`--socket-mode` 八进制、`--uid`/`--gid` 0..4294967295、duration 键非负等 | invalid …（值可回显，非敏感） |
+| 值域/枚举 | `--write-policy`/`--stop-signal`/`--session-mode` 枚举、`--socket-mode` 八进制、`--uid`/`--gid` 0..4294967295、duration 键非负等 | invalid …（值可回显，非敏感） |
 
 **放行但警告**（stderr 醒目提示，不阻断启动）：
 
 - `--no-auth` 非 loopback：任何人可达该端口即得终端。
 - `--insecure-http` 非 loopback：凭据经明文 HTTP 传输（TLS 终止型反代之后的典型合法场景）。
 - `--no-auth` + `--auth-header` 非 loopback：直连客户端可伪造审计头。
+- 显式 `--write-policy` × `--session-mode=per-client`：`owner`/`all` 仲裁与递补语义在 per-client 下不装配，stderr 警告放行（ro/rw 权限级别仍按 ticket 生效）。
 
 **退出码约定**（供 systemd `Restart=` 与脚本编排参考）：
 
@@ -149,6 +151,7 @@ wesh 采取「显式哲学」：绝大多数键可选且有默认值，以下情
 | `bind` | `0.0.0.0` | 全网卡（非 loopback——触发凭据/明文校验矩阵） |
 | `writable` | `false` | 只读会话 |
 | `write-policy` | `owner` | 首写者独占 + 按序递补 |
+| `session-mode` | `shared` | `per-client` 行为装配中，当前与 `shared` 等价 |
 | `max-clients` | `32` | 满员 503 |
 | `ping-interval` | `5s` | `0` = 禁用保活 |
 | `osc52` | `false` | 剪贴板写默认关 |
