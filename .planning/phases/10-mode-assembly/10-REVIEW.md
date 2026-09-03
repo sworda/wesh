@@ -1,6 +1,6 @@
 ---
 phase: 10-mode-assembly
-reviewed: 2026-09-02T15:49:06Z
+reviewed: 2026-09-03T04:31:15Z
 depth: standard
 files_reviewed: 12
 files_reviewed_list:
@@ -18,144 +18,120 @@ files_reviewed_list:
   - internal/server/server.go
 findings:
   critical: 0
-  warning: 3
-  info: 4
+  warning: 2
+  info: 5
   total: 7
 status: issues_found
 ---
 
 # Phase 10: Code Review Report
 
-**Reviewed:** 2026-09-02T15:49:06Z
+**Reviewed:** 2026-09-03T04:31:15Z
 **Depth:** standard
 **Files Reviewed:** 12
 **Status:** issues_found
 
 ## Summary
 
-本轮为 phase 10（mode-assembly：--session-mode flag/TOML 键、Options.SessionMode/SpawnFunc 接缝、ValidateOptions 装配契约、run() 装配分岔、pty.StartWithSize 导出、validateStartup 的 write-policy×per-client warn 与 per-client LookPath 预检）的对抗性复审。评审基线 = 全部 12 个列入文件全量通读 + phase diff（f57c701^..HEAD，+503/-23）聚焦 + 交叉核实。
+本轮为 phase 10 修复后（HEAD = aaaaa3e，含 189d081/0ec37cb/23f2df2 三修复提交与 10-05 收口文档）当前树态的全新复审。评审基线 = 12 个列入文件全量通读 + phase diff（f57c701^..HEAD，+566/-33）聚焦 + 交叉核实（grep 消费面追踪 + 进程级实证复现）。
 
-**复审再验证（2026-09-02T15:49Z 轮）**：评审范围 12 个文件相对 HEAD 逐文件 diff 为空（字节级不变），全部 7 条发现的行号锚点逐一重新核对（WR-01 → main.go:1043-1047、WR-02 → main.go:1342-1348、WR-03 → clients.go:883-894、IN-01 → spawn.go:100、IN-02 → config.go:174-176/main.go:509-511、IN-03 → clients.go:692、IN-04 → config.go:160-167）——结论原样成立，无新增/消亡发现。
+**前轮发现复核（当前树态逐一验证）：**
 
-已做实证（非仅纸面阅读）：
+- WR-01（per-client 预检 --cwd 错位）已修复且修复正确：main.go:1051-1063 的 stat 探测与 child chdir 后 execve 语义逐案对齐（相对 slash 路径 Join(cwd)、绝对路径直 stat、无 slash 走 LookPath——PATH 解析与父子 cwd 无关，无错位面）；三条 TestStartupMatrix 行为锁（放行/缺失/无执行位）就位。
+- WR-02（ValidateOptions 调用点在资源获取之后）已修复且修复正确：main.go:1328 前移至 pty.Start/listen 之前，守卫触发时零资源占用，与其注释自引纪律恢复一致。
+- WR-03（exit-when-empty 陈旧回调竞态）已修复且修复正确：clients.go:889-906 的计时器身份比对（`s.exitEmptyTimer != t`）——武装方全程持 hubMu，回调取锁后赋值必然可见（锁同步边），陈旧回调四条逃逸路径（新纪元重武装 / 取消置 nil / 注册表非空 / exiting）逐一推演全部收口。但见 IN-01：该修复无回归测试。
+- 前轮 IN-01/IN-03/IN-04（uint16 截断契约、mergeBatch 守卫不对称、D-07 空数组误报）在当前树原样存续，本轮结转登记为 IN-04/IN-02/IN-03。
 
-- `go build ./... && go vet` 干净；`go test ./cmd/wesh ./internal/pty` 全绿；`internal/server` 首轮三包并行跑出现一次 FAIL，随后 5 轮复跑（含同形态三包并行）全绿——一次性 flake 未定位到用例名，登记观察项，建议后续以 `-json` 落盘长跑盯防。
-- creack/pty@v1.1.24 `start.go` 源码核实：`StartWithSize` 仅在 `cmd.SysProcAttr == nil` 时分配并只补 Setsid/Setctty 两字段——spawn.go 降权 Credential 不被覆盖的注释声明属实（该声明是 uid/gid 降权安全性的承重墙，必须核实而非信注释）。
-- go-toml v2.4.3（go.mod 钉版）实证：`credential = []` 解码为非 nil 空切片（IN-04 的前提）。
-- WR-01 进程级独立复现：per-client × `--cwd` × 相对 argv0 → exit 2 误拒；同参数 shared 正常 spawn（session_start 事件 + listening 打印实证）。
-- 值剥离红线抽查：ParseCredential 错误文案不含值（auth.go 源码核实），config.go 错误三要素（类别+键名+行号）实现与 fuzz 探针断言面一致；docs/CONFIGURATION.md 的 30 键表、退出码表与 main.go/config.go 逐键对账一致（28 flag 同名 + command + index-max-size）。
+**本轮实证（非纸面阅读）：**
 
-前置评审（HEAD 提交的 10-REVIEW.md，0C/2W/1I）结论经独立验证成立并吸收为 WR-01/WR-02/IN-01（WR-01 本轮重新复现）。本轮新增：WR-03（exit-when-empty 宽限计时器陈旧回调竞态，可提前杀死子进程）、IN-02（prescan 与 flag.Parse 的解析一致性注释 overstated）、IN-03（mergeBatch 空帧守卫不对称的潜在 panic）、IN-04（D-07 权限警告对空 credential 数组误报）。WR-03/IN-02/IN-03/IN-04 均位于列入文件内的**前序 phase 代码**（非 phase 10 diff 引入），因文件在审且缺陷可证而登记，已逐条标注出处。
+- `go build ./... && go vet`（三包）干净；`go test ./cmd/wesh ./internal/pty ./internal/server` 全绿（server 包 54.6s 无 flake）。
+- **WR-01 进程级复现**：构建真实二进制，`wesh true --config /tmp/wesh-probe.toml`（无 `--`，配置文件内容为 `port=0, bind=127.0.0.1`）——启动打印 `listening on http://127.0.0.1:37487`（随机端口 + loopback 均来自 TOML 而非内置默认 0.0.0.0:7681），证明文件被当作 wesh 配置静默加载应用；同形态指向不存在文件 → exit 2 拒绝启动。两形态均与 flag.Parse 语义（`--config` 属子命令 argv）矛盾。
+- `sessionModeSet` 消费面 grep 全仓核实：生产代码零读取点（写入点 main.go:531/581，读取点仅 config_test.go 两处断言），WR-02 前提成立。
+- 配置键计数对账：fileConfig 30 键 = 28 flag 同名（32 注册 flag − no-auth/insecure-http/version/config 四排除项；help 非注册 flag 但 TOML 侧按未知键拒绝）+ command + index-max-size——config.go 头注释、CONFIGURATION.md「30 键」表逐键核对一致。
+
+**本轮新增发现**：WR-01（prescanConfigPath 不在首个非 flag 参数处停止——前轮 IN-02 同族的更强向量，静默误载配置文件，已复现）、WR-02（sessionModeSet 只写字段 + 注释声称的 10-02 消费未发生）、IN-01（WR-03 竞态修复无回归测试）、IN-05（文档/测试锚点过期族）。WR-01 不涉及 phase 10 diff 新引入逻辑（07-06 区段前序代码），WR-02 是 10-01/10-02 的接缝残留，按前例标注出处。
 
 ## Warnings
 
-### WR-01: per-client LookPath 预检不感知 --cwd，相对路径 argv0 被误拒（本轮独立复现）
+### WR-01: prescanConfigPath 不在首个非 flag 参数处停止——子命令 argv 中的 --config 被当作 wesh 配置静默加载（07-06 区段前序代码；本轮进程级复现）
 
-**File:** `cmd/wesh/main.go:1043-1047`
-**Issue:** SC4 预检 `exec.LookPath(cfg.argv0)` 在**服务端进程 cwd** 下解析，而实际 spawn（`pty.StartWithSize` → `exec.Command` + `cmd.Dir = opts.Dir`）中，含路径分隔符的 argv0 在子进程 chdir(cfg.cwd) 之后 execve——相对 `--cwd` 解析。两者在 `--cwd` × 相对路径 argv0 组合下双向发散：
+**File:** `cmd/wesh/config.go:177-199`（扫描循环）；注释声明处 `cmd/wesh/config.go:174-176` 与 `cmd/wesh/main.go:509-511`（「预扫与正式 Parse 的 --config 值一致」「双通道同值」）
 
-- 误拒（本轮复现）：`/tmp/wesh-review-verify/appdir/run.sh` 存在且可执行，从不含 run.sh 的 `/tmp` 启动——`wesh --session-mode=per-client --cwd=<appdir> --bind 127.0.0.1 -- ./run.sh` → **exit 2**，`invalid command "./run.sh": not found in PATH (per-client startup preflight)`；同参数 `--session-mode=shared` 正常 spawn（listening 打印 + session_start 事件实证）。
-- 误放（同机制反向）：服务端 cwd 恰有 `./run.sh` 而 --cwd 目录没有时，预检放行、Phase 11 attach 期 spawn 才失败——预检存在意义（命令缺失不推迟为 attach 期故障）落空。
-- 次要：PATH 含 `.`/空元素等相对项时 LookPath 返回相对路径，同一 cwd 错位同样发生；文案 `not found in PATH` 对带斜杠路径不准确（该形态不经 PATH 解析）。
+**Issue:** Go flag 包的解析语义是「在首个非 flag 参数（不以 `-` 开头或为 `-`）处停止」（flag 包文档逐字："Flag parsing stops just before the first non-flag argument ("-" is a non-flag argument) or after the terminator \"--\""），而 prescanConfigPath 的循环只在 `"--"` 处 break——**不在首个非 flag 参数处停止**。于是无 `--` 形态的调用两通道判定分叉：
 
-即：shared 下完全合法的部署形态（`--cwd` + 相对命令，Phase 7 既有能力的合理用法）在 per-client 下被结构性误拒；Phase 11 spawn 移至 attach 期后该预检是唯一启动闸，误拒将永久固化。
+- `wesh true --config probe.toml`：flag.Parse 在 `true` 处停止，`--config probe.toml` 落入子命令 argv；prescan 却继续扫描并命中 `--config`，真实读盘并以其铺底。
+- **复现证据（本轮实证）**：probe.toml 内容为 `port = 0` + `bind = "127.0.0.1"`，上述调用启动打印 `listening on http://127.0.0.1:37487`——bind 与随机端口均来自 TOML（内置默认是 0.0.0.0:7681），静默误载成立；同调用换不存在路径 → exit 2 `invalid config file ... cannot read`，即「子命令自己的参数」使 wesh 拒绝启动。
 
-**Fix:** 预检与 spawn 语义对齐——argv0 含 `/` 时改为对 `--cwd` 感知的可执行探测，不经 LookPath：
+后果两态均真实：文件存在 → 操作者无意的配置被静默应用（bind/port/credential 等全部铺底生效，无任何提示）；文件不存在 → 与 wesh 无关的子命令参数触发 exit 2。`--` 是文档推荐形态但非强制（`wesh bash` 合法可用），该缝隙现实可达。前轮 IN-02 登记的是同函数的另一分叉向量（`--credential --config x.toml`——取值 flag 消费下一参数致判定错位），但评定「后果轻微（credErr 使 exit 2）」；本向量无 fail-fast 兜底、静默生效，故升级为 Warning。前轮 IN-02 建议的修复选项 (a)（仅降级注释）对本向量不充分。
+
+**Fix:** 预扫循环增加非 flag 参数停止条件，与 flag.Parse 语义对齐：
 
 ```go
-if cfg.sessionMode == server.SessionModePerClient && cfg.argv0 != "" {
-    probe := cfg.argv0
-    if strings.ContainsRune(probe, '/') && cfg.cwd != "" && !filepath.IsAbs(probe) {
-        probe = filepath.Join(cfg.cwd, probe) // 与 child chdir 后 execve 的解析对齐
+for i := 0; i < len(args); i++ {
+    a := args[i]
+    if a == "--" {
+        break
     }
-    if strings.ContainsRune(probe, '/') {
-        if fi, serr := os.Stat(probe); serr != nil || fi.IsDir() || fi.Mode()&0o111 == 0 {
-            return "", fmt.Errorf("invalid command %q: not executable (per-client startup preflight)", cfg.argv0)
-        }
-    } else if _, lerr := exec.LookPath(probe); lerr != nil {
-        return "", fmt.Errorf("invalid command %q: not found in PATH (per-client startup preflight)", cfg.argv0)
+    if len(a) == 0 || a[0] != '-' || a == "-" {
+        break // flag.Parse 在首个非 flag 参数处停止——此后一切 token 属子命令 argv
     }
+    // ...既有 --config/-config 匹配逻辑不变
 }
 ```
 
-或最小修复：`--cwd` 非空且 argv0 带斜杠时跳过预检（退让给 spawn 期错误通道），并在注释登记该已知缝隙。两案均需补 `--cwd`×相对路径的 TestStartupMatrix 行（放行面）。
+（说明：`-` 单独出现按 flag 语义也是非 flag 参数，一并 break；该停止条件同时使前轮 IN-02 的取值 flag 错位向量收窄但不消除——`--credential --config x.toml` 形态下 `--credential` 本身是 flag 不触发 break，该向量仍存续，维持前轮注释降级建议作为残余登记。）补 TestPrescanConfigPath 两行：`{"stop at first non-flag", []string{"bash", "--config", "/x.toml"}, ""}` 与裸 `-` 形态。
 
-### WR-02: ValidateOptions 调用点在资源获取之后，失败路径零回滚（与自引纪律矛盾）
+### WR-02: sessionModeSet 只写字段——注释声称的 10-02 消费未发生，测试反而把死位锁成「机制证据」（10-01/10-02 接缝残留）
 
-**File:** `cmd/wesh/main.go:1342-1348`（调用点）；对照 `internal/server/server.go:324-328`（ValidateOptions 注释自引「与 validateStartup『拒绝路径零资源占用』纪律同构」）
-**Issue:** run() 中 ValidateOptions 在 `pty.Start`（已 spawn 子进程，main.go:1307）与 `net.Listen`/`listenSocket`（已占用监听，main.go:1316-1322）**之后**、New 之前调用，失败分支直接 `return 2`——既无 `sess.Close()` 也无 `ln.Close()`。与紧邻的失败路径不对称（listen 失败 1326 行与 serve 失败 1452 行均 `_ = sess.Close()` 回滚），并直接违反其注释自引的零资源占用纪律。守卫触发时的后果：子进程依赖进程退出时 master 关闭的 SIGHUP 被动收口（非主动回滚）；`--socket` 形态下 socket 文件残留磁盘（unlink 依赖 ln.Close()，os.Exit 不触发——下次启动经活性探测自愈，但残留事实成立）。
+**File:** `cmd/wesh/main.go:93`（字段注释「D-02 双源机制采集备用，write-policy×per-client warn 锚定归 10-02 消费」）、`cmd/wesh/main.go:529-532`（fs.Visit 写入）、`cmd/wesh/main.go:580-582`（fc 合并写入）、`cmd/wesh/main.go:179-182`（parseArgs 头注释同款声称）；对照消费点实况 `cmd/wesh/main.go:985-993`（warn 锚定 `cfg.sessionMode == server.SessionModePerClient` 终值，注释自述「锚定模式终值而非 sessionModeSet」）；测试锁定 `cmd/wesh/config_test.go:806-819`、`905-909`
 
-当前不可达（parse 枚举闸 + run() 分岔逻辑保证 SessionMode/SpawnFunc 恒一致），但该守卫的全部存在意义是拦截未来漂移——一旦触发，清理路径即错。
+**Issue:** 全仓 grep 核实：sessionModeSet 在生产代码中**只有两个写入点、零读取点**。10-02 落地时 D-01/D-02 warn 改为锚定模式终值（main.go:985-986 注释明确记录该取舍），字段注释与 parseArgs 头注释声称的「消费归 10-02」从未发生。更糟的是测试侧把死位锁成了机制证据：config_test.go:817-818 断言 sessionModeSet 置位并标注「D-02 warn 锚定机制的配置来源同档」——该机制实际不存在（warn 不读此位），断言为死代码提供了虚假合法性。当前无行为错误（终值锚定本身正确且双源覆盖成立），危害在维护面：Phase 11+ 实现者读字段注释会误认为存在既有消费者而沿用错误前提；「显式位」家族（writePolicySet/maxClientsSet/exitEmptySet 等）的全部先例都是「采集即有消费」，本字段破坏了该不变量却无任何注释承认。
 
-**Fix:** 将校验前移至 `pty.Start` 之前——两个输入（`cfg.sessionMode`、分岔产物 `spawnFunc`）在装配分岔块尾部（main.go:1304）即已完全确定：
-
-```go
-// 10-01 分岔块之后、pty.Start 之前：
-if verr := server.ValidateOptions(server.Options{SessionMode: cfg.sessionMode, SpawnFunc: spawnFunc}); verr != nil {
-    fmt.Fprintf(os.Stderr, "wesh: %v\n", verr)
-    return 2
-}
-sess, err := pty.Start(...)
-```
-
-（opts 字面量其余字段与本校验无关，New 前的完整 opts 构造保持原位；或保留原位调用但补上 `sess.Close()`/`ln.Close()` 回滚——前移方案更简单且恢复零占用语义，推荐前者。）
-
-### WR-03: exit-when-empty 宽限计时器陈旧回调竞态——attach/detach 翻转窗口内子进程被提前杀死（前序 phase 代码，06-02/08-review 区段）
-
-**File:** `internal/server/clients.go:883-894`（回调复查缺纪元判定）；关联 `clients.go:877-879`（武装点）、`internal/server/server.go:1033`+`clients.go:920-927`（取消点）
-**Issue:** grace>0 形态下，计时器回调只复查 `s.exiting || len(s.registry.set) != 0`，不校验自身是否已被新纪元取代。竞态序列（attach+detach 全周期落入回调触发到取锁之间的窗口）：
-
-1. 纪元 1 致空 → 武装 T1（30s 宽限）；
-2. T1 到期触发，回调 goroutine 已创建但被调度延迟/等 hubMu；
-3. 客户端 B attach：`cancelExitEmptyTimerLocked` 对已触发计时器 Stop 返回 false（无效），置 nil，`exitEmptySignaled=false`；
-4. B 随即 detach：`maybeExitWhenEmptyLocked` 正常走完全程——置位 signaled、武装新计时器 T2（重新计 30s）；
-5. 陈旧 T1 回调取得 hubMu：复查成立（registry 空、未 exiting）→ `stopChildLocked()` **立即**发 stop-signal——纪元 2 的宽限被架空，子进程提前至多一个 grace 周期死亡。
-
-窗口成立条件苛刻（回调触发后恰好完成一轮 attach+detach——macOS CI/GOMAXPROCS=1 单核调度延迟场景本项目已有同类先例，kickOrCreditLocked 注释演化记录即单核实证产物），但后果真实（grace 语义被静默破坏），-race 抓不到（无数据竞争，纯逻辑竞态），T2 稍后重复发信号幂等收口使现场更难排查。注释（clients.go:860-862）声称复查是「恰好一次的兜底」，但该复查不区分纪元，恰恰漏掉这个窗口。
-
-**Fix:** 回调携带计时器身份，复查时比对（武装与回调均在 hubMu 内/需 hubMu，赋值与比较无窗口）：
-
-```go
-t := time.AfterFunc(s.exitWhenEmptyGrace, func() {
-    s.hubMu.Lock()
-    defer s.hubMu.Unlock()
-    if s.exitEmptyTimer != t || s.exiting || len(s.registry.set) != 0 {
-        return // 陈旧回调（已被新纪元取代/取消）不动作
-    }
-    logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
-    s.stopChildLocked()
-})
-s.exitEmptyTimer = t
-```
+**Fix:** 二选一：(a) 字段与两处写入保留（Phase 11 备用语义成立时），但全部四处注释改为「当前零消费方，D-02 warn 经终值锚定双源覆盖；本位为 Phase 11 备用采集」并修正 config_test.go:818/908 两处的机制声称；(b) 若 Phase 11 前无确定消费场景，删除字段 + fs.Visit/fc 两处写入 + 测试断言，需要时再以显式位家族先例重新引入。推荐先落 (a) 的注释修正，(b) 的删除评估随 Phase 11 挂接时定夺——现状（声称已消费）不可接受。
 
 ## Info
 
-### IN-01: StartWithSize 的 uint16 截断锐利边（契约已挂账，建议接缝处防御）
+### IN-01: WR-03 陈旧计时器修复（23f2df2）无回归测试——身份比对分支无执行证据
 
-**File:** `internal/pty/spawn.go:100`
-**Issue:** `pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}`——int→uint16 转换对越界值静默截断（`rows = -1` → 65535；`cols = 70000` → 4464）。注释已将 ClampDim [1,1000] 钳制显式划归 Phase 12 调用侧（Hello 登记路径 DecodeHello 已钳制），当前唯一调用方 Start 传常量 80/24，无现实风险。但该函数是本 phase 新导出的接缝，Phase 11 SpawnFunc 挂接后调用面扩大，契约仅靠注释承载。
-**Fix:** 接缝处加防御性钳制（复用 ClampDim 语义）或对越界输入显式报错，使契约由代码而非注释承载；若坚持现状（零开销论点），建议在 Phase 11 挂接 PR 中复查一次调用链钳制证据。
+**File:** `internal/server/clients.go:889-906`（修复本体）；对照 `internal/server/emptyexit_test.go`（本 phase diff 为空——七用例中无覆盖陈旧回调场景者）
 
-### IN-02: prescanConfigPath「与正式 Parse 同值」注释 overstated——畸形 CLI 下两通道解析分叉（前序 phase 代码，07-06 区段）
+**Issue:** WR-03 的身份比对修复经审查推演正确（武装方持 hubMu、回调取锁后 t 可见、四逃逸路径均收口），但 `s.exitEmptyTimer != t` 这一新增判定分支没有任何测试能到达：emptyexit_test.go 在本 phase 零改动，既有用例覆盖立即形态/宽限取消/到期/kick 触发/lifecycle 门/计时器越过 lifecycle/promote-kick 门闩，独缺「回调已触发但尚未取得 hubMu 期间完成一轮 attach+detach」的 WR-03 场景。竞态修复的正确性目前纯靠代码评审承载——与项目「行为锁」纪律（同文件 08-review WR-01 门闩即有 TestExitWhenEmptyPromoteKickOnce 白盒锁定）不一致。确定性构造可行：白盒持 hubMu → 等计时器到期（回调排队等锁）→ 同锁内完成 attach+detach 重武装 T2 → 放锁，断言陈旧回调不动作（无 exit_when_empty 触发行、子进程在 T1 到期点不收信号）。
 
-**File:** `cmd/wesh/config.go:174-176`（注释声明「预扫与正式 Parse 的 --config 值一致」）；`cmd/wesh/main.go:509-511`（「预扫与正式 Parse 双通道同值」）
-**Issue:** 预扫器只特判 `--config`，不知道其他 flag 是否消费值。畸形输入 `--credential --config x.toml`：预扫在位置 1 命中 `--config` 并加载 x.toml；而 flag.Parse 把 `--config` 字符串**作为 credential 的值**消费（flag 包对取值 flag 不检查下一参数的 `-` 前缀）——两通道对「哪个 token 是 --config」判定不同。后果轻微（该 CLI 本就畸形，credErr 使运行 exit 2 fail-fast，配置文件值剥离红线不受损），但「值一致」的不变量声明在畸形输入下不成立，且预扫会为一个 flag.Parse 从不视为 --config 的调用形去真实读盘。另：`--config=`（显式空值）两通道一致地静默按「未给配置」放行——显式给空路径多为笔误，fail-fast 更贴 D-01「显式」哲学，至少应登记语义。
-**Fix:** 二选一：(a) 注释降级为「well-formed CLI 下与正式 Parse 同值；畸形 CLI 由后续 fail-fast 收口」并登记 `--config=` 空值语义；(b) 预扫器跳过已知取值 flag 的参数位（维护成本高，不推荐）。
+**Fix:** 在 emptyexit_test.go 增补上述白盒用例（照 TestExitWhenEmptyPromoteKickOnce 的白盒先例直接驱动 hubMu/registry），或至少在该测试文件头注释登记「WR-03 分支经评审锁定、无执行证据」的风险接受。
 
-### IN-03: mergeBatch 守卫不对称——空帧会使 `batch[i][0]` panic（前序 phase 代码，05-03 区段，潜在缺陷）
+### IN-02（结转前轮 IN-03）: mergeBatch 守卫不对称——空帧会使 `batch[i][0]` panic（05-03 区段前序代码）
 
 **File:** `internal/server/clients.go:692`
-**Issue:** 内层合并条件 `len(batch[j]) > 0 && batch[j][0] == batch[i][0] && ...` 只守卫了 `batch[j]` 的取字节，`batch[i][0]` 无长度守卫——零长度帧进入 outbox 即 slice 越界 panic（writer goroutine 崩溃 → 该客户端写端静默死亡）。当前全部生产者（onChunk 组帧 `1+len(chunk)`、WelcomeFrame/ExitFrame 协议帧）恒 ≥1 字节，结构性不可达；但守卫不对称说明作者考虑过空帧，而守卫放错了元素。一行防御可消除该锐利边。
-**Fix:** 循环头归一化为非空不变量，例如 `for i := 0; i < len(batch); { if len(batch[i]) == 0 { i++; continue } ...`，或在 trySend 入口断言帧非空（单一事实源更靠入口侧）。
+**Issue:** 内层合并条件 `len(batch[j]) > 0 && batch[j][0] == batch[i][0] && batch[i][0] == proto.Output` 只守卫 `batch[j]` 的取字节，`batch[i][0]` 无长度守卫——零长度帧进入 outbox 即 slice 越界 panic（writer goroutine 崩溃 → 该客户端写端静默死亡）。当前全部生产者（onChunk 组帧 `1+len(chunk)`、WelcomeFrame/ExitFrame）恒 ≥1 字节，结构性不可达；前轮评定后本次复核现状不变。
+**Fix:** 循环头归一化非空不变量（`if len(batch[i]) == 0 { i++; continue }`），或在 trySend 入口断言帧非空（单一事实源更靠入口侧）。
 
-### IN-04: D-07 权限警告对空 credential 数组误报（前序 phase 代码，07-06 区段；go-toml v2.4.3 实证）
+### IN-03（结转前轮 IN-04）: D-07 权限警告对空 credential 数组误报（07-06 区段前序代码）
 
 **File:** `cmd/wesh/config.go:160-167`
-**Issue:** 判定条件 `decoded.Credential != nil`——go-toml v2.4.3（go.mod 钉版，本轮沙盒实证）把 `credential = []` 解码为**非 nil 空切片**，于是空数组 + 0644 权限也打出「config file ... contains credentials and is readable by others」警告。文件实际不含任何凭据，警告为误报（狼来了效应稀释 D-07 信号）。应用侧语义不受影响（空数组按缺席处理，main.go:786 循环零迭代）。
-**Fix:** 判定改为 `len(decoded.Credential) > 0`，与「实际含凭据」语义对齐。
+**Issue:** 判定条件 `decoded.Credential != nil`——go-toml 把 `credential = []` 解码为非 nil 空切片（前轮沙盒实证，本轮复核代码未变），空数组 + 0644 权限也打出「contains credentials」警告（文件实际不含凭据，狼来了效应稀释 D-07 信号）。应用侧语义不受影响（main.go:787 循环零迭代，空数组按缺席处理）。另注（本轮附加观察，同函数）：os.Open 之后 os.Stat(path) 存在 TOCTOU 窗口——open 与 stat 之间文件被替换则警告反映的不是被读文件；advisory 性质下影响可忽略，仅登记。
+**Fix:** 判定改 `len(decoded.Credential) > 0`；如需消除 TOCTOU 可同时改 `f.Stat()`（打开句柄）。
+
+### IN-04（结转前轮 IN-01）: StartWithSize 的 uint16 截断锐利边仍仅由注释承载契约
+
+**File:** `internal/pty/spawn.go:100`
+**Issue:** `pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}`——int→uint16 对越界值静默截断（-1 → 65535、70000 → 4464）。ClampDim 钳制已显式划归 Phase 12 调用侧，当前唯一调用方 Start 传常量 80/24，无现实风险；但 Phase 11 SpawnFunc 挂接后调用面扩大，契约仍只靠注释。前轮建议（接缝处防御性钳制或显式报错）未采纳，现状复核不变。
+**Fix:** 维持前轮建议：挂接 PR 中复查调用链钳制证据，或在 StartWithSize 入口加 ClampDim 同语义钳制使契约由代码承载。
+
+### IN-05: 锚点过期族——fuzz_test.go 行号引用与 config_test.go 键数命名未随 10-01/10-03 演化同步
+
+**File:** `cmd/wesh/fuzz_test.go:25-28`；`cmd/wesh/config_test.go:31-33,38,158-181`
+**Issue:** 三处同族过期（本 phase 新增键后未回填）：
+
+1. fuzz_test.go:25 注「configErr 单写口（config.go:86）」——configErr 实际在 config.go:93；
+2. fuzz_test.go:28 注「值剥离经『只取 Key()』实现，config.go:98-102」——该逻辑实际在 config.go:116-122（SessionMode 字段及注释使行号漂移）；
+3. config_test.go:38 子测名 "all 27 keys load" 与同函数头注释「27 键 = 26 flag 同名 + command」——fileConfig 现 30 键（该用例 TOML 只覆盖 27 键；index 两键与 session-mode 各有专测，但 "absent keys stay nil"（config_test.go:171-178）未把 SessionMode 纳入缺席-nil 断言清单——30 键中唯它无 decode 层缺席锚）。
+
+均为注释/命名/覆盖精度问题，无行为影响；但本项目注释承担决策溯源职能（D-xx 锚定），行号/计数失真会误导后续考古。
+
+**Fix:** 更新两处行号引用（或去行号化改为符号引用，免后续腐化）；子测名改 "all flag-named keys load" 类免计数命名并同步头注释键数；absent-keys 断言清单补 `fc.SessionMode != nil` 项。
 
 ---
 
-_Reviewed: 2026-09-02T15:49:06Z_
+_Reviewed: 2026-09-03T04:31:15Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
