@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -713,11 +714,13 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// D-24：--uid/--gid 值域校验（插入点同 03-04 先例——showVersion 早退之后，
 	// write-policy 枚举校验同位）：-1 哨兵之外 < -1 或 > 4294967295 即拒
 	//（uint32 转换安全——越界值 uint32 截断会降权到非预期账号，T-07-04b；
-	// 值非敏感可回显）。
-	if cfg.uid < -1 || cfg.uid > 4294967295 {
+	// 值非敏感可回显）。比较经 int64 上转（10-review WR-02）：无类型常量
+	// 4294967295 在 32-bit 平台（int=int32）不可表示，直接比较即编译破口
+	//——linux/386 与 32-bit arm 用户态自构建直接撞错。
+	if cfg.uid < -1 || int64(cfg.uid) > math.MaxUint32 {
 		return cfg, nil, fmt.Errorf("invalid --uid %d: must be -1 (unset) or 0..4294967295", cfg.uid)
 	}
-	if cfg.gid < -1 || cfg.gid > 4294967295 {
+	if cfg.gid < -1 || int64(cfg.gid) > math.MaxUint32 {
 		return cfg, nil, fmt.Errorf("invalid --gid %d: must be -1 (unset) or 0..4294967295", cfg.gid)
 	}
 	// D-09：--socket-mode 八进制解析（插入点同 03-04 先例——showVersion 早退
