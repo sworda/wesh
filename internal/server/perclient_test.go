@@ -16,9 +16,12 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -197,5 +200,102 @@ func TestPerClientWelcomeDims(t *testing.T) {
 	}
 	if wm["cols"] != float64(111) || wm["rows"] != float64(44) {
 		t.Fatalf("Welcome cols/rows = %v/%v, want 111/44（Hello 钳制尺寸回显，无 80x24 中间态）", wm["cols"], wm["rows"])
+	}
+}
+
+// ====== 11-01 Task 2 增量：装配契约与输入链测试（三测名仅出现于 func 声明行——
+// 验收 grep 行计数闸；doc 注释不引测试名字面量）======
+
+// 输入链全链实证（PC-02/PC-03）：rw 客户端 INPUT `echo ECHOMARK_9z2\r` →
+// 输出流含 ECHOMARK_9z2 结果行（cl.inQ → 每会话 inputWriter → master 全链）。
+// 正则行首锚定只命中结果行——命令回显行以 "echo " 起首不命中（phase06.mjs
+// readPid「正则只命中结果行」纪律的 Go 同构）。
+func TestPerClientInputEcho(t *testing.T) {
+	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo ECHOMARK_9z2\r")...)); err != nil {
+		t.Fatalf("write INPUT: %v", err)
+	}
+	// 命中即通过；未命中则统护 ctx 到期，readOutputUntil 内 Fatal。
+	readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^ECHOMARK_9z2\r?$`))
+}
+
+// sess×mode 装配契约锁定（11-01 planner 裁定登记：契约承载于 New 入口程序
+// 错误 panic 而非 ValidateOptions 签名扩展——D-05「options_test.go 一字节
+// 不动」与 10-review WR-02 前移纪律调和，PATTERNS §8E 的 options_test 加行
+// 建议被本裁定取代）。表驱动两形态：每子测 defer recover 捕获，断言 panic 值
+// 含锁定文案子串；两形态均断言 exitf 桩未被调用（装配失败零终结事件——两
+// panic 均在 goroutine 启动前触发，零残留；零值 &pty.Session{} 仅作非 nil
+// 哨兵，永不 Start）。
+func TestNewModeSessContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		sess      *pty.Session
+		opts      server.Options
+		wantPanic string
+	}{
+		{"shared requires non-nil sess", nil, server.Options{}, "requires non-nil sess"},
+		{"per-client requires nil sess", &pty.Session{}, server.Options{
+			SessionMode: server.SessionModePerClient,
+			SpawnFunc:   func(cols, rows int) (*pty.Session, error) { return nil, nil },
+		}, "requires nil sess"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exitfCalled := false
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("New 未 panic，want 含 %q 的程序错误", tt.wantPanic)
+				}
+				if !strings.Contains(fmt.Sprint(r), tt.wantPanic) {
+					t.Fatalf("panic = %v, want 含 %q", r, tt.wantPanic)
+				}
+				if exitfCalled {
+					t.Fatal("装配失败路径 exitf 被调用——零终结事件纪律违反")
+				}
+			}()
+			server.New(tt.sess, func(code int) { exitfCalled = true }, tt.opts)
+		})
+	}
+}
+
+// D-04 窗口期空白锁：captureStderr 窗口内构造 per-client server → 事件流零
+// session_start 行；随后 GET /healthz → 200 且 session_active==false
+// （11→13 已知中间态显式锁——Phase 13 语义裁决 OQ①② 落地时本断言按裁决
+// 翻转）。同步纪律（events_test.go 文件头）：New 内 emit 先于本函数返回
+// （程序序），restore() 前的 happens-before 边由 harness 构造序列天然成立
+// （本窗口期无 goroutine emit 面——零事件正是断言对象）。
+func TestPerClientNoSessionStartEvent(t *testing.T) {
+	restore := captureStderr(t)
+	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+	out := restore()
+	if starts := eventsNamed(parseEvents(t, out), "session_start"); len(starts) != 0 {
+		t.Fatalf("per-client New emit 了 %d 条 session_start——D-04 窗口期空白语义违反: %q", len(starts), out)
+	}
+
+	// wsURL → http URL（attachURL e2e_test.go 形态同款 scheme/路径替换）。
+	base := strings.TrimSuffix(strings.Replace(wsURL, "ws://", "http://", 1), "/ws")
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(base + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/healthz status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		SessionActive bool `json:"session_active"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /healthz body: %v", err)
+	}
+	if body.SessionActive {
+		t.Fatal("/healthz session_active = true, want false（D-04 窗口期：sessionAlive 不置位；Phase 13 OQ①② 裁决落地时本断言随之翻转）")
 	}
 }
