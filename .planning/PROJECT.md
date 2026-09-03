@@ -62,6 +62,7 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ 自定义首页 HTML（--index 整页替换零注入零模板 + TOML index/index-max-size 双键 + 启动四拒绝错误行零内容字节 + gzip/Vary 双通道 byte-identity + 认证面不变）— Phase 9（OPS-03；TestCustomIndex -race + phase09.mjs 18/18 含 SEC 红线自净）
 - ✓ 单静态二进制四平台发布（goreleaser linux/darwin × amd64/arm64 全静态 CGO_ENABLED=0 + 前端单 HTML embed + checksums.txt + release.sh 单命令发布链 + release.yml CI 全链）— Phase 9（OPS-10；v1.0.0 实发布：GitHub Release 五资产核验 sha256 全 OK + linux_amd64 --version 实跑 wesh 1.0.0）
 - ✓ 修复源码核实的全部 ttyd 缺陷（预认证崩溃/内存放大/凭据日志/Origin/TLS/env 泄露/关闭码/健康检查缺失等 Context 节清单项，?arg= 经裁决 v1 砍掉）— 跨 Phase 1-9（44/44 需求里程碑收口，各 phase VERIFICATION/SECURITY 独立复演）
+- ✓ 会话模式阀门装配（--session-mode=shared|per-client flag + TOML session-mode 键 + parse 期枚举校验 + Options.SessionMode/SpawnFunc 接缝 + ValidateOptions 零资源占用位序 + SC4 预检 --cwd 感知对齐；全部 inert，shared 逐字节零回归）— Phase 10（PC-01；10-VERIFICATION 19/19 passed：六形态进程级冒烟 + -race 五包 + 八 UAT 12/18/10/28/23/34/21/18 对齐基线 + append-only 零删除行）
 
 ### Active
 
@@ -168,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-01 — milestone v1.1（per-client 会话模式）启动；v1.0 于 2026-08-31 全量收口（44/44 需求，v1.0.0 已发布上架）*
+*Last updated: 2026-09-03 — Phase 10（模式装配与接缝）完成：PC-01 验证 19/19 passed，--session-mode 公开契约锁定全部 inert；v1.0 于 2026-08-31 全量收口（44/44 需求，v1.0.0 已发布上架）*
