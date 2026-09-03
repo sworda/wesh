@@ -63,7 +63,7 @@ type StartOptions struct {
 // 即纠正，PITFALLS C10 首帧窗口可接受）。可配面见 StartOptions（07-04 选项化）。
 //
 // 10-01：Start 缩为 StartWithSize 的单行委托——80×24 字面量零第二副本
-//（SpawnCols/SpawnRows 单一事实源纪律，上方 :34-41 注释预言的形态）。
+// （SpawnCols/SpawnRows 单一事实源纪律，上方 :34-41 注释预言的形态）。
 func Start(argv []string, opts StartOptions) (*Session, error) {
 	return StartWithSize(argv, opts, SpawnCols, SpawnRows)
 }

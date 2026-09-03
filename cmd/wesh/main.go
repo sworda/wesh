@@ -168,7 +168,7 @@ func (v *exitEmptyValue) Set(s string) error {
 // 读入；stat 级预检与读入校验归 validateStartup/loadCustomIndex，index-max-size
 // 纯配置键无 flag——D-08）；
 // Phase 10：--session-mode（10-01 PC-01，shared|per-client 默认 shared
-//——REQUIREMENTS 反特性 A5；parse 期枚举校验 D-04 文案；per-client 装配中，
+// ——REQUIREMENTS 反特性 A5；parse 期枚举校验 D-04 文案；per-client 装配中，
 // 当前版本行为与 shared 等价——10-CONTEXT D-05 注记）。
 // 配置文件两阶段合并（07-06 OPS-09，D-01..D-07，07-RESEARCH Pattern 4）：
 // prescanConfigPath 预扫 --config 路径 → loadFileConfig 严格加载铺底（文件级
