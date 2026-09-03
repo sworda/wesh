@@ -9,7 +9,7 @@
 ## Milestones
 
 - ✅ **v1.0** — Phases 1-9（shipped 2026-08-31，v1.0.0 四平台发布上架，44/44 需求收口）
-- 🚧 **v1.1 per-client 会话模式** — Phases 10-15（roadmap created 2026-09-02）
+- 🚧 **v1.1 per-client 会话模式** — Phases 10-14（roadmap created 2026-09-02；2026-09-03 原 13/14 合并、原 15 重编号 14）
 
 ## Phases
 
@@ -32,9 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 10: 模式装配与接缝** - --session-mode flag + TOML 键 + Options/StartWithSize 接缝，全部 inert 零回归 (completed 2026-09-03)
 - [ ] **Phase 11: per-client 生命周期主干** - attach spawn / 断开即杀进程组 / EXIT 私有化 / teardown 恰好一次
 - [ ] **Phase 12: per-client 交互与背压语义** - resize 直通 / ro 门控 / 重连 reset / 停读续读 / 1013 踢出
-- [ ] **Phase 13: 资源与容量防线** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组
-- [ ] **Phase 14: 终结语义与观测面适配** - 第二终结源 / 退出码对齐 / metrics 审计 per-client 粒度 / WESH_REMOTE_USER
-- [ ] **Phase 15: 双模式验证矩阵、标定与 herdr UAT** - 双模式 -race 门 / 协议层 + Playwright UAT / 负载矩阵回填 / 模式文档
+- [ ] **Phase 13: 资源防线与终结语义** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组 / 第二终结源 / 退出码对齐 / metrics 审计 per-client 粒度 / WESH_REMOTE_USER
+- [ ] **Phase 14: 双模式验证矩阵、标定与 herdr UAT** - 双模式 -race 门 / 协议层 + Playwright UAT / 负载矩阵回填 / 模式文档
 
 ## Phase Details
 
@@ -451,7 +450,24 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. 客户端断开（正常关闭或异常 1006）后其子进程进程组立即收到 SIGHUP（随 --stop-signal 可配），无宽限、无僵尸残留；信号与收割锁内序列化，pgid 复用窗口内不误杀无关进程组
   4. 子进程退出（exit 42 或信号死亡）后仅该客户端收到私有 EXIT 帧（含 exit_code，信号死亡 -1）并以 1000 关闭；服务端与其他客户端继续运行
 
-**Plans**: TBD
+**Plans**: 6 plans
+**Wave 1**
+
+- [ ] 11-01-PLAN.md — tracer 主干：per-client 端到端（attach spawn→Welcome 回显→五 goroutine 装配→断开 SIGHUP teardown Once 含 KILL 兜底→EXIT 私有化直写）+ New 分岔 + main sess=nil + harness 冒烟五测（PC-02/PC-03/PC-04，D-01/D-04）
+- [ ] 11-02-PLAN.md — darwin watcher dup-watch fail-closed 防御 + errDupWatch（PC-03，Pitfall 9）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 11-03-PLAN.md — 容量再闸（D-02 1011+容量文案 wire 形态）+ D-03 注册点复检回收 + spawn 失败 Pitfall 5 清理清单测试（PC-02）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 11-04-PLAN.md — 生命周期 Go 测试六测：EXIT 私有化两形态/断开 SIGHUP pgid ESRCH/重连新 pid/KILL 兜底时序双断言/teardown 恰好一次竞态注入（PC-03/PC-04）
+- [ ] 11-05-PLAN.md — web/uat/phase11.mjs 协议层八场景（D-06：双 pid 互不串台/首帧 winsize 钳制/运行期删命令 spawn 失败 1011/断开 ESRCH 无僵尸/EXIT 不串台/容量 1011 文案/重连新 pid/trap 免疫 KILL 兜底）（PC-02/PC-03/PC-04）
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 11-06-PLAN.md — 收口闸：静态面 + 全量 -race + GOOS=darwin 编译闸 + phase02-09 默认模式零修改重跑 + phase11.mjs 全绿 + 期望值逐字未动 diff 审查（PC-02/PC-03/PC-04）
 
 含：client.inQ/pc 字段、升档 per-client 分支（容量再闸 → hubMu 外 spawn → 失败 Error+1011 → Welcome 回显 → 注册+登记）、五 goroutine 装配（ReadLoop 闭包 / inputWriter 参数化 / writer / pinger / sessionWatcher）、EXIT 私有化直写、detach/kick SIGHUP 挂点（注册表移除点覆盖一切断开形态）、每会话 teardown sync.Once 固定序列 + reaped 栅栏、darwin watcher dup-watch fail-closed 防御。Welcome 恒首帧、exitf 恰好一次（termOnce 复用）、唯一收割者纪律三大不变量保持。
 
@@ -472,43 +488,31 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 含：INPUT 零分支 / RESIZE 直通两 case、每会话 resize 防抖（共用 debouncer 组件防双写漂移）、前端重连分支按 Welcome 模式位执行 terminal.reset() + dist 重建（本里程碑唯一前端改动）、per-PTY 停读/续读状态机。
 
-### Phase 13: 资源与容量防线
+### Phase 13: 资源防线与终结语义
 
-**Goal**: per-client 模式下并发进程有硬顶、已认证 churn 打不垮服务端、HUP 免疫进程必被收割、关停覆盖全部存活进程组
-**Depends on**: Phase 11（spawn 路径与 pcSessions 注册表）；与 Phase 14 互不依赖（建议先行——churn 防护缺失会使 Phase 15 压测失真）
-**Requirements**: PC-08
+**Goal**: per-client 模式下并发进程有硬顶、已认证 churn 打不垮服务端、HUP 免疫进程必被收割、关停覆盖全部存活进程组；--once/--exit-when-empty 触发语义与退出码规则成立（含注册表空迁移第二终结源），metrics/审计达 per-client 粒度，反代身份注入子进程环境
+**Depends on**: Phase 11（spawn 路径/pcSessions 注册表/watcher/teardown）
+**Requirements**: PC-08, PC-09, SEC-09, OPS-12
 **Success Criteria** (what must be TRUE):
 
   1. 满员时第 max-clients+1 个客户端握手即收 503（既有闸保留）；并发 attach 竞态下「并发子进程数 ≤ max-clients」硬不变量始终成立（spawn 前 hubMu 内复检计数，无 ttyd 式 == 闸 + 异步 spawn 窗口超编）
   2. 已认证客户端高频断开重连（churn）被 spawn 双令牌桶（全局防惊群 + per-IP 防单点 churn）限速，取不到令牌在 spawn 前拒绝且关闭码避开 1006（前端不进入自动重连放大循环）；churn 负载下 RSS/goroutine/fd 有界
   3. SIGHUP 免疫的子进程在 stop-timeout 到期后被 SIGKILL 兜底收割、不泄漏（per-client 下 stop-timeout 默认值重议经用户裁决落地——公开契约变更）
   4. 优雅关停（SIGTERM/SIGINT）时全部存活 per-client 进程组各执行一遍 stop-signal 序列，有界 join 后退出（不等 D-state，不丢 session_end 事件）
+  5. --once 下唯一客户端断开后服务端退出；--exit-when-empty 在全部客户端断开后触发退出——含「注册表已空且无子进程可等」形态下第二终结源生效（不会永不退出），退出状态 255 与 shared 语义对齐（第二终结源登记 Key Decisions）
+  6. 「先断后死」「先死后断」两种时序下 wesh 退出码规则与 shared 模式逐位对齐（255 / 子进程退出码透传，last-reaped-code 规则）
+  7. 运维者从 /metrics 读到 per-client 粒度指标（活跃会话 gauge、spawn 成功/失败与 kill 计数器），全部 series 保持零身份 label 红线；/healthz 的 session_alive 语义在 per-client 下按裁决落地
+  8. 审计日志会话生命周期事件（session_start/session_end/spawn_failed）携带 pid 归因与 client_id 关联键，可串联单个 per-client 会话全生命周期；spawn_failed 事件零敏感值
+  9. per-client 模式下 --auth-header 透传的用户名经 SEC-07 sanitize 后作为 WESH_REMOTE_USER 出现在该客户端子进程环境中（Web shell 内 env 可见，键名白名单固定）；shared 模式不注入（D-15 收窄语义不变）
 
 **Plans**: TBD
 
-含：spawn-intent 容量预占/回滚记账（或超编 ≤8 显式裁决登记并写进 README——规划期裁决项）、churn 负载测试（合法票据 10rps × 30s，断言 RSS/goroutine/fd 有界）。准则 2/3/4 为研究锁定防线（PITFALLS #4 fork bomb / #8 HUP 免疫泄漏 ×N / #10 Shutdown 面），是 PC-08 硬不变量在 churn 与关停语境下的操作化。
+含：容量硬帽机制（闸前检查 + 注册点复检回收）经 Phase 11 D-03 提前落地，本 phase 防线本体为 spawn 双令牌桶 + stop-timeout 默认值重议 + Shutdown N 进程组快照逐组信号（原裁决项④已消解）；churn 负载测试（合法票据 10rps × 30s，断言 RSS/goroutine/fd 有界）；pcSupervisor 单例（hubCond 等 `(pcExitReq||exiting) && active==0`，termOnce/terminate 单点收口——「exitf 唯一收口」per-client 同构映射）、healthz/metrics 四个 OQ 逐项裁决落地（规划期确认门）、metricsSeries17 镜像扩展 + 零身份 label 红线扩到新 series。准则 1-4 为研究锁定防线（PITFALLS #4 fork bomb / #8 HUP 免疫泄漏 ×N / #10 Shutdown 面），是 PC-08 硬不变量在 churn 与关停语境下的操作化。churn 防护先行于 Phase 14 压测（防护缺失会使压测失真）。
 
-### Phase 14: 终结语义与观测面适配
-
-**Goal**: per-client 模式下 --once/--exit-when-empty 触发语义与退出码规则成立（含注册表空迁移第二终结源），metrics/审计达 per-client 粒度，反代身份注入子进程环境
-**Depends on**: Phase 11（watcher/pcSessions/teardown）；与 Phase 13 互不依赖
-**Requirements**: PC-09, SEC-09, OPS-12
-**Success Criteria** (what must be TRUE):
-
-  1. --once 下唯一客户端断开后服务端退出；--exit-when-empty 在全部客户端断开后触发退出——含「注册表已空且无子进程可等」形态下第二终结源生效（不会永不退出），退出状态 255 与 shared 语义对齐（第二终结源登记 Key Decisions）
-  2. 「先断后死」「先死后断」两种时序下 wesh 退出码规则与 shared 模式逐位对齐（255 / 子进程退出码透传，last-reaped-code 规则）
-  3. 运维者从 /metrics 读到 per-client 粒度指标（活跃会话 gauge、spawn 成功/失败与 kill 计数器），全部 series 保持零身份 label 红线；/healthz 的 session_alive 语义在 per-client 下按裁决落地
-  4. 审计日志会话生命周期事件（session_start/session_end/spawn_failed）携带 pid 归因与 client_id 关联键，可串联单个 per-client 会话全生命周期；spawn_failed 事件零敏感值
-  5. per-client 模式下 --auth-header 透传的用户名经 SEC-07 sanitize 后作为 WESH_REMOTE_USER 出现在该客户端子进程环境中（Web shell 内 env 可见，键名白名单固定）；shared 模式不注入（D-15 收窄语义不变）
-
-**Plans**: TBD
-
-含：pcSupervisor 单例（hubCond 等 `(pcExitReq||exiting) && active==0`，termOnce/terminate 单点收口——「exitf 唯一收口」per-client 同构映射）、healthz/metrics 四个 OQ 逐项裁决落地（规划期确认门）、metricsSeries17 镜像扩展 + 零身份 label 红线扩到新 series。
-
-### Phase 15: 双模式验证矩阵、标定与 herdr UAT
+### Phase 14: 双模式验证矩阵、标定与 herdr UAT
 
 **Goal**: 双模式零回归双证据收口；herdr/tmux driving scenario 端到端恢复正确行为；并发进程资源标定与双模式文档义务落地
-**Depends on**: Phase 13, Phase 14
+**Depends on**: Phase 13（churn 防护缺失会使本 phase 压测失真）
 **Requirements**: PC-12, PC-13
 **Success Criteria** (what must be TRUE):
 
@@ -520,12 +524,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Plans**: TBD
 
-**Research flag**: 32 会话资源曲线为账面推算（唯一 MEDIUM 置信面），负载矩阵实测回填；herdr 端到端断言设计依赖外部子程序行为，需实测标定——建议 `/gsd-plan-phase --research-phase 15`。测试拓扑遵循双机分工（CODEBUDDY.md）：协议层 UAT 在 Linux 开发机（headless，禁浏览器），Playwright 浏览器全链在 Windows 工作站（经 TCP 转发器 kill/restore 模拟断网）。
+**Research flag**: 32 会话资源曲线为账面推算（唯一 MEDIUM 置信面），负载矩阵实测回填；herdr 端到端断言设计依赖外部子程序行为，需实测标定——建议 `/gsd-plan-phase --research-phase 14`。测试拓扑遵循双机分工（CODEBUDDY.md）：协议层 UAT 在 Linux 开发机（headless，禁浏览器），Playwright 浏览器全链在 Windows 工作站（经 TCP 转发器 kill/restore 模拟断网）。
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 → 12 → 13 → 14 → 15（v1.1；13/14 互不依赖可并行，建议 13 先行——churn 防护缺失会使 15 压测失真）
+Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 → 12 → 13 → 14（v1.1；2026-09-03 原 13/14 合并——原 13 经 Phase 11 D-01/D-03 机制先行收窄后独立 phase 开销过重，合并同时提前闭合 --once/--exit-when-empty 窗口期缺口）
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -541,6 +545,5 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 0/? | Not started | - |
 | 12. per-client 交互与背压语义 | v1.1 | 0/? | Not started | - |
-| 13. 资源与容量防线 | v1.1 | 0/? | Not started | - |
-| 14. 终结语义与观测面适配 | v1.1 | 0/? | Not started | - |
-| 15. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |
+| 13. 资源防线与终结语义 | v1.1 | 0/? | Not started | - |
+| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |
