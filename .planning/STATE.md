@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 10
 current_phase_name: mode-assembly
 status: executing
-stopped_at: Completed 10-04-PLAN.md
-last_updated: "2026-09-03T02:51:41.670Z"
-last_activity: 2026-09-02
-last_activity_desc: v1.1 roadmap created（15/15 需求映射 Phase 10-15）
+stopped_at: Completed 10-05-PLAN.md
+last_updated: "2026-09-03T03:40:18.721Z"
+last_activity: 2026-09-03
+last_activity_desc: Phase 10 execution started
 progress:
   total_phases: 1
   completed_phases: 1
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # Project State
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-09-01)
 ## Current Position
 
 Phase: 10 (mode-assembly) — EXECUTING
-Plan: 4 of 4
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-09-02 — Phase 10 execution started
+Last activity: 2026-09-03 — Phase 10 execution started
 
 Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
@@ -61,6 +61,7 @@ Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/
 | Phase 10 P02 | 35 min | 2 tasks | 4 files |
 | Phase 10 P03 | 18 min | 2 tasks | 2 files |
 | Phase 10 P04 | 25 min | 2 tasks | 2 files |
+| Phase 10 P05 | 31min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Recent decisions affecting current work:
 - [Requirements v1.1]: D5 裁决落定——SEC-09 per-client 下 WESH_REMOTE_USER 注入子进程 env（D-15 收窄理由结构性消失），shared 保持收窄语义；反特性五条入 Out of Scope（reattach/linger/运行期切模式/默认 per-client/ro 共享进程）
 - [Phase ?]: [Phase 10-01] run() 两模式均经启动期 pty.Start（sess=nil 与 New 体 sess.Cmd.Process.Pid 取引用冲突，归 Phase 11）；SpawnFunc 闭包 inert 零调用方
 - [Phase ?]: [Phase 10-01] ValidateOptions 包级互斥校验 option (b) 落地：per-client×SpawnFunc=nil / shared×SpawnFunc≠nil fail-fast，零值归一 shared 与 New 兜底同口径
+- [Phase ?]: [Phase 10-05] GOROOT gofmt（go1.26.3 现代 doc-comment 规则）定为收口闸工具：10-01 遗留两行 CJK 标点接续注释补空格归一（a412a87），新旧 gofmt 双 clean；历史闸用 PATH 旧版 gofmt 故未报
 
 ### Pending Todos
 
@@ -95,6 +97,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-02T13:20:02.856Z
-Stopped at: Completed 10-04-PLAN.md
+Last session: 2026-09-03T03:40:18.709Z
+Stopped at: Completed 10-05-PLAN.md
 Resume file: None
