@@ -37,3 +37,16 @@ func (s *Server) ShrinkOutboxForTest(seq int64, newCap int) bool {
 	}
 	return false
 }
+
+// 11-03 观测出口（D-02/D-03 容量闸测试的数据源）：返回 per-client 会话活性
+// 注册表 pcSessions 的当前登记数（hubMu 内 len 读）。per-client 注册表活性 =
+// 未收割会话数——含断开待收割 linger 形态（断开 SIGHUP 已发但 trap 免疫的
+// 会话登记至 Wait 收割完成，容量再闸测试的确定性注入载体）。shared 模式
+// pcSessions 为 nil——len(nil)==0 自然成立。故障注入语义仅服务测试：生产
+// 路径 pcSessions 仅经 upgradePerClient 登记与 teardown 慢半段移除。调用方
+// 不得持 hubMu（上方 ShrinkOutboxForTest 注释形态同款纪律）。
+func (s *Server) PCSessionsLenForTest() int {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	return len(s.pcSessions)
+}
