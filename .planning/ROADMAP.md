@@ -419,7 +419,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. CLI flag > env > TOML > 默认的既定优先级链对 session_mode 成立（CLI 显式覆盖配置文件值）
   4. per-client 模式下启动预检（exec.LookPath 等 validateStartup 行）把命令缺失等配置错误暴露在启动期，而非推迟到首个客户端 attach 才失败
 
-**Plans**: 4/4 plans executed
+**Plans**: 5 plans（4/4 executed + 10-05 gap closure）
 **Wave 1**
 
 - [x] 10-01-PLAN.md — 模式阀门 tracer：--session-mode 全链装配（flag/TOML 键/枚举闸/Options.SessionMode+SpawnFunc/ValidateOptions/run() 分岔/StartWithSize）+ CLI 契约测试（PC-01，D-03/D-04）
@@ -432,6 +432,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [x] 10-04-PLAN.md — D-05 文档最小明示（CONFIGURATION.md 五处 + README 一句 + --help 核对）+ 收口全量验证（-race 全量 + 既有协议 UAT 原样重跑 + 冒烟三命令）（PC-01，D-06）
+
+**Gap closure** *(VERIFICATION 2026-09-02 gaps_found 18/19：WR-01 SC4 预检 --cwd 盲误拒相对路径 argv0 + WR-02 ValidateOptions 调用点在资源获取后零回滚——修复经 10-REVIEW-FIX 提交 189d081/0ec37cb 落 main，本 plan 出闭合断言与 fix 后全量双证据首跑)*
+
+- [ ] 10-05-PLAN.md — WR-01/WR-02 闭合：预检 --cwd 感知对齐六形态进程级冒烟 + ValidateOptions 前移位序断言 + 零回归收口闸（PC-01）
 
 含：pty.StartWithSize（Start 委托、80x24 单一事实源纪律保持）、Options.SessionMode/SpawnFunc + New 互斥校验 fail-fast、配置 fuzz 语料扩展（session_mode 键入白名单 + 非法值 parse 拒绝同 PR）、write-policy=owner × per-client 组合的 validateStartup 处置（warn 或拒绝，规划期裁决——静默永不接受）。本阶段结束时不存在任何 per-client 运行期行为，接缝全部 inert；先锁定公开契约面（one-way flag 纪律）。
 
@@ -534,7 +538,7 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 7. 部署与配置 | v1.0 | 10/10 | Complete | 2026-08-27 |
 | 8. 可观测性 | v1.0 | 6/6 | Complete | 2026-08-28 |
 | 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
-| 10. 模式装配与接缝 | v1.1 | 4/4 | In Progress|  |
+| 10. 模式装配与接缝 | v1.1 | 4/5 | In Progress|  |
 | 11. per-client 生命周期主干 | v1.1 | 0/? | Not started | - |
 | 12. per-client 交互与背压语义 | v1.1 | 0/? | Not started | - |
 | 13. 资源与容量防线 | v1.1 | 0/? | Not started | - |
