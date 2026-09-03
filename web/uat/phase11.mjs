@@ -409,6 +409,157 @@ function s4bAbnormalExempt() {
     'CODEBUDDY.md 分层测试策略 §5 平台豁免（真实 OS 断网时序不列阻塞项）+ Node 原生 WebSocket 无 TCP 层强杀面；协议层可覆盖形态 = 正常关闭 + 服务端侧 pgid 断言（S4a）+ 11-01 detach/kick 挂点覆盖论证（一切断开形态同走注册表移除点）+ 11-04 竞态注入测');
 }
 
+// ---------- S5：EXIT 私有化两形态（PC-04——终结余波仅属主可见） ----------
+async function s5ExitPrivate() {
+  console.log('S5: EXIT 私有化（A exit 42 → 仅 A 末帧 EXIT exit_code==42 + close 1000；B 1.5s 窗零帧 + 窗后 echo 照常；信号死亡形态 -1 + 1000）');
+  const inst = await startWesh(['--session-mode=per-client', '--writable', '--', 'sh']);
+  try {
+    const a = await dialHello(inst.port, {});
+    const b = await dialHello(inst.port, {});
+    // B 排空自身在途帧（提示符/回显）后记录静默基线——「零帧」断言先排空否则
+    // 假阳性（11-04 drainQuiet 形态的 UAT 同构）
+    const drained = await echoMark(b.frames, b.ws, 'UAT_S5_DRAIN_h3v6');
+    await sleep(300); // B 落定窗（提示符尾帧吸纳）
+    const baseB = b.frames.length;
+    // A exit 42 → 仅 A 收私有 EXIT（EXIT 直写纪律：组帧一次 → 同步 Write →
+    // Close(1000)，帧序 EXIT 必先于 1000）
+    const collA = collectUntilClose(a.ws);
+    sendInput(a.ws, 'exit 42\r');
+    const rA = await collA;
+    const exA = rA.frames.at(-1)?.[0] === EXIT ? exitOf(rA.frames) : null;
+    check('S5a', 'A exit 42 → 末帧 EXIT exit_code==42 + close 1000（私有化直写，帧序 EXIT 先于 1000）',
+      exA?.exit_code === 42 && rA.close.code === 1000,
+      `exit_code=${exA?.exit_code} close=${rA.close.code}`);
+    // B 在 A 终结后 1.5s 窗内零帧到达（含 OUTPUT——「连终结余波都不可见」强形态）
+    await sleep(1500);
+    const framesB = b.frames.length - baseB;
+    check('S5b', 'B 端 1.5s 静默窗零帧扰动（A 终结余波对 B 逐字节不可见）',
+      drained && framesB === 0, `B窗内帧数=${framesB}`);
+    // 窗后 B echo 照常（服务端续跑 + B 会话无扰动）
+    const aliveB = await echoMark(b.frames, b.ws, 'UAT_S5_ALIVE_p6t1');
+    check('S5c', '窗后 B echo 照常（服务端续跑 + 他端零扰动）', aliveB, `回读=${aliveB}`);
+    // 信号死亡形态（11-04 plan 勘误延续：交互式 shell 无 trap 时忽略 SIGTERM——
+    // bash/dash 手册语义，TERM 自杀不致死；HUP 致死且与 exit_test.go/
+    // phase06.mjs S2 信号夹具同款。断言面不变：exit_code==-1 + 大写信号名 + 1000）
+    const a2 = await dialHello(inst.port, {});
+    const collA2 = collectUntilClose(a2.ws);
+    sendInput(a2.ws, 'kill -HUP $$\r');
+    const rA2 = await collA2;
+    const exA2 = rA2.frames.at(-1)?.[0] === EXIT ? exitOf(rA2.frames) : null;
+    check('S5d', "信号死亡形态：末帧 EXIT exit_code==-1（message 含大写 'SIGHUP'）+ close 1000",
+      exA2?.exit_code === -1 && typeof exA2?.message === 'string' && exA2.message.includes('SIGHUP') && rA2.close.code === 1000,
+      `exit_code=${exA2?.exit_code} SIGHUP大写=${exA2?.message?.includes('SIGHUP') ?? false} close=${rA2.close.code}`);
+    b.ws.close(1000);
+    await waitClose(b.ws, 3000);
+  } finally {
+    inst.kill();
+  }
+}
+
+// ---------- S6：--max-clients=1 容量再闸（D-02 wire 形态协议层实证，linger 注入） ----------
+async function s6CapacityRegate() {
+  console.log('S6: --max-clients=1 容量再闸（trap 免疫 linger 注入 → 注册表空出 + pcSessions 满窗口 → B 命中 WS 面 1011 容量文案逐字）');
+  // linger 注入形态（11-03 Go 侧 TestPerClientCapacityGate 同机理——确定性窗口）：
+  // 启动即印 pid 的非交互死循环（不读 stdin——pid 经初始 OUTPUT 回读）；断开后
+  // SIGHUP 被 trap 免疫 → 会话滞留 pcSessions（teardown 慢半段等收割不到）而
+  // 注册表已清空
+  const inst = await startWesh(['--session-mode=per-client', '--max-clients=1', '--', 'sh', '-c', 'trap "" HUP; echo S6PID=$$; while true; do sleep 1; done']);
+  let pidA = null;
+  try {
+    const a = await dialHello(inst.port, {});
+    pidA = await waitScanPid(a.frames, 'S6PID');
+    if (pidA !== null) sensitivePids.push(pidA);
+    check('S6a', '前置：A attach + 初始 OUTPUT 回读 S6PID（非交互夹具启动即印 pid）',
+      pidA !== null, `解析=${pidA !== null}`);
+    if (pidA === null) {
+      check('S6b', '容量再闸', false, '前提失败：pid 未解析');
+      return;
+    }
+    a.ws.close(1000);
+    await waitClose(a.ws, 3000); // close 握手完成 ⇒ 服务端 detach 已发生（注册表清空）
+    // linger 窗：SIGHUP 已发但被 trap 免疫——会话滞留 pcSessions、注册表已空
+    await sleep(300);
+    // B 过 ③位 503 闸（registry.n==0——server.go 守卫区计数源；两关闭面分工：
+    // 注册表满→503 既有闸 / linger 或竞态窗口→WS 面 1011 本闸）后命中再闸
+    const r = await dialExpectReject(inst.port, {});
+    const errs = r.frames.filter((f) => f[0] === ERROR);
+    const ep = errs.length > 0 ? JSON.parse(dec.decode(errs[0].subarray(1))) : null;
+    check('S6b', 'B attach → Error{server_error, "server is at capacity" 逐字} + close 1011（WS 面再闸，D-02）',
+      errs.length === 1 && ep?.code === 'server_error' && ep?.message === 'server is at capacity' && r.close.code === 1011,
+      `Error帧数=${errs.length} code=${ep?.code} 文案逐字=${ep?.message === 'server is at capacity'} close=${r.close.code}`);
+    // trap 免疫实证：A 的进程组仍存活（linger——--stop-timeout 默认 0 不补 KILL）
+    const alive = pgroupAlive(pidA);
+    check('S6c', 'linger 实证：A 的 pgid 仍存活（HUP 已发但被 trap 免疫）', alive, `存活=${alive}`);
+  } finally {
+    // CI 夹具纪律：滞留进程组显式 SIGKILL 清场（绝不随脚本泄漏——CPU 受限 CI
+    // 级联减速实证纪律，prohibitions 第三条；ESRCH 幂等静默）
+    if (pidA !== null) { try { process.kill(-pidA, 'SIGKILL'); } catch { /* 已消亡 */ } }
+    inst.kill();
+  }
+}
+
+// ---------- S7：断开重连 = 全新进程新 pid（ttyd parity，PC-03） ----------
+async function s7ReconnectNewPid() {
+  console.log('S7: 断开重连 = 全新进程（pid1 → close → ESRCH → 重连 pid2 ≠ pid1）');
+  const inst = await startWesh(['--session-mode=per-client', '--writable', '--', 'sh']);
+  try {
+    const a = await dialHello(inst.port, {});
+    const pid1 = await readPid(a.frames, a.ws, 'S7PID');
+    if (pid1 !== null) sensitivePids.push(pid1);
+    a.ws.close(1000);
+    await waitClose(a.ws, 3000);
+    const gone1 = pid1 !== null && await pollESRCH(pid1, 2000);
+    check('S7a', '前置：pid1 回读 + 断开后 2s 护栏内 ESRCH（旧进程已终结收割）',
+      pid1 !== null && gone1, `解析=${pid1 !== null} ESRCH=${gone1}`);
+    const a2 = await dialHello(inst.port, {});
+    const pid2 = await readPid(a2.frames, a2.ws, 'S7PID');
+    if (pid2 !== null) sensitivePids.push(pid2);
+    // D-06 ⑦ 括注原文锚定：本场景锁服务端语义（重连 = 新 spawn 新 pid）；
+    // 前端 terminal.reset() 归 Phase 12 不在此断言
+    check('S7b', '重连回读 pid2 ≠ pid1（服务端语义：重连 = 全新进程）',
+      pid2 !== null && pid1 !== null && pid2 !== pid1,
+      `解析=${pid2 !== null} pid不等=${pid2 !== pid1}`);
+    a2.ws.close(1000);
+    await waitClose(a2.ws, 3000);
+  } finally {
+    inst.kill();
+  }
+}
+
+// ---------- S8：trap '' HUP + --stop-timeout=1s → KILL 兜底（D-01 机制先行端到端证据） ----------
+async function s8KillFallback() {
+  console.log("S8: trap '' HUP + --stop-timeout=1s → KILL 兜底（断开后 ~300ms 时点存活 → 1s 到期后 5s 护栏内 ESRCH）");
+  // 时序双断言（11-04 TestPerClientStopTimeoutKillFallback 的 UAT 同构——
+  // stopseq_test.go「到期前静默窗 / 到期后护栏内收码」形态镜像到协议层）
+  const inst = await startWesh(['--session-mode=per-client', '--stop-timeout=1s', '--', 'sh', '-c', "trap '' HUP; echo S8PID=$$; while true; do sleep 1; done"]);
+  let pid = null;
+  try {
+    const a = await dialHello(inst.port, {});
+    pid = await waitScanPid(a.frames, 'S8PID');
+    if (pid !== null) sensitivePids.push(pid);
+    check('S8a', "前置：A attach + 初始 OUTPUT 回读 S8PID（trap '' HUP 免疫夹具启动即印 pid）",
+      pid !== null, `解析=${pid !== null}`);
+    if (pid === null) {
+      check('S8b', 'KILL 兜底', false, '前提失败：pid 未解析');
+      return;
+    }
+    a.ws.close(1000);
+    await waitClose(a.ws, 3000); // close 握手完成 ⇒ detach 已发生（SIGHUP 已发、1s KILL 定时器已武装）
+    // 静默窗断言：断开后 ~300ms 时点进程组仍存活——HUP 被 trap 免疫，不存在
+    // 自然死亡路径（300ms ≪ 1000ms 标称，调度余量充足；禁精确时点断言）
+    await sleep(300);
+    const aliveAt300 = pgroupAlive(pid);
+    // 到期断言：1s stop-timeout 到期 SIGKILL 补发收割——5s 护栏吸纳调度抖动
+    const gone = await pollESRCH(pid, 5000);
+    check('S8b', '时序双断言：~300ms 时点存活（HUP 免疫静默窗）+ 5s 护栏内 ESRCH（1s 到期 SIGKILL 补发收割）',
+      aliveAt300 && gone, `静默窗存活=${aliveAt300} 护栏内ESRCH=${gone}`);
+  } finally {
+    // CI 夹具纪律：断言失败路径也不泄漏滞留进程组（ESRCH 幂等静默）
+    if (pid !== null) { try { process.kill(-pid, 'SIGKILL'); } catch { /* 已消亡 */ } }
+    inst.kill();
+  }
+}
+
 // 输出自净断言（phase06.mjs review #7 形态延伸——红线由注释纪律升级为运行时
 // 自证）：遍历全部已发 detail，断言不含任一 share token 值（含 '/s/' 链接形态串）
 // 与任一会话 pid 数值；命中即 FAIL（防未来回归静默破线）。命中时不回显冒犯内容
@@ -421,7 +572,8 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-const scenarios = [s1DualPidIsolation, s2FirstFrameWinsize, s3RuntimeDeletedCommand, s4DisconnectESRCH, s4bAbnormalExempt];
+// D-06 八场景一次建齐（S4b skipped 豁免登记不阻塞退出码）——与头注释清单逐一对账
+const scenarios = [s1DualPidIsolation, s2FirstFrameWinsize, s3RuntimeDeletedCommand, s4DisconnectESRCH, s4bAbnormalExempt, s5ExitPrivate, s6CapacityRegate, s7ReconnectNewPid, s8KillFallback];
 let failed = 0;
 for (const s of scenarios) {
   try {
