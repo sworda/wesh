@@ -786,7 +786,7 @@ func accumFramesUntil(t *testing.T, resCh <-chan frameRes, re *regexp.Regexp) []
 }
 
 // readSessionPid 发 `echo <tag>=$$\r` 并回读解析 pid——setsid pgid==pid 不变量
-//（pty spawn 既有）下即该会话的进程组锚点。正则只命中结果行：命令回显含 $$
+// （pty spawn 既有）下即该会话的进程组锚点。正则只命中结果行：命令回显含 $$
 // 字面（无数字）不命中（phase06.mjs readPid 纪律同构；11-03 容量闸测的
 // PCAPID 内联形态抽取为 helper）。
 func readSessionPid(t *testing.T, ctx context.Context, c *websocket.Conn, tag string) int {
@@ -805,7 +805,7 @@ func readSessionPid(t *testing.T, ctx context.Context, c *websocket.Conn, tag st
 // waitPgroupESRCH 轮询（25ms 步进，guard 总护栏）至 kill(-pid, 0) 返回
 // ESRCH——setsid pgid==pid 不变量下进程组消失的强证据：组成员僵尸在未收割前
 // 对信号 0 仍视为存在，故 ESRCH ⊇ 死亡且收割完成（无僵尸）。**严禁**把
-//「kill 0 无错」当死亡证据——那是存活探针（无错 = 进程组存在）。guard 到期
+// 「kill 0 无错」当死亡证据——那是存活探针（无错 = 进程组存在）。guard 到期
 // 未 ESRCH 即 Fatal；非 ESRCH 错误（如 EPERM）同 Fatal（同 uid 派生的进程组
 // EPERM 不可达，出现即环境异常）。
 func waitPgroupESRCH(t *testing.T, pid int, guard time.Duration) {
@@ -888,15 +888,15 @@ func TestPerClientExitPrivate42(t *testing.T) {
 // EXIT 私有化强形态二（PC-04 信号死亡 -1 语义，11-04 Task 1）：A 发
 // kill -HUP $$（sh 自杀）→ A 端末帧 EXIT exit_code==-1 + close 1000，且
 // message 含大写信号名 SIGHUP。-1 语义经 watcher 内联退出码提取
-//（exec.ExitError.ExitCode() 对信号死亡返回 -1——shared lifecycle
+// （exec.ExitError.ExitCode() 对信号死亡返回 -1——shared lifecycle
 // :1418-1423 同形）与 exitMessage/exitSignalNum 复用面送达
-//（emptyexit_test.go 文件头 accept-255 断言常量同源；exit_test.go 信号
+// （emptyexit_test.go 文件头 accept-255 断言常量同源；exit_test.go 信号
 // 形态测的大写信号名断言同形——同为 HUP 自杀夹具）。
 //
 // 信号选型勘误（11-04 执行期实测修正）：plan 文本写 kill -TERM——但**交互式
 // shell 无 trap 时忽略 SIGTERM**（bash 手册 Signals 节/dash 同语义），TERM
 // 自杀不致死（实测 10s 统护到期，提示符照常）；HUP 对交互 shell 致死
-//（exit_test.go TestExitFrameSignal 的既有信号夹具同款），语义断言面不变。
+// （exit_test.go TestExitFrameSignal 的既有信号夹具同款），语义断言面不变。
 func TestPerClientExitSignalMinus1(t *testing.T) {
 	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
 
@@ -981,5 +981,193 @@ func TestPerClientReconnectNewPid(t *testing.T) {
 	pid2 := readSessionPid(t, ctx, c2, "PCRPID")
 	if pid2 == pid1 {
 		t.Fatalf("重连回读 pid == 首次 %d——重连须为全新进程（ttyd parity）", pid1)
+	}
+}
+
+// ====== 11-04 Task 2 增量：D-01 KILL 兜底时序双断言 + teardown 恰好一次竞态
+// 注入（Pitfall 8/3 的 Phase 11 侧锁；测名纪律同上——仅现于 func 声明行）======
+
+// D-01 KILL 兜底（PC-03，Pitfall 8「HUP 免疫泄漏」的 Phase 11 侧 Go 证据；
+// stopseq_test.go:97-134「stop-timeout 前静默 / 到期后护栏内收码」时序双断言
+// 形态的 per-client 同构——断言对象从 exitf(-1) 换为 pgid ESRCH + pcSessions
+// 收敛）：Options.StopTimeout=1s + argv 为 trap "" HUP 免疫死循环（启动即印
+// pid——trap 安装先于 echo，回读 pid 即 trap 已就位的同步点，11-03 容量闸测
+// 同款免落盘纪律：客户端仍在线时 stdout 可观测）→ A attach 回读 pid →
+// Close(1000) → 断开后 300ms 时点进程组仍存活（HUP 免疫实证——stop-timeout
+// 前静默窗；循环夹具无自然死亡路径，此时点消失即 trap 未生效或 KILL 提前
+// 补发的序列错误）→ 1s 到期 AfterFunc 补 SIGKILL（经 reaped 闸复检）→ 5s
+// 护栏内 ESRCH（SIGKILL 补发 + Wait 收割 + pcSessions 移除全链——D-01 固定
+// 序列逐段锚定：SIGHUP 被 trap 免疫 → 1s AfterFunc 补 KILL → Drain(200ms)
+// → Close(master) → watcher Wait 返回 → 注册表单点移除）→ pcSessions ==0。
+//
+// 尾部清场纪律：defer SIGKILL 幂等清场先行注册（已 ESRCH 则静默）——护栏外
+// 仍存活即 FAIL，FAIL 路径同样清场，防断言调整留下泄漏窗口（CI 级联减速
+// 夹具纪律，killServer 注释先例）；harness Cleanup 的 spawned Kill+Close 对
+// 已收割会话幂等无害。
+func TestPerClientStopTimeoutKillFallback(t *testing.T) {
+	argv := []string{"sh", "-c", "trap '' HUP; echo PCKPID=$$; while true; do sleep 1; done"}
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) { o.StopTimeout = time.Second })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	pid := readSessionPid(t, ctx, c, "PCKPID")
+	defer func() { _ = syscall.Kill(-pid, syscall.SIGKILL) }() // 幂等清场（见 doc 注释）
+	closedAt := time.Now()
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// stop-timeout(1s) 前 300ms 时点静默——HUP 被 trap 忽略，无自然死亡路径
+	//（stopseq_test.go:122-128 时点断言形态镜像；syscall.Kill 探测为直接调用，
+	// 无 ctx 面，夹具纪律红线不触及）。
+	time.Sleep(300 * time.Millisecond)
+	if err := syscall.Kill(-pid, 0); err != nil {
+		t.Fatalf("断开后 300ms 时点 pgid(%d) 已消失（%v）——trap 免疫应使进程组存活至 stop-timeout 到期（Pitfall 8 夹具未就位）", pid, err)
+	}
+	t.Logf("断开后 300ms 时点 pgid(%d) 存活——HUP 免疫实证（stop-timeout 前静默窗）", pid)
+
+	// 1s 到期 AfterFunc 补 SIGKILL → 5s 护栏内 ESRCH（KILL 补发的结构证据——
+	// 无补发则 trap 免疫进程必然存活到护栏翻车）。
+	waitPgroupESRCH(t, pid, 5*time.Second)
+	t.Logf("断开至 pgid ESRCH 历时 %v（stop-timeout=1s 到期后 KILL 兜底收割）", time.Since(closedAt))
+
+	// 注册表收敛（teardown 慢半段移除点，2s 护栏）。
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.PCSessionsLenForTest() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("pcSessions 2s 内未收敛到 0（当前 %d）——KILL 兜底收割/移除未落定", srv.PCSessionsLenForTest())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// teardown 恰好一次竞态注入（PC-03，Pitfall 3「断开↔子死双路收口竞态」的
+// Phase 11 侧锁）：单实例 10 轮——每轮新客户端 dialHello（argv sh）→ 回读
+// pid → 同端接连发 exit 0 与 conn Close(1000)（两触发源并发：子死 watcher
+// 路径 vs 断开 detach 路径）→ 读连接至终结 → 终态四件套断言：pcSessions
+// 收敛 0 / /healthz clients==0 / 回读 pid 的 pgid ESRCH / exitf 桩全程零
+// 调用。
+//
+// 竞态固有二形态（≠断言放宽——Pitfall 11 红线保护对象是 shared 零回归期望
+// 值，本测锁定的是 per-client 竞态不变量，注释明示区别）：两触发源的胜者
+// 不定——形态①子死先收口：EXIT 帧可到达后 1000；形态②断开先落地：服务端
+// 库在 detach 前已自动回显关闭并 full-close 服务端 conn，watcher 的 EXIT
+// 直写在 +200ms Drain 后必然失败静默（S1 直写纪律：Write 失败不补救直接
+// Close），帧集零 EXIT。两形态同为正确终结；锁定对象 = quiescent 终态 +
+// exitf 零调用 + 恰好一次，非时序胜者身份。
+//
+// 「读连接至 CloseError」的并发泵实现注解：客户端主动 Close 完成后 Read 恒
+// 返 net.ErrClosed（库 prepareRead 先查 c.closed），故关闭码证据由两通道
+// 承载——泵观测到对端关闭帧 = CloseError{1000} 直接断言；Close 返回 nil =
+// 库 closeHandshake 内 CloseStatus==code 校验已通过（对端即 1000）；Close
+// 返 net.ErrClosed = 连接已被对端关闭帧收口（泵侧必然已观测 CloseError）。
+// EXIT 帧至多一个（恰好一次的 wire 面观察）；到达即 exit_code==0——EXIT 上
+// wire 的前提 = watcher 在客户端关闭帧被服务端处理前完成终结写（conn 仍
+// 开），该前提蕴含子死路径先收口（断开先收口则 conn 已随库自动回显关闭，
+// 见上），子死先收口蕴含死因 = exit 0（reaped 栅栏内 SIGHUP 不发）。
+//
+// 恰好一次的结构性锁：teardownOnce 双触发单执行（Pitfall 3「两路径都只触发、
+// 执行序列只有一个」）；waitDone/teardownDone 双 close 若失守即 panic（重复
+// close channel 使测试二进制整体崩坏必现形）——零 panic 由结构承载不另断言。
+// exitf 零调用 = per-client 会话终结绝不触达 exitf（D-10/D-13 硬约束）——
+// 本断言同时是 11-01 已知中间态①②（--once/--exit-when-empty per-client
+// 永不退出，第二终结源归 Phase 13 pcSupervisor）的反向锁：Phase 13 落地时
+// 本断言按裁决翻转（11-04 flagged_assumptions 锚定）。
+func TestPerClientTeardownRaceOnce(t *testing.T) {
+	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	for i := 0; i < 10; i++ {
+		c, _ := dialHello(t, ctx, wsURL, 80, 24)
+		pid := readSessionPid(t, ctx, c, "PCRIPID")
+
+		resCh := make(chan frameRes, 16)
+		quit := make(chan struct{})
+		go readPump(ctx, c, resCh, quit)
+
+		// 两触发源并发接连发出（执行序不定是竞态固有性）：子死（exit 0）与
+		// 断开（Close(1000)）。
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("exit 0\r")...)); err != nil {
+			t.Fatalf("第 %d 轮 write INPUT: %v", i, err)
+		}
+		closeCh := make(chan error, 1)
+		go func() { closeCh <- c.Close(websocket.StatusNormalClosure, "") }()
+
+		// 读至终结（两形态均合法——见 doc 注释「竞态固有二形态」）。
+		var frames [][]byte
+		closeVerified1000 := false
+		for {
+			r := <-resCh
+			if r.err == nil {
+				frames = append(frames, r.data)
+				continue
+			}
+			var ce websocket.CloseError
+			switch {
+			case errors.As(r.err, &ce):
+				if ce.Code != websocket.StatusNormalClosure {
+					t.Fatalf("第 %d 轮对端关闭码 = %d, want %d (1000)", i, ce.Code, websocket.StatusNormalClosure)
+				}
+				closeVerified1000 = true
+			case errors.Is(r.err, net.ErrClosed):
+				// Close 握手侧已观测关闭完成——1000 证据由 closeCh 通道承载。
+			default:
+				t.Fatalf("第 %d 轮 read error: %v（非 CloseError/net.ErrClosed 终结形态）", i, r.err)
+			}
+			break
+		}
+		close(quit)
+		switch err := <-closeCh; {
+		case err == nil:
+			// closeHandshake 成功返回 = 库内 CloseStatus==code 校验已过（对端 1000）。
+			closeVerified1000 = true
+		case errors.Is(err, net.ErrClosed):
+			// 幂等形态：连接已被对端关闭帧收口（泵侧已观测 CloseError{1000}）。
+		default:
+			t.Fatalf("第 %d 轮 Close = %v, want nil 或 net.ErrClosed 幂等形态", i, err)
+		}
+		if !closeVerified1000 {
+			t.Fatalf("第 %d 轮两通道均未取得 1000 关闭证据（泵与 Close 握手双通道校验）", i)
+		}
+
+		// wire 面恰好一次 + EXIT 上 wire 蕴含 exit 0 先收口（论证见 doc 注释）。
+		exitFrames := 0
+		for _, f := range frames {
+			if len(f) > 0 && f[0] == proto.Exit {
+				exitFrames++
+				if ep := decodeExitFrame(t, f); ep.ExitCode != 0 {
+					t.Fatalf("第 %d 轮 EXIT exit_code = %d, want 0（EXIT 上 wire 蕴含 exit 0 先收口）", i, ep.ExitCode)
+				}
+			}
+		}
+		if exitFrames > 1 {
+			t.Fatalf("第 %d 轮收到 %d 个 EXIT 帧——恰好一次违反（Pitfall 3）", i, exitFrames)
+		}
+
+		// 终态四件套（quiescent 收敛，护栏纪律）。
+		waitPgroupESRCH(t, pid, 2*time.Second)
+		deadline := time.Now().Add(2 * time.Second)
+		for srv.PCSessionsLenForTest() != 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("第 %d 轮 pcSessions 2s 内未收敛到 0（当前 %d）", i, srv.PCSessionsLenForTest())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if n := healthzClients(t, wsURL); n != 0 {
+			t.Fatalf("第 %d 轮 /healthz clients = %d, want 0", i, n)
+		}
+		// 轮间 100ms 收敛等待（真实等待 + 护栏上限纪律，phase06.mjs 时序容差
+		// 论证先例的 Go 同构）——并给任何失守的第二终结触发留出暴露窗口，
+		// 使 exitf 零调用断言覆盖 quiescent 后 100ms。
+		time.Sleep(100 * time.Millisecond)
+		if n := len(exitCh); n != 0 {
+			t.Fatalf("第 %d 轮 exitf 被调用（exitCh len=%d）——per-client 会话终结绝不触达 exitf（D-10/D-13 硬约束）", i, n)
+		}
 	}
 }
