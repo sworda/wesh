@@ -450,11 +450,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. 客户端断开（正常关闭或异常 1006）后其子进程进程组立即收到 SIGHUP（随 --stop-signal 可配），无宽限、无僵尸残留；信号与收割锁内序列化，pgid 复用窗口内不误杀无关进程组
   4. 子进程退出（exit 42 或信号死亡）后仅该客户端收到私有 EXIT 帧（含 exit_code，信号死亡 -1）并以 1000 关闭；服务端与其他客户端继续运行
 
-**Plans**: 1/6 plans executed
+**Plans**: 2/6 plans executed
 **Wave 1**
 
 - [x] 11-01-PLAN.md — tracer 主干：per-client 端到端（attach spawn→Welcome 回显→五 goroutine 装配→断开 SIGHUP teardown Once 含 KILL 兜底→EXIT 私有化直写）+ New 分岔 + main sess=nil + harness 冒烟五测（PC-02/PC-03/PC-04，D-01/D-04）
-- [ ] 11-02-PLAN.md — darwin watcher dup-watch fail-closed 防御 + errDupWatch（PC-03，Pitfall 9）
+- [x] 11-02-PLAN.md — darwin watcher dup-watch fail-closed 防御 + errDupWatch（PC-03，Pitfall 9）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -543,7 +543,7 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 8. 可观测性 | v1.0 | 6/6 | Complete | 2026-08-28 |
 | 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
-| 11. per-client 生命周期主干 | v1.1 | 1/6 | In Progress|  |
+| 11. per-client 生命周期主干 | v1.1 | 2/6 | In Progress|  |
 | 12. per-client 交互与背压语义 | v1.1 | 0/? | Not started | - |
 | 13. 资源防线与终结语义 | v1.1 | 0/? | Not started | - |
 | 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |

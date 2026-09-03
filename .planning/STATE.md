@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 11
 current_phase_name: per-client 生命周期主干
 status: executing
-stopped_at: Completed 11-01-PLAN.md
-last_updated: "2026-09-03T17:02:56.335Z"
+stopped_at: Completed 11-02-PLAN.md
+last_updated: "2026-09-03T17:18:13.428Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 execution started
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 11
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 ## Current Position
 
 Phase: 11 (per-client 生命周期主干) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-09-04 — Phase 11 execution started
 
-Progress: [██████░░░░] 55%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [██████░░░░] 64%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Progress: [██████░░░░] 55%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 10 P04 | 25 min | 2 tasks | 2 files |
 | Phase 10 P05 | 31min | 3 tasks | 3 files |
 | Phase 11-per-client P01 | 40min | 2 tasks | 5 files |
+| Phase 11-per-client P02 | 9min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 10-05] GOROOT gofmt（go1.26.3 现代 doc-comment 规则）定为收口闸工具：10-01 遗留两行 CJK 标点接续注释补空格归一（a412a87），新旧 gofmt 双 clean；历史闸用 PATH 旧版 gofmt 故未报
 - [Phase ?]: [Phase 11-01] perclient_test.go 落 package server_test（plan 文本 package server 与「同包复用 e2e_test.go helper」矛盾，按后者裁决）
 - [Phase ?]: [Phase 11-01] Task 1 TDD 以 plan 显式单 feat 提交收口；PC-02/03/04 需求勾选留给 phase 末 plan 11-06（ID 跨 6 plan 共享）
+- [Phase ?]: [Phase 11-02] darwin exit watcher dup-watch fail-closed 落地（Pitfall 9 挂账兑现）：errDupWatch 包级错误值 + watch() w.mu 内 dup 检查；awaitExit 既有分支退化 cmd.Wait() 兜底零新面；TestWatchDupPidFailClosed 由 CI macOS leg 承担运行
 
 ### Pending Todos
 
@@ -100,6 +102,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-03T17:02:56.321Z
-Stopped at: Completed 11-01-PLAN.md
-Resume file: .planning/phases/11-per-client/11-01-SUMMARY.md
+Last session: 2026-09-03T17:18:13.414Z
+Stopped at: Completed 11-02-PLAN.md
+Resume file: .planning/phases/11-per-client/11-02-SUMMARY.md
