@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: 部署与配置** - 监听/base-path/配置文件/降权/子进程管理/auth-header 透传 (completed 2026-08-27)
 - [x] **Phase 8: 可观测性** - /healthz、/metrics、JSON 结构化审计日志 (completed 2026-08-28)
 - [x] **Phase 9: 发布与打磨** - 单静态二进制四平台发布、自定义首页、负载/模糊测试回填默认参数 (completed 2026-08-31)
-- [ ] **Phase 10: 模式装配与接缝** - --session-mode flag + TOML 键 + Options/StartWithSize 接缝，全部 inert 零回归
+- [x] **Phase 10: 模式装配与接缝** - --session-mode flag + TOML 键 + Options/StartWithSize 接缝，全部 inert 零回归 (completed 2026-09-03)
 - [ ] **Phase 11: per-client 生命周期主干** - attach spawn / 断开即杀进程组 / EXIT 私有化 / teardown 恰好一次
 - [ ] **Phase 12: per-client 交互与背压语义** - resize 直通 / ro 门控 / 重连 reset / 停读续读 / 1013 踢出
 - [ ] **Phase 13: 资源与容量防线** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组
@@ -538,7 +538,7 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 7. 部署与配置 | v1.0 | 10/10 | Complete | 2026-08-27 |
 | 8. 可观测性 | v1.0 | 6/6 | Complete | 2026-08-28 |
 | 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
-| 10. 模式装配与接缝 | v1.1 | 5/5 | In Progress|  |
+| 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 0/? | Not started | - |
 | 12. per-client 交互与背压语义 | v1.1 | 0/? | Not started | - |
 | 13. 资源与容量防线 | v1.1 | 0/? | Not started | - |
