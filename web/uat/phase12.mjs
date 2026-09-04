@@ -594,7 +594,15 @@ async function s4ROInputDropRateLimit() {
 async function s5StallResumeNoLoss() {
   console.log('S5: 停读续读不丢（A raw socket 停读 → seq 洪水积压 → 3s 停读窗 ≪ dwell 10s → 恢复读 → 序号连续无缺口；B 全程不受影响）');
   const FLOOD_LAST = 4000000;
-  const inst = await startWesh(['--session-mode=per-client', '--writable', '--', 'sh']);
+  // WR-01（12-REVIEW）：与 S6 同款 --ping-interval=0 隔离——S6 注释实证的竞态
+  //（默认 ping 5s 下，stall 端 writer 阻塞持 writeFrameMu 时 ping tick 的
+  // writeControl 内层 5s 写超时返回 DeadlineExceeded，被 pinger 误读为 pong
+  // 超时 → 1006 先杀）同样作用于 S5 的 RawStallClient（pause 停读同时停了自动
+  // pong、writer 同样会 mu 阻塞）：停读窗标称 ~3s，慢 CI 上 B 探针（echoMark
+  // 5s 超时上界）+ 30.9MB 管线排空延迟可把 writer mu 阻塞窗拉过首个 ping tick
+  //（attach+5s），tick+5s 处触发 1006 → S5a/S5b 假阳 FAIL。S5 断言面（序号
+  // 连续/连接存活/对端无扰）零依赖保活，隔离零弱化
+  const inst = await startWesh(['--session-mode=per-client', '--writable', '--ping-interval=0', '--', 'sh']);
   const a = new RawStallClient();
   try {
     const b = await dialHello(inst.port, {});
