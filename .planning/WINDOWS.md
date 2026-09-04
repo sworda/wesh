@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 24
+open_count: 28
 waived_count: 0
 fixed_count: 3
-total_count: 27
-last_updated: 2026-08-30T07:57:44.432Z
+total_count: 31
+last_updated: 2026-09-03T18:55:25.878Z
 ---
 
 # Broken Windows Ledger
@@ -42,6 +42,10 @@ last_updated: 2026-08-30T07:57:44.432Z
 | 25 | 09 | deviation | web/uat/phase06-dom.mjs |  | 09-03: D13 夹具形态替换——plan 括注建议『hold 或不发 Hello 使 opened 保持 false』两形态结构性不可达（fetch hold 期间 WS 未构造无 socket 可驱动；opened 在 WS onopen 即置位先于 Hello 发送），改黑洞 TCP 伺服器夹具（accept-never-upgrade + SpyWebSocket URL 端口改写）确定性构造 pre-onopen 驻留；断言面与 plan 行为逐字一致（D13a RED 复现 WARNING#3 后 GREEN） | open |  | 2026-08-30T04:14:53.268Z |  |
 | 26 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: task 级 tdd RED 形态裁决——被测实现属先序 plan（09-04 已落地），failing-first 提交结构性不可达（交付物即测试脚本）；RED 以 git archive 49ed5b2 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1），GREEN 当前二进制 18/18 exit 0（1649639） | open |  | 2026-08-30T07:57:33.918Z |  |
 | 27 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: Task 2 回归里程碑取 --allow-empty 提交——plan 指定提交语但 verification-only 任务零文件改动，裸 git commit 必失败；空提交保持 per-task 原子提交协议（四脚本 18+28+40+34 断言零 FAIL 证据入提交信息，95f06f0） | open |  | 2026-08-30T07:57:44.432Z |  |
+| 28 | 11 | deviation | internal/server/perclient_test.go |  | plan 文本 package server 与 helper 同包复用矛盾——裁决落 package server_test（详见 11-01-SUMMARY Deviations #1） | open |  | 2026-09-03T17:02:56.654Z |  |
+| 29 | 11 | deviation | internal/server/perclient_test.go |  | 11-04 执行期勘误：plan 文本 kill -TERM $$ 对交互 shell 不致死（交互 shell 无 trap 忽略 SIGTERM），实测修正为 kill -HUP $$（exit_test.go 信号夹具同款），断言面不变——已修复并锁定，非遗留缺陷 | open |  | 2026-09-03T18:27:12.817Z |  |
+| 30 | 11 | deviation | web/uat/phase11.mjs |  | 11-05: S5d 自杀信号 plan 文本 kill -TERM $$ 勘误为 kill -HUP $$（交互 shell 无 trap 忽略 SIGTERM——11-04 实测先例 + STATE 裁决「后续 plan 信号夹具直接用 HUP/trap」；断言面 -1+大写 SIGHUP+1000 不变） | open |  | 2026-09-03T18:55:25.713Z |  |
+| 31 | 11 | unrun-verify | web/uat/phase11.mjs |  | 11-05: S4b 1006 真实异常断开形态 skipped+reason（CODEBUDDY.md §5 平台豁免——OS 断网时序 + Node 原生 WebSocket 无 TCP 层强杀面）；协议层等价物 S4a（正常关闭→ESRCH）+ 11-01 挂点覆盖论证 + 11-04 竞态注入测已覆盖 | open |  | 2026-09-03T18:55:25.878Z |  |
 
 ````json
 [
@@ -367,6 +371,54 @@ last_updated: 2026-08-30T07:57:44.432Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-30T07:57:44.432Z",
+    "resolved_at": null
+  },
+  {
+    "id": 28,
+    "kind": "deviation",
+    "phase": "11",
+    "file": "internal/server/perclient_test.go",
+    "line": null,
+    "description": "plan 文本 package server 与 helper 同包复用矛盾——裁决落 package server_test（详见 11-01-SUMMARY Deviations #1）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T17:02:56.654Z",
+    "resolved_at": null
+  },
+  {
+    "id": 29,
+    "kind": "deviation",
+    "phase": "11",
+    "file": "internal/server/perclient_test.go",
+    "line": null,
+    "description": "11-04 执行期勘误：plan 文本 kill -TERM $$ 对交互 shell 不致死（交互 shell 无 trap 忽略 SIGTERM），实测修正为 kill -HUP $$（exit_test.go 信号夹具同款），断言面不变——已修复并锁定，非遗留缺陷",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:27:12.817Z",
+    "resolved_at": null
+  },
+  {
+    "id": 30,
+    "kind": "deviation",
+    "phase": "11",
+    "file": "web/uat/phase11.mjs",
+    "line": null,
+    "description": "11-05: S5d 自杀信号 plan 文本 kill -TERM $$ 勘误为 kill -HUP $$（交互 shell 无 trap 忽略 SIGTERM——11-04 实测先例 + STATE 裁决「后续 plan 信号夹具直接用 HUP/trap」；断言面 -1+大写 SIGHUP+1000 不变）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:55:25.713Z",
+    "resolved_at": null
+  },
+  {
+    "id": 31,
+    "kind": "unrun-verify",
+    "phase": "11",
+    "file": "web/uat/phase11.mjs",
+    "line": null,
+    "description": "11-05: S4b 1006 真实异常断开形态 skipped+reason（CODEBUDDY.md §5 平台豁免——OS 断网时序 + Node 原生 WebSocket 无 TCP 层强杀面）；协议层等价物 S4a（正常关闭→ESRCH）+ 11-01 挂点覆盖论证 + 11-04 竞态注入测已覆盖",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:55:25.878Z",
     "resolved_at": null
   }
 ]

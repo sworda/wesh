@@ -43,7 +43,7 @@
 
 | Option | Description | Selected |
 |--------|-------------|----------|
-| 最小明示（推荐） | CONFIGURATION.md flag 表+TOML 键表+校验矩阵各加行（注记「per-client 装配中与 shared 等价」）+ README 一句；完整语义段留 Phase 15（PC-12） | ✓ |
+| 最小明示（推荐） | CONFIGURATION.md flag 表+TOML 键表+校验矩阵各加行（注记「per-client 装配中与 shared 等价」）+ README 一句；完整语义段留 Phase 14（PC-12） | ✓ |
 | 仅 --help 文案 | 文档不动避免描述不存在的行为；代价：--help 可见的 flag 文档查无此项，Phase 11-14 各阶段都得记着补 | |
 | 完整语义段 | 文档先行驱动实现；代价：写的是研究设计而非已验证行为，每次裁决都得回改（漂移源） | |
 
@@ -87,5 +87,5 @@
 
 - `WESH_SESSION_MODE` env 键——D-03 裁决不引入；真实 env 注入需求出现再评估
 - phase10.mjs 协议 UAT——D-06 裁决不建；per-client 真实行为 UAT 随 Phase 11+
-- per-client 完整模式语义文档段——Phase 15（PC-12）
+- per-client 完整模式语义文档段——Phase 14（PC-12）
 - write-policy warn→reject 收紧——仅真实配置漂移事故支撑时重议

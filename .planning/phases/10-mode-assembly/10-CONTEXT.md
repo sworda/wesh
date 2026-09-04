@@ -10,9 +10,9 @@ Phase 10 交付会话模式阀门与全部接缝一次装配（全部 inert）�
 
 **In scope (from ROADMAP):** PC-01——`--session-mode` flag/TOML 键（默认 shared）；非法值 parse 期 exit 2 拒绝；优先级链 flag>env>TOML>默认对 session_mode 成立；per-client 启动预检（exec.LookPath 等 validateStartup 行）；pty.StartWithSize；Options.SessionMode/SpawnFunc + New 互斥校验；配置 fuzz 语料扩展（新键入白名单 + 非法值 parse 拒绝同 PR）；write-policy × per-client 组合处置（D-01/D-02 已裁决）。
 
-**Out of scope (本阶段不做):** 任何 per-client 运行期行为（attach spawn/断开杀进程/EXIT 私有化——Phase 11）；resize 直通/ro 门控/重连 reset/停读续读（Phase 12）；Welcome 模式位下发与前端任何改动（Phase 12，本里程碑唯一前端改动面）；容量防线/stop-timeout 重议（Phase 13，裁决项①④）；--once/exit-when-empty 第二终结源、metrics/审计 per-client 粒度、WESH_REMOTE_USER 注入（Phase 14，SEC-09 已裁决）；双模式 -race 门/协议 UAT/herdr UAT/标定回填（Phase 15）；per-client 完整模式语义文档段（Phase 15 PC-12）；env 兜底键（D-03 裁决不引入）。
+**Out of scope (本阶段不做):** 任何 per-client 运行期行为（attach spawn/断开杀进程/EXIT 私有化——Phase 11）；resize 直通/ro 门控/重连 reset/停读续读（Phase 12）；Welcome 模式位下发与前端任何改动（Phase 12，本里程碑唯一前端改动面）；容量防线/stop-timeout 重议（Phase 13，裁决项①）；--once/exit-when-empty 第二终结源、metrics/审计 per-client 粒度、WESH_REMOTE_USER 注入（Phase 13，SEC-09 已裁决）；双模式 -race 门/协议 UAT/herdr UAT/标定回填（Phase 14）；per-client 完整模式语义文档段（Phase 14 PC-12）；env 兜底键（D-03 裁决不引入）。
 
-**已锁定不重复决策：** TOML 平铺键 = flag 名（P7 D-03，29 键全连字符 + DisallowUnknownFields——ROADMAP/REQUIREMENTS 中 `session_mode` 下划线写法按此修正为 `session-mode`）；优先级链 flag>env>config>default（P7 D-05）+ fs.Visit 显式设置位合并（P7 D-02）；CLI flag 全名无短选项 + parse/validate 分层 + fail-fast（P2 D-15/P3）；启动面红线：凭据/token/文件内容永不回显（SEC-01/P4 记录式上报），非敏感枚举/路径值可回显（P5 write-policy %q/P7 --cwd 先例，CONFIGURATION.md:124 明示口径）；SpawnCols/SpawnRows 80×24 单一事实源（spawn.go:38-41，G-05-1）；Options 生产直传 + New 零值兜底注释先例（server.go:234+）；零新依赖（STACK.md：go-toml v2 既有机制覆盖新键）；全部 inert（ROADMAP 含：本阶段结束不存在任何 per-client 运行期行为）；D5/SEC-09 已裁决落定（STATE.md）——WESH_REMOTE_USER 归 Phase 14；每阶段收口闸 = shared 全量测试原样绿 + 期望值逐字未动（SUMMARY.md 方法论警告：最大风险 = 破坏既有不变量而不自知，禁止断言放宽成「两模式都接受」）。
+**已锁定不重复决策：** TOML 平铺键 = flag 名（P7 D-03，29 键全连字符 + DisallowUnknownFields——ROADMAP/REQUIREMENTS 中 `session_mode` 下划线写法按此修正为 `session-mode`）；优先级链 flag>env>config>default（P7 D-05）+ fs.Visit 显式设置位合并（P7 D-02）；CLI flag 全名无短选项 + parse/validate 分层 + fail-fast（P2 D-15/P3）；启动面红线：凭据/token/文件内容永不回显（SEC-01/P4 记录式上报），非敏感枚举/路径值可回显（P5 write-policy %q/P7 --cwd 先例，CONFIGURATION.md:124 明示口径）；SpawnCols/SpawnRows 80×24 单一事实源（spawn.go:38-41，G-05-1）；Options 生产直传 + New 零值兜底注释先例（server.go:234+）；零新依赖（STACK.md：go-toml v2 既有机制覆盖新键）；全部 inert（ROADMAP 含：本阶段结束不存在任何 per-client 运行期行为）；D5/SEC-09 已裁决落定（STATE.md）——WESH_REMOTE_USER 归 Phase 13；每阶段收口闸 = shared 全量测试原样绿 + 期望值逐字未动（SUMMARY.md 方法论警告：最大风险 = 破坏既有不变量而不自知，禁止断言放宽成「两模式都接受」）。
 
 </domain>
 
@@ -30,7 +30,7 @@ Phase 10 交付会话模式阀门与全部接缝一次装配（全部 inert）�
 - **D-04:** 非法值报错**回显值**：`invalid --session-mode "banana": must be shared or per-client`——write-policy（main.go:619 `%q`）与 --cwd 路径回显先例同形态；TOML 源经 configErr 单写口同纪律（键名入文案合法）。SC2「错误文案不泄露用户输入值内容」解读为：凭据/token/文件内容红线保持（SEC-01 起源本义），枚举非敏感面豁免——与 CONFIGURATION.md:124「值域/枚举类 invalid …（值可回显，非敏感）」及 PITFALLS「值不敏感可回显」一致；值域是两个固定单词，用户输入无秘密可泄，回显助定位拼写错误（TOML 场景尤甚） — **Reversibility:** one-way — 错误文案形态被 Go 测试与 CONFIGURATION.md 校验矩阵表双重锁定，改口径动两个 face
 
 ### 文档面
-- **D-05:** **最小明示**——`docs/CONFIGURATION.md` flag 表 + TOML 键表 + 校验矩阵表各加一行（注记「per-client 行为装配中，当前版本与 shared 等价」）；`README.md` 加一句同旨明示；`--help` 文案随 flag 注册同 PR。完整模式语义段留 Phase 15（PC-12）——flag 公开即文档义务（每 phase 收口先例），「装配中」注记防用户开了发现无新行为误以为 bug；不写完整语义段（行为尚不存在，文档先行于实现是漂移源）
+- **D-05:** **最小明示**——`docs/CONFIGURATION.md` flag 表 + TOML 键表 + 校验矩阵表各加一行（注记「per-client 行为装配中，当前版本与 shared 等价」）；`README.md` 加一句同旨明示；`--help` 文案随 flag 注册同 PR。完整模式语义段留 Phase 14（PC-12）——flag 公开即文档义务（每 phase 收口先例），「装配中」注记防用户开了发现无新行为误以为 bug；不写完整语义段（行为尚不存在，文档先行于实现是漂移源）
 
 ### 验证面
 - **D-06:** **零新 UAT 脚本**——Go 测试新增面（parse 枚举拒绝矩阵 CLI+TOML 双源 / 优先级链 flag>TOML>默认 / New 互斥校验 / fuzz 语料扩展 / StartWithSize 委托等价 / warn 触发双源两形态）+ 既有 phase02-09 协议 UAT 默认模式原样重跑 + -race 全量 = 零回归双证据；phase10.mjs 不建——全部 inert 无新协议行为可断言，新脚本只能重复既有脚本原样重跑已证明的等价性（SC1 锁定「既有协议 UAT 原样全绿」即此口径）
@@ -56,7 +56,7 @@ Phase 10 交付会话模式阀门与全部接缝一次装配（全部 inert）�
 - `.planning/ROADMAP.md` §Phase 10 — 成功准则 4 条（双源接受+零回归 / 非法值 parse 期 exit 2 / 优先级链 / LookPath 预检）与「含」清单（本 phase 全部交付物枚举）
 - `.planning/REQUIREMENTS.md` §PC-01 — 需求原文（默认 shared、v1.0 行为逐字节不变）
 - `.planning/PROJECT.md` §Current Milestone v1.1 — 里程碑目标（「装配期一次分岔、运行期零分岔」不抽象 session 接口）
-- `.planning/STATE.md` §Blockers/Concerns — v1.1 规划期裁决项②（write-policy×per-client——本 phase D-01/D-02 闭合；①③④ 归 Phase 13/14 不在本阶段）
+- `.planning/STATE.md` §Blockers/Concerns — v1.1 规划期裁决项②（write-policy×per-client——本 phase D-01/D-02 闭合；①③ 归 Phase 13 不在本阶段，④ 经 Phase 11 D-03 提前消解）
 
 ### v1.1 调研结论（2026-09-02，HIGH 置信）
 - `.planning/research/SUMMARY.md` §Phase 1（模式装配与接缝）— 阶段交付物与 Pitfall 6 先行理据；方法论警告（最大风险 = 破坏既有不变量而不自知；禁止断言放宽）
@@ -132,7 +132,7 @@ Phase 10 交付会话模式阀门与全部接缝一次装配（全部 inert）�
 
 - **`WESH_SESSION_MODE` env 键** — D-03 裁决不引入；添加为放松变更向后兼容，若容器/systemd 部署出现真实 env 注入需求再评估
 - **phase10.mjs 协议 UAT** — D-06 裁决不建；per-client 真实协议行为 UAT 随 Phase 11+ 建设（phaseNN.mjs 编号随 roadmap）
-- **per-client 完整模式语义文档段** — Phase 15（PC-12）：分享链接=独立进程入场券、ro=自有进程输入门控、herdr/tmux 汇聚叙事
+- **per-client 完整模式语义文档段** — Phase 14（PC-12）：分享链接=独立进程入场券、ro=自有进程输入门控、herdr/tmux 汇聚叙事
 - **write-policy warn→reject 收紧** — D-01 放行后收紧为拒绝属行为破坏（Reversibility 注记）；仅真实配置漂移事故支撑时重议
 
 </deferred>

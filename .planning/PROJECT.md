@@ -63,6 +63,7 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ 单静态二进制四平台发布（goreleaser linux/darwin × amd64/arm64 全静态 CGO_ENABLED=0 + 前端单 HTML embed + checksums.txt + release.sh 单命令发布链 + release.yml CI 全链）— Phase 9（OPS-10；v1.0.0 实发布：GitHub Release 五资产核验 sha256 全 OK + linux_amd64 --version 实跑 wesh 1.0.0）
 - ✓ 修复源码核实的全部 ttyd 缺陷（预认证崩溃/内存放大/凭据日志/Origin/TLS/env 泄露/关闭码/健康检查缺失等 Context 节清单项，?arg= 经裁决 v1 砍掉）— 跨 Phase 1-9（44/44 需求里程碑收口，各 phase VERIFICATION/SECURITY 独立复演）
 - ✓ 会话模式阀门装配（--session-mode=shared|per-client flag + TOML session-mode 键 + parse 期枚举校验 + Options.SessionMode/SpawnFunc 接缝 + ValidateOptions 零资源占用位序 + SC4 预检 --cwd 感知对齐；全部 inert，shared 逐字节零回归）— Phase 10（PC-01；10-VERIFICATION 19/19 passed：六形态进程级冒烟 + -race 五包 + 八 UAT 12/18/10/28/23/34/21/18 对齐基线 + append-only 零删除行）
+- ✓ per-client 生命周期主干（attach 独立 spawn + Welcome 首帧钳制尺寸 / spawn 失败类型化 Error+1011 / 断开 SIGHUP 进程组终结 + reaped 栅栏序列化 + KILL 兜底 / EXIT 帧私有化 exit_code/信号 -1 + 1000 / 容量再闸与注册点复检回收 / darwin kqueue dup-watch fail-closed；shared 逐字节零回归三重证据）— Phase 11（PC-02/PC-03/PC-04；11-VERIFICATION 12/12 passed：十四测 -race + phase11.mjs 21/21 + CI 双平台全绿 33844831146 + diff 四件套；G-11-2 gap closure 经 11-07 探针参数化闭合；SECURITY.md 21 威胁全 closed）
 
 ### Active
 
@@ -169,4 +170,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-03 — Phase 10（模式装配与接缝）完成：PC-01 验证 19/19 passed，--session-mode 公开契约锁定全部 inert；v1.0 于 2026-08-31 全量收口（44/44 需求，v1.0.0 已发布上架）*
+*Last updated: 2026-09-04 — Phase 11（per-client 生命周期主干）完成：PC-02/03/04 验证 12/12 passed（十四测 + UAT 21/21 + CI 双平台全绿 + 零回归三重证据），G-11-2 gap closure 闭合，SECURITY 21 威胁全 closed；v1.0 于 2026-08-31 全量收口（44/44 需求，v1.0.0 已发布上架）*

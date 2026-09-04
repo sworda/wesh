@@ -1314,20 +1314,19 @@ func run(args []string) int {
 			return 2
 		}
 	}
-	// 10-01 PC-01 装配期一次分岔：per-client 模式装配 SpawnFunc 闭包（捕获
-	// argv+StartOptions，函数体为 pty.StartWithSize 直通——Phase 11 attach 期
-	// spawn 的装配挂点，本阶段零调用方 inert，T-10-01c；闭包内 StartOptions
-	// 字面量与下方 pty.Start 内联字面量为 Phase 11 重写前的临时重复形态，
-	// 切换 sess=nil + attach 期 spawn 时收编）。shared 模式 spawnFunc 保持
-	// 零值 nil（ValidateOptions 互斥契约锚定）。
-	// planner 裁定（10-01-PLAN Task 1 ⑥，executor 不得回改）：两模式本阶段
-	// 均经启动期 pty.Start 创建 sess——PATTERNS §3「sess = nil」建议与 New
-	// 体 server.go session_start emit 的 sess.Cmd.Process.Pid 取引用冲突
-	//（nil 即 panic），且违反 D-05「与 shared 等价」注记与全部 inert 约束；
-	// sess=nil 形态归 Phase 11 生命周期主干。
+	// 10-01 PC-01 装配期一次分岔（11-01 兑现）：per-client 模式装配 SpawnFunc
+	// 闭包（捕获 argv+startOpts，函数体为 pty.StartWithSize 直通——attach 升档
+	// 期消费，11-01 起生效，cols/rows 为该端 Hello 钳制尺寸）。shared 模式
+	// spawnFunc 保持零值 nil（ValidateOptions 互斥契约锚定）。
+	// 11-01 收编：StartOptions 字面量收编为分支前单一声明 startOpts——
+	// spawnFunc 闭包与下方 shared 分支 pty.Start 共用（10-01 注释预言的临时
+	// 重复形态收编）。10-01 planner 裁定注释块（「两模式本阶段均经启动期
+	// pty.Start 创建 sess」）随本落地失效——Phase 11 已落地 sess=nil +
+	// attach 期 spawn：New 体 sess.Cmd.Process.Pid 取引用冲突由 New 尾部
+	// 模式分岔消化（per-client 分支不 emit session_start，D-04 窗口期）。
+	startOpts := pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid}
 	var spawnFunc func(cols, rows int) (*pty.Session, error)
 	if cfg.sessionMode == server.SessionModePerClient {
-		startOpts := pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid}
 		spawnFunc = func(cols, rows int) (*pty.Session, error) {
 			return pty.StartWithSize(argv, startOpts, cols, rows)
 		}
@@ -1345,10 +1344,20 @@ func run(args []string) int {
 	}
 	// D-21/D-24 接线（07-04）：--cwd/--term 落 StartOptions Dir/Term；--uid/--gid
 	// 落 Uid/Gid（-1 哨兵 = 不降权，Task 3 完成 flag 注册与成对校验）。
-	sess, err := pty.Start(argv, pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
-		return 1
+	// 11-01：pty.Start 启动期 spawn 为 shared-only 分支（现状逐字节零回归，
+	// err 复用外层声明、值与现状相同）。
+	var sess *pty.Session
+	if cfg.sessionMode == server.SessionModePerClient {
+		// 11-01（PC-02）：per-client 启动期零子进程——spawn 移至 attach 升档
+		//（ticket 核销后，SEC-08；启动期命令缺失暴露已由 validateStartup
+		// LookPath 预检承担，10-02 SC4）。sess 保持 nil——New 入口 sess×mode
+		// 契约（per-client requires nil sess）与 New 尾部模式分岔消化。
+	} else {
+		sess, err = pty.Start(argv, startOpts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
+			return 1
+		}
 	}
 	// D-08：listen 分岔——--socket 给定时走 unix socket（Remove→Listen→Chmod→
 	// Chown 序列见 listenSocket 注释），否则现状 TCP 一行；失败回滚块两分岔
@@ -1364,7 +1373,10 @@ func run(args []string) int {
 	if err != nil {
 		// 启动失败路径回滚已 spawn 资源：Close master 后子进程（setsid 组长）
 		// 收 SIGHUP 退出，不留孤儿进程。
-		_ = sess.Close()
+		// 11-01 nil 守护：per-client 启动期零子进程，无 sess 可回滚。
+		if sess != nil {
+			_ = sess.Close()
+		}
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
@@ -1485,7 +1497,10 @@ func run(args []string) int {
 		// 回滚——Close master 后 setsid 组长子进程收 SIGHUP 退出，不留孤儿进程。
 		// 该路径无单测故障注入手段（Serve 阻塞语义 + lifecycle os.Exit 不可在
 		// 单测驱动），以逐字对称 + 代码评审锁定（TestBadCertPreflight 注释同述）。
-		_ = sess.Close()
+		// 11-01 nil 守护：per-client 启动期零子进程，无 sess 可回滚。
+		if sess != nil {
+			_ = sess.Close()
+		}
 		fmt.Fprintf(os.Stderr, "wesh: %v\n", err)
 		return 1
 	}
