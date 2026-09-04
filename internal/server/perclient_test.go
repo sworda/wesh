@@ -301,7 +301,11 @@ func TestPerClientWelcomeDims(t *testing.T) {
 // 输入链全链实证（PC-02/PC-03）：rw 客户端 INPUT `echo ECHOMARK_9z2\r` →
 // 输出流含 ECHOMARK_9z2 结果行（cl.inQ → 每会话 inputWriter → master 全链）。
 // 正则行首锚定只命中结果行——命令回显行以 "echo " 起首不命中（phase06.mjs
-// readPid「正则只命中结果行」纪律的 Go 同构）。
+// readPid「正则只命中结果行」纪律的 Go 同构）。(?:\$ )? 容忍 shell 启动
+// 提示符与结果行同行的交错形态：CI 慢 runner 上 shell 冷启动慢，PS1 打印
+// 晚于 tty 回显（echo ...\r\n 之后、结果行之前），实证 = CI run 33843785651
+// ubuntu leg 累积串 "echo X\r\n$ X\r\n$ "——回显行 "$ echo X" 行首为
+// "$ echo" 仍不命中，断言强度不变（marker 逐字 + 结果行锚定保留）。
 func TestPerClientInputEcho(t *testing.T) {
 	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
 
@@ -313,8 +317,9 @@ func TestPerClientInputEcho(t *testing.T) {
 	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo ECHOMARK_9z2\r")...)); err != nil {
 		t.Fatalf("write INPUT: %v", err)
 	}
-	// 命中即通过；未命中则统护 ctx 到期，readOutputUntil 内 Fatal。
-	readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^ECHOMARK_9z2\r?$`))
+	// 命中即通过；未命中则统护 ctx 到期，readOutputUntil 内 Fatal。(?:\$ )?
+	// 容忍 PS1 交错形态（慢 runner 上 shell 启动提示符晚于回显——同函数头注释）。
+	readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^(?:\$ )?ECHOMARK_9z2\r?$`))
 }
 
 // sess×mode 装配契约锁定（11-01 planner 裁定登记：契约承载于 New 入口程序
@@ -428,7 +433,7 @@ func TestPerClientSpawnFailure(t *testing.T) {
 		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo "+marker+"\r")...)); err != nil {
 			t.Fatalf("write INPUT: %v", err)
 		}
-		readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^`+marker+`\r?$`))
+		readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^(?:\$ )?`+marker+`\r?$`))
 	}
 	cA, _ := dialHello(t, ctx, wsURL, 80, 24)
 	defer cA.Close(websocket.StatusNormalClosure, "")
@@ -983,7 +988,9 @@ func TestPerClientExitPrivate42(t *testing.T) {
 	if err := cB.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo BSURVIVE_4k8\r")...)); err != nil {
 		t.Fatalf("write INPUT on B: %v", err)
 	}
-	accumFramesUntil(t, resCh, regexp.MustCompile(`(?m)^BSURVIVE_4k8\r?$`))
+	// (?:\$ )? 同 TestPerClientInputEcho：容忍 PS1 交错形态（CI run
+	// 33843785651 同源竞态——B 端窗后 echo 的结果行可能粘启动提示符）。
+	accumFramesUntil(t, resCh, regexp.MustCompile(`(?m)^(?:\$ )?BSURVIVE_4k8\r?$`))
 }
 
 // EXIT 私有化强形态二（PC-04 信号死亡 -1 语义，11-04 Task 1）：A 发
