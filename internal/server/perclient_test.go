@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1549,4 +1550,282 @@ func TestPerClientInputRateLimitKept(t *testing.T) {
 		t.Fatalf("write probe INPUT: %v", err)
 	}
 	readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^(?:\$ )?RATEOK_PC07\r?$`))
+}
+
+// ====== 12-03 增量：per-client 背压语义断言组（PC-10/PC-11 服务端收口，D-11
+// 单一家纪律——四测全部落本文件；stall 夹具与 seqFlood/assertKicked1013/
+// readUntilError 同包 slowclient_test.go 直接复用；停读/续读观测经 12-03 新增
+// GateTransitionsForTest 出口——per-client 单模式实例下该计数只有 ReadLoop
+// 输出闭包两个递增点（shared 信用门路径结构性不装配），差值即闭包行为直接
+// 观测。测名仅出现于 func 声明行——验收 grep 行计数闸，doc 注释不引测名
+// 字面量，同 11-01/11-03/12-02 纪律）======
+
+// waitGateTransitions 轮询 GateTransitionsForTest 直至相对起点递增 ≥ want
+// （间隔 15ms、guard 总护栏——轮询替代固定 sleep，STATE.md Blockers Phase 9
+// flake 教训既定规避形态；hubMu 内读纪律由 ForTest 出口承载）。返回观测值。
+func waitGateTransitions(t *testing.T, srv *server.Server, from, want int, guard time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(guard)
+	for {
+		cur := srv.GateTransitionsForTest()
+		if cur-from >= want {
+			return cur
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("gateTransitions %v 内未达 +%d（当前 %d，起点 %d）——停读/续读递增点未发生", guard, want, cur, from)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+}
+
+// assertSeqContinuity 断言 seqFlood 洪水的完整字节流连续性：fields 严格 +1
+// 无缺口（首值恒 1——stall 客户端自洪水首字节起接收，无中段接合切面；任何
+// 断裂 = 停读/续读转换丢段 = PC-11 违反），末位 floodLast（darwin 容忍 ≥95%：
+// watcher EXIT 直写绕过 outbox 与残余批的 close 竞态——TestGlobalCredit
+// darwin 实测同源形态；连续性断言才是字节精确的核心证据）。
+func assertSeqContinuity(t *testing.T, acc []byte, floodLast int) {
+	t.Helper()
+	fields := strings.Fields(string(acc))
+	if len(fields) == 0 {
+		t.Fatal("未收到任何 OUTPUT 载荷——洪水为空")
+	}
+	prev := 0
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("field %d = %q 不是 seq 整数（字节流损坏）: %v", i, f, err)
+		}
+		if n != prev+1 {
+			t.Fatalf("seq 在 field %d 断裂: %d（want %d）——停读/续读转换丢段（PC-11 违反）", i, n, prev+1)
+		}
+		prev = n
+	}
+	if prev != floodLast {
+		if runtime.GOOS == "darwin" {
+			if prev < floodLast*95/100 {
+				t.Fatalf("seq 末位 = %d, want ≥ %d（95%% of %d，darwin outbox-close 竞态容忍）", prev, floodLast*95/100, floodLast)
+			}
+			t.Logf("darwin 容忍：seq 末位 = %d（< %d，outbox-close 竞态；连续性断言为核心证据）", prev, floodLast)
+		} else {
+			t.Fatalf("seq 末位 = %d, want %d（洪水未收齐即终结）", prev, floodLast)
+		}
+	}
+}
+
+// PC-11 停读续读不丢数据（12-03，D-01）：seqFlood 洪水 + stall 夹具（dialHello
+// 后不 Read——TCP 吸收带 ~10MiB 填满 → writer 阻塞 → outbox 涨满）→ ReadLoop
+// 闭包阻塞持帧停读（gateTransitions +1 轮询观测——停读点递增；闭包停摆 →
+// PTY 内核缓冲积压 → 子进程写阻塞，ttyd pty_pause 等效）→ 静默窗
+// （clamp(2×停读确认时长, 1s, 5s)，≪ dwell）内连接不被踢 → 恢复读取 → 续读
+// （gateTransitions 再 +1——drain 恢复信号唤醒持帧闭包重试同一帧成功）→ 全量
+// 收齐至子进程退出广播 1000 → seq 字节连续性断言（停读期输出零丢失）。
+//
+// SlowDwell 覆写 30s（D-03/D-12 测试覆写通道）：默认 10s 下慢 CI 的洪水填充
+// 时长会侵蚀「静默窗 ≪ dwell」约束——30s 使该约束在任何环境稳健成立；dwell
+// 到期踢出语义由短值覆写的踢出测承担。静默窗「不被踢」的观测通道：窗内不读
+// （读即破坏 stall），证据推迟到恢复阶段——窗内被踢则恢复读取必以 1013 终结
+// 而非 1000 退出广播。
+func TestPerClientStallBlocksAndResumes(t *testing.T) {
+	floodArgv, floodLast := seqFlood()
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = 30 * time.Second
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	// writer 同类型连续段合并使积压后的单条 WS 消息可达 outbox cap（64KiB）
+	//——超过 Go 客户端库默认 32KiB 读上限触发 1009（TestSlowConsumerKick
+	// 实测先例；生产前端为浏览器 WebSocket 无此上限）。
+	c.SetReadLimit(4 * 1024 * 1024)
+
+	// 停读观测（+1 轮询；护栏 15s = 洪水填满 TCP 吸收带 ~10MiB 的慢环境上界，
+	// TestSlowConsumerKick 12MiB/15s 先例）。
+	t0 := time.Now()
+	base := srv.GateTransitionsForTest()
+	waitGateTransitions(t, srv, base, 1, 15*time.Second)
+	confirmDur := time.Since(t0)
+
+	// 静默窗：clamp(2×停读确认时长, 1s, 5s)——下限保「持续停读」判别力，
+	// 上限防慢环境（确认窗本身已长）侵蚀 ≪ dwell(30s) 约束。
+	silent := 2 * confirmDur
+	if silent < time.Second {
+		silent = time.Second
+	}
+	if silent > 5*time.Second {
+		silent = 5 * time.Second
+	}
+	time.Sleep(silent)
+
+	// 恢复读取：readUntilError 全速收干至终结；同时观测续读点递增（+1）。
+	res := readUntilError(c)
+	waitGateTransitions(t, srv, base, 2, 15*time.Second)
+
+	select {
+	case r := <-res:
+		var ce websocket.CloseError
+		if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
+			t.Fatalf("恢复读取后终结 = %v, want CloseError 1000（子进程退出广播；静默窗内被踢则此处为 1013——PC-11 违反）", r.err)
+		}
+		assertSeqContinuity(t, r.acc, floodLast)
+	case <-time.After(45 * time.Second):
+		t.Fatal("恢复读取后 45s 内未收齐洪水——续读后流未恢复（持帧阻塞未被唤醒，死锁）")
+	}
+}
+
+// PC-10 持续过载 1013（12-03，D-02/D-03）：SlowDwell=500ms 覆写（o.StopTimeout
+// 覆写先例形态）+ stall 恒不读 → outbox 写满停读（+1 轮询观测——dwell 自
+// 停读起点武装）→ dwell 到期回调 → kickSlowConsumerLocked 既有序列 →
+// /healthz clients 归零（只读 HTTP 观测通道不打扰 WS stall 面，轮询替代固定
+// sleep）→ wire 面证据：assertKicked1013 两合法终结形态逐字复用
+// （CloseError 1013 slow_consumer 机器串逐字 / CI 慢速 frame-cut EOF + acc
+// 阈值）。
+func TestPerClientDwellKick(t *testing.T) {
+	floodArgv, _ := seqFlood()
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = 500 * time.Millisecond
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	c.SetReadLimit(4 * 1024 * 1024) // writer 合并消息可达 outbox cap——慢客户端测试既定放宽
+
+	// 停读就位（+1）——此后 dwell 500ms 从停读起点武装。
+	base := srv.GateTransitionsForTest()
+	waitGateTransitions(t, srv, base, 1, 15*time.Second)
+
+	// dwell 到期观测：kick → removeLocked → /healthz clients 归零。护栏 5s
+	//（= dwell 500ms + 调度余量；到期未被踢即护栏翻车——「护栏内到达」断言，
+	// 非精确时点断言）。
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if n := healthzClients(t, wsURL); n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("dwell(500ms) 到期后 5s 内客户端未被移除——持续过载 1013 踢出未发生（PC-10 违反）")
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	// wire 面证据：两合法终结形态逐字复用（slowclient_test.go）。
+	assertKicked1013(t, c, 15*time.Second, "per-client stall client")
+}
+
+// PC-11 慢但在前进永不踢（12-03，D-02 判据核心）：SlowDwell=1s 覆写 + 事件
+// 驱动 duty-cycle——每轮「停读形成（gateTransitions +1，dwell 武装）→ 刻意
+// 停读 0.5×dwell → 全速读取至续读（再 +1，dwell 重置）」，循环 3 轮：每轮
+// 停读间隔 ~0.52×dwell < dwell（安全），累计停读 ~1.56×dwell > dwell（若
+// dwell 不随续读重置——跨停读累计形态——第 2 轮即被 1013 踢出，测试判别力
+// 内建）；3 轮后全速收干 → CloseError 1000 + seq 连续无缺口 + gateTransitions
+// ≥ +6（3 对停读/续读递增点）。
+//
+// 滴漏形态的执行期实证演化（Rule 3 调试结论，与 plan 文本「每 ~dwell/3 读
+// 一小批」的差异登记）：配额泵滴漏（每 tick 读 128KiB）在本机实证下永不触
+// 发服务端续读——PTY 行规程使 seq 逐行产出 ~50-500B 微帧，内核 send queue
+// 自适应至 ~3-4MiB，writer 阻塞写在多 MB 管线之后，亚秒级配额滴漏的窗口
+// 信用不足以完成「管线排空→writer 解阻塞→drain→notFull→续读」链路（停读
+// 态按 D-02 定义持续，dwell 正常触发踢出——机制行为正确，测试形态错误）。
+// 事件驱动 duty-cycle 以停读/续读事件本身为节拍：停读间隔由测试刻意构造
+// （固定 0.5×dwell），续读由全速读取触发（全速续读的可行性由停读续读主测
+// 锁定）——参数机器无关，判别力内建。
+func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
+	floodArgv, floodLast := seqFlood()
+	dwell := 1 * time.Second
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = dwell
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	c.SetReadLimit(4 * 1024 * 1024)
+
+	var acc []byte
+	base := srv.GateTransitionsForTest()
+	// 三轮 duty-cycle：停读（不读，等 +1）→ 刻意停读 0.5×dwell（dwell 计时
+	// 中——本段是判别力的载体）→ 全速读到续读（+1）。
+	for cycle := 0; cycle < 3; cycle++ {
+		stalled := waitGateTransitions(t, srv, base, 2*cycle+1, 15*time.Second)
+		time.Sleep(dwell / 2) // 停读持续 0.5×dwell——累计跨轮 > dwell，单轮 < dwell
+		for srv.GateTransitionsForTest() < stalled+1 {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				var ce websocket.CloseError
+				if errors.As(err, &ce) && ce.Code == websocket.StatusTryAgainLater {
+					t.Fatalf("第 %d 轮被 1013 踢出——慢但在前进的客户端不得被 dwell 踢（D-02/PC-11 违反）", cycle)
+				}
+				t.Fatalf("第 %d 轮续读段 read: %v", cycle, err)
+			}
+			if len(data) > 0 && data[0] == proto.Output {
+				acc = append(acc, data[1:]...)
+			}
+		}
+	}
+	// 三对停读/续读递增点齐备（+6；此后全速收干段的瞬态二次停读可能追加
+	// 成对增量——下界断言）。
+	if diff := srv.GateTransitionsForTest() - base; diff < 6 {
+		t.Fatalf("duty-cycle gateTransitions 差值 = %d, want ≥ 6（3 对停读/续读递增点未齐备）", diff)
+	}
+	// 全速收干至终结：零 1013、退出广播 1000、seq 连续（慢消费全程零丢数据）。
+	res := readUntilError(c)
+	select {
+	case r := <-res:
+		acc = append(acc, r.acc...)
+		var ce websocket.CloseError
+		if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
+			t.Fatalf("duty-cycle 后终结 = %v, want CloseError 1000（慢但在前进全程未被踢——D-02 违反）", r.err)
+		}
+		assertSeqContinuity(t, acc, floodLast)
+	case <-time.After(45 * time.Second):
+		t.Fatal("duty-cycle 后 45s 内未收齐洪水——全速收干阶段流未恢复")
+	}
+}
+
+// D-05 观测计数收口（12-03）：起止快照 GateTransitionsForTest 差值断言——
+// 停读+续读一轮 = +2。per-client 单模式实例下 gateTransitions 只有 ReadLoop
+// 输出闭包两个递增点（shared 信用门路径结构性不装配）：+1 于「客户端恒不读」
+// 窗口观测到（停读点唯一可能——续读需 notFull 需 drain 需读取），读取启动后
+// 再 +1（续读点），配对成立即两递增点经差值锁定。差值下界 ≥2 而非精确 ==2：
+// 恢复读取后的瞬态二次停读（慢 CI 下 TCP 写瞬断 + outbox 64KiB 亚毫秒回填）
+// 会追加成对增量——精确计数断言有 flake 面（STATE.md Blockers Phase 9 教训
+// 同源，「禁精确时点断言」纪律的计数面同构）。
+func TestPerClientStallGateTransitions(t *testing.T) {
+	floodArgv, _ := seqFlood()
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = 30 * time.Second
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	c.SetReadLimit(4 * 1024 * 1024)
+
+	// 起点快照 → 停读（+1，客户端恒不读窗口）→ 恢复读取 → 续读（再 +1）→
+	// 终点快照差值 ≥2。
+	start := srv.GateTransitionsForTest()
+	waitGateTransitions(t, srv, start, 1, 15*time.Second)
+	readUntilError(c) // 恢复读取（计数断言达成即收口，无需收齐洪水——harness Cleanup 收尾）
+	end := waitGateTransitions(t, srv, start, 2, 15*time.Second)
+	if diff := end - start; diff < 2 {
+		t.Fatalf("gateTransitions 起止差值 = %d, want ≥ 2（停读+续读两递增点，D-05）", diff)
+	}
+	t.Logf("gateTransitions 起止差值 = %d（≥2 达成；瞬态二次停读可能追加成对增量）", end-start)
 }
