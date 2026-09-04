@@ -805,22 +805,53 @@ func readSessionPid(t *testing.T, ctx context.Context, c *websocket.Conn, tag st
 // waitPgroupESRCH 轮询（25ms 步进，guard 总护栏）至 kill(-pid, 0) 返回
 // ESRCH——setsid pgid==pid 不变量下进程组消失的强证据：组成员僵尸在未收割前
 // 对信号 0 仍视为存在，故 ESRCH ⊇ 死亡且收割完成（无僵尸）。**严禁**把
-// 「kill 0 无错」当死亡证据——那是存活探针（无错 = 进程组存在）。guard 到期
-// 未 ESRCH 即 Fatal；非 ESRCH 错误（如 EPERM）同 Fatal（同 uid 派生的进程组
-// EPERM 不可达，出现即环境异常）。
+// 「kill 0 无错」当死亡证据——那是存活探针（无错 = 进程组存在）。
+//
+// macOS XNU 退出过渡态补注（G-11-2，实证 = CI run 33832096581）：进程组成员
+// 处于退出过渡态（P_LIST_EXITED 标记/proc_exit 进行中）时 kill(-pgid, 0)
+// 对该瞬态可返回 EPERM 而非 0——TestPerClientTeardownRaceOnce 的竞态注入
+// 设计（首探针 µs 级紧贴 closeCh 确认）是唯一命中者，同断言的
+// DisconnectSIGHUP/StopTimeoutKillFallback 无该设计故未命中，排除环境级
+// 拦截的对照证据。POSIX 语义 EPERM = 目标存在但权限拒绝 ≠ 消失，与探针
+// 无错同属「进程组仍存在」形态。「ESRCH ⊇ 死亡且收割完成」论证的 macOS
+// 组信号语义差异：Linux 僵尸成员对信号 0 视为存在的论断在 macOS 退出
+// 过渡态被 EPERM 瞬态遮蔽——形态不同、结论同向，ESRCH 仍为进程组消失含
+// 收割完成的强证据。故 EPERM 落入护栏轮询：护栏内 ESRCH 收敛即 PASS，
+// guard 到期未 ESRCH 仍 Fatal（僵尸残留/卡死进程组检测保留）；其余非
+// ESRCH 非 EPERM 错误维持立即 Fatal（环境异常检测面零弱化）。
 func waitPgroupESRCH(t *testing.T, pid int, guard time.Duration) {
 	t.Helper()
+	if err := waitPgroupESRCHWithProbe(pid, guard, syscall.Kill); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// waitPgroupESRCHWithProbe 是 waitPgroupESRCH 的探针参数化核心（error 返回
+// 形态，不接 testing.T——Fatal 路径可在无 Goexit 技巧下以返回值断言）。
+// 探针注入设计理由：EPERM 分支在 Linux 同 uid 测试进程下结构性不可达，
+// 真实 EPERM 夹具（异 uid 子进程）会破坏服务端 SIGHUP teardown 语义（非
+// root 无法向异 uid 进程组发信号），macOS 瞬态本身非确定（唯一命中者正是
+// 竞态注入测试）——四语义案例的唯一确定性锁定通道 = 脚本化探针注入，由
+// TestWaitPgroupESRCHProbeSemantics 直调本核心断言返回值，同时反向锁定
+// 护栏保留与他错立即 Fatal 两半边不被顺手弱化。探针调用点恒
+// probe(-pid, 0)：负 pgid 进程组语义 + 信号 0 探测语义，与包装层直传的
+// syscall.Kill 实参形态逐语义等价（linux/darwin 双平台同型）。
+func waitPgroupESRCHWithProbe(pid int, guard time.Duration, probe func(int, syscall.Signal) error) error {
 	deadline := time.Now().Add(guard)
 	for {
-		err := syscall.Kill(-pid, 0)
+		err := probe(-pid, 0)
 		if err != nil {
 			if errors.Is(err, syscall.ESRCH) {
-				return
+				return nil // 护栏内收敛即 PASS（既有语义）。
 			}
-			t.Fatalf("kill(-%d, 0) = %v, want ESRCH（进程组消失含收割完成）", pid, err)
+			if !errors.Is(err, syscall.EPERM) {
+				return fmt.Errorf("kill(-%d, 0) = %v, want ESRCH（进程组消失含收割完成）", pid, err)
+			}
+			// EPERM：目标存在但权限拒绝 ≠ 消失——与「无错」同归「进程组
+			// 仍存在」形态，落入 deadline 检查续轮询（语义论证见头注释）。
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("pgid(%d) %v 护栏内仍存活（kill 0 无错 = 存活探针）", pid, guard)
+			return fmt.Errorf("pgid(%d) %v 护栏内进程组仍存在（kill 0 无错 = 存活探针；EPERM = 目标存在但权限拒绝，同为存活形态——两者皆非死亡证据）", pid, guard)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
