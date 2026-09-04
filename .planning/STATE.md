@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 11
-current_phase_name: per-client 生命周期主干
+current_phase_name: per-client
 status: verifying
-stopped_at: Completed 11-06-PLAN.md
-last_updated: "2026-09-04T01:41:46.857Z"
+stopped_at: 11-07 complete（G-11-2 闭合：afb77a8+5aad25a+9936f2b，CI 33844831146 双平台全绿）；SECURITY.md 就位（threats_open: 0，5b6b178）；UAT 2/2 passed——待 /gsd-verify-work 11 复验收口
+last_updated: "2026-09-04T06:45:00.000Z"
 last_activity: 2026-09-04
-last_activity_desc: Phase 11 execution started
+last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 2
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 11
+  completed_phases: 1
+  total_plans: 12
+  completed_plans: 12
 ---
 
 # Project State
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-03)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 11 — per-client 生命周期主干
+**Current focus:** Phase 11 — per-client
 
 ## Current Position
 
-Phase: 11 (per-client 生命周期主干) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-09-04 — Phase 11 execution started
+Phase: 11 (per-client) — VERIFYING
+Plan: 7 of 7
+Status: Gap closure complete — ready for re-verification
+Last activity: 2026-09-04 — Phase 11 gap closure (G-11-2) complete
 
 Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
@@ -68,6 +68,7 @@ Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/
 | Phase 11-per-client P04 | 30min | 2 tasks | 1 files |
 | Phase 11-per-client P05 | 18min | 2 tasks | 1 files |
 | Phase 11-per-client P06 | 11min | 2 tasks | 0 files |
+| Phase 11-per-client P07 | 1h50min | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -97,6 +98,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 11-06] phase基点口径：branching_strategy=none下merge-base退化为HEAD——以phase首提交父提交954da7c为等价基点；PC-02/03/04勾选承载兑现（十四测+八场景+diff审查三证据链）
 - [Phase 11 REVIEW WR-01 → Phase 12]: per-client 输出闭包 trySend 失败直踢 1013（kickSlowConsumerLocked），丢失 05-13 attach 宽限与信用门暂存层——慢链路新端瞬态满箱即循环丢会话；PATTERNS:218 母本为 kickOrCreditLocked。Phase 12（1013/背压语义主场）规划时收口：补宽限门 + creditPending/afterDrain 重投
 - [Phase 11 REVIEW WR-02 → Phase 13]: reaped 栅栏 Wait-return→hubMu-acquire 微窗口（kill-after-reap 理论面，实际不可达=pid 回绕+µs 窗）——零成本严格修法：waitDone 在 reap 完成点关闭 + 快半段非阻塞 select 即结构性栅栏。随 Phase 13 终结语义一并处置
+- [Phase 11-per-client]: [Phase 11-07 CI 复验副产] ubuntu flaky 根因 = CI 慢 runner shell 冷启动慢，PS1 打印晚于 tty 回显落在回显行与结果行之间（"$ MARKER" 交错形态，CI run 33843785651 实证）——9936f2b 以 (?:\$ )? 容忍修正三处（InputEcho/echoMarker/ExitPrivate42 B 端），结果行锚定与回显行排除语义不变（六案例自检）；后续终端类测试断言沿用该容忍形态
+- [Phase 11-per-client]: [Phase 11 secure-phase] 21 威胁全 closed（threats_open: 0，L1 grep 深度 + register_authored_at_plan_time 短路）；accepted risks 三条登记（AR-1 审计空白→Phase 13 / AR-2 持续 EPERM 语义=护栏正确翻车 / AR-3 零新依赖供应链窗口）
+- [Phase 11-per-client]: [Phase 11-07] 单一文件门基点按 plan 规则以实际起始 HEAD 975af23 替换假设基点 f55c1ea（两者间仅 7358b82/975af23 两个 .planning-only 提交，f55c1ea 交叉核对同结果：恰 internal/server/perclient_test.go 一文件）；waitPgroupESRCH EPERM 容忍语义经探针参数化（waitPgroupESRCHWithProbe 四子测）确定性锁定，护栏保留与他错立即 Fatal 两半边零弱化
 
 ### Pending Todos
 
@@ -117,6 +121,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T01:41:46.843Z
-Stopped at: Completed 11-06-PLAN.md
+Last session: 2026-09-04T06:45:00.000Z
+Stopped at: 11-07 complete + SECURITY.md 就位 + UAT 2/2——下一步 /gsd-verify-work 11 复验收口，随后 /gsd-ship 11
 Resume file: None
