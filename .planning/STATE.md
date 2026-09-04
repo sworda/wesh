@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 12
 current_phase_name: per-client
 status: executing
-stopped_at: Completed 12-per-client 12-01-PLAN.md
-last_updated: "2026-09-04T11:54:01.174Z"
+stopped_at: Completed 12-per-client 12-02-PLAN.md
+last_updated: "2026-09-04T12:25:42.392Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 13
+  completed_plans: 14
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 ## Current Position
 
 Phase: 12 (per-client) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-09-04 — Phase 12 execution started
 
-Progress: [████████░░] 76%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [████████░░] 82%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [████████░░] 76%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 11-per-client P06 | 11min | 2 tasks | 0 files |
 | Phase 11-per-client P07 | 1h50min | 3 tasks | 1 files |
 | Phase 12 P01 | 38min | 3 tasks | 11 files |
+| Phase 12 P02 | 20min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -105,6 +106,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 12-01] D-08 one-way 门 option-a 用户派发确认落定：session 字符串枚举恒序列化（G-05-1 同形态），五 Welcome 组帧调用点统一恒传 s.sessionMode
 - [Phase ?]: [Phase 12-01] reset 判别通道以 @xterm/headless 探针实证升级：clear() 不退 alt screen 且不清其背后 normal buffer——phase12-dom D1 以 1049l 残影复活链路锁定 reset 效应（plan 原 DOM 空白断言两态皆过无判别力）
 - [Phase ?]: [Phase 12-01] 模式位解析缺键语义按 sessionDims :655-664 容错同构：缺键（旧服务端）静默 shared，键在场值非法 warn；PC-06 勾选留 phase 末 12-05（跨 plan 共享，11-01 先例）
+- [Phase ?]: [Phase 12-02] winsize 观测面复用同包 ptySize/pollSize（creack/pty Getsize 即 TIOCSWINSZ 直读）——plan 原文 unix.IoctlGetWinsize 同语义既有件，零新代码零新导入
+- [Phase ?]: [Phase 12-02] D2 判别面经 onopen lastReported 同步语义（Hello 即首报）收敛：握手后基线恒零 RESIZE，布局桩突变+resize 事件才产生新帧——消除 WELCOME refit 假阳面
+- [Phase ?]: [Phase 12-02] PC-05/PC-07 需求勾选留 phase 末 12-05（ID 跨 12-02/04/05 共享，12-04 协议层证据未落——11-01/12-01 先例延续）
 
 ### Pending Todos
 
@@ -125,6 +129,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T11:54:01.159Z
-Stopped at: Completed 12-per-client 12-01-PLAN.md
+Last session: 2026-09-04T12:25:42.376Z
+Stopped at: Completed 12-per-client 12-02-PLAN.md
 Resume file: None
