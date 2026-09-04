@@ -1313,3 +1313,235 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 		}
 	}
 }
+
+// ====== 12-02 增量：RESIZE 直通 / 尺寸隔离 / ro INPUT 门控 / 限速保留断言组
+// （PC-05/PC-07 服务端收口，D-11 单一家纪律——五测全部落本文件；winsize 观测面
+// 复用同包 resize_arb_test.go 的 ptySize/pollSize（creack/pty Getsize 即
+// TIOCGWINSZ 直读，io.go Resize 合法观测依据）；RESIZE 帧发送复用同包 sendResize）======
+
+// TestPerClientResizePassthroughRW（PC-05 rw case，12-02）：rw 端 dialHello(111x44)
+// → spawnedSessions[0] PTY 出生即 111x44（Hello 钳制尺寸直通，PC-03 既有语义）；
+// RESIZE 120x50 → 50ms 防抖窗后 PTY == 120x50（轮询非固定 sleep——Phase 9 flake
+// 教训；直通路径 = server.go RESIZE case cl.pc != nil 分支 → 每会话 debouncer →
+// sess.Resize 仅 fdMu）。DecodeResize 钳制 [1,1000] 在解码层既有（D-16），本测
+// 覆盖正常值域直通；越界钳制为 proto 层既有锁定（proto_test），不重复断言。
+func TestPerClientResizePassthroughRW(t *testing.T) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, mode := dialHello(t, ctx, wsURL, 111, 44)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if mode != proto.ModeRW {
+		t.Fatalf("Welcome mode = %q, want %q（Writable:true 默认装配）", mode, proto.ModeRW)
+	}
+	sess := spawnedSessions()[0]
+	pollSize(t, sess, 111, 44) // Hello 钳制尺寸出生即正确（基线）
+
+	sendResize(t, ctx, c, 120, 50)
+	pollSize(t, sess, 120, 50) // 直通 + 50ms 防抖后应用（轮询至上限 5s）
+}
+
+// TestPerClientResizePassthroughRO（PC-05 ro case，D-06）：mutate 覆写
+// Writable:false（Options 既有字段，零新装配面）→ ro 端照常独立 spawn（PC-07
+// 前半），其 RESIZE 133x55 直通自己 PTY——D-09 第二闸（ro 丢弃）在 per-client
+// 分支不生效的直行为证据；shared 半侧 ro 丢弃闸由既有 TestResizeArbitration
+// 「owner模式参与集与ro忽略闸」子测锁定（零改动全绿即保持）。
+func TestPerClientResizePassthroughRO(t *testing.T) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) { o.Writable = false })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, mode := dialHello(t, ctx, wsURL, 111, 44)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if mode != proto.ModeRO {
+		t.Fatalf("Welcome mode = %q, want %q（mutate 覆写 Writable:false）", mode, proto.ModeRO)
+	}
+	sess := spawnedSessions()[0]
+	pollSize(t, sess, 111, 44) // ro 客户端照常 spawn，Hello 尺寸出生（基线）
+
+	sendResize(t, ctx, c, 133, 55)
+	pollSize(t, sess, 133, 55) // D-06：ro RESIZE 直通自己 PTY
+}
+
+// TestPerClientResizeIsolation（PC-05 成功准则 1，12-02）：双端 attach（Hello
+// 尺寸各异）→ A RESIZE 110x50 → A 的 PTY 变 110x50、B 的 PTY 恒为自己的 Hello
+// 值 120x40（各归各会话，无仲裁无串扰）；且 attach Welcome 之后双端零 'W' 帧
+// （静默窗断言——per-client 运行期线上无 Welcome 约束帧，resize 仲裁/fan-out
+// 不装配，arbiter 零值天然 no-op）。300ms 负向余量 > 50ms 防抖窗（resize_arb_test
+// 「owner模式参与集与ro忽略闸」既有形态）：若 B 被误串扰（仲裁残留路径），防抖
+// 到期早已应用。
+func TestPerClientResizeIsolation(t *testing.T) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cA, _ := dialHello(t, ctx, wsURL, 100, 30)
+	defer cA.Close(websocket.StatusNormalClosure, "")
+	cB, _ := dialHello(t, ctx, wsURL, 120, 40)
+	defer cB.Close(websocket.StatusNormalClosure, "")
+
+	sess := spawnedSessions()
+	if len(sess) != 2 {
+		t.Fatalf("spawned sessions = %d, want 2（双端 attach 各自独立 spawn）", len(sess))
+	}
+	pollSize(t, sess[0], 100, 30) // A 各自 Hello 尺寸
+	pollSize(t, sess[1], 120, 40) // B 各自 Hello 尺寸
+
+	// 双端读泵（夹具纪律：无 per-read deadline，goroutine + 缓冲 channel +
+	// select time.After 竞速）——静默窗 'W' 帧收集通道；泵启动前 Welcome 均已
+	// 被 dialHello 消费，泵内任何 Welcome 帧即运行期约束帧违规。
+	resChA := make(chan frameRes, 16)
+	resChB := make(chan frameRes, 16)
+	quit := make(chan struct{})
+	defer close(quit)
+	go readPump(ctx, cA, resChA, quit)
+	go readPump(ctx, cB, resChB, quit)
+
+	// A resize → A winsize 变（轮询），B winsize 恒为 Hello 值（负向断言）。
+	sendResize(t, ctx, cA, 110, 50)
+	pollSize(t, sess[0], 110, 50)
+	time.Sleep(300 * time.Millisecond) // > 50ms 防抖窗余量——B 若被误串扰早已应用
+	if cols, rows := ptySize(t, sess[1]); cols != 120 || rows != 40 {
+		t.Fatalf("B PTY size = %dx%d, want 120x40——per-client 双端 resize 互不影响（PC-05）", cols, rows)
+	}
+
+	// 静默窗（select + time.After 竞速）：泵启动以来双端累积帧零 'W'——
+	// 窗口内其余帧（sh 提示符/回显等自身会话输出）允许，唯独不得有 Welcome。
+	silent := time.After(500 * time.Millisecond)
+	welcomes := 0
+	for {
+		select {
+		case r := <-resChA:
+			if r.err != nil {
+				t.Fatalf("A 静默窗 read error: %v", r.err)
+			}
+			if len(r.data) > 0 && r.data[0] == proto.Welcome {
+				welcomes++
+			}
+		case r := <-resChB:
+			if r.err != nil {
+				t.Fatalf("B 静默窗 read error: %v", r.err)
+			}
+			if len(r.data) > 0 && r.data[0] == proto.Welcome {
+				welcomes++
+			}
+		case <-silent:
+			if welcomes != 0 {
+				t.Fatalf("双端静默窗内收到 %d 帧 'W'——per-client 运行期零 Welcome 约束帧（PC-05）", welcomes)
+			}
+			return
+		}
+	}
+}
+
+// TestPerClientROInputDropped（PC-07 INPUT 门控，12-02）：ro 端（Writable:false
+// 实例）发 INPUT `echo SHOULD_NOT_ECHO\r` → 静默窗内其 OUTPUT 零 MARKER 命中
+// ——INPUT 在服务端 mode 闸被丢弃，对自身进程同样无效（ro 独占进程不构成放开
+// 输入面的理由，T-05-08 越权面保持）；rw 对照（Writable:true 实例）echo 正常
+// 回显——同一断言通道证明丢弃是 mode 闸语义而非链路故障。
+func TestPerClientROInputDropped(t *testing.T) {
+	// 半场一：ro 实例（mutate 覆写 Writable:false）——INPUT 丢弃证据。
+	{
+		_, wsURL := startPerClientServer(t, []string{"sh"}, func(o *server.Options) { o.Writable = false })
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		c, mode := dialHello(t, ctx, wsURL, 80, 24)
+		defer c.Close(websocket.StatusNormalClosure, "")
+		if mode != proto.ModeRO {
+			t.Fatalf("ro 实例 Welcome mode = %q, want %q", mode, proto.ModeRO)
+		}
+		marker := []byte("SHOULD_NOT_ECHO")
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo SHOULD_NOT_ECHO\r")...)); err != nil {
+			t.Fatalf("ro write INPUT: %v", err)
+		}
+		resCh := make(chan frameRes, 16)
+		quit := make(chan struct{})
+		defer close(quit)
+		go readPump(ctx, c, resCh, quit)
+		var acc []byte
+		silent := time.After(2 * time.Second)
+		for {
+			select {
+			case r := <-resCh:
+				if r.err != nil {
+					t.Fatalf("ro 静默窗 read error: %v", r.err)
+				}
+				if len(r.data) > 0 && r.data[0] == proto.Output {
+					acc = append(acc, r.data[1:]...)
+					if bytes.Contains(acc, marker) {
+						t.Fatalf("ro INPUT 到达自身进程——echo 结果出现在 OUTPUT（PC-07 丢弃闸失效）")
+					}
+				}
+			case <-silent:
+				if bytes.Contains(acc, marker) {
+					t.Fatalf("ro 静默窗后 OUTPUT 含 %q（PC-07 丢弃闸失效）", marker)
+				}
+				return // ro 半场通过：2s 静默窗零 MARKER 命中
+			}
+		}
+	}
+	// 半场二：rw 对照（默认 Writable:true）——同通道 echo 正常（丢弃是 mode 闸
+	// 语义而非链路故障的对照证据）。(?:\$ )? 容忍 PS1 交错形态（11-07 CI flake
+	// 修正先例）。
+	{
+		_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		c, mode := dialHello(t, ctx, wsURL, 80, 24)
+		defer c.Close(websocket.StatusNormalClosure, "")
+		if mode != proto.ModeRW {
+			t.Fatalf("rw 对照 Welcome mode = %q, want %q", mode, proto.ModeRW)
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo ECHOK_PC07\r")...)); err != nil {
+			t.Fatalf("rw write INPUT: %v", err)
+		}
+		readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^(?:\$ )?ECHOK_PC07\r?$`))
+	}
+}
+
+// TestPerClientInputRateLimitKept（PC-07 限速保留，12-02）：rw 端超速率 flood
+// INPUT（10×15KiB ≈ 150KiB 瞬时，≫ 64KiB burst + 32KiB/s 补充——远超每客户端
+// 限速，超限帧按 R-02 drop 语义丢弃）→ 连接不被踢不关闭（RES-02：超限唯一
+// 动作 = 丢弃 + inputDrops 计数，不断开），后续正常输入照常回显（洪水后令牌
+// 恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶数学确定性：
+// 250ms × 32KiB/s = 8KiB 令牌 ≫ 探针帧 14B——非时序断言，是回充护栏）；
+// 探针命令前的 `\r` 先收口 canonical 行缓冲中的残留 'x'（超长行被行规程
+// 丢弃是 tty 语义，与本测无关）。
+func TestPerClientInputRateLimitKept(t *testing.T) {
+	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, mode := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if mode != proto.ModeRW {
+		t.Fatalf("Welcome mode = %q, want %q", mode, proto.ModeRW)
+	}
+
+	// 超速率洪水：10×15KiB 'x'（帧总 150KiB+10B 类型字节，均 < 16KiB
+	// ReadLimitPostAuth 单帧硬顶）。超限帧被丢弃（不断开），通过帧进 inQ
+	//（≈64KiB < 256KiB 容量）由 inputWriter 写 master。
+	flood := bytes.Repeat([]byte{'x'}, 15*1024)
+	for i := 0; i < 10; i++ {
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, flood...)); err != nil {
+			t.Fatalf("write flood INPUT #%d: %v", i, err)
+		}
+	}
+	// 回充等待后：行缓冲收口 + 探针 echo——连接存活与正常输入回显的双重证据
+	//（连接若被踢/关闭，Read 在 readOutputUntil 内即出错 Fatal）。
+	time.Sleep(250 * time.Millisecond)
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, '\r')); err != nil {
+		t.Fatalf("write flush newline: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo RATEOK_PC07\r")...)); err != nil {
+		t.Fatalf("write probe INPUT: %v", err)
+	}
+	readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^(?:\$ )?RATEOK_PC07\r?$`))
+}
