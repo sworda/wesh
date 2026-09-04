@@ -1467,6 +1467,7 @@ func TestPerClientROInputDropped(t *testing.T) {
 		go readPump(ctx, c, resCh, quit)
 		var acc []byte
 		silent := time.After(2 * time.Second)
+	roSilent:
 		for {
 			select {
 			case r := <-resCh:
@@ -1483,7 +1484,11 @@ func TestPerClientROInputDropped(t *testing.T) {
 				if bytes.Contains(acc, marker) {
 					t.Fatalf("ro 静默窗后 OUTPUT 含 %q（PC-07 丢弃闸失效）", marker)
 				}
-				return // ro 半场通过：2s 静默窗零 MARKER 命中
+				// 12-03 Rule 1 修复：原 return 使半场二（rw 对照）不可达——
+				// go vet unreachable 暴露的 12-02 真缺陷（rw 半场从未执行，
+				// 「丢弃是 mode 闸语义而非链路故障」对照证据缺位）。labeled
+				// break 退出静默窗循环，断言语义逐字不动。
+				break roSilent
 			}
 		}
 	}
