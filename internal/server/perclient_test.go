@@ -826,6 +826,76 @@ func waitPgroupESRCH(t *testing.T, pid int, guard time.Duration) {
 	}
 }
 
+// scriptedProbe 返回消费预置 error 返回值序列的探针闭包（耗尽后重复末值，
+// 支撑恒 EPERM 案例），并在每次调用内断言入参形态：首参 = 负 pid（-pid
+// 进程组语义）、次参 = 信号 0（探测语义）——锚定核心内探针调用恒
+// probe(-pid, 0)。探针在测试 goroutine 内被同步调用，t.Fatalf 形态安全。
+func scriptedProbe(t *testing.T, seq ...error) func(int, syscall.Signal) error {
+	t.Helper()
+	calls := 0
+	return func(pid int, sig syscall.Signal) error {
+		if pid >= 0 {
+			t.Fatalf("probe 首参 = %d, want 负 pid（-pid 进程组语义）", pid)
+		}
+		if sig != 0 {
+			t.Fatalf("probe 次参 = %d, want 信号 0（探测语义）", sig)
+		}
+		i := calls
+		if i >= len(seq) {
+			i = len(seq) - 1
+		}
+		calls++
+		return seq[i]
+	}
+}
+
+// TestWaitPgroupESRCHProbeSemantics 锁定 waitPgroupESRCHWithProbe 的四语义
+// 案例（G-11-2 修复的行为锁）：瞬态容忍收敛（EPERM, EPERM, ESRCH → nil，
+// CI run 33832096581 FAIL 形态的消除证明）/ 持续到期翻车（恒 EPERM +
+// 150ms 护栏 → 非 nil 且含「护栏」，僵尸残留检测保留，容忍非无限化）/
+// 他错立即失败（EINVAL → 非 nil 且含 %v 渲染的 invalid argument，错误串
+// 无字面 EINVAL——文案 %v 逐字不变纪律，不为 errors.Is 断言改 %w）/
+// 无错存活（nil, nil, ESRCH → nil，既有语义保留）。EPERM 分支在 Linux
+// 同 uid 下结构性不可达、macOS 为非确定瞬态——本单测是四语义案例的唯一
+// 确定性锁定通道（探针参数化理由详见 waitPgroupESRCHWithProbe 注释）。
+// guard 取值：150ms 案例测试时长 ~150ms；2s 案例收敛于 2-3 次轮询约
+// 50ms。
+func TestWaitPgroupESRCHProbeSemantics(t *testing.T) {
+	t.Run("eperm-transient-converges", func(t *testing.T) {
+		err := waitPgroupESRCHWithProbe(4242, 2*time.Second, scriptedProbe(t, syscall.EPERM, syscall.EPERM, syscall.ESRCH))
+		if err != nil {
+			t.Fatalf("EPERM 瞬态容忍 + 护栏内 ESRCH 收敛应返回 nil: %v", err)
+		}
+	})
+	t.Run("eperm-persistent-guard-expiry", func(t *testing.T) {
+		err := waitPgroupESRCHWithProbe(4242, 150*time.Millisecond, scriptedProbe(t, syscall.EPERM))
+		if err == nil {
+			t.Fatal("恒 EPERM 到护栏到期应返回错误——僵尸残留检测保留（容忍非无限化）")
+		}
+		if !strings.Contains(err.Error(), "护栏") {
+			t.Fatalf("护栏到期错误文案应含「护栏」: %v", err)
+		}
+		if !strings.Contains(err.Error(), "EPERM") {
+			t.Fatalf("护栏到期错误文案应含「EPERM」（存活探针两形态明示）: %v", err)
+		}
+	})
+	t.Run("other-error-immediate-fatal", func(t *testing.T) {
+		err := waitPgroupESRCHWithProbe(4242, 2*time.Second, scriptedProbe(t, syscall.EINVAL))
+		if err == nil {
+			t.Fatal("非 ESRCH 非 EPERM 错误应立即返回——环境异常检测面零弱化")
+		}
+		if !strings.Contains(err.Error(), "invalid argument") {
+			t.Fatalf("立即失败错误文案应含 syscall.EINVAL 经 %%v 渲染的 invalid argument: %v", err)
+		}
+	})
+	t.Run("alive-then-esrch", func(t *testing.T) {
+		err := waitPgroupESRCHWithProbe(4242, 2*time.Second, scriptedProbe(t, nil, nil, syscall.ESRCH))
+		if err != nil {
+			t.Fatalf("无错存活后 ESRCH 收敛应返回 nil: %v", err)
+		}
+	})
+}
+
 // EXIT 私有化强形态一（PC-04，11-04 Task 1；Security Mistakes 表「EXIT 广播
 // 习惯禁带过来」行的 Go 侧锁，T-11-04a 信息泄露面）：A/B 两端 attach 同一
 // per-client 实例 → A 发 exit 42 自杀 → A 端 readExitClose 收至 CloseError：
