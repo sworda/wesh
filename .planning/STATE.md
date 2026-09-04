@@ -73,7 +73,7 @@ Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/
 | Phase 12 P02 | 20min | 3 tasks | 7 files |
 | Phase 12 P03 | 42min | 2 tasks | 5 files |
 | Phase 12 P04 | 22min | 2 tasks | 1 files |
-| Phase 12-per-client P05 | 32min | 2 tasks | 2 files |
+| Phase 12-per-client P05 | 22min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
