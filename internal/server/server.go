@@ -1179,6 +1179,29 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 				continue // 满则丢（droppedInputs 计数已在 tryEnqueue 内递增）；限速器在前，队列满本应罕见
 			}
 		case proto.Resize:
+			// 12-02（PC-05，D-06）per-client 直通分支：RESIZE 直通本会话 PTY 的
+			// TIOCSWINSZ——DecodeResize 钳制 [1,1000] 既有（proto.go，解码层零
+			// 改动）+ 每会话 50ms 防抖（resizeMu 内写 pendingResize + resizeDeb.Reset，
+			// 到期回调 sess.Resize 仅 fdMu 不持 hubMu——锁序三规则 §5）。ro/rw
+			// 同形直通（D-06：D-09 第二闸在 per-client 分支不生效——ttyd parity，
+			// protocol.c 只门 INPUT 不门 RESIZE；per-client 下 ro 独占自己进程，
+			// 无旁观对象可保护；前端第一闸按模式位放行 = main.ts sendResize 的
+			// sessionMode 判定，两侧闸注释互指，D-06/D-07 同 plan 配对落地）。
+			// 零 Welcome 再推送：本分支不调 recalcNow/pushSessionDimsLocked
+			// （resize 仲裁/owner 递补/fan-out 在 per-client 分支不装配，arbiter
+			// 零值天然 no-op——Welcome cols/rows 即自有尺寸，G-05-1 契约 per-client
+			// 下退化为恒等式，perclient.go Welcome 组帧注释互指）。JSON 解码失败
+			// 静默丢弃（不关连接，与 shared 半侧同语义）。
+			if cl != nil && cl.pc != nil {
+				if cols, rows, ok := proto.DecodeResize(data[1:]); ok {
+					pc := cl.pc
+					pc.resizeMu.Lock()
+					pc.pendingResize = dims{cols: cols, rows: rows}
+					pc.resizeDeb.Reset(s.resizeDebounce)
+					pc.resizeMu.Unlock()
+				}
+				continue
+			}
 			// D-09 第二闸：ro 端 RESIZE 服务端直接忽略（『P2 D-13 ro 放行 RESIZE 为单
 			// 客户端语境，已被 D-09 修订』逐字登记；第一闸 = 前端 ro 不发，05-08 落地）。
 			if cl == nil || cl.mode.Load() == proto.ModeRO {

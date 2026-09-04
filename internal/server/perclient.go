@@ -90,6 +90,19 @@ type pcSession struct {
 	// teardownOnce 收口双触发路径（detach/kick 断开挂点 × watcher 子死
 	// 路径）——两路径都只「触发」，执行序列只有一个（Pitfall 3 恰好一次）。
 	teardownOnce sync.Once
+	// 12-02（PC-05）RESIZE 直通三字段：resizeMu 为 pendingResize 的叶锁
+	// （锁序三规则 §5——持有期间不取任何其他锁；读循环写 pendingResize 与
+	// 防抖回调读 pendingResize 经它互斥，Reset 与回调执行的并发安全由
+	// Go 1.23+ timer 语义承接）；pendingResize 为最新上报尺寸（防抖窗内
+	// 合并，到期只应用最后值——arbiter 同款语义，Pitfall 7 SIGWINCH 风暴
+	// 防线每会话粒度）；resizeDeb 为每会话防抖（共用件 debouncer，时长源
+	// s.resizeDebounce 与 arbiter 同源——不新增第二份常量，防双写漂移）。
+	// 回调锁序可证：resizeMu 内取 pendingResize → 放锁 → sess.Resize 仅
+	// fdMu（hubMu > sess.fdMu 全序不受影响，回调函数体零 hubMu）；closed
+	// 会话 Resize 返回 os.ErrClosed 静默（Attach 读循环既有纪律同款）。
+	resizeMu      sync.Mutex
+	pendingResize dims
+	resizeDeb     *debouncer
 }
 
 // capacityMessage 是 D-02 容量拒绝的统一文案（11-03）：pre-spawn 闸与注册点
@@ -171,6 +184,17 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 		teardownDone: make(chan struct{}),
 		startedAt:    time.Now(),
 	}
+	// 12-02（PC-05）每会话 RESIZE 防抖装配（共用件 debouncer，构造即 stopped：
+	// 首次 RESIZE 上报才武装——server.go RESIZE case per-client 直通分支在
+	// resizeMu 内写 pendingResize 后 Reset）。回调：resizeMu 内取 pendingResize
+	// → 放锁 → sess.Resize 仅 fdMu（锁序三规则 §5——回调函数体绝不取 hubMu；
+	// closed 会话返回 os.ErrClosed 静默）。
+	pc.resizeDeb = newDebouncer(s.resizeDebounce, func() {
+		pc.resizeMu.Lock()
+		d := pc.pendingResize
+		pc.resizeMu.Unlock()
+		_ = pc.sess.Resize(d.cols, d.rows)
+	})
 	s.hubMu.Lock()
 	// D-03 注册点复检（11-03）：spawn 成功后在注册段的同一 hubMu 持有内复检
 	// 容量——竞态窗口 = 两并发升档同时过上方 pre-spawn 闸（Pitfall 4 超编形态：
@@ -331,6 +355,10 @@ func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 // 移除——map delete 幂等）→ close(teardownDone)。
 func (s *Server) teardownPCLocked(pc *pcSession) {
 	pc.teardownOnce.Do(func() {
+		// 快半段：每会话 RESIZE 防抖停摆（12-02——计时器随会话消亡；teardown
+		// 后在途 RESIZE 再武装亦无害：AfterFunc 回调对 closed 会话 Resize 返回
+		// os.ErrClosed 静默，双防线）。
+		pc.resizeDeb.Stop()
 		// 快半段：信号面（Pitfall 2 reaped 栅栏——收割完成后一切 kill(-pgid)
 		// 禁发，kill-after-reap 误杀复用 pgid 结构性不可能）。
 		if !pc.reaped {
