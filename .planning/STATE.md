@@ -6,14 +6,14 @@ current_phase: 12
 current_phase_name: per-client 交互与背压语义
 status: "Phase 11 shipped — PR #15"
 stopped_at: Phase 12 context gathered
-last_updated: "2026-09-04T08:24:55.230Z"
+last_updated: "2026-09-04T10:09:02.663Z"
 last_activity: 2026-09-04
+last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 12
+  total_plans: 17
   completed_plans: 12
-last_activity_desc: Phase 11 gap closure complete
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 Phase: 12 — per-client 交互与背压语义
 Plan: Not started
 Status: Phase 11 shipped — PR #15
-Last activity: 2026-09-04
+Last activity: 2026-09-04 — Phase 12 planning complete
 
 Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
