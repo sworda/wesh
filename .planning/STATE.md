@@ -5,11 +5,11 @@ milestone_name: per-client 会话模式
 current_phase: 12
 current_phase_name: per-client 交互与背压语义
 status: "Phase 11 shipped — PR #15"
-stopped_at: 11-07 complete + SECURITY.md 就位 + UAT 2/2——下一步 /gsd-verify-work 11 复验收口，随后 /gsd-ship 11
-last_updated: "2026-09-04T06:57:09.378Z"
+stopped_at: Phase 12 context gathered
+last_updated: "2026-09-04T08:24:55.230Z"
 last_activity: 2026-09-04
 progress:
-  total_phases: 2
+  total_phases: 3
   completed_phases: 2
   total_plans: 12
   completed_plans: 12
@@ -121,6 +121,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T06:52:00.000Z
-Stopped at: Phase 11 complete (transitioned to Phase 12, 7/7 plans, verification passed)；ship 流程进行中（PR 创建收尾）
-Resume file: None
+Last session: 2026-09-04T08:24:55.205Z
+Stopped at: Phase 12 context gathered
+Resume file: .planning/phases/12-per-client/12-CONTEXT.md
