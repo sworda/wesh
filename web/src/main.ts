@@ -334,10 +334,14 @@ function sendResize(cols: number, rows: number): void {
   // Hello 完成前禁发任何数据帧：onopen 首次 refit() 几乎必然走到 sendResize——
   // 不门住则 RESIZE 抢跑首帧，服务端握手段以 1002 frame_before_hello 直关
   if (!helloSent) return;
-  // D-09 第一闸：ro 客户端不发 RESIZE。Hello 携首尺寸不受影响——helloSent 门先于
-  // isRO 生效（isRO 仅在 WELCOME 到达后才可能为 true，彼时 Hello 已发出）；
-  // 服务端忽略 ro RESIZE 为兜底第二闸（05-04 已落）
-  if (isRO) return;
+  // D-07/12-02 第一闸（ro RESIZE 按模式位）：shared ro 不发逐字保留（05-08 落地
+  // 语义，服务端 D-09 第二闸丢弃互为纵深防御）；per-client ro 放行照常上报——
+  // D-07 与服务端 D-06（server.go RESIZE case 的 cl.pc != nil 直通分支）同 plan
+  // 配对生效：仅服务端放行则自家 ro 前端零变化、仅前端放行则消息空转（12-CONTEXT
+  // specifics 配对论证）。Hello 携首尺寸不受影响——helloSent 门先于本闸生效
+  //（isRO 仅在 WELCOME 到达后才可能为 true，彼时 Hello 已发出）；per-client 下
+  // ro RESIZE 直通自己独占的 PTY（ttyd parity：protocol.c 只门 INPUT 不门 RESIZE）。
+  if (isRO && sessionMode !== 'per-client') return;
   if (ws === null || ws.readyState !== WebSocket.OPEN) return;
   if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0) return;
   // 去重：与最近一次实际上行相同的尺寸不重发。去重键 = 上行 fit 尺寸（窗口物理尺寸，

@@ -18,6 +18,9 @@
 // 场景：
 //   D1 per-client 1006 重连全链 → 新 WELCOME（session:"per-client"）→ reset 生效：
 //      旧 normal buffer 残影不复活 + 新会话内容完整 + 静默零新面板（D-09/D-10）
+//   D2 per-client ro 端 window resize → RESIZE（0x31）真实上行（D-07 第一闸按模式位
+//      放开 + D-06 服务端直通配对）；shared ro 对照同操作全程零 RESIZE（05-08
+//      shared 语义逐字保留，prohibition 回归锁）
 //   D3 缺 session 键 Welcome（旧服务端形态，SpyWebSocket 投递拦截剥键注入）→
 //      不 reset：旧 normal buffer 内容保持在场（D-08 防御性缺省，误 reset 即
 //      CORE-05 接回同进程语义下清掉有效旧屏 = 数据面破坏）
@@ -411,6 +414,66 @@ async function d3MissingKeyNoReset() {
   }
 }
 
+// ═══════════════════ D2：ro 端 RESIZE 第一闸按模式位放开（PC-05 前端半侧，D-06/D-07 配对） ═══════════════════
+// 链路（12-02 Task 2）：per-client ro 实例（无 --writable）jsdom 加载 → WELCOME
+//（isRO=true + sessionMode="per-client"）→ 突变布局桩尺寸（720x408 → 900x510，
+// fit 80x24 → 100x30）→ window resize 事件 → 100ms debounce → refit() →
+// sendResize 上行 RESIZE（0x31）。
+// 去重闸说明（main.ts onopen）：Hello 载荷即首次尺寸上报且同步 lastReported
+//（80x24），WELCOME refit 的等值上报被去重吞掉——握手后基线恒零 RESIZE，只有
+// fit 尺寸真实变化（本场景的布局突变）才产生新帧，判别面唯一。
+// shared ro 对照：shared 模式实例同操作——isRO && sessionMode==='shared' →
+// sendResize 直接 return（05-08 逐字保留），全程零 RESIZE（静默窗形态负向断言）。
+// 隔离纪律：每实例独立 spawn + 独立 jsdom（半场一/半场二先后独立装配收口）。
+async function d2RoResizeGate() {
+  console.log('D2: per-client ro 端 window resize → RESIZE 上行恢复（D-07）；shared ro 对照零 RESIZE（05-08 保留）');
+  const RESIZE_SENT = 0x31;
+  const countResize = (frames) => frames.filter((b) => b === RESIZE_SENT).length;
+
+  // 半场一：per-client ro——事件驱动 RESIZE 上行（D-07 第一闸放开）
+  {
+    const inst = await startWesh(['--session-mode', 'per-client', '--', 'bash', '--norc', '--noprofile']);
+    const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+    try {
+      await waitReady(ctx.document);
+      const roNotified = ctx.infos.some((s) => s.includes('read-only mode'));
+      check('D2a', 'per-client ro 会话建立（无 --writable → ro 通知在场 = isRO 通路；握手后零 RESIZE——Hello 即首报 + 去重）',
+        roNotified && countResize(ctx.sentFrames) === 0,
+        `ro通知=${roNotified} RESIZE帧=${countResize(ctx.sentFrames)}`);
+      // 布局桩突变（getComputedStyle 闭包引用同一 dims 对象——proposeDimensions
+      // 读 #terminal 父容器 computed width/height）：900x510 → fit 100x30
+      ctx.dims.w = 900;
+      ctx.dims.h = 510;
+      ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+      await waitFor(() => countResize(ctx.sentFrames) > 0, 'per-client ro resize 事件 → RESIZE（0x31）上行', 3000);
+      check('D2b', 'per-client ro 端 resize 事件后 sentFrames 含 RESIZE（0x31）——D-07 第一闸按模式位放开（与服务端 D-06 直通配对生效）',
+        countResize(ctx.sentFrames) >= 1, `RESIZE帧=${countResize(ctx.sentFrames)}`);
+    } finally {
+      await cleanup(ctx, inst);
+    }
+  }
+
+  // 半场二：shared ro 对照——同操作全程零 RESIZE（05-08 语义逐字保留）
+  {
+    const inst = await startWesh(['--', 'bash', '--norc', '--noprofile']);
+    const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+    try {
+      await waitReady(ctx.document);
+      const roNotified = ctx.infos.some((s) => s.includes('read-only mode'));
+      check('D2c', 'shared ro 会话建立（对照实例，ro 通知在场）', roNotified, `ro通知=${roNotified}`);
+      ctx.dims.w = 900;
+      ctx.dims.h = 510;
+      ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+      // 100ms debounce + 余量静默窗（负向断言：窗口内零 RESIZE = 闸门保持关闭）
+      await sleep(400);
+      check('D2d', 'shared ro 对照：同操作全程零 RESIZE——05-08 ro 不发语义逐字保留（per-client 放开不渗入 shared 路径，prohibition 回归锁）',
+        countResize(ctx.sentFrames) === 0, `RESIZE帧=${countResize(ctx.sentFrames)}`);
+    } finally {
+      await cleanup(ctx, inst);
+    }
+  }
+}
+
 // 输出自净断言（phase06-dom.mjs:732-737 逐字沿用——红线由注释纪律升级为运行时
 // 自证）：遍历全部已发 detail，断言不含任一 token 值或 '/s/' 链接形态串；命中即
 // FAIL（防未来回归静默破线）。命中时不回显冒犯内容（只打布尔/计数——红线自保）
@@ -421,7 +484,7 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-const scenarios = [d1PerClientResetChain, d3MissingKeyNoReset];
+const scenarios = [d1PerClientResetChain, d2RoResizeGate, d3MissingKeyNoReset];
 let failed = 0;
 for (const s of scenarios) {
   try {
