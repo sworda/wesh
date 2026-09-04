@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
-current_phase: 11
-current_phase_name: per-client
-status: verifying
-stopped_at: 11-07 complete（G-11-2 闭合：afb77a8+5aad25a+9936f2b，CI 33844831146 双平台全绿）；SECURITY.md 就位（threats_open: 0，5b6b178）；UAT 2/2 passed——待 /gsd-verify-work 11 复验收口
-last_updated: "2026-09-04T06:45:00.000Z"
+current_phase: 12
+current_phase_name: per-client 交互与背压语义
+status: planning
+stopped_at: 11-07 complete + SECURITY.md 就位 + UAT 2/2——下一步 /gsd-verify-work 11 复验收口，随后 /gsd-ship 11
+last_updated: "2026-09-04T06:49:09.632Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 12
   completed_plans: 12
 ---
@@ -20,17 +20,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-03)
+See: .planning/PROJECT.md (updated 2026-09-04)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 11 — per-client
+**Current focus:** Phase 12 — per-client 交互与背压语义
 
 ## Current Position
 
-Phase: 11 (per-client) — VERIFYING
-Plan: 7 of 7
-Status: Gap closure complete — ready for re-verification
-Last activity: 2026-09-04 — Phase 11 gap closure (G-11-2) complete
+Phase: 12 — per-client 交互与背压语义
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-04 — Phase 11 complete, transitioned to Phase 12
 
 Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
@@ -121,6 +121,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T06:45:00.000Z
-Stopped at: 11-07 complete + SECURITY.md 就位 + UAT 2/2——下一步 /gsd-verify-work 11 复验收口，随后 /gsd-ship 11
+Last session: 2026-09-04T06:52:00.000Z
+Stopped at: Phase 11 complete (transitioned to Phase 12, 7/7 plans, verification passed)；ship 流程进行中（PR 创建收尾）
 Resume file: None
