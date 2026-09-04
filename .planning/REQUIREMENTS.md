@@ -81,13 +81,13 @@
 - [x] **PC-02**: per-client 模式下每个 WS 客户端 attach 认证通过后独立 spawn 自己的 PTY 子进程（Hello cols/rows 经钳制后作初始 winsize）；spawn 失败时该客户端收类型化 Error 帧并以 1011 关闭，服务端与其他客户端不受影响
 - [x] **PC-03**: per-client 客户端断开（含异常）后其子进程进程组立即收 SIGHUP（随 `--stop-signal` 可配），无宽限；信号发送与收割序列化，杜绝 kill-after-reap 误杀复用 pgid
 - [x] **PC-04**: per-client 子进程退出后仅该客户端收私有 EXIT 帧（含 exit_code，信号死亡 -1）并以 1000 关闭；服务端与其他客户端继续运行
-- [ ] **PC-05**: per-client 模式下 RESIZE 直通本会话 TIOCSWINSZ（钳制 [1,1000] 与 50ms 防抖保留），无仲裁器、无 'W' 约束帧
-- [ ] **PC-06**: per-client 模式下断线重连成功即获得全新进程；前端按 Welcome 下发的模式位在重连分支执行 terminal.reset() 清屏（旧屏残留对新进程无意义）
-- [ ] **PC-07**: ro 客户端在 per-client 模式下照常 spawn 独立进程，其 INPUT 被服务端丢弃（ro=自有进程输入门控）；每客户端输入限速保留
+- [x] **PC-05**: per-client 模式下 RESIZE 直通本会话 TIOCSWINSZ（钳制 [1,1000] 与 50ms 防抖保留），无仲裁器、无 'W' 约束帧
+- [x] **PC-06**: per-client 模式下断线重连成功即获得全新进程；前端按 Welcome 下发的模式位在重连分支执行 terminal.reset() 清屏（旧屏残留对新进程无意义）
+- [x] **PC-07**: ro 客户端在 per-client 模式下照常 spawn 独立进程，其 INPUT 被服务端丢弃（ro=自有进程输入门控）；每客户端输入限速保留
 - [ ] **PC-08**: per-client 模式下 `--max-clients` 兼任并发进程上限：握手 503 闸保留 + spawn 前 hubMu 内复检计数（防 ttyd 式 == 闸 + 异步 spawn 窗口的并发超编）；并发子进程数 ≤ max-clients 为硬不变量
 - [ ] **PC-09**: `--once` / `--exit-when-empty` / 优雅关停语义适配：触发条件（计数归零）不变，终结目标为全部存活 per-client 进程组各执行一遍 stop-signal 序列；注册表空迁移存在显式第二终结源（无子进程可等时仍能退出）
-- [ ] **PC-10**: per-client 慢客户端保护：每客户端有界 outbox 写满 1013 踢出（无全局信用门；自然反压为停读该 PTY→内核缓冲满→子进程写阻塞）
-- [ ] **PC-11**: per-PTY 停读/续读背压（ttyd pty_pause/resume parity）：慢客户端先停读其 PTY 而非立即踢出，恢复后自动续读；持续过载仍按 PC-10 踢出
+- [x] **PC-10**: per-client 慢客户端保护：每客户端有界 outbox 写满 1013 踢出（无全局信用门；自然反压为停读该 PTY→内核缓冲满→子进程写阻塞）
+- [x] **PC-11**: per-PTY 停读/续读背压（ttyd pty_pause/resume parity）：慢客户端先停读其 PTY 而非立即踢出，恢复后自动续读；持续过载仍按 PC-10 踢出
 - [ ] **PC-12**: 模式语义文档：README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 时经多路复用汇聚）；修正 v1.0「GoTTY 式共享进程模型」误记（GoTTY 实为 per-connection spawn，源码已核实）
 - [ ] **PC-13**: herdr/tmux 等多路复用应用场景下多客户端互不干扰：移动端 attach 不再压缩其他客户端面板尺寸（herdr is_foreground + per-client area 仲裁恢复生效）；协议层 UAT 断言进程独立/尺寸互不干扰 + Windows Playwright 全链观感断言
 
@@ -192,13 +192,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PC-02 | Phase 11 | Complete |
 | PC-03 | Phase 11 | Complete |
 | PC-04 | Phase 11 | Complete |
-| PC-05 | Phase 12 | Pending |
-| PC-06 | Phase 12 | Pending |
-| PC-07 | Phase 12 | Pending |
+| PC-05 | Phase 12 | Complete |
+| PC-06 | Phase 12 | Complete |
+| PC-07 | Phase 12 | Complete |
 | PC-08 | Phase 13 | Pending |
 | PC-09 | Phase 13 | Pending |
-| PC-10 | Phase 12 | Pending |
-| PC-11 | Phase 12 | Pending |
+| PC-10 | Phase 12 | Complete |
+| PC-11 | Phase 12 | Complete |
 | PC-12 | Phase 14 | Pending |
 | PC-13 | Phase 14 | Pending |
 | SEC-09 | Phase 13 | Pending |
@@ -213,4 +213,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-09-03 — v1.1 原 Phase 13/14 合并、原 15 重编号 14：15 条需求全量映射 Phase 10-14（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12；PC-08/09+SEC-09+OPS-12→13；PC-12/13→14），覆盖 15/15 无孤儿*
+*Last updated: 2026-09-04 — Phase 12 收口：PC-05/06/07/10/11 五条勾选（12-05 收口闸六段式全绿 + 三证据链：Go 新测组 12 测 + phase12.mjs 六场景两轮 + phase12-dom 三场景；期望值逐字未动 diff 白名单审查）；v1.1 累计 6/15（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12）*

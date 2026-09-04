@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 9: 发布与打磨** - 单静态二进制四平台发布、自定义首页、负载/模糊测试回填默认参数 (completed 2026-08-31)
 - [x] **Phase 10: 模式装配与接缝** - --session-mode flag + TOML 键 + Options/StartWithSize 接缝，全部 inert 零回归 (completed 2026-09-03)
 - [x] **Phase 11: per-client 生命周期主干** - attach spawn / 断开即杀进程组 / EXIT 私有化 / teardown 恰好一次 (completed 2026-09-04)
-- [ ] **Phase 12: per-client 交互与背压语义** - resize 直通 / ro 门控 / 重连 reset / 停读续读 / 1013 踢出
+- [x] **Phase 12: per-client 交互与背压语义** - resize 直通 / ro 门控 / 重连 reset / 停读续读 / 1013 踢出 (completed 2026-09-04)
 - [ ] **Phase 13: 资源防线与终结语义** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组 / 第二终结源 / 退出码对齐 / metrics 审计 per-client 粒度 / WESH_REMOTE_USER
 - [ ] **Phase 14: 双模式验证矩阵、标定与 herdr UAT** - 双模式 -race 门 / 协议层 + Playwright UAT / 负载矩阵回填 / 模式文档
 
@@ -488,7 +488,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 慢客户端停止消费时其 PTY 先被停读（输出积压于内核缓冲、子进程写阻塞而非丢数据），恢复消费后自动续读（ttyd pty_pause/resume parity）
   5. 持续过载的慢客户端 outbox 写满后以 1013 被踢出，服务端与其他客户端不受影响
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans executed
 **Wave 1**
 
 - [x] 12-01-PLAN.md — PC-06 tracer：Welcome.session 协议面（D-08 one-way 确认门 + WelcomePayload/WelcomeFrame 五调用点）+ 前端模式位 reset + phase12-dom.mjs D1/D3
@@ -507,7 +507,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 12-05-PLAN.md — 收口闸六段式 + 期望值逐字未动 diff 白名单审查 + 五需求勾选 + WR-01 闭合登记
+- [x] 12-05-PLAN.md — 收口闸六段式 + 期望值逐字未动 diff 白名单审查 + 五需求勾选 + WR-01 闭合登记
 
 含：INPUT 零分支 / RESIZE 直通两 case、每会话 resize 防抖（共用 debouncer 组件防双写漂移）、前端重连分支按 Welcome 模式位执行 terminal.reset() + dist 重建（本里程碑唯一前端改动）、per-PTY 停读/续读状态机。
 
@@ -567,6 +567,6 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
-| 12. per-client 交互与背压语义 | v1.1 | 4/5 | In Progress|  |
+| 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
 | 13. 资源防线与终结语义 | v1.1 | 0/? | Not started | - |
 | 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |

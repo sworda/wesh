@@ -4,16 +4,16 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 12
 current_phase_name: per-client
-status: executing
-stopped_at: Completed 12-per-client 12-04-PLAN.md
-last_updated: "2026-09-04T14:59:05.614Z"
+status: verifying
+stopped_at: Completed 12-per-client 12-05-PLAN.md（Phase 12 收口：五需求勾选 + WR-01 闭合登记——phase 5/5 ready for verification）
+last_updated: "2026-09-04T15:24:04.878Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 17
-  completed_plans: 16
+  completed_plans: 17
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 
 Phase: 12 (per-client) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-09-04 — Phase 12 execution started
 
-Progress: [█████████░] 94%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -73,6 +73,7 @@ Progress: [█████████░] 94%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 12 P02 | 20min | 3 tasks | 7 files |
 | Phase 12 P03 | 42min | 2 tasks | 5 files |
 | Phase 12 P04 | 22min | 2 tasks | 1 files |
+| Phase 12-per-client P05 | 32min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -119,6 +120,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 12-04] S6 场景形态裁决（Rule 3 实证驱动）：默认 --ping-interval=5s 下 dwell 1013 被 1006 pong_timeout 结构性先杀——coder/websocket writeControl 内层 5s 写超时（write.go:277-279）使 ping tick 落在 writer 持锁阻塞于满 TCP 窗口时 mu.lock 超时返回 DeadlineExceeded，被 pinger 单一判读误认为 pong 超时（实测 detach 恰于 attach+10.0007s）；S6 以生产 CLI flag --ping-interval=0（D-16「0 = 禁用保活」，Go harness 零值同构）隔离 dwell 看门狗，dwell 本身生产 10s 零覆写真实等待（两轮实测 10.6s/10.4s）
 - [Phase ?]: [Phase 12-04] 洪水量修正：plan 文本「seq 1 400000 级，超 outbox 512KiB 即足量」与 TCP 吸收带事实不符（2.7MB < ~10.6MiB 吸收带 → 停读永不形成、场景空转假绿）——按 slowclient_test.go 吸收带纪律上调至 seq 1 4000000（30.9MB ≈ 3× 余量，Go seqFlood Linux 分支同款）；S5 恢复期零输入纪律（tty 回显与洪水共用输出流，发标记会破坏连续性校验面——收齐信号 = 尾窗 '3999999\r\n4000000\r\n' 终态联合形态）
 - [Phase ?]: [Phase 12-04] phase12.mjs 六场景两轮全绿（20/20×2）：Welcome.session 双模式 / resize 直通隔离+零 W 帧 / ro RESIZE 直通+shared 对照 / ro INPUT 丢弃+rw 限速 / 停读续读 34.9MB 字节级连续 / 真实 dwell 1013+ESRCH；RawStallClient raw socket 停读夹具（phase05 rawStallClient 一般化）为后续 phase 可复用件；PC-05/06/07/10/11 勾选留 12-05（既定先例）
+- [Phase ?]: [Phase 12-05] Phase 12 收口闸六段式全绿：静态面（gofmt/vet 零输出）+ 全量 -race 5 包 1m21s（新测 12/12 逐名）+ darwin 双编译闸 + dist byte-identical + UAT 矩阵 16 轮（既有 10 协议脚本默认 shared 零修改与基线逐脚本一致 + 3 jsdom + phase12 两轮 20/20 + phase12-dom 14/14）+ diff 白名单审查（放宽形态零命中/红线文件零 diff/零新依赖 0 行）；PC-05/06/07/10/11 五需求勾选收口（三证据链映射表）
+- [Phase ?]: [Phase 12-05] WR-01（Phase 11 REVIEW 遗留）闭合回指登记（D-04「dwell 涵盖不复刻」形态）：dwell 10s 从停读起点武装结构性涵盖 500ms attach 宽限（×20 余量）；阻塞持帧即暂存（帧在闭包栈上 ≡ creditPending 语义等价）——宽限门与 creditPending/afterDrain 重投均不复刻；若瞬态满箱误踢案例实证出现则回写重开（CONTEXT deferred 口径）；登记项 STATE.md 规划期 :99 现位 :103（12-01..04 决策追加行移，内容逐字核对）
+- [Phase ?]: [Phase 12-05] diff 审查白名单补充项①：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——12-05 plan 白名单枚举未列属 plan 文本枚举缺口而非回归，三轴裁决（plan 授权/append-only/零断言）如实登记（WINDOWS #33）不判收口失败；phase 基点 = e8b39c0（86433a6^ Phase 12 首提交父提交，11-06 先例同构）
 
 ### Pending Todos
 
@@ -140,6 +144,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T14:59:05.597Z
-Stopped at: Completed 12-per-client 12-04-PLAN.md
+Last session: 2026-09-04T15:24:04.860Z
+Stopped at: Completed 12-per-client 12-05-PLAN.md（Phase 12 收口：五需求勾选 + WR-01 闭合登记——phase 5/5 ready for verification）
 Resume file: None
