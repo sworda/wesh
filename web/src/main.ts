@@ -192,6 +192,12 @@ let connectGen = 0;
 let retriedAuth = false; // auth_failed 静默重试仅一次的门闩（D-10；无限重试会把 60s TTL 正常过期放大成重试风暴）
 // ro 判定模块级化——标题写口/04-03 粘贴门/04-05 osc52 门三处共用（RESEARCH §Pattern 6 核实注）
 let isRO = false;
+// D-08/12-01 会话模式位（per-connection，IN-01 登记口径）：WELCOME 分支按 session 键
+// 赋值，取值 "shared"|"per-client"（与 --session-mode 同词同值域，proto.go
+// WelcomePayload.Session 恒序列化恒在键）；缺键（旧服务端）= shared 防御性缺省。
+// 消费面：WELCOME 分支 reset 判断（D-09）；后续 D-07 ro RESIZE 第一闸按模式位
+// 放开（12-02）同源消费。connect() 重置块同批清零
+let sessionMode = 'shared';
 // OSC52 一次性门闩（05 D-13 §OSC52 Boundary）：prefs.osc52===true 才加载 ClipboardAddon
 // 且全程仅加载一次——升格 Welcome 重放 prefs 时防二次注册 OSC52 handler；
 // ro 端永远收不到 osc52:true（服务端双档 blob 结构性不含该键）→ 永不加载，无需 ro 特判
@@ -506,6 +512,9 @@ async function connect(): Promise<void> {
   // osc52Loaded/retriedAuth 与 reconnecting/attempt 等重连循环状态为页面级门闩，刻意不重置
   isRO = false;
   welcomeDone = false;
+  // D-08/12-01：sessionMode 同属 per-connection（IN-01 登记口径）——重连/auth_failed
+  // 重试不携带上连接的模式位；缺键/旧服务端回落 shared 防御性缺省
+  sessionMode = 'shared';
   // G-05-1 resize 四状态同批清零（IN-01 延伸）——auth_failed 重试/未来 Phase 6 重连
   // 不携带上连接的残留尺寸约束、去重基线、overlay 基线与 ro 提示门闩
   sessionDims = null;
@@ -648,6 +657,15 @@ async function connect(): Promise<void> {
         // 重复注册 → DOM 同类型同 listener addEventListener 去重（既有）
         try {
           const w = JSON.parse(new TextDecoder().decode(buf.subarray(1)));
+          // D-08/12-01 模式位解析：session 为 "shared"/"per-client" 之一才赋值；
+          // 键缺席（旧服务端）静默保持默认 shared（行为零漂移，D-08 识别契约），
+          // 键在场但值非法 → console.warn 保持默认（sessionDims 段容错同构——
+          // 非法输入不得触发 reset，T-12-01 缓解）
+          if (w.session === 'shared' || w.session === 'per-client') {
+            sessionMode = w.session;
+          } else if ('session' in w) {
+            console.warn('ignoring invalid session mode in WELCOME frame');
+          }
           // G-05-1 会话尺寸键处理（05-10 契约：attach/升格/运行期推送三通道同形恒携）：
           // 成对校验——任一键出现即视为服务端新形态，两键均须 [1,1000] 正整数才接受；
           // 任一键缺失/非法 → console.warn 并保持旧 sessionDims（D-16 容错纪律：非法输入
@@ -663,6 +681,17 @@ async function connect(): Promise<void> {
             } else {
               console.warn('ignoring invalid session dims in WELCOME frame');
             }
+          }
+          // D-09/12-01 统一 reset 判断：per-client 会话 Welcome = 全新进程（重连=新进程，
+          // Phase 11 已锁）→ terminal.reset() 清全部 buffer + 终端状态复位（含 alt screen
+          // 退出与 scrollback 清空——clear() 只清视口行、不退 alt screen、不清其背后的
+          // normal buffer，旧会话停在全屏程序内断线时残影由 reset 收口）。首连屏幕本空，
+          // reset no-op 等价——零分支；shared/缺键（旧服务端）永不 reset（CORE-05 接回
+          // 同进程，旧屏有效，误清屏即数据面破坏）。静默无提示（D-10——画面恢复交给
+          // 子程序重绘，零新面板/文案）。与下方 reconnecting 分支的 term.clear() 独立
+          //（per-client 下 reset 先行清 buffer，该分支的 clear 幂等无害）
+          if (sessionMode === 'per-client') {
+            term.reset();
           }
           if (w.mode === 'ro') {
             isRO = true;
