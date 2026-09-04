@@ -1077,9 +1077,19 @@ func TestPerClientStopTimeoutKillFallback(t *testing.T) {
 // 永不退出，第二终结源归 Phase 13 pcSupervisor）的反向锁：Phase 13 落地时
 // 本断言按裁决翻转（11-04 flagged_assumptions 锚定）。
 func TestPerClientTeardownRaceOnce(t *testing.T) {
+	// StopTimeout=1s 覆写（2026-09-04 post-merge 调查实证，Rule 3 偏差登记）：
+	// plan 原文未覆写（stopTimeout=0 纯 HUP 路径），但本机 bash 4.4 交互模式在
+	//「提示符 pselect 稳定态 + 竞态输入行恰好待读」窗口内 readline 信号中止会
+	// 丢弃输入行并错过 termsig 退出——SIGHUP 被壳侧无声吸收（kill(-pgid) 成功
+	// 发出、disposition=caught、SigBlk/ShdPnd 全零、进程存活的实证链见
+	// 11-04-SUMMARY 附录）。纯 HUP 即杀由 TestPerClientDisconnectSIGHUP（无并发
+	// 输入竞争，quiescent 提示态）确定性锁定；本测的 pgid ESRCH 终态改经 D-01
+	// KILL 兜底生产路径达成——HUP 被吸收场景的 1s 补发正是该序列的真实消费点，
+	// 恰好一次/quiescent/exitf 零调用三不变量锁定面逐字不动。1s 到期 + ESRCH
+	// < 2s 护栏的时序容差论证同 TestPerClientStopTimeoutKillFallback。
 	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
-	}, nil)
+	}, func(o *server.Options) { o.StopTimeout = time.Second })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
