@@ -1,19 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 11-per-client
 source: [11-VERIFICATION.md]
 started: 2026-09-04T02:30:00Z
-updated: 2026-09-04T02:30:00Z
+updated: 2026-09-04T03:25:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: CI macOS leg darwin 测试实际结果确认
-expected: |
-  TestWatchDupPidFailClosed 与 TestKqueueExitZombieRace 在 macOS 上实际运行且 PASS；
-  若 ZombieRace 为 SKIP，按 reap_darwin.go:12-15 兜底预案退化 awaitExit 并锚定裁决
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -25,15 +20,38 @@ awaiting: user response
 
 expected: TestWatchDupPidFailClosed 与 TestKqueueExitZombieRace 实际运行且 PASS（CI macOS leg 日志或本机 macOS 实跑）；
 若 TestKqueueExitZombieRace 为 SKIP，按 reap_darwin.go:12-15 兜底预案退化 awaitExit 并在代码注释锚定该裁决
-result: [pending]
+result: pass
+evidence: CI run 33832096581（macos-latest, go test -race -count=1 -v）：TestWatchDupPidFailClosed PASS (0.11s)、TestKqueueExitZombieRace PASS (1.09s, 非 SKIP)。Q1 裁决成立——kqueue 补发僵尸进程事件，reap_darwin.go:12-15 兜底预案条件不触发，awaitExit 无需退化（watcher 路径保持）。REVIEW IN-01 的「CI 绿不证明裁决」关切经 -v 日志逐测试行实证闭环。
+
+### 2. TestPerClientTeardownRaceOnce macOS CI 失败（测试 1 调查副产物）
+
+expected: Phase 11 全部测试在 CI macOS leg PASS（零回归收口闸的 darwin 运行面）
+result: issue
+reported: "CI run 33832096581 macOS leg: TestPerClientTeardownRaceOnce FAIL (0.01s)——perclient_test.go:1164: kill(-2650, 0) = operation not permitted, want ESRCH（进程组消失含收割完成）。Linux 本机同测试 PASS (1.30s, 14143fe 覆写形态)，macOS 首轮竞态注入即命中 EPERM 立即 Fatal"
+severity: major
 
 ## Summary
 
-total: 1
-passed: 0
-issues: 0
-pending: 1
+total: 2
+passed: 1
+issues: 1
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+- gap_id: G-11-2
+  truth: "Phase 11 测试套件在 CI macOS leg 全绿（darwin 运行面零回归）"
+  status: failed
+  reason: "User reported: CI run 33832096581 macOS leg TestPerClientTeardownRaceOnce FAIL (0.01s)——kill(-2650, 0) = operation not permitted, want ESRCH。Linux 本机 PASS (1.30s)。CI 红阻塞 Phase 11 PR 合并"
+  severity: major
+  test: 2
+  root_cause: "waitPgroupESRCH（perclient_test.go）把非 ESRCH 错误一律立即 Fatal，注释论断「同 uid 派生的进程组 EPERM 不可达，出现即环境异常」在 macOS 被证伪：XNU 上进程组成员处于退出过渡态（P_LIST_EXITED/proc_exit 进行中）时 kill(-pgid, 0) 对该瞬态返回 EPERM 而非 0（存活）或 ESRCH（消失）。TeardownRaceOnce 是唯一在 closeCh 确认后 µs 级即发首次 kill 的测试（exit 0 × Close 竞态注入设计使检查点紧贴退出窗口），故仅其命中；TestPerClientDisconnectSIGHUP (0.04s) 与 TestPerClientStopTimeoutKillFallback (1.01s) 同断言在 macOS PASS，排除环境级拦截（沙箱会拦截一切 kill）。POSIX 语义 EPERM = 目标存在但权限拒绝 ≠ 消失——立即 Fatal 属测试断言过严（平台兼容缺陷），生产收割语义未证实破坏（EPERM 瞬态意味着进程组尚在退出中，最终 ESRCH 收敛与否受护栏保护未被观测到）"
+  artifacts:
+    - path: "internal/server/perclient_test.go"
+      issue: "waitPgroupESRCH 非 ESRCH 错误立即 Fatal 分支（EPERM 未按「目标存在」语义处理）；函数头注释「EPERM 不可达」论断需按 macOS 实测修正"
+  missing:
+    - "waitPgroupESRCH 将 EPERM 视为存活探针的一种形态：不 return 不 Fatal，fall through 到护栏到期检查（2s 内 ESRCH 仍收敛 PASS；到期未 ESRCH 仍 Fatal，僵尸残留检测能力保留）；其余非 ESRCH 错误维持立即 Fatal"
+    - "函数头注释修正：EPERM 在 macOS 退出过渡态可达（引 CI run 33832096581 实证），「ESRCH ⊇ 死亡且收割完成」论证补充 macOS 组信号语义差异"
+  debug_session: ""
