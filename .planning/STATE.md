@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 12
-current_phase_name: per-client 交互与背压语义
-status: "Phase 11 shipped — PR #15"
-stopped_at: Phase 12 context gathered
-last_updated: "2026-09-04T10:09:02.663Z"
+current_phase_name: per-client
+status: executing
+stopped_at: Completed 12-per-client 12-01-PLAN.md
+last_updated: "2026-09-04T11:54:01.174Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-04)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 12 — per-client 交互与背压语义
+**Current focus:** Phase 12 — per-client
 
 ## Current Position
 
-Phase: 12 — per-client 交互与背压语义
-Plan: Not started
-Status: Phase 11 shipped — PR #15
-Last activity: 2026-09-04 — Phase 12 planning complete
+Phase: 12 (per-client) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-09-04 — Phase 12 execution started
 
-Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [████████░░] 76%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -69,6 +69,7 @@ Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/
 | Phase 11-per-client P05 | 18min | 2 tasks | 1 files |
 | Phase 11-per-client P06 | 11min | 2 tasks | 0 files |
 | Phase 11-per-client P07 | 1h50min | 3 tasks | 1 files |
+| Phase 12 P01 | 38min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,9 @@ Recent decisions affecting current work:
 - [Phase 11-per-client]: [Phase 11-07 CI 复验副产] ubuntu flaky 根因 = CI 慢 runner shell 冷启动慢，PS1 打印晚于 tty 回显落在回显行与结果行之间（"$ MARKER" 交错形态，CI run 33843785651 实证）——9936f2b 以 (?:\$ )? 容忍修正三处（InputEcho/echoMarker/ExitPrivate42 B 端），结果行锚定与回显行排除语义不变（六案例自检）；后续终端类测试断言沿用该容忍形态
 - [Phase 11-per-client]: [Phase 11 secure-phase] 21 威胁全 closed（threats_open: 0，L1 grep 深度 + register_authored_at_plan_time 短路）；accepted risks 三条登记（AR-1 审计空白→Phase 13 / AR-2 持续 EPERM 语义=护栏正确翻车 / AR-3 零新依赖供应链窗口）
 - [Phase 11-per-client]: [Phase 11-07] 单一文件门基点按 plan 规则以实际起始 HEAD 975af23 替换假设基点 f55c1ea（两者间仅 7358b82/975af23 两个 .planning-only 提交，f55c1ea 交叉核对同结果：恰 internal/server/perclient_test.go 一文件）；waitPgroupESRCH EPERM 容忍语义经探针参数化（waitPgroupESRCHWithProbe 四子测）确定性锁定，护栏保留与他错立即 Fatal 两半边零弱化
+- [Phase ?]: [Phase 12-01] D-08 one-way 门 option-a 用户派发确认落定：session 字符串枚举恒序列化（G-05-1 同形态），五 Welcome 组帧调用点统一恒传 s.sessionMode
+- [Phase ?]: [Phase 12-01] reset 判别通道以 @xterm/headless 探针实证升级：clear() 不退 alt screen 且不清其背后 normal buffer——phase12-dom D1 以 1049l 残影复活链路锁定 reset 效应（plan 原 DOM 空白断言两态皆过无判别力）
+- [Phase ?]: [Phase 12-01] 模式位解析缺键语义按 sessionDims :655-664 容错同构：缺键（旧服务端）静默 shared，键在场值非法 warn；PC-06 勾选留 phase 末 12-05（跨 plan 共享，11-01 先例）
 
 ### Pending Todos
 
@@ -121,6 +125,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T08:24:55.205Z
-Stopped at: Phase 12 context gathered
-Resume file: .planning/phases/12-per-client/12-CONTEXT.md
+Last session: 2026-09-04T11:54:01.159Z
+Stopped at: Completed 12-per-client 12-01-PLAN.md
+Resume file: None
