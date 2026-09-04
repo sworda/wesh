@@ -44,7 +44,9 @@ blocked: 0
 
 - gap_id: G-11-2
   truth: "Phase 11 测试套件在 CI macOS leg 全绿（darwin 运行面零回归）"
-  status: closed
+  status: resolved
+  resolved_by: 11-07-PLAN.md
+  resolved_at: 2026-09-04
   reason: "已闭合（2026-09-04）：11-07 修复链（afb77a8 + 5aad25a）+ CI run 33844831146 macOS leg 全绿实证（TestPerClientTeardownRaceOnce PASS 1.40s = 33832096581 FAIL 现场测试转绿；同 helper 三调用点保持 PASS；internal/server ok 66.4s）——终局对账由 /gsd-verify-work 裁定"
   severity: major
   test: 2

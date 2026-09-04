@@ -1,9 +1,10 @@
 ---
 phase: 11-per-client
 verified: 2026-09-04T02:40:00Z
-status: human_needed
-score: 11/12 must-haves verified
-behavior_unverified: 1
+reverified: 2026-09-04T06:50:00Z
+status: passed
+score: 12/12 must-haves verified
+behavior_unverified: 0
 overrides_applied: 0
 deferred:
   - truth: "per-client 输出闭包 trySend 失败直踢 1013，绕过 kickOrCreditLocked 的 attach 宽限与信用暂存两层判定（REVIEW WR-01）"
@@ -12,23 +13,16 @@ deferred:
   - truth: "teardownPCLocked 的 reaped 栅栏存在 Wait-return→hubMu-acquire 微窗口，「kill-after-reap 结构性不可能」注释声明过强（REVIEW WR-02）"
     addressed_in: "Phase 13"
     evidence: "STATE.md:99 登记「WR-02 → Phase 13」（附零成本严格修法：waitDone 非阻塞 select 联合判定）；ROADMAP Phase 13 SC3/SC4（KILL 兜底收割 / 关停 N 进程组终结语义主场）；REVIEW 自评实际可利用性与 orphan 路径已接受窄窗口同档（pid 整轮回绕 + µs 窗，实际不可达）"
-behavior_unverified_items:
-  - truth: "darwin 共享 kqueue exitWatcher watch() 对重复 pid 注册 fail-closed（errDupWatch），awaitExit 经既有 watch-error 分支退化 cmd.Wait() 兜底（11-02，Pitfall 9）"
-    test: "在 macOS（或 CI macos-latest leg）运行 go test ./internal/pty/ -run 'TestWatchDupPidFailClosed|TestKqueueExit' -v"
-    expected: "TestWatchDupPidFailClosed 实际运行且 PASS（非 build-tag 排除）；TestKqueueExitZombieRace 结果为 PASS 而非 SKIP——若 SKIP 则按 reap_darwin.go:12-15 兜底预案将 awaitExit 退化为直接 cmd.Wait()（REVIEW IN-01）"
-    why_human: "darwin-only 测试在本机（Linux）由 build tag 排除，GOOS=darwin build/vet 编译闸已实证通过但运行态不可本机观测；CI 状态为外部态，且 REVIEW IN-01 指出该竞态测试的否定出路是 t.Skip 而非 FAIL——CI 绿不证明裁决为「补发」，需人工查明 CI macOS leg 实际结果"
-human_verification:
-  - test: "查明 CI macOS leg（.github/workflows/ci.yml）最近运行中 internal/pty 包 darwin 测试的实际结果：TestWatchDupPidFailClosed 与 TestKqueueExitZombieRace 是 PASS 还是 SKIP"
-    expected: "两者均实际运行且 PASS；若 ZombieRace 为 SKIP，按 reap_darwin.go:12-15 已登记兜底预案执行 awaitExit 退化（cmd.Wait 直等）并在注释锚定裁决"
-    why_human: "darwin 运行态在本机（Linux headless）结构性不可观测；CI 运行结果为外部服务状态。编译面（GOOS=darwin build/vet）本次核验已自跑通过，仅运行面待确认"
+behavior_unverified_items: []
+human_verification: []
 ---
 
 # Phase 11: per-client 生命周期主干 Verification Report
 
 **Phase Goal:** per-client 模式下每个浏览器客户端 attach 即获得独立 PTY 子进程，其生死只影响自己——核心 E2E 最长链成立
-**Verified:** 2026-09-04T02:40:00Z
-**Status:** human_needed
-**Re-verification:** No — initial verification
+**Verified:** 2026-09-04T02:40:00Z（初验）
+**Re-verified:** 2026-09-04T06:50:00Z
+**Status:** passed（re-verification 闭合 darwin 运行面）
 
 ## Goal Achievement
 
@@ -47,9 +41,9 @@ human_verification:
 | 9 | INPUT case 读循环零分支（cl.inQ 间接字段），CR-01 读循环永不直写 master | ✓ VERIFIED | 代码面 server.go:1178 `cl.inQ.tryEnqueue(data[1:])`、clients.go:781 inputWriter 包级参数化（shared 装配 :531 `inputWriter(s.sess, s.inputQ, s.inputDone)`、per-client 装配 perclient.go:269）；TestPerClientInputEcho PASS（自跑） |
 | 10 | D-02 容量再闸（1011+容量文案 wire 形态）+ D-03 注册点复检回收（并发子进程数 ≤ maxClients 硬不变量） | ✓ VERIFIED | 行为实证（自跑）：UAT S6b Error{server_error,"server is at capacity" 逐字}+close 1011；TestPerClientCapacityGate（linger 形态）与 TestPerClientCapacityRecheckRace（barrier 竞态：恰一胜一负+终态==1+败者 ESRCH）PASS；代码面 perclient.go:139-145 pre-spawn 闸、:184-189 复检、:381-397 reapOrphanSession 完整 SignalGroup→Drain→Close→Wait |
 | 11 | shared 模式逐字节零回归（零回归收口闸） | ✓ VERIFIED | 行为实证（自跑）：`go test -race -count=1 ./...` 5 包全 ok（1m5s）；`node web/uat/phase02.mjs` 12/12 PASS 冒烟；diff 审查（自跑）：基点 954da7c 以来删除文件 0、新增恰 3 文件、修改恰 6 文件、红线路径（proto/web/src/metrics/health/resize/go.mod/go.sum）零出现、两白名单测试文件删除行==0、shared 行为文件删除行逐条为计划内变换（注释更新/startOpts 收编/inputWriter 参数化/inQ 切换） |
-| 12 | darwin 共享 kqueue watcher dup-watch fail-closed（errDupWatch + awaitExit 退化 cmd.Wait()，Pitfall 9） | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | 存在+接线已证：reap_darwin.go:30 errDupWatch 包级错误值、:55-60 w.mu 内 dup 检查 fail-closed、:132-134 awaitExit 既有分支退化；GOOS=darwin build/vet 双闸本次自跑通过；TestWatchDupPidFailClosed 测试存在且已挂 CI macOS leg——但 darwin-only 测试本机由 build tag 排除，运行态（PASS vs SKIP）外部不可观测 → 见 Human Verification |
+| 12 | darwin 共享 kqueue watcher dup-watch fail-closed（errDupWatch + awaitExit 退化 cmd.Wait()，Pitfall 9） | ✓ VERIFIED（re-verification） | 初验在案（代码/接线/编译闸）+ 运行面闭合：CI run 33832096581 macOS leg TestWatchDupPidFailClosed PASS (0.11s)、TestKqueueExitZombieRace PASS (1.10s, 非 SKIP)；CI run 33844831146 macOS leg 双测复证 PASS——darwin 运行面经两轮 CI 实证（UAT 测试 1 证据） |
 
-**Score:** 11/12 truths verified（1 项 present + wired，darwin 运行面行为未经测试执行实证）
+**Score:** 12/12 truths verified（初验 11/12 + re-verification 补 1：darwin 运行面经 CI 两轮实证闭合）
 
 ### Deferred Items
 
@@ -123,13 +117,23 @@ SKIPPED（本 phase 无 probe 类验证约定——验证载体为 Go 测试与 
 |------|------|---------|----------|--------|
 | — | — | 无 | — | 九文件 TBD/FIXME/XXX/TODO/HACK/PLACEHOLDER 全零命中；perclient.go 零 err.Error() 拼接；无空实现/硬编码空数据渲染面；失败与容量文案双定值常量 |
 
-### Human Verification Required
+### Human Verification Required（已闭合）
 
 #### 1. CI macOS leg darwin 测试实际结果确认
 
-**Test:** 查明 CI（.github/workflows/ci.yml macos leg）最近运行中 `internal/pty` 包 darwin 测试：TestWatchDupPidFailClosed 与 TestKqueueExitZombieRace 是实际运行 PASS 还是 SKIP
-**Expected:** 两者实际运行且 PASS；若 ZombieRace 为 SKIP，按 reap_darwin.go:12-15 已登记兜底预案将 awaitExit 退化为 `cmd.Wait()` 直等并在注释锚定裁决（REVIEW IN-01）
-**Why human:** darwin-only 测试在本机（Linux）由 build tag 结构性排除；编译闸（GOOS=darwin build/vet）本次已自跑通过，但运行态不可本机观测，CI 状态为外部服务态。该 truth 的代码面与接线面已全部核验在案，仅差运行面执行证据
+**Result:** CLOSED（UAT 测试 1，2026-09-04）——CI run 33832096581 macOS leg（go test -race -count=1 -v）：TestWatchDupPidFailClosed PASS (0.11s)、TestKqueueExitZombieRace PASS (1.09s, 非 SKIP)。Q1 裁决成立——kqueue 补发僵尸进程事件，reap_darwin.go:12-15 兜底预案条件不触发，awaitExit 无需退化。REVIEW IN-01「CI 绿不证明裁决」关切经 -v 日志逐测试行实证闭环；CI run 33844831146 双测复证 PASS。
+
+### Re-verification Record (2026-09-04T06:50:00Z)
+
+初验（2026-09-04T02:40:00Z）以 human_needed 收口，唯一未闭合项 = darwin 运行面。Re-verification 证据链：
+
+1. **darwin 运行面闭合**：UAT 测试 1（CI run 33832096581 -v 日志逐行核对）——TestWatchDupPidFailClosed / TestKqueueExitZombieRace 实际运行且 PASS，非 SKIP。Truth #12 由 PRESENT_BEHAVIOR_UNVERIFIED → VERIFIED。
+2. **G-11-2 闭环**（UAT 测试 2 初报 issue 的处置）：gap closure plan 11-07（afb77a8 test + 5aad25a fix：waitPgroupESRCHWithProbe 探针参数化，EPERM 归类存活形态落入护栏轮询，护栏保留与他错立即 Fatal 两半边由 TestWaitPgroupESRCHProbeSemantics 四子测锁定）+ CI run 33844831146 macOS leg 全绿（TestPerClientTeardownRaceOnce PASS 1.40s = FAIL 现场测试转绿；同 helper 三调用点保持 PASS；internal/server ok 66.4s）——「Phase 11 测试套件在 CI macOS leg 全绿」truth 达成。
+3. **CI 复验副产**：ubuntu flaky（PS1 交错，9936f2b 修正）——纯测试时序鲁棒性，不触及产品行为面。
+4. **Linux 零回归三证据复核**（2026-09-04 ship 期）：全量 -race 五包 ok（两轮 1m6.6s / 1m7.2s）+ darwin build/vet 双闸 + gofmt + 单一文件 diff 门（975af23..HEAD -- internal/ cmd/ web/ == internal/server/perclient_test.go）。
+5. **SECURITY.md 就位**（secure-phase 2026-09-04）：21 威胁全 closed，threats_open: 0。
+
+**Score 12/12；Gaps 零；UAT 2/2 passed。Phase 11 verification passed。**
 
 ### Gaps Summary
 
