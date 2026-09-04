@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 12
 current_phase_name: per-client
 status: executing
-stopped_at: Completed 12-per-client 12-03-PLAN.md
-last_updated: "2026-09-04T14:13:05.702Z"
+stopped_at: Completed 12-per-client 12-04-PLAN.md
+last_updated: "2026-09-04T14:59:05.614Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 15
+  completed_plans: 16
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 ## Current Position
 
 Phase: 12 (per-client) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-09-04 — Phase 12 execution started
 
-Progress: [█████████░] 88%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [█████████░] 94%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Progress: [█████████░] 88%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 12 P01 | 38min | 3 tasks | 11 files |
 | Phase 12 P02 | 20min | 3 tasks | 7 files |
 | Phase 12 P03 | 42min | 2 tasks | 5 files |
+| Phase 12 P04 | 22min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 12-03] dwell 踢出观测经 /healthz clients 归零轮询（只读 HTTP 不打扰 WS stall 面）替代固定 sleep 越点等待；gateTransitions 差值断言取下界（≥2/≥6）——瞬态二次停读使精确计数 flake（Phase 9 教训），两递增点存在性由配对论证锁定
 - [Phase ?]: [Phase 12-03] Rule 1/3 偏差：12-02 遗留 TestPerClientROInputDropped ro 半场 return 使 rw 对照半场不可达（go vet unreachable 暴露，go test 默认 vet 子集不含故 12-02 未现形）——labeled break 修复（0602e0b），解锁本 plan mandated verify；PC-10/PC-11 勾选留 12-05
 - [Phase ?]: [Phase 12-03] WR-01（Phase 11 REVIEW 遗留）按 D-04「dwell 涵盖不复刻」形态闭合：dwell 10s 从停读起点武装结构性涵盖 500ms attach 宽限（×20 余量）与一切瞬态满箱；阻塞持帧即暂存（帧在闭包栈上 ≡ shared 暂存字段语义等价，单消费者下复刻即死代码面）——宽限门与 creditPending/afterDrain 重投均不复刻，代码与注释双侧回指（perclient.go 闭包注释 + clients.go defaultSlowDwell 注释）；若瞬态满箱误踢案例实证出现，回写重开（CONTEXT deferred 既定）
+- [Phase ?]: [Phase 12-04] S6 场景形态裁决（Rule 3 实证驱动）：默认 --ping-interval=5s 下 dwell 1013 被 1006 pong_timeout 结构性先杀——coder/websocket writeControl 内层 5s 写超时（write.go:277-279）使 ping tick 落在 writer 持锁阻塞于满 TCP 窗口时 mu.lock 超时返回 DeadlineExceeded，被 pinger 单一判读误认为 pong 超时（实测 detach 恰于 attach+10.0007s）；S6 以生产 CLI flag --ping-interval=0（D-16「0 = 禁用保活」，Go harness 零值同构）隔离 dwell 看门狗，dwell 本身生产 10s 零覆写真实等待（两轮实测 10.6s/10.4s）
+- [Phase ?]: [Phase 12-04] 洪水量修正：plan 文本「seq 1 400000 级，超 outbox 512KiB 即足量」与 TCP 吸收带事实不符（2.7MB < ~10.6MiB 吸收带 → 停读永不形成、场景空转假绿）——按 slowclient_test.go 吸收带纪律上调至 seq 1 4000000（30.9MB ≈ 3× 余量，Go seqFlood Linux 分支同款）；S5 恢复期零输入纪律（tty 回显与洪水共用输出流，发标记会破坏连续性校验面——收齐信号 = 尾窗 '3999999\r\n4000000\r\n' 终态联合形态）
+- [Phase ?]: [Phase 12-04] phase12.mjs 六场景两轮全绿（20/20×2）：Welcome.session 双模式 / resize 直通隔离+零 W 帧 / ro RESIZE 直通+shared 对照 / ro INPUT 丢弃+rw 限速 / 停读续读 34.9MB 字节级连续 / 真实 dwell 1013+ESRCH；RawStallClient raw socket 停读夹具（phase05 rawStallClient 一般化）为后续 phase 可复用件；PC-05/06/07/10/11 勾选留 12-05（既定先例）
 
 ### Pending Todos
 
@@ -126,6 +130,7 @@ None yet.
 - [Phase 9 遗留]: README.md:96「及其 `.gz`」Phase 1 遗留文档债——随 WR 清单择机处置
 - [v1.1 规划期裁决项]: ① per-client stop-timeout 默认值重议（0=不补 KILL 在新模式下=HUP 免疫泄漏，公开契约变更，Pitfall 8）→ Phase 13——**Phase 11 post-merge 调查已实证泄漏窗真实存在**（2026-09-04）：本机 bash 4.4 交互模式在「提示符 pselect + 竞态输入行待读」窗口内可无声吸收 SIGHUP（kill 成功发出、非阻塞非 pending、进程存活；cat 对照组 50/50 全收，服务端信号面零缺陷），11-04 竞态测试经 StopTimeout=1s 覆写走 KILL 兜底确定性收口（14143fe）；③ healthz/metrics 四个 OQ（session_alive 语义/series 双语义/1013 vs 阻塞/spawn 失败 wire 面，研究均有推荐答案）→ Phase 13（② write-policy×per-client 经 Phase 10 D-01/D-02 闭合；④ spawn-intent 口径经 Phase 11 D-03 复检回收提前消解）
 - [v1.1 测试拓扑]: 协议层 UAT 在 Linux 开发机（headless 禁浏览器/禁 playwright）；Playwright 浏览器全链在 Windows 工作站（TCP 转发器 kill/restore 模拟断网）——见 CODEBUDDY.md 双机拓扑
+- [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态：默认 --ping-interval=5s 下 TCP 级停读客户端在 (停读+5s, 停读+10s] 被 1006 pong_timeout 先杀，PC-10 dwell 1013 结构性后到（writeControl 5s 写超时 × pinger 单一 DeadlineExceeded 判读；Go 测 harness PingInterval 零值未暴露，phase12.mjs S6 以 --ping-interval=0 隔离取证）。真实浏览器端网络栈自动回 pong 不触发；herdr 类自管 socket 客户端可触发。裁决面：pinger 区分「写阻塞超时」与「pong 等待超时」（lib 错误链 failed to acquire lock vs failed to wait for pong 可区分）或接受 1006 语义（死连接更早收口）
 
 ## Deferred Items
 
@@ -135,6 +140,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T14:12:42.400Z
-Stopped at: Completed 12-per-client 12-03-PLAN.md
+Last session: 2026-09-04T14:59:05.597Z
+Stopped at: Completed 12-per-client 12-04-PLAN.md
 Resume file: None

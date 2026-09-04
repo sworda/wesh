@@ -488,7 +488,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 慢客户端停止消费时其 PTY 先被停读（输出积压于内核缓冲、子进程写阻塞而非丢数据），恢复消费后自动续读（ttyd pty_pause/resume parity）
   5. 持续过载的慢客户端 outbox 写满后以 1013 被踢出，服务端与其他客户端不受影响
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 **Wave 1**
 
 - [x] 12-01-PLAN.md — PC-06 tracer：Welcome.session 协议面（D-08 one-way 确认门 + WelcomePayload/WelcomeFrame 五调用点）+ 前端模式位 reset + phase12-dom.mjs D1/D3
@@ -503,7 +503,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 12-04-PLAN.md — phase12.mjs 协议层 UAT 六场景（session 双模式对照/resize 隔离/ro 直通/门控限速/停读续读/真实 10s+ dwell 1013）
+- [x] 12-04-PLAN.md — phase12.mjs 协议层 UAT 六场景（session 双模式对照/resize 隔离/ro 直通/门控限速/停读续读/真实 10s+ dwell 1013）
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -567,6 +567,6 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
-| 12. per-client 交互与背压语义 | v1.1 | 3/5 | In Progress|  |
+| 12. per-client 交互与背压语义 | v1.1 | 4/5 | In Progress|  |
 | 13. 资源防线与终结语义 | v1.1 | 0/? | Not started | - |
 | 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |
