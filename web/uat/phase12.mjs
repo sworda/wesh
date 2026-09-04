@@ -27,6 +27,8 @@
 // 运行：node web/uat/phase12.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh；
 // 先构建：go build -o /tmp/wesh-uat/wesh ./cmd/wesh）
 import { spawn } from 'node:child_process';
+import net from 'node:net';
+import crypto from 'node:crypto';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
 
@@ -175,6 +177,201 @@ const echoMark = async (frames, ws, mark, timeoutMs = 5000) => {
   }
   return false;
 };
+
+// pgroupAlive：进程组存活探针（setsid 不变量使 pgid==pid，echo 回读的 pid 即 pgid
+// 锚点——phase11.mjs 形态）。红线：无错返回 = 存活探针，严禁当死亡证据；EPERM 等
+// 意外形态上抛（同用户下不可达）——fail-closed。
+const pgroupAlive = (pid) => {
+  try { process.kill(-pid, 0); return true; } catch (e) {
+    if (e.code === 'ESRCH') return false;
+    throw e;
+  }
+};
+
+// pollESRCH：每 50ms process.kill(-pid, 0) 探测进程组，ESRCH 即到达（僵尸未收割
+// 则组仍存在——ESRCH ⊇ 收割完成强证据）。总护栏参数化，超时返回 false（由断言
+// 转 FAIL，非无限等待——T-06-06b 护栏先例）。
+const pollESRCH = async (pid, guardMs) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < guardMs) {
+    if (!pgroupAlive(pid)) return true;
+    await sleep(50);
+  }
+  return false;
+};
+
+// healthzClients：GET /healthz 的 clients 字段值（registry.n 计数源）。停读类
+// 场景的踢出观测通道（12-03 纪律）：只读 HTTP 面不打扰 WS stall 面——读取 WS
+// 即破坏停读，轮询替代固定 sleep（STATE Phase 9 教训的通道面应用）。
+const healthzClients = async (port) => {
+  const r = await fetch(`http://127.0.0.1:${port}/healthz`);
+  const j = await r.json();
+  return j.clients;
+};
+
+// RawStallClient：raw net.Socket 手工 WS 客户端（phase05.mjs rawStallClient
+// 纪律的一般化）。停读必须用 raw socket 而非 Node WebSocket 客户端——undici
+// 实现会持续 drain TCP，内核级停读结构性不可达（phase05.mjs:162-163 纪律登记）；
+// 停读/续读以 socket.pause()/resume() 表达（slowclient_test.go「dialHello 后不再
+// Read」的 Node 语义对应）。C→S 帧 masked（RFC6455）；S→C 帧不 masked；writer
+// 的同类型连续段合并使单条 WS 消息可达 outbox cap（512KiB）——解析器支持 16/64
+// 位扩展长度。ping 自动回 pong（与浏览器协议栈自动应答语义一致——连接存活不因
+// 停读观测通道而异）。OUTPUT 载荷拷贝脱离解析视图后累积（P5-1 同族纪律：跨
+// chunk 持有须拷贝）。
+class RawStallClient {
+  constructor() {
+    this.frames = [];      // 非 OUTPUT 应用帧载荷（W/E——数量恒小）
+    this.outChunks = [];   // OUTPUT 载荷字节累积
+    this.outBytes = 0;
+    this.tail = '';        // 输出尾窗滚动 ~8KiB（marker/pid 检索面）
+    this.closeInfo = null; // close 帧 {code, reason}
+    this.tcpClosed = false;
+    this.pending = null;   // 跨 chunk 半帧残余
+    this.welcomeDone = false;
+  }
+
+  connect(port, { cols = 80, rows = 24 } = {}) {
+    return new Promise((resolve, reject) => {
+      const key = crypto.randomBytes(16).toString('base64');
+      const socket = net.connect(port, '127.0.0.1');
+      this.socket = socket;
+      let hsBuf = Buffer.alloc(0);
+      let upgraded = false;
+      const watchdog = setTimeout(() => { socket.destroy(); reject(new Error('raw 握手总超时：10s 未收到 Welcome')); }, 10000);
+      socket.on('error', (e) => { this.errorInfo = e; clearTimeout(watchdog); reject(e); });
+      socket.on('close', () => { this.tcpClosed = true; });
+      socket.on('data', (d) => {
+        if (!upgraded) {
+          hsBuf = Buffer.concat([hsBuf, d]);
+          const idx = hsBuf.indexOf('\r\n\r\n');
+          if (idx === -1) return;
+          const head = hsBuf.subarray(0, idx).toString('latin1');
+          if (!head.includes(' 101')) { socket.destroy(); clearTimeout(watchdog); reject(new Error(`WS 升级非 101: ${head.split('\r\n')[0]}`)); return; }
+          upgraded = true;
+          // masked Hello 完成注册（服务端 Welcome 到达 = 握手完成，dialHello 同判据）
+          this.send(helloFrame({ cols, rows }));
+          const rest = hsBuf.subarray(idx + 4);
+          if (rest.length > 0) this.feed(rest);
+          return;
+        }
+        this.feed(d);
+        if (this.welcomeDone) { clearTimeout(watchdog); resolve(this); }
+      });
+      socket.on('connect', () => {
+        socket.write(
+          `GET /ws HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: ${SUBPROTOCOL}\r\n\r\n`);
+      });
+    });
+  }
+
+  // send：masked binary 数据帧（本脚本全部 C→S 帧 <126B——Hello/INPUT 均短帧形）
+  send(payload) {
+    if (payload.length > 125) throw new Error(`raw client 短帧上限超限: ${payload.length}`);
+    this.sendMasked(0x2, payload);
+  }
+
+  sendMasked(opcode, payload) {
+    const mask = crypto.randomBytes(4);
+    const masked = Buffer.allocUnsafe(payload.length);
+    for (let i = 0; i < payload.length; i++) masked[i] = payload[i] ^ mask[i & 3];
+    this.socket.write(Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), mask, masked]));
+  }
+
+  pause() { this.socket.pause(); }  // 停读起点——内核接收缓冲停止排空
+  resume() { this.socket.resume(); } // 续读——缓冲数据经 data 事件流入解析器
+
+  destroy() { this.socket.destroy(); }
+
+  // feed：RFC6455 帧解析（服务端帧不 masked；长度 7/16/64 位三形）
+  feed(chunk) {
+    const buf = this.pending ? Buffer.concat([this.pending, chunk]) : chunk;
+    this.pending = null;
+    let pos = 0;
+    for (;;) {
+      const avail = buf.length - pos;
+      if (avail < 2) break;
+      const opcode = buf[pos] & 0x0f;
+      let len = buf[pos + 1] & 0x7f;
+      let off = pos + 2;
+      if (len === 126) {
+        if (avail < 4) break;
+        len = buf.readUInt16BE(off); off += 2;
+      } else if (len === 127) {
+        if (avail < 10) break;
+        len = buf.readUInt32BE(off) * 2 ** 32 + buf.readUInt32BE(off + 4); off += 8;
+      }
+      if (avail < off - pos + len) break;
+      this.handleFrame(opcode, buf.subarray(off, off + len));
+      pos = off + len;
+    }
+    this.pending = pos === 0 ? buf : pos === buf.length ? null : Buffer.from(buf.subarray(pos));
+  }
+
+  handleFrame(opcode, payload) {
+    if (opcode === 0x1 || opcode === 0x2) { // 应用帧（服务端恒 binary）
+      if (payload.length === 0) return;
+      const t = payload[0]; // wesh 帧类型字节
+      if (t === OUTPUT) {
+        const p = Buffer.from(payload.subarray(1)); // 拷贝脱离解析视图
+        this.outChunks.push(p);
+        this.outBytes += p.length;
+        this.tail = (this.tail + dec.decode(p)).slice(-8192);
+      } else {
+        this.frames.push(Buffer.from(payload));
+        if (t === WELCOME) this.welcomeDone = true;
+      }
+      return;
+    }
+    if (opcode === 0x9) { this.sendMasked(0xA, payload); return; } // ping→pong
+    if (opcode === 0xA) return; // pong——无需消费
+    if (opcode === 0x8) { // close：记录 {code,reason} 后回 echo close 帧（服务端
+      // Close 等待对端关闭帧收口，5s 超时——礼貌回帧使握手即刻落定）
+      this.closeInfo = {
+        code: payload.length >= 2 ? payload.readUInt16BE(0) : 1005,
+        reason: dec.decode(payload.subarray(2)),
+      };
+      try { this.sendMasked(0x8, payload); } catch { /* socket 已终结 */ }
+      this.socket.end();
+    }
+  }
+
+  // readPid：发 `echo <TAG>=$$` 回读会话 pid（phase11 readPid 的 raw 半侧——正则
+  // 只命中结果行；pid 数值只作断言材料，红线：永不进 detail）
+  async readPid(tag, timeoutMs = 5000) {
+    this.send(concat(new Uint8Array([INPUT]), enc.encode(`echo ${tag}=$$\r`)));
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      const m = new RegExp(`${tag}=(\\d+)`).exec(this.tail);
+      if (m) return Number(m[1]);
+      await sleep(50);
+    }
+    return null;
+  }
+}
+
+// seqContinuity：洪水字节流连续性算术步进校验（Go assertSeqContinuity 同语义的
+// 字节级强化——fields 严格 +1 无缺口、首值恒 1、末位精确；PTY ONLCR 使行尾
+// CRLF）。锚定洪水首 10 行联合形态（回显命令行/提示符不可能包含）后逐行精确
+// 匹配，任何缺段/损坏即在断裂处报因——停读/续读转换丢段 = PC-11 违反。
+function seqContinuity(buf, last) {
+  const head = [];
+  for (let i = 1; i <= 10; i++) head.push(String(i));
+  const anchor = Buffer.from(head.join('\r\n'));
+  const start = buf.indexOf(anchor);
+  if (start === -1) return { ok: false, why: '洪水起点锚未命中' };
+  let i = start;
+  let n = 1;
+  while (n <= last) {
+    const s = String(n);
+    for (let k = 0; k < s.length; k++) {
+      if (buf[i++] !== s.charCodeAt(k)) return { ok: false, why: `第 ${n} 行数字不匹配（字节流损坏或丢段）` };
+    }
+    if (buf[i++] !== 0x0d || buf[i++] !== 0x0a) return { ok: false, why: `第 ${n} 行行尾非 CRLF` };
+    n++;
+  }
+  return { ok: true, bytes: i - start };
+}
 
 // ---------- S1：Welcome.session 双模式对照（PC-06/D-08 协议面端到端） ----------
 async function s1WelcomeSession() {
@@ -384,6 +581,143 @@ async function s4ROInputDropRateLimit() {
   }
 }
 
+// ---------- S5：停读期输出不丢、恢复后完整到达（PC-11 端到端证据） ----------
+// 洪水量 seq 1 4000000 ≈ 30.9MB（slowclient_test.go seqFlood Linux 分支同款）：
+// loopback 单连接最坏吸收 ≈ wmem 4MiB + rmem 6MiB + outbox 512KiB + PTY 64KiB
+// ≈ 10.6MiB（slowclient_test.go:8-11 纪律），30.9MB ≈ 3× 余量使停读态确定形成
+// （TCP 物理上限迫使 writer 阻塞 → outbox 涨满 → 闭包阻塞持帧 + dwell 武装——
+// 停读形成由管线量级保证，协议层无服务端计数可读，行为证据 = 恢复后字节连续）。
+// 时序：停读窗 ~3s ≪ dwell 10s（安全边 3×+）；恢复后不发任何 INPUT 直至洪水
+// 收齐——tty 回显与洪水输出共用 PTY 输出流，恢复期发标记会中途插入回显字节
+// 破坏连续性校验面（收齐信号 = 尾窗含 "3999999\r\n4000000\r\n" 终态联合形态，
+// 回显行不可能包含——结果行锚定纪律）。
+async function s5StallResumeNoLoss() {
+  console.log('S5: 停读续读不丢（A raw socket 停读 → seq 洪水积压 → 3s 停读窗 ≪ dwell 10s → 恢复读 → 序号连续无缺口；B 全程不受影响）');
+  const FLOOD_LAST = 4000000;
+  const inst = await startWesh(['--session-mode=per-client', '--writable', '--', 'sh']);
+  const a = new RawStallClient();
+  try {
+    const b = await dialHello(inst.port, {});
+    await a.connect(inst.port, {});
+    // 洪水命令发出后立即停读（INPUT 写出不受 pause 影响——pause 只停读侧）
+    a.send(concat(new Uint8Array([INPUT]), enc.encode(`seq 1 ${FLOOD_LAST}\r`)));
+    a.pause(); // 停读起点——dwell 自 outbox 涨满点武装（管线填满 ~1s ≪ 停读窗）
+    // B 端停读窗内探针（per-client 双端独立会话——A 停读对 B 结构性零影响）
+    const bDuring = await echoMark(b.frames, b.ws, 'UAT_S5_B_DURING_c4j9');
+    await sleep(2700); // 补足 ~3s 停读窗（B 探针 ~0.3s + 落定）
+    a.resume(); // 续读——积压（内核双缓冲 + outbox + 持帧）全量流入
+    // 收齐信号轮询（护栏 30s：慢 CI 全速排空 ~20MB 的上界；本机常态 <2s）
+    let drained = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 30000 && !drained) {
+      drained = a.tail.includes('3999999\r\n4000000\r\n');
+      if (!drained) await sleep(100);
+    }
+    // S5a：序号连续性（字节级算术步进——停读期积压 + 持帧 + 恢复续读全链零丢失）
+    const cont = drained ? seqContinuity(Buffer.concat(a.outChunks), FLOOD_LAST) : { ok: false, why: '洪水未收齐' };
+    check('S5a', '恢复读后 seq 1..4000000 序号严格 +1 连续无缺口（停读期输出不丢，PC-11）',
+      cont.ok, cont.ok ? `校验字节=${cont.bytes}` : `断裂: ${cont.why}`);
+    // S5b：连接存活无 1013（停读窗 3s ≪ dwell 10s 未被踢）+ 会话照常——洪水收齐后
+    // 才发 POST 探针（此时回显字节落在已校验洪水之后，零污染）
+    let post = false;
+    if (drained) {
+      a.send(concat(new Uint8Array([INPUT]), enc.encode('echo UAT_S5_POST_t8n3\r')));
+      const t1 = Date.now();
+      while (Date.now() - t1 < 5000 && !post) {
+        post = /\nUAT_S5_POST_t8n3/.test(a.tail); // 结果行锚定（排除命令回显行）
+        if (!post) await sleep(50);
+      }
+    }
+    check('S5b', 'A 连接存活无 1013（close 未发生）+ 洪水收齐后 echo 探针正常回显（会话照常）',
+      a.closeInfo === null && !a.tcpClosed && post,
+      `零close=${a.closeInfo === null} TCP存活=${!a.tcpClosed} 探针=${post}`);
+    // S5c：B 端全程不受影响（停读窗内 + 收齐后 echo 照常）
+    const bAfter = await echoMark(b.frames, b.ws, 'UAT_S5_B_AFTER_h2r6');
+    check('S5c', 'B 端停读窗内 + 窗后 echo 照常（对端全程不受影响）',
+      bDuring && bAfter, `窗内=${bDuring} 窗后=${bAfter}`);
+    b.ws.close(1000);
+    await waitClose(b.ws, 3000);
+  } finally {
+    a.destroy();
+    inst.kill();
+  }
+}
+
+// ---------- S6：真实 10s+ dwell 到期 → 1013 slow_consumer 端到端（D-12/PC-10） ----------
+// dwell 走生产默认 defaultSlowDwell=10s，零覆写零测试钩子（D-12 硬约束：时钟不
+// mock、服务端等待不缩短——Go 侧 500ms 覆写测已锁定机制，本场景做一次真实 10s+
+// 等待的端到端证据，phase06 保活测 11s+ 先例）。观测通道：/healthz clients 归零
+// 轮询（只读 HTTP 不打扰 WS stall 面，12-03 纪律）检测踢出后恢复读——被踢端
+// writer 阻塞写在满 TCP 上持 writeFrameMu，恢复读使阻塞写完成、kick 路径的
+// writeClose 获锁补发 1013 关闭帧（clients.go:625-632 关闭帧可达性不变量）。
+// --writable：pid 回读与洪水命令经 INPUT 通道（ro 实例 INPUT 被丢弃无法注洪水；
+// dwell 踢出与客户端 mode 无关——per-client 停读闭包模式无关）。
+//
+// --ping-interval=0 的裁决依据（执行期实证发现，Rule 3 场景形态修正）：coder/
+// websocket writeControl 内层 5s 写超时（write.go:277-279）——默认 --ping-
+// interval=5s 下，ping tick 落在 writer 持锁阻塞于满 TCP 的窗口时，mu.lock 以
+// ctx 超时等待 5s 后返回 DeadlineExceeded，被 pinger 误读为 pong 超时（server.go
+// pinger 只认 errors.Is(err, DeadlineExceeded) 单一形态）→ TCP 级停读客户端在
+// (停读点+5s, 停读点+10s] 被 1006 pong_timeout 先杀，dwell 1013 结构性后到
+// （实测 detach 恰于 attach+10.0007s = tick+5.0007s，reason=pong_timeout）。
+// Go 侧 12-03 四测未暴露此交互——harness Options.PingInterval 零值即 pinger
+// 禁用。本场景以生产 CLI flag --ping-interval=0（D-16「0 = 禁用保活」公开契约）
+// 隔离 dwell 看门狗做端到端证据；默认 ping 配置下 1006/1013 竞态的取舍归
+// Phase 13 裁决（STATE Blockers 登记——真实浏览器端网络栈自动回 pong 不触发
+// 该路径，herdr 类自管 socket 客户端可触发）。
+async function s6DwellKick1013() {
+  console.log('S6: 真实 dwell 到期 1013（单端停读恒不读 → 生产 10s dwell 到期 → /healthz 归零 → 恢复读收 1013 close → ESRCH 收割复核）');
+  const FLOOD_LAST = 4000000;
+  const inst = await startWesh(['--session-mode=per-client', '--writable', '--ping-interval=0', '--', 'sh']);
+  const a = new RawStallClient();
+  let pid = null;
+  try {
+    await a.connect(inst.port, {});
+    pid = await a.readPid('S6PID');
+    if (pid !== null) sensitivePids.push(pid);
+    const clients1 = await healthzClients(inst.port);
+    check('S6a', '前置：A attach + pid 回读 + /healthz clients==1（停读前就位）',
+      pid !== null && clients1 === 1, `pid解析=${pid !== null} clients==1=${clients1 === 1}`);
+    if (pid !== null) {
+      // 停读：洪水 + pause 后恒不读（dwell 自 outbox 涨满点武装）
+      a.send(concat(new Uint8Array([INPUT]), enc.encode(`seq 1 ${FLOOD_LAST}\r`)));
+      a.pause();
+      const stallStart = Date.now();
+      // 踢出检测：/healthz clients 1→0（护栏 25s = dwell 10s + 管线填满/调度余量）
+      let kicked = false;
+      while (Date.now() - stallStart < 25000) {
+        if ((await healthzClients(inst.port)) === 0) { kicked = true; break; }
+        await sleep(150);
+      }
+      const dwellWaitMs = Date.now() - stallStart;
+      check('S6b', '停读恒不读 → 真实 dwell（生产 10s 零覆写）到期踢出：/healthz clients 归零（护栏 25s 内）',
+        kicked && dwellWaitMs >= 10000,
+        `踢出=${kicked} 实测停读至踢出=${(dwellWaitMs / 1000).toFixed(1)}s（≥10s 生产值）`);
+      // 恢复读收 1013（护栏 15s：恢复后管线排空 + writeClose 补发的上界）
+      a.resume();
+      const t0 = Date.now();
+      while (Date.now() - t0 < 15000 && a.closeInfo === null && !a.tcpClosed) await sleep(50);
+      check('S6c', '恢复读后 CloseError code==1013 且 reason=="slow_consumer"（R-10 机器串逐字）',
+        a.closeInfo?.code === 1013 && a.closeInfo?.reason === 'slow_consumer',
+        `close=${a.closeInfo?.code ?? '未到达'} reason逐字=${a.closeInfo?.reason === 'slow_consumer'}`);
+      // 踢出 → teardown SIGHUP → 进程组收割（PC-03 挂点联动证据，phase11 S4 形态）
+      const gone = await pollESRCH(pid, 3000);
+      check('S6d', '踢出后 3s 护栏内进程组 ESRCH（断开即杀——PC-03 挂点联动）',
+        gone, `ESRCH到达=${gone}`);
+    } else {
+      check('S6b', '真实 dwell 到期 1013', false, '前提失败：pid 未解析');
+      check('S6c', 'CloseError 1013 slow_consumer', false, '前提失败：pid 未解析');
+      check('S6d', '进程组 ESRCH', false, '前提失败：pid 未解析');
+    }
+  } finally {
+    // CI 夹具纪律：断言失败路径也不泄漏滞留进程组（ESRCH 幂等静默）
+    if (pid !== null) { try { process.kill(-pid, 'SIGKILL'); } catch { /* 已消亡 */ } }
+    a.destroy();
+    inst.kill();
+  }
+}
+
+
 // 输出自净断言（phase11.mjs:563-573 逐字——红线由注释纪律升级为运行时自证）：
 // 遍历全部已发 detail，断言不含任一 share token 值（含 '/s/' 链接形态串）与任一
 // 会话 pid 数值；命中即 FAIL（防未来回归静默破线）。命中时不回显冒犯内容
@@ -396,9 +730,9 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-// 六场景串行收口（S5/S6 于 Task 2 落地后并入本数组）——场景间 300ms + 异常纳入
-// emittedDetails + skipped 不阻塞退出码（phase11.mjs:576-595 逐字）
-const scenarios = [s1WelcomeSession, s2ResizePassthroughIsolation, s3ROResizePassthrough, s4ROInputDropRateLimit];
+// 六场景串行收口——场景间 300ms + 异常纳入 emittedDetails + skipped 不阻塞
+// 退出码（phase11.mjs:576-595 逐字；与头注释六场景清单逐一对账）
+const scenarios = [s1WelcomeSession, s2ResizePassthroughIsolation, s3ROResizePassthrough, s4ROInputDropRateLimit, s5StallResumeNoLoss, s6DwellKick1013];
 let failed = 0;
 for (const s of scenarios) {
   try {
