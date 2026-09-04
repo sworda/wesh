@@ -118,6 +118,12 @@ type Server struct {
 	inputRate      int
 	inputBurst     int
 	resizeDebounce time.Duration
+	// slowDwell 为 per-client 停读态 dwell 踢出阈值（12-03，PC-10/PC-11，
+	// D-02/D-03）：Options.SlowDwell 经 New 零值兜底（defaultSlowDwell 10s）
+	// 后装配，运行期只读。消费点 = perclient.go ReadLoop 输出闭包停读点
+	// 武装（armSlowDwellLocked）——停读连续无恢复超本值即 1013。shared 模式
+	// 恒不消费（shared 侧 dwell 已废弃，见 defaultSlowDwell 注释反面教材段）。
+	slowDwell time.Duration
 
 	// halfOpen 为 D-04 per-IP 半开（Hello 未完成）连接计数器；
 	// acquire/release 恰好一次不变量见 halfOpenCounter 类型注释。
@@ -314,6 +320,13 @@ type Options struct {
 	// spawn 面结构性不存在）。SessionMode×SpawnFunc 互斥契约由
 	// ValidateOptions fail-fast 承载（New 之前调用）。
 	SpawnFunc func(cols, rows int) (*pty.Session, error)
+	// SlowDwell 为测试可覆写字段（12-03，PC-10/PC-11，D-02/D-03）：per-client
+	// 停读态（ReadLoop 输出闭包阻塞持帧）连续无恢复的 dwell 踢出阈值。零值
+	// 取 defaultSlowDwell（clients.go 常量区，10s——OutboxBytes 同档零值兜底
+	// 先例）。刻意不设 CLI flag/TOML 键（D-03）：零调优需求，公开契约面不
+	// 膨胀；量级依据与 shared 侧废弃 dwell 的区别论证见 defaultSlowDwell
+	// 注释。消费点 = perclient.go 停读点武装（armSlowDwellLocked）。
+	SlowDwell time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -394,6 +407,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.ResizeDebounce <= 0 {
 		opts.ResizeDebounce = defaultResizeDebounce
 	}
+	// 12-03（PC-10/PC-11，D-03）：SlowDwell 零值兜底 defaultSlowDwell
+	//（OutboxBytes :382-384 三段式先例——常量声明见 clients.go 常量区）。
+	if opts.SlowDwell <= 0 {
+		opts.SlowDwell = defaultSlowDwell
+	}
 	if opts.WritePolicy == "" {
 		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
 	}
@@ -467,6 +485,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// SessionModeShared，SpawnFunc 本阶段 inert 零调用方）。
 		sessionMode: opts.SessionMode,
 		spawnFunc:   opts.SpawnFunc,
+		// New 装配直传（12-03，PC-10/PC-11；零值已在上方兜底
+		// defaultSlowDwell——sessionMode 同位形态）。
+		slowDwell: opts.SlowDwell,
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键
 		// 与 remote_user 提取共用同一开关，零双轨）；空串 = 零值不信任。
 		proxy: proxyInfo{trust: opts.AuthHeader != "", userHeader: opts.AuthHeader},
