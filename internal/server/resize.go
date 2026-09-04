@@ -169,7 +169,7 @@ func (s *Server) pushSessionDimsLocked(target dims) {
 		if mode == proto.ModeRW {
 			prefs = s.clientPrefsRW
 		}
-		frame := proto.WelcomeFrame(mode, prefs, target.cols, target.rows)
+		frame := proto.WelcomeFrame(mode, prefs, target.cols, target.rows, s.sessionMode)
 		if !c.outbox.trySend(frame) {
 			s.kickOrCreditLocked(c, frame)
 			// 踢出可能经 removeMember→嵌套 recalcNow 把 arbiter.last 推进到更新值，

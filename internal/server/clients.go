@@ -565,7 +565,7 @@ func (s *Server) afterDrain(c *client) {
 	if mode == proto.ModeRW {
 		prefs = s.clientPrefsRW
 	}
-	_ = c.outbox.trySend(proto.WelcomeFrame(mode, prefs, sd.cols, sd.rows)) // 补发阻塞期错过的尺寸推送
+	_ = c.outbox.trySend(proto.WelcomeFrame(mode, prefs, sd.cols, sd.rows, s.sessionMode)) // 补发阻塞期错过的尺寸推送
 	s.hubCond.Broadcast()
 }
 
@@ -677,7 +677,7 @@ func (s *Server) promoteNextLocked() {
 			s.registry.owner = nil // 无可递补者：下一个 rw attach 按矩阵成为新 owner
 			return
 		}
-		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW, cand.dims.cols, cand.dims.rows)) {
+		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW, cand.dims.cols, cand.dims.rows, s.sessionMode)) {
 			s.kickSlowConsumerLocked(cand) // 升格通知不可达 = stalled，同义踢出后重扫
 			continue
 		}

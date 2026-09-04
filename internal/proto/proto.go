@@ -24,9 +24,12 @@ const (
 	Output = '0' // 0x30, S→C, master 读块直发
 
 	Hello   = 'H' // 0x48, C→S, JSON {"version":V,"cols":C,"rows":R}
-	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw","cols":C,"rows":R,"prefs"?}——P4 起可携可选
+	Welcome = 'W' // 0x57, S→C, JSON {"mode":"ro"|"rw","session":"shared"|"per-client","cols":C,"rows":R,"prefs"?}——P4 起可携可选
 	// prefs（D-13 一次性下发）；G-05-1（2026-08-22 方向 A 裁决）起恒携会话尺寸 cols/rows 键
 	//（P2 D-02 加键兼容增量：旧前端忽略未知键，新前端对缺席键的旧服务端不约束渲染）；
+	// 12-01 起恒携 session 模式位键（D-08：与 CLI flag --session-mode 同词同值域，
+	// 恒序列化——旧服务端缺席该键 = shared，前端防御性缺省；前端消费面 =
+	// web/src/main.ts WELCOME 分支，两侧注释互指 D-16）；
 	// 05-03 起运行期再推送用于 owner 递补升格通知（R-09——P2 D-01/D-02 纪律：
 	// 既有帧类型的运行期再推送不算动协议，零新类型字节）；G-05-1 起运行期再推送同为
 	// 尺寸下发通道（recalcNow 检测到会话尺寸变化时按各端当前 mode 组帧广播）
@@ -98,6 +101,13 @@ type HelloPayload struct {
 }
 
 // WelcomePayload 显式 json tag。Mode 取值见 ModeRO/ModeRW（D-14）。
+// Session 为会话模式位（D-08，Phase 12 用户裁决 option-a）：取值 "shared"|
+// "per-client"，与 CLI flag --session-mode 同词同值域（server/clients.go
+// SessionModeShared/SessionModePerClient 常量同源——本包不重复定义字符串，
+// 防双写漂移）。刻意不加 omitempty——恒序列化（G-05-1 Cols/Rows 同形态
+// 先例）：新前端靠「缺席 = 旧服务端」识别遗留形态并按 shared 防御性缺省
+// （不 reset，协议演化纪律；前端消费面 web/src/main.ts WELCOME 分支，
+// D-16 互指）。
 // Prefs 为 P4 D-13 客户端偏好一次性下发通道（--client-option 聚合 + osc52 并入），
 // 服务端不透明透传不解析；omitempty：nil/空时 JSON 不出 prefs 键——旧前端零漂移
 // （P2 D-02 加字段不动协议纪律，与 HelloPayload.Ticket 同形态）。
@@ -109,10 +119,11 @@ type HelloPayload struct {
 // 换行点分叉产生异尺寸双端叠写；会话尺寸下发使各端按同尺寸约束渲染（05-11 前端
 // 消费），同 cols 渲染同字节流 = 两端逐屏严格一致。
 type WelcomePayload struct {
-	Mode  string          `json:"mode"`
-	Cols  int             `json:"cols"` // G-05-1：会话 cols（恒序列化，无 omitempty）
-	Rows  int             `json:"rows"` // G-05-1：会话 rows（恒序列化，无 omitempty）
-	Prefs json.RawMessage `json:"prefs,omitempty"`
+	Mode    string          `json:"mode"`
+	Session string          `json:"session"` // D-08：会话模式位（恒序列化，无 omitempty）
+	Cols    int             `json:"cols"`    // G-05-1：会话 cols（恒序列化，无 omitempty）
+	Rows    int             `json:"rows"`    // G-05-1：会话 rows（恒序列化，无 omitempty）
+	Prefs   json.RawMessage `json:"prefs,omitempty"`
 }
 
 // ErrorPayload 显式 json tag。Code 为 snake_case 机器串，Message 为英文人话
@@ -143,16 +154,21 @@ func DecodeHello(payload []byte) (HelloPayload, bool) {
 	return hp, true
 }
 
-// WelcomeFrame 组 Welcome 帧：1 字节类型 + JSON {"mode":M,"cols":C,"rows":R,"prefs"?}，
-// 调用方直接 c.Write（与 onChunk 的 1+payload 组帧模式同构）。prefs 为 P4 D-13 内嵌
-// 下发的客户端偏好 blob——nil/空时 omitempty 使 JSON 不出 prefs 键（旧前端零漂移）。
-// cols/rows 为当前会话尺寸（G-05-1）：恒序列化（无 omitempty——「缺席 = 旧服务端」
-// 识别契约），调用方取值须与 PTY 实际尺寸同源（server.sessionDimsLocked——参与期为
-// 仲裁器 last，零参与者期间为 spawn 80x24 回落）。三条组帧通道：attach 升档 Welcome
-// / 递补升格 Welcome（R-09）/ 运行期尺寸变化再推送（G-05-1，recalcNow 唯一挂点）。
-// 固定 schema 下 json.Marshal 不会失败。
-func WelcomeFrame(mode string, prefs json.RawMessage, cols, rows int) []byte {
-	b, _ := json.Marshal(WelcomePayload{Mode: mode, Cols: cols, Rows: rows, Prefs: prefs})
+// WelcomeFrame 组 Welcome 帧：1 字节类型 + JSON
+// {"mode":M,"session":S,"cols":C,"rows":R,"prefs"?}，调用方直接 c.Write
+// （与 onChunk 的 1+payload 组帧模式同构）。prefs 为 P4 D-13 内嵌下发的客户端
+// 偏好 blob——nil/空时 omitempty 使 JSON 不出 prefs 键（旧前端零漂移）。
+// cols/rows 为当前会话尺寸（G-05-1）：恒序列化（无 omitempty——「缺席 = 旧
+// 服务端」识别契约），调用方取值须与 PTY 实际尺寸同源（server.sessionDimsLocked
+// ——参与期为仲裁器 last，零参与者期间为 spawn 80x24 回落）。session 为会话
+// 模式位（D-08）：恒序列化（无 omitempty，Cols/Rows 同形态），取值
+// "shared"|"per-client"，调用方恒传 s.sessionMode（装配期归一值——per-client
+// 下运行期再推送三通道结构性不可达（arbiter 零值天然 no-op），shared 路径
+// 运行期值恒 "shared"，五调用点统一传参无双写面）。三条组帧通道：attach
+// 升档 Welcome / 递补升格 Welcome（R-09）/ 运行期尺寸变化再推送（G-05-1，
+// recalcNow 唯一挂点）。固定 schema 下 json.Marshal 不会失败。
+func WelcomeFrame(mode string, prefs json.RawMessage, cols, rows int, session string) []byte {
+	b, _ := json.Marshal(WelcomePayload{Mode: mode, Session: session, Cols: cols, Rows: rows, Prefs: prefs})
 	return append([]byte{Welcome}, b...)
 }
 

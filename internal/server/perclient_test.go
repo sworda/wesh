@@ -295,6 +295,30 @@ func TestPerClientWelcomeDims(t *testing.T) {
 	}
 }
 
+// TestPerClientWelcomeSession（D-08，12-01）：per-client 模式 Welcome.session
+// e2e 断言——harness 装配（SessionMode: per-client）下 dialHelloPayload 回读
+// Welcome JSON：session=="per-client"（服务端组帧第 5 实参 s.sessionMode 的
+// 端到端证据），且 mode/cols/rows 既有键同帧共存不挤压（additive 纪律——
+// 加键不改既有键形态）。shared 模式 Welcome.session=="shared" 的协议层对照
+// 由 12-04 phase12.mjs S1 承担（本文件保 per-client 单一归属，D-11）。
+func TestPerClientWelcomeSession(t *testing.T) {
+	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, wm := dialHelloPayload(t, ctx, wsURL, 80, 24)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if wm["session"] != server.SessionModePerClient {
+		t.Fatalf("Welcome session = %v, want %q（D-08 模式位——per-client 装配组帧）", wm["session"], server.SessionModePerClient)
+	}
+	if wm["mode"] != "rw" {
+		t.Fatalf("Welcome mode = %v, want rw（Writable:true 装配；additive 键不挤压既有键）", wm["mode"])
+	}
+	if wm["cols"] != float64(80) || wm["rows"] != float64(24) {
+		t.Fatalf("Welcome cols/rows = %v/%v, want 80/24（Hello 钳制尺寸回显；additive 键不挤压既有键）", wm["cols"], wm["rows"])
+	}
+}
+
 // ====== 11-01 Task 2 增量：装配契约与输入链测试（三测名仅出现于 func 声明行——
 // 验收 grep 行计数闸；doc 注释不引测试名字面量）======
 

@@ -1075,7 +1075,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			if effMode == proto.ModeRW {
 				prefs = s.clientPrefsRW
 			}
-			cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, sd.cols, sd.rows))
+			cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, sd.cols, sd.rows, s.sessionMode))
 			s.registry.registerLocked(cl)
 			if becomeOwner {
 				s.registry.owner = cl // D-06：首个 rw attach 立 owner

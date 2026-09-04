@@ -14,7 +14,9 @@ import { backoffMs } from './lib/reconnect';
 // SUBPROTOCOL 同时是 WS 子协议 token 与 Hello.version 期望值（D-03，同源复用防双写漂移）。
 // Hello 载荷 {version, cols, rows, ticket?}——ticket 为 Phase 3 认证核销一次性票（可选，
 // 无认证模式省略该键，proto.go HelloPayload.Ticket omitempty 同形）；
-// Welcome 载荷 {mode, cols, rows, prefs?}——cols/rows 为会话尺寸恒在键（G-05-1 方向 A，
+// Welcome 载荷 {mode, session, cols, rows, prefs?}——session 为会话模式位恒在键（D-08，与
+// --session-mode 同词同值域 "shared"|"per-client"，proto.go WelcomePayload.Session 恒序列化
+// 无 omitempty；旧服务端缺席该键 = shared 防御性缺省，不 reset）；cols/rows 为会话尺寸恒在键（G-05-1 方向 A，
 // 05-10 三通道下发，proto.go WelcomePayload.Cols/Rows 恒序列化无 omitempty；
 // 旧服务端缺席 = 不约束渲染）；prefs 为可选偏好下发字段（D-13 omitempty，proto.go WelcomePayload.Prefs 同形）；
 // Error code 含 auth_failed（ticket 核销失败统一口径 D-10，proto.go ErrAuthFailed，前端据此静默重试一次）；

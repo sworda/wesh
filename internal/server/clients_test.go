@@ -95,9 +95,10 @@ func TestClientCountInvariant(t *testing.T) {
 //   - 空批 → nil（writer len(batch)==0 分支前置，双保险）。
 func TestWriterMergeControlFramesOnly(t *testing.T) {
 	// G-05-1（05-10）：WelcomeFrame 签名携会话尺寸——本测试锁定 mergeBatch 形状，
-	// 尺寸值不参与断言，任取 80x24。
-	wRO := proto.WelcomeFrame(proto.ModeRO, json.RawMessage(`{"fontSize":14}`), 80, 24)
-	wRW := proto.WelcomeFrame(proto.ModeRW, json.RawMessage(`{"fontSize":14,"osc52":true}`), 80, 24)
+	// 尺寸值不参与断言，任取 80x24。第 5 参 session（D-08）传 SessionModeShared
+	// 常量（本包白盒可引，clients.go:88-92）。
+	wRO := proto.WelcomeFrame(proto.ModeRO, json.RawMessage(`{"fontSize":14}`), 80, 24, SessionModeShared)
+	wRW := proto.WelcomeFrame(proto.ModeRW, json.RawMessage(`{"fontSize":14,"osc52":true}`), 80, 24, SessionModeShared)
 	e1 := proto.ErrorFrame(proto.ErrServerError, "boom-1")
 	e2 := proto.ErrorFrame(proto.ErrServerError, "boom-2")
 	out := func(payload string) []byte { return append([]byte{proto.Output}, payload...) }
@@ -163,7 +164,7 @@ func TestAfterDrainResendsDims(t *testing.T) {
 		c.mode.Store(proto.ModeRW)
 		s.registry.registerLocked(c) // 注册表仅 c 一端——剔除 c 后无其他未 blocked rw，必走信用分支
 
-		s.kickOrCreditLocked(c, proto.WelcomeFrame(proto.ModeRW, nil, 100, 30))
+		s.kickOrCreditLocked(c, proto.WelcomeFrame(proto.ModeRW, nil, 100, 30, SessionModeShared))
 
 		if !bytes.Equal(c.creditPending, first) {
 			t.Fatalf("creditPending = %q, want 首触发帧 %q（幂等置位守卫下后续推送帧不覆写暂存）", c.creditPending, first)

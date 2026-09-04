@@ -214,7 +214,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	if effMode == proto.ModeRW {
 		prefs = s.clientPrefsRW
 	}
-	cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, h.Cols, h.Rows))
+	cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, h.Cols, h.Rows, s.sessionMode))
 	s.registry.registerLocked(cl)
 	s.pcSessions[pc] = struct{}{}
 	s.hubMu.Unlock()
