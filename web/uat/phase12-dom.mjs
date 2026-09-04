@@ -19,8 +19,9 @@
 //   D1 per-client 1006 重连全链 → 新 WELCOME（session:"per-client"）→ reset 生效：
 //      旧 normal buffer 残影不复活 + 新会话内容完整 + 静默零新面板（D-09/D-10）
 //   D2 per-client ro 端 window resize → RESIZE（0x31）真实上行（D-07 第一闸按模式位
-//      放开 + D-06 服务端直通配对）；shared ro 对照同操作全程零 RESIZE（05-08
-//      shared 语义逐字保留，prohibition 回归锁）
+//      放开 + D-06 服务端直通配对）+ 渲染尺寸跟随 fit（12-REVIEW CR-01 sessionDims
+//      恒等式回归锁：ro 半场 rows 轴 + rw 半场 cols 轴/RESIZE 载荷）；shared ro
+//      对照同操作全程零 RESIZE（05-08 shared 语义逐字保留，prohibition 回归锁）
 //   D3 缺 session 键 Welcome（旧服务端形态，SpyWebSocket 投递拦截剥键注入）→
 //      不 reset：旧 normal buffer 内容保持在场（D-08 防御性缺省，误 reset 即
 //      CORE-05 接回同进程语义下清掉有效旧屏 = 数据面破坏）
@@ -139,6 +140,9 @@ async function loadTerminal(srv, opts = {}) {
   // ── 平台能力注入/桩 ──
   // SpyWebSocket：记录全部上行帧首字节 + 合成 CloseEvent 能力 + 实例台账 + 投递拦截
   const sentFrames = [];
+  // 12-REVIEW CR-01 D2 断言材料：RESIZE 帧完整载荷记账（sentFrames 只留首字节，
+  // 渲染跟随断言需要上报尺寸的 wire 证据）
+  const sentResizePayloads = [];
   const sockets = [];
   // 合成关闭事件构造（A2：jsdom 25 CloseEvent 构造器实测可用；构造受阻回退
   // Event + code 赋值——回退形态存在即 A2 登记兜底）
@@ -180,6 +184,7 @@ async function loadTerminal(srv, opts = {}) {
     send(data) {
       const u8 = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer ?? data);
       sentFrames.push(u8[0]);
+      if (u8[0] === RESIZE) sentResizePayloads.push(JSON.parse(dec.decode(u8.subarray(1))));
       return super.send(data);
     }
     // 合成关闭：取存处理器并置 null（抑制随后真实 close 的 1000 事件混入断言面）→
@@ -284,7 +289,7 @@ async function loadTerminal(srv, opts = {}) {
     inst._savedClose?.call(inst, makeCloseEvent(code));
   };
 
-  return { window, document: window.document, sentFrames, infos, warns, unhandled, dom, dims, sockets, bu, staleClose, releaseHeldFetch: () => releaseHeld?.() };
+  return { window, document: window.document, sentFrames, sentResizePayloads, infos, warns, unhandled, dom, dims, sockets, bu, staleClose, releaseHeldFetch: () => releaseHeld?.() };
 }
 
 // 等终端完成握手（WELCOME 处理完）：shell prompt 非空白字符出现即 OUTPUT 流通
@@ -424,9 +429,13 @@ async function d3MissingKeyNoReset() {
 // fit 尺寸真实变化（本场景的布局突变）才产生新帧，判别面唯一。
 // shared ro 对照：shared 模式实例同操作——isRO && sessionMode==='shared' →
 // sendResize 直接 return（05-08 逐字保留），全程零 RESIZE（静默窗形态负向断言）。
-// 隔离纪律：每实例独立 spawn + 独立 jsdom（半场一/半场二先后独立装配收口）。
+// 渲染跟随断言（12-REVIEW CR-01 回归锁）：per-client RESIZE 直通打破「Welcome
+// 推送刷新 sessionDims」闭环后，渲染钳制 min(fit, sessionDims) 曾恒钳在 attach
+// 尺寸——D2e（ro 半场 rows 轴：.xterm-rows 行 div 数）与 D2f/D2g（rw 半场：
+// RESIZE 载荷 wire 证据 + 90 字符长行折行判别 cols 轴）锁定修复后的恒等式。
+// 隔离纪律：每实例独立 spawn + 独立 jsdom（半场一/二/三先后独立装配收口）。
 async function d2RoResizeGate() {
-  console.log('D2: per-client ro 端 window resize → RESIZE 上行恢复（D-07）；shared ro 对照零 RESIZE（05-08 保留）');
+  console.log('D2: per-client ro 端 window resize → RESIZE 上行恢复（D-07）+ 渲染跟随 fit（12-CR-01）；shared ro 对照零 RESIZE（05-08 保留）');
   const RESIZE_SENT = 0x31;
   const countResize = (frames) => frames.filter((b) => b === RESIZE_SENT).length;
 
@@ -441,13 +450,31 @@ async function d2RoResizeGate() {
         roNotified && countResize(ctx.sentFrames) === 0,
         `ro通知=${roNotified} RESIZE帧=${countResize(ctx.sentFrames)}`);
       // 布局桩突变（getComputedStyle 闭包引用同一 dims 对象——proposeDimensions
-      // 读 #terminal 父容器 computed width/height）：900x510 → fit 100x30
+      // 读 #terminal 父容器 computed width/height）：900x510 → fit 98x30
+      //（fit 插件 scrollback≠0 恒减 ViewportConstants.DEFAULT_SCROLL_BAR_WIDTH=14：
+      // floor((900−14)/9)=98；行数轴无滚动条减宽 510/17=30）
       ctx.dims.w = 900;
       ctx.dims.h = 510;
       ctx.window.dispatchEvent(new ctx.window.Event('resize'));
       await waitFor(() => countResize(ctx.sentFrames) > 0, 'per-client ro resize 事件 → RESIZE（0x31）上行', 3000);
       check('D2b', 'per-client ro 端 resize 事件后 sentFrames 含 RESIZE（0x31）——D-07 第一闸按模式位放开（与服务端 D-06 直通配对生效）',
         countResize(ctx.sentFrames) >= 1, `RESIZE帧=${countResize(ctx.sentFrames)}`);
+      // 12-REVIEW CR-01 渲染跟随断言（rows 轴）：DOM 渲染器 .xterm-rows 行 div 数
+      // 恒等于 term.rows（phase05-dom D6a 先例通道）。布局突变 900x510 → fit
+      // 98x30（见上方公式注释）；修复前 sessionDims 恒为 attach 时 78x24（唯一
+      // 赋值点 WELCOME 分支，per-client 零 W 帧推送无刷新闭环）→ 渲染钳在
+      // 24 行、放大永不跟随；修复后 sendResize 同步 sessionDims（refit 上报
+      // 先行）→ 同一事件内 min(fit, fit) 恒等 → 30 行。waitFor 软化（超时不抛）：
+      // 红态保半场二对照断言（D2c/D2d）照常运行，诊断面完整
+      let renderFollowed = false;
+      try {
+        await waitFor(() => ctx.document.querySelector('.xterm-rows')?.childElementCount === 30,
+          'per-client 渲染行数跟随 fit（24→30，CR-01 恒等式）', 3000);
+        renderFollowed = true;
+      } catch { /* 超时 → 下方 check FAIL 落诊断 */ }
+      check('D2e', 'per-client ro 布局突变后渲染行数跟随 fit（24→30）——sessionDims 恒等式维护，渲染不再钳在 attach 尺寸（12-REVIEW CR-01）',
+        renderFollowed,
+        `渲染行数=${ctx.document.querySelector('.xterm-rows')?.childElementCount}`);
     } finally {
       await cleanup(ctx, inst);
     }
@@ -468,6 +495,63 @@ async function d2RoResizeGate() {
       await sleep(400);
       check('D2d', 'shared ro 对照：同操作全程零 RESIZE——05-08 ro 不发语义逐字保留（per-client 放开不渗入 shared 路径，prohibition 回归锁）',
         countResize(ctx.sentFrames) === 0, `RESIZE帧=${countResize(ctx.sentFrames)}`);
+    } finally {
+      await cleanup(ctx, inst);
+    }
+  }
+
+  // 半场三：per-client rw 渲染跟随（12-REVIEW CR-01 cols 轴 + RESIZE 载荷 wire 证据）。
+  // ro 半场（D2e）覆盖 rows 轴；cols 轴判别通道 = 长行折行（phase05-dom D6b
+  // 'A'.repeat(N) 行 div 精确匹配先例）：布局突变 720x408→900x510（fit 78x24→
+  // 98x30，fit 插件公式见半场一注释）渲染恢复后输出 90 字符长行——渲染 98 cols
+  // 时单行 90 A 在场（90 < 98 不折）；渲染钳在 attach 78 cols 时折为 78+12
+  //（CR-01 症状：shell 按 PTY 实际 98 cols 输出的字节流在过时 78 cols 视口上
+  // 折行错位）。折行由终端渲染宽度决定（bash 原始输出不含折行控制；echo 行因
+  // prompt 前缀永不精确等于 90 A——无假阳面），与 PTY 侧 50ms 防抖竞态无关
+  {
+    const inst = await startWesh(['--session-mode', 'per-client', '--writable', '--', 'bash', '--norc', '--noprofile']);
+    const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
+    try {
+      await waitReady(ctx.document);
+      const rowsAt = () => ctx.document.querySelector('.xterm-rows')?.childElementCount ?? -1;
+      const rows0 = rowsAt();
+      ctx.dims.w = 900;
+      ctx.dims.h = 510;
+      ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+      await waitFor(() => ctx.sentResizePayloads.length > 0, 'per-client rw resize 事件 → RESIZE 上行', 3000);
+      const payload = ctx.sentResizePayloads.at(-1);
+      check('D2f', 'per-client rw 布局突变 → RESIZE 载荷 {cols:98, rows:30}（上报恒为窗口 fit 全值而非被约束渲染尺寸，G-05-1 约束 3；98=floor((900−14)/9)）+ attach 基线 24 行（wire 侧证据）',
+        rows0 === 24 && payload?.cols === 98 && payload?.rows === 30,
+        `attach行数=${rows0} payload=${JSON.stringify(payload)}`);
+      // 渲染落定软等待：RESIZE 帧观察点（Spy send）先于同任务内 term.resize——
+      // D2b 同款时序；软化（超时不抛）保 D2g 独立落诊断
+      let rowsFollowed = false;
+      try {
+        await waitFor(() => rowsAt() === 30, 'per-client rw 渲染行数跟随 fit（24→30）', 3000);
+        rowsFollowed = true;
+      } catch { /* 超时 → D2g 落 FAIL 诊断 */ }
+      // PTY 侧落定门：服务端 50ms 防抖后 PTY 才到 98x30——readline 回显按 PTY
+      // 宽度计算光标数学，旧宽度下长命令回显错位会把后续输出写偏列位；且首跑
+      // 实测教训：typing 紧跟 rowsFollowed（≈RESIZE 发出后 0ms）时 stty 与防抖
+      // 竞态读到旧尺寸（非 bug——CR-01 修复的渲染面已由 rowsFollowed 先行证明）。
+      // sleep(400) 护栏性落定窗（phase12.mjs S2 sleep(400) 同款，50ms × 8 余量）
+      // 后 stty size 回读 "30 98" = 直通落定 + 列位干净的双重确定性证据
+      await sleep(400);
+      typeText(ctx.window, 'stty size\n');
+      await waitFor(() => terminalText(ctx.document).includes('30 98'), 'PTY 侧 stty size 回读 "30 98"（服务端防抖落定 + 直通配对，D-06）', 5000);
+      // printf 单参即 format 串：内层字面 \n（源码 \\n 两字符）使输出行收尾换行、
+      // prompt 落下一行（无它则 prompt 粘行，textContent 精确匹配失败——首跑
+      // 实测）；末尾真 \n 是 typeText 的 Enter 派发约定（split('\n') 末元素空串
+      // 触发 Enter keydown——漏它命令永不执行，二跑实测）
+      typeText(ctx.window, `printf '${'A'.repeat(90)}\\n'\n`);
+      const singleRow90 = () => [...ctx.document.querySelectorAll('.xterm-rows > div')].some((r) => r.textContent === 'A'.repeat(90));
+      let single90 = false;
+      try {
+        await waitFor(singleRow90, '90 字符输出行单行在场（渲染 cols ≥ 90）', 5000);
+        single90 = true;
+      } catch { /* 超时 → 下方 check FAIL 落诊断 */ }
+      check('D2g', 'per-client rw 渲染 cols 跟随 fit——90 字符输出行单行在场（98 cols 不折；钳在 attach 78 cols 时折为 78+12，12-REVIEW CR-01 症状判别）',
+        rowsFollowed && single90, `行数跟随=${rowsFollowed} 单行90A=${single90}`);
     } finally {
       await cleanup(ctx, inst);
     }

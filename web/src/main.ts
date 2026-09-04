@@ -317,7 +317,11 @@ term.onData((s) => {
 });
 
 // G-05-1 resize 链路四状态（connect() per-connection 重置块同批清零，IN-01 防漂移登记延伸）：
-// sessionDims —— 最近一帧 Welcome 携会话尺寸；null = 旧服务端/未收到，渲染不约束（行为零漂移）。
+// sessionDims —— 会话尺寸记账：shared 下为最近一帧 Welcome 携会话尺寸（服务端推送刷新，
+// recalcNow → pushSessionDimsLocked 闭环）；per-client 下为本端最近上报 fit（sendResize
+// 内恒等式维护，12-REVIEW CR-01——RESIZE 直通后 PTY = 上报 fit 经服务端 ClampDim
+// 钳制 [1,1000]，前端同步记账并镜像钳制；服务端补发 Welcome 违反本 phase「零 W 帧」
+// wire 契约，不可取）。null = 旧服务端/未收到，渲染不约束（行为零漂移）。
 // lastReported —— 最近一次实际上行的 fit 尺寸（sendResize 去重依据；只在真实发送后更新）。
 // prevFit —— 上一次 refit 的 fit 尺寸（overlay 触发判定：窗口物理尺寸未变不闪浮层）。
 let sessionDims: { cols: number; rows: number } | null = null;
@@ -344,6 +348,21 @@ function sendResize(cols: number, rows: number): void {
   if (isRO && sessionMode !== 'per-client') return;
   if (ws === null || ws.readyState !== WebSocket.OPEN) return;
   if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0) return;
+  // per-client 恒等式维护（12-REVIEW CR-01）：会话即本端独占，RESIZE 直通
+  //（server.go cl.pc != nil 分支）后 PTY 尺寸 = 本端上报 fit 经服务端 ClampDim
+  // 钳制 [1,1000]（proto.go DecodeResize）——同步 sessionDims 并镜像钳制，使
+  // 渲染约束 min(fit, sessionDims) 回到恒等（fit ≤ fit），不再钳在 attach 时
+  // Welcome 尺寸（放大窗口渲染永不跟随，CR-01 症状）。shared 不动：sessionDims
+  // 唯一刷新源仍是服务端 Welcome 推送，客户端不自记。位置在去重闸【前】而非
+  // 发送成功处：WELCOME 分支按帧赋值 sessionDims 后的统一 refit 走到此处时，
+  // 窗口未变则上报被去重跳过——若同步只在发送成功处，该路径不再重申恒等式，
+  // attach 竞态（100ms resize 防抖恰在 Hello 后、WELCOME 处理前到期，真实
+  // 上报先于 Welcome 到达）下 Welcome 携的 attach 时旧尺寸会覆盖较新的本端
+  // 记账且 per-client 无后续 WELCOME 推送可自愈；去重闸前无条件重申使该覆盖
+  // 在同一 refit 内即被纠正
+  if (sessionMode === 'per-client') {
+    sessionDims = { cols: Math.min(cols, 1000), rows: Math.min(rows, 1000) };
+  }
   // 去重：与最近一次实际上行相同的尺寸不重发。去重键 = 上行 fit 尺寸（窗口物理尺寸，
   // 与被约束的渲染尺寸无关）；ro 期被 isRO 门拦截的调用不触 lastReported——升格后首次
   // refit 必真实上报（05-08 尺寸接管纠正链的保持机制）
@@ -363,6 +382,16 @@ let overlayTimer: number | undefined;
 function refit(): void {
   const d = fit.proposeDimensions();
   if (!d) return; // C10 守卫：display:none 时 proposeDimensions 返回 undefined
+  // 上报先行（12-REVIEW CR-01 顺序调整）：per-client 下 sendResize 内同步
+  // sessionDims = 本端上报尺寸——若先算渲染后上报，本事件渲染钳制取的还是上一代
+  // sessionDims，而 per-client 无服务端 Welcome 推送可触发后续 refit（「零 W 帧」
+  // wire 契约），钳制将停在 attach 尺寸、放大窗口渲染永不跟随（CR-01 症状——
+  // REVIEW 最小补丁只加同步不改顺序时渲染落后事件一代的缺口，见 12-REVIEW-FIX）。
+  // 先行上报使同一事件内 min(fit, sessionDims) 即回恒等式。shared 路径
+  // sendResize 不触 sessionDims（唯一刷新源 = 服务端 Welcome 推送，异步到达经
+  // WELCOME 分支 refit 收口），先报后算对 shared 零行为差异——两侧均为同一
+  // 同步任务内的本地操作，服务端对 RESIZE 的反应本就异步。
+  sendResize(d.cols, d.rows); // 上报恒为窗口 fit 尺寸；等值去重在 sendResize 内（lastReported）
   // 渲染尺寸逐轴 min：窗口小于会话尺寸的轴按窗口渲染（裁剪语义不变，README 既有明示），
   // 大于的轴约束到会话矩形（G-05-1 修复面——同 cols 渲染同字节流，异尺寸双端逐屏一致）；
   // 超出面积为页面背景留白（纯布局零新 UI 组件，D-07）；sessionDims null（旧服务端）不约束
@@ -371,7 +400,6 @@ function refit(): void {
   if (term.cols !== rCols || term.rows !== rRows) {
     term.resize(rCols, rRows); // 变化才调——幂等，Welcome 推送重放零抖动
   }
-  sendResize(d.cols, d.rows); // 上报恒为窗口 fit 尺寸；等值去重在 sendResize 内（lastReported）
   // FE-06 resize 浮层（D-17 语义钉死 = 窗口物理尺寸，本地 UX 辅助）：fit 尺寸未变的
   // 推送重放/约束变化不闪浮层（会话尺寸推送不改变本地窗口，浮层无由触发）；
   // welcomeDone && resizeOverlayOn 双门保持——onopen 初次 refit 不触发（浮层是会话辅助
@@ -675,7 +703,11 @@ async function connect(): Promise<void> {
           // 任一键缺失/非法 → console.warn 并保持旧 sessionDims（D-16 容错纪律：非法输入
           // 不得使终端不可用，与 invalid query pref 同款静默降级方向；T-05G-04 缓解——
           // term.resize 永收合法正整数）。两键均缺席 = 旧服务端 → 不动 sessionDims
-          //（恒 null → 渲染=fit，行为与改造前逐字节一致）
+          //（恒 null → 渲染=fit，行为与改造前逐字节一致）。per-client 下本赋值为瞬态
+          // 记账：per-client Welcome cols/rows 恒回显 attach 时 Hello 尺寸
+          //（perclient.go 组帧注释互指），下方统一 refit → sendResize 以本端上报
+          // 记账重申恒等式（12-REVIEW CR-01，见 sendResize 注释）——attach 竞态下
+          //（真实上报先于 Welcome 到达）本赋值携旧尺寸亦在该 refit 内自愈
           if ('cols' in w || 'rows' in w) {
             if (
               typeof w.cols === 'number' && Number.isInteger(w.cols) && w.cols >= 1 && w.cols <= 1000 &&
