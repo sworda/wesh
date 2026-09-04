@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 12
 current_phase_name: per-client
 status: executing
-stopped_at: Completed 12-per-client 12-02-PLAN.md
-last_updated: "2026-09-04T12:25:42.392Z"
+stopped_at: Completed 12-per-client 12-03-PLAN.md
+last_updated: "2026-09-04T14:13:05.702Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 17
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 ## Current Position
 
 Phase: 12 (per-client) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-09-04 — Phase 12 execution started
 
-Progress: [████████░░] 82%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [█████████░] 88%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -71,6 +71,7 @@ Progress: [████████░░] 82%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 11-per-client P07 | 1h50min | 3 tasks | 1 files |
 | Phase 12 P01 | 38min | 3 tasks | 11 files |
 | Phase 12 P02 | 20min | 3 tasks | 7 files |
+| Phase 12 P03 | 42min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -109,6 +110,11 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 12-02] winsize 观测面复用同包 ptySize/pollSize（creack/pty Getsize 即 TIOCSWINSZ 直读）——plan 原文 unix.IoctlGetWinsize 同语义既有件，零新代码零新导入
 - [Phase ?]: [Phase 12-02] D2 判别面经 onopen lastReported 同步语义（Hello 即首报）收敛：握手后基线恒零 RESIZE，布局桩突变+resize 事件才产生新帧——消除 WELCOME refit 假阳面
 - [Phase ?]: [Phase 12-02] PC-05/PC-07 需求勾选留 phase 末 12-05（ID 跨 12-02/04/05 共享，12-04 协议层证据未落——11-01/12-01 先例延续）
+- [Phase ?]: [Phase 12-03] kickSlowConsumerLocked 调用移入独立回调 armSlowDwellLocked（AfterFunc 三件套承载）——startSessionGoroutines 函数体 kick 零命中验收闸字面可满足 + 闭包可读性；武装挂点形态属 Claude's Discretion 范围
+- [Phase ?]: [Phase 12-03] 慢但前进测滴漏形态经三轮 TCP 层实证（滴漏时间线/双端 ss/SIGQUIT 栈/服务端临时插桩）从 plan 文本「每 dwell/3 读一小批」演化为事件驱动 duty-cycle：PTY 行规程微帧 ~50-500B + 内核 send queue 自适应 ~3-4MiB 使亚秒级配额滴漏永不触发服务端续读（机制按 D-02 定义正确）；事件形态判别力内建（单轮 0.5×dwell < dwell、3 轮累计 > dwell，非重置实现必翻车）且机器无关
+- [Phase ?]: [Phase 12-03] dwell 踢出观测经 /healthz clients 归零轮询（只读 HTTP 不打扰 WS stall 面）替代固定 sleep 越点等待；gateTransitions 差值断言取下界（≥2/≥6）——瞬态二次停读使精确计数 flake（Phase 9 教训），两递增点存在性由配对论证锁定
+- [Phase ?]: [Phase 12-03] Rule 1/3 偏差：12-02 遗留 TestPerClientROInputDropped ro 半场 return 使 rw 对照半场不可达（go vet unreachable 暴露，go test 默认 vet 子集不含故 12-02 未现形）——labeled break 修复（0602e0b），解锁本 plan mandated verify；PC-10/PC-11 勾选留 12-05
+- [Phase ?]: [Phase 12-03] WR-01（Phase 11 REVIEW 遗留）按 D-04「dwell 涵盖不复刻」形态闭合：dwell 10s 从停读起点武装结构性涵盖 500ms attach 宽限（×20 余量）与一切瞬态满箱；阻塞持帧即暂存（帧在闭包栈上 ≡ shared 暂存字段语义等价，单消费者下复刻即死代码面）——宽限门与 creditPending/afterDrain 重投均不复刻，代码与注释双侧回指（perclient.go 闭包注释 + clients.go defaultSlowDwell 注释）；若瞬态满箱误踢案例实证出现，回写重开（CONTEXT deferred 既定）
 
 ### Pending Todos
 
@@ -129,6 +135,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T12:25:42.376Z
-Stopped at: Completed 12-per-client 12-02-PLAN.md
+Last session: 2026-09-04T14:12:42.400Z
+Stopped at: Completed 12-per-client 12-03-PLAN.md
 Resume file: None
