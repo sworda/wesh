@@ -4,16 +4,16 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 11
 current_phase_name: per-client 生命周期主干
-status: executing
-stopped_at: Completed 11-05-PLAN.md
-last_updated: "2026-09-03T18:59:54.363Z"
+status: verifying
+stopped_at: Completed 11-06-PLAN.md
+last_updated: "2026-09-04T01:41:46.857Z"
 last_activity: 2026-09-04
 last_activity_desc: Phase 11 execution started
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 11
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-09-03)
 
 Phase: 11 (per-client 生命周期主干) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-09-04 — Phase 11 execution started
 
-Progress: [█████████░] 91%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [█████████░] 91%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 11-per-client P03 | 19min | 2 tasks | 3 files |
 | Phase 11-per-client P04 | 30min | 2 tasks | 1 files |
 | Phase 11-per-client P05 | 18min | 2 tasks | 1 files |
+| Phase 11-per-client P06 | 11min | 2 tasks | 0 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 11-04] PC-03/PC-04 需求勾选延续既定归 phase 末 11-06（跨 6 plan 共享 ID）
 - [Phase ?]: [Phase 11-05] S5d 自杀信号沿用 11-04 勘误（kill -TERM→-HUP，STATE 裁决既定）；pid 数值纳入 SEC 运行时自净扫描（sensitivePids 三通道）
 - [Phase ?]: [Phase 11-05] PC-02/03/04 需求勾选延续既定归 phase 末 11-06（跨 6 plan 共享 ID + plan flagged_assumptions 明示保持 flagged-unverified）
+- [Phase ?]: [Phase 11-06] Phase 11 收口闸六段式全绿：静态面+全量-race(5包1m5.6s)+darwin双闸+八脚本两轮基线一致(12/18/10/28/23/34/21/18)+phase11.mjs 21/21+1skip+diff四件套；prohibitions 19/19人工确认零违反
+- [Phase ?]: [Phase 11-06] phase基点口径：branching_strategy=none下merge-base退化为HEAD——以phase首提交父提交954da7c为等价基点；PC-02/03/04勾选承载兑现（十四测+八场景+diff审查三证据链）
 
 ### Pending Todos
 
@@ -112,6 +115,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-03T18:59:54.350Z
-Stopped at: Completed 11-05-PLAN.md
+Last session: 2026-09-04T01:41:46.843Z
+Stopped at: Completed 11-06-PLAN.md
 Resume file: None
