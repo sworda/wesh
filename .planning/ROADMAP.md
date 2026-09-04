@@ -488,7 +488,26 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 慢客户端停止消费时其 PTY 先被停读（输出积压于内核缓冲、子进程写阻塞而非丢数据），恢复消费后自动续读（ttyd pty_pause/resume parity）
   5. 持续过载的慢客户端 outbox 写满后以 1013 被踢出，服务端与其他客户端不受影响
 
-**Plans**: TBD
+**Plans**: 5 plans
+**Wave 1**
+
+- [ ] 12-01-PLAN.md — PC-06 tracer：Welcome.session 协议面（D-08 one-way 确认门 + WelcomePayload/WelcomeFrame 五调用点）+ 前端模式位 reset + phase12-dom.mjs D1/D3
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 12-02-PLAN.md — PC-05/PC-07：debouncer 共用件 + RESIZE 直通分支 + ro 放行 D-06/D-07 同 plan 配对 + Go 断言五测
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 12-03-PLAN.md — PC-10/PC-11：outbox 恢复信号 + 阻塞持帧 + dwell 看门狗（10s 常量 + Options 覆写）+ gateTransitions 两递增点 + WR-01 闭合回指 + Go 断言四测
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 12-04-PLAN.md — phase12.mjs 协议层 UAT 六场景（session 双模式对照/resize 隔离/ro 直通/门控限速/停读续读/真实 10s+ dwell 1013）
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 12-05-PLAN.md — 收口闸六段式 + 期望值逐字未动 diff 白名单审查 + 五需求勾选 + WR-01 闭合登记
 
 含：INPUT 零分支 / RESIZE 直通两 case、每会话 resize 防抖（共用 debouncer 组件防双写漂移）、前端重连分支按 Welcome 模式位执行 terminal.reset() + dist 重建（本里程碑唯一前端改动）、per-PTY 停读/续读状态机。
 
@@ -548,6 +567,6 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 9. 发布与打磨 | v1.0 | 10/10 | Complete | 2026-08-31 |
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
-| 12. per-client 交互与背压语义 | v1.1 | 0/? | Not started | - |
+| 12. per-client 交互与背压语义 | v1.1 | 0/5 | Planned | - |
 | 13. 资源防线与终结语义 | v1.1 | 0/? | Not started | - |
 | 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |
