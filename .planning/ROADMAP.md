@@ -528,11 +528,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   8. 审计日志会话生命周期事件（session_start/session_end/spawn_failed）携带 pid 归因与 client_id 关联键，可串联单个 per-client 会话全生命周期；spawn_failed 事件零敏感值
   9. per-client 模式下 --auth-header 透传的用户名经 SEC-07 sanitize 后作为 WESH_REMOTE_USER 出现在该客户端子进程环境中（Web shell 内 env 可见，键名白名单固定）；shared 模式不注入（D-15 收窄语义不变）
 
-**Plans**: 1/8 plans executed
+**Plans**: 2/8 plans executed
 **Wave 1**
 
 - [x] 13-01-PLAN.md — D-01 one-way 确认门 + stop-timeout 双默认值（per-client 未设默认 5s / 显式 0 尊重+warn / shared 字面 0 不变）+ 显式位第八位 + 三态测试 + 双文档行（PC-08）
-- [ ] 13-02-PLAN.md — 【phase tracer】spawn 双令牌桶端到端（全局 8/16 + per-IP 1/4 内部常量、XFF 换键、Error+1011+spawn_throttled 拒绝序列、四计数器字段）+ 扩展测试组（PC-08）
+- [x] 13-02-PLAN.md — 【phase tracer】spawn 双令牌桶端到端（全局 8/16 + per-IP 1/4 内部常量、XFF 换键、Error+1011+spawn_throttled 拒绝序列、四计数器字段）+ 扩展测试组（PC-08）
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -593,5 +593,5 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
-| 13. 资源防线与终结语义 | v1.1 | 1/8 | In Progress|  |
+| 13. 资源防线与终结语义 | v1.1 | 2/8 | In Progress|  |
 | 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |

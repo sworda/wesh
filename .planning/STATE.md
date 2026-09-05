@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 13
 current_phase_name: resource-defense
 status: executing
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-09-05T14:26:11.906Z"
+stopped_at: Completed 13-02-PLAN.md
+last_updated: "2026-09-05T15:21:02.899Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 18
+  completed_plans: 19
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 ## Current Position
 
 Phase: 13 (resource-defense) — EXECUTING
-Plan: 2 of 8
+Plan: 3 of 8
 Status: Ready to execute
 Last activity: 2026-09-05 — Phase 13 execution started
 
-Progress: [███████░░░] 72%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [████████░░] 76%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -75,6 +75,7 @@ Progress: [███████░░░] 72%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 12 P04 | 22min | 2 tasks | 1 files |
 | Phase 12-per-client P05 | 22min | 2 tasks | 2 files |
 | Phase 13 P01 | 30min | 3 tasks | 5 files |
+| Phase 13 P02 | 50min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -126,6 +127,12 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 12-05] diff 审查白名单补充项①：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——12-05 plan 白名单枚举未列属 plan 文本枚举缺口而非回归，三轴裁决（plan 授权/append-only/零断言）如实登记（WINDOWS #33）不判收口失败；phase 基点 = e8b39c0（86433a6^ Phase 12 首提交父提交，11-06 先例同构）
 - [Phase ?]: [Phase 13-01] D-01 one-way 门 option-a 用户派发确认落定：per-client --stop-timeout 未显式设置默认 5s（HUP 免疫泄漏防线默认开启）+ 显式 0 经 stopTimeoutSet 显式位尊重并 warn 泄漏风险；shared 字面 0 逐字不动（12-01 D-08 one-way 门先例同形态）
 - [Phase ?]: [Phase 13-01] Task 3 Rule 3 可测性提取：run() 内联双默认值覆写提取为纯函数 resolveStopTimeout（loadCustomIndex 同位纪律）——plan「终值落定直调」的直调点；TestValidateStartupWarnMerge 加第四枚负例（per-client 未设无 warn，Rule 2 判别力——锚定显式位而非终值的过宽实现必翻车）
+- [Phase ?]: [Phase 13-02] 双桶判序 per-IP 先/全局后（短路）：单 IP churn 过量尝试在 per-IP 桶即拒（AllowN 失败零消耗）不耗全局预算——反代后合法多用户共享全局配额不被单一 churning IP 占干（plan/RESEARCH 蓝本均未定序，实现 latitude 裁决）
+- [Phase ?]: [Phase 13-02] Rule 3：TestPerClientTeardownRaceOnce mutate 放宽 per-IP 桶（10 轮同 IP 连续 attach 超默认 burst 4，plan 对既有测试 attach 密度枚举缺口；测试对象 teardown 竞态非 churn 防线，断言行零改动）
+- [Phase ?]: [Phase 13-02] 惰性过期判别面：perIPRate=1/s burst=1200 > 15min TTL 补给上限 900——正补给使小 burst 的 allow-结果无判别力（重置与补给同满额），三相位精确计数 1200/120/1200 双向判别（无重置 960 翻车/过早重置相位二 1200 翻车）
+- [Phase ?]: [Phase 13-02] 事件 schema 键集白名单含日志封套（time/level/msg）+ 四段 schema——parseEvents 解析整行 JSON，纯四段白名单必翻车（Task 2 内自愈的 Rule 1 测试 bug）
+- [Phase ?]: [Phase 13-02] PC-08 勾选留 phase 末收口 plan（11-01/12-01/13-01 先例：ID 跨 plan 共享——机制本体已落地，13-03 场景面/13-07 压测面证据未齐）
+- [Phase ?]: [Phase 13-02] GOROOT gofmt（go1.26.3）存量命中两处（cmd/wesh/main_test.go 13-01 遗留 + perclient_test.go:1535 Phase 12 遗留，均为 //（ CJK 标点接续行）登记 deferred-items.md——范围外不修，13-08 收口闸应知悉
 
 ### Pending Todos
 
@@ -147,6 +154,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-05T14:26:11.888Z
-Stopped at: Completed 13-01-PLAN.md
+Last session: 2026-09-05T15:21:02.880Z
+Stopped at: Completed 13-02-PLAN.md
 Resume file: None
