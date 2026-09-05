@@ -191,6 +191,20 @@ type Server struct {
 	// 慢半段）。shared 模式恒 nil（New 尾部分岔仅 per-client 初始化）。
 	pcSessions map[*pcSession]struct{}
 
+	// 13-03（PC-09）第二终结源三字段（全部 hubMu 保护——置位/读取全在
+	// hubMu 内，pinger pongTimedOut「置位取 hubMu 写、detach 同锁读」先例
+	// 同形态）：pcExitReq 为 exit-when-empty/--once 空迁移终结请求位
+	//（maybeExitWhenEmptyLocked per-client 两触发点置位，Pitfall 1 窗口期
+	// 闭合——「注册表已空且无子进程可等」形态下服务端仍能退出的资源驻留
+	// 防线）；pcLastExitCode/pcHasExitCode 为 last-reaped-code 退出码记录
+	//（sessionWatcher hubMu 置位区段写入，pcSupervisor 出循环时消费——
+	// pcHasExitCode=false 缺省 0）。happens-before：三字段零值起步，
+	// pcSupervisor goroutine 启动（New）+ hubMu 读写建立同步边；一切置位方
+	//（detach/kick 移除点及其宽限回调、sessionWatcher）均在 hubMu 持有内写。
+	pcExitReq      bool
+	pcLastExitCode int
+	pcHasExitCode  bool
+
 	// 13-02（PC-08）：spawnThrottle 为 spawn 双令牌桶存储（全局桶 + per-IP
 	// map，spawnthrottle.go）——churn/惊群 fork 预算防线（D-03/D-04/D-05）。
 	// New 尾部仅 per-client 分支装配（shared 零 spawn 热路径，装配期一次
@@ -222,7 +236,7 @@ type Server struct {
 	version string
 	mc      metricsCounters
 
-	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
+	termOnce sync.Once // 终结路径收口，exitf 只触发一次（触发源 = lifecycle 子进程退出（shared）/ pcSupervisor 第二终结源（per-client，13-03）——termOnce 使两源交汇后仍恰好一次，D-10）
 }
 
 // Options 为 New 的装配选项。
@@ -555,8 +569,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// 启动前——onChunk 的 Wait 与 detach/kick 的 Broadcast 均以它为挂点）。
 	s.hubCond = sync.NewCond(&s.hubMu)
 	// 11-01（PC-02）New 尾部模式分岔（「装配期一次分岔、运行期零分岔」分支点
-	// ①）：per-client 仅初始化 pcSessions 注册表即返回——零全局 goroutine
-	//（pcSupervisor/pcExitReq 归 Phase 13，Pitfall 1 窗口期）；不装
+	// ①）：per-client 初始化 pcSessions 注册表并钉死 pcSupervisor（13-03，
+	// PC-09——唯一全局 goroutine，研究 §5 拓扑表；Pitfall 1 窗口期闭合：第二
+	// 终结源随本 phase 落地）；不装
 	// initArbiter（arbiter 零值下 reportResize 成员守卫/recalcNow 零值哨兵/
 	// removeMember nil-map delete 全部天然 no-op，resize.go:88-141 实证——
 	// RESIZE 在 per-client 本阶段静默无效为已知中间态，直通归 Phase 12）；
@@ -569,6 +584,10 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// spawnthrottle.go 构造内兜底为直构防御面）。shared 分支零装配
 		//（桶字段 nil，upgradePerClient 为唯一消费点——装配期一次分岔）。
 		s.spawnThrottle = newSpawnThrottleStore(opts.SpawnGlobalRate, opts.SpawnGlobalBurst, opts.SpawnPerIPRate, opts.SpawnPerIPBurst)
+		// 13-03（PC-09）：第二终结源单例钉死——hubCond 已在上方装配（构造
+		// 必须在 goroutine 启动前，R-07 同款纪律）；go 启动与字段零值起步
+		// 建立 happens-before（pcSupervisor 首次取 hubMu 前无任何写方）。
+		go s.pcSupervisor()
 		return s
 	}
 	// shared 分支（现状逐字——零回归红线）。
@@ -1580,13 +1599,53 @@ func (s *Server) lifecycle() {
 	s.terminate(code)
 }
 
-// terminate 以 sync.Once 收口终结路径，exitf 只触发一次（唯一调用方 =
-// lifecycle——P1 D-11 单次语义终结后，wsDisconnected/SIGHUP 路径已消亡，
-// CONTEXT domain 必然推论）。
+// terminate 以 sync.Once 收口终结路径，exitf 只触发一次（调用方 = shared
+// lifecycle（P1 D-11 单次语义终结，wsDisconnected/SIGHUP 路径已消亡）+
+// per-client pcSupervisor（13-03 第二终结源，PC-09）——两源并发交汇时
+// termOnce 保证恰好一次，T-13-11）。
 func (s *Server) terminate(code int) {
 	s.termOnce.Do(func() {
 		s.exitf(code)
 	})
+}
+
+// pcSupervisor 是 per-client 模式的第二终结源单例 goroutine（13-03，PC-09，
+// Pitfall 1 窗口期闭合——Phase 11 D-04 明示「--once/--exit-when-empty 永不
+// 退出」中间态的既定兑现）：New per-client 分支钉死启动（研究 §5 拓扑表
+// per-client 唯一全局 goroutine；shared 分支零装配），经既有 hubCond 等待
+// 终结条件：
+//
+//	(pcExitReq || exiting) && len(pcSessions) == 0
+//
+// 两触发源：① exit-when-empty/--once 空迁移（maybeExitWhenEmptyLocked
+// per-client 分支置位 pcExitReq——「注册表已空且无子进程可等」形态下服务端
+// 仍能退出的资源驻留防线，PITFALLS P1）；② Shutdown 终结（既有 exiting 位
+// ——13-04 填充 Shutdown 侧 Broadcast 与 N 进程组快照，本方法消费面先行
+// 落定）。pcSessions 归零唤醒 = teardownPCLocked 慢半段 delete 点的
+// Broadcast 补行 + detach/kick 既有 P5-7 统一挂点 Broadcast（Wait 被任意
+// Broadcast 唤醒后重估条件，不满足继续 Wait——hubCond 语义既有）。
+//
+// 退出码 last-reaped-code 规则（研究 §4.3 两时序逐位对齐证明：子先死 →
+// exitf(子码)；客户端先断 → HUP → watcher 收割 -1 → exitf(-1) → 进程级
+// 255）：出循环后读 pcHasExitCode→pcLastExitCode（sessionWatcher 收割链
+// 写入；缺省 0 = 从未有会话被收割的形态）。放锁后 terminate(code)——
+// termOnce/terminate 逐字复用 shared 收口件（上方 terminate），
+//「exitf 恰好一次、唯一收口」零漂移；本函数体内绝不直调 s.exitf。
+//
+// 锁序：hubCond.Wait 释放并重取 hubMu（sync.Cond 语义）——临界区内仅读
+// 三字段与 len，零 I/O 零信号零 spawn（hubMu 单锁纪律；快照在 hubMu 内取、
+// terminate 在放锁后调——terminate 经 exitf 的进程级收口不在锁内）。
+func (s *Server) pcSupervisor() {
+	s.hubMu.Lock()
+	for !((s.pcExitReq || s.exiting) && len(s.pcSessions) == 0) {
+		s.hubCond.Wait()
+	}
+	code := 0
+	if s.pcHasExitCode {
+		code = s.pcLastExitCode
+	}
+	s.hubMu.Unlock()
+	s.terminate(code) // termOnce 单点——与 shared 同一收口件
 }
 
 // Shutdown 是 D-23 1001 优雅下线的触发源（07-05，P6 deferred 兑现；调用方 =

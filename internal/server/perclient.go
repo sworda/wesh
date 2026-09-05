@@ -3,7 +3,10 @@ package server
 // perclient.go —— per-client 会话生命周期主干（11-01/11-03，PC-02/PC-03/PC-04，
 // D-01/D-02/D-03/D-04；研究 ARCHITECTURE §2.1/§3.1/§3.5/§4.1/§5 与 PITFALLS
 // Pitfall 2/3/4/5 锚点登记；13-02 增量：spawn 双令牌桶 pre-spawn 判定——
-// PC-08 churn 防线，存储件 spawnthrottle.go）：
+// PC-08 churn 防线，存储件 spawnthrottle.go；13-03 增量：PC-09 终结语义——
+// sessionWatcher 收割链三补（last-reaped 记录/session_end 事件/慢半段
+// Broadcast）+ teardownPCLocked WR-02 waitDone 结构性栅栏；pcSupervisor
+// 第二终结源本体与触发端在 server.go/clients.go）：
 //
 //   - pcSession：单客户端会话的全部服务端状态（pty.Session + 每会话输入
 //     队列 + 收口信号集 + 收割/终结同步边）；
@@ -26,11 +29,12 @@ package server
 //     → AfterFunc 补 KILL（局部 reaped 原子闸）→ Drain → Close → Wait——
 //     该会话的唯一收割者，11-03）。
 //
-// 窗口期登记（D-04 / 11→13 已知中间态，均明示接受非缺口）：watcher 不 emit
-// session_start/session_end（per-client 粒度审计归 Phase 13 一次补齐，
-// client_id 关联键）；--once/--exit-when-empty 本阶段永不退出（第二终结源
-// pcSupervisor/pcExitReq 归 Phase 13，Pitfall 1——maybeExitWhenEmptyLocked
-// 早退守卫见 clients.go）。
+// 13-03 落地登记（Phase 11 D-04 窗口期已闭合）：--once/--exit-when-empty 的
+// 第二终结源已落地——pcSupervisor 单例 goroutine（server.go，New per-client
+// 分支钉死；触发端 = clients.go maybeExitWhenEmptyLocked per-client 分支，
+// Pitfall 1 窗口期闭合）；session_end 审计事件已由 sessionWatcher emit
+//（per-client 粒度 + client_id 关联键，D-09 前半——session_start emit 归
+// 13-05）。
 
 import (
 	"context"
@@ -75,13 +79,15 @@ type pcSession struct {
 	// 完成后 close）——sessionWatcher 等它落定再发 EXIT（终结输出先经 outbox
 	// 送达的时序与 lifecycle 同序）。
 	teardownDone chan struct{}
-	// startedAt 为会话起点（spawn 成功时刻）：Phase 13 per-client session_end
-	// duration_seconds 数据源预留（shared s.startedAt 同构；D-04 窗口期本
-	// 阶段零消费方）。
+	// startedAt 为会话起点（spawn 成功时刻）：13-03 激活——sessionWatcher
+	// session_end 事件的 duration_seconds 数据源（shared s.startedAt 同构；
+	// Phase 11 预留字段本 phase 起有消费方）。
 	startedAt time.Time
 	// exitCode 为 watcher 收割的退出码（hubMu 保护）：信号死亡 = -1
-	//（exec.ExitError ExitCode 语义，lifecycle 退出码提取同形）；本阶段
-	// 零读者——supervisor 消费归 Phase 13。
+	//（exec.ExitError ExitCode 语义，lifecycle 退出码提取同形）；13-03 起
+	// 仍为零读者（pcSupervisor 消费 Server 级 pcLastExitCode last-reaped
+	// 记录——单值消费面单点化）——本每会话粒度记录保持（hubMu 内写一次，
+	// 白盒/审计面数据源）。
 	exitCode int
 	// reaped 为「已被 Wait 收割」栅栏位（hubMu 保护，Pitfall 2）：一切
 	// kill(-pgid) 发信号点（SIGHUP 与 AfterFunc 补 KILL 两处）只在本位为
@@ -441,19 +447,30 @@ func (s *Server) armSlowDwellLocked(cl *client, pc *pcSession) *time.Timer {
 // darwin 共享 kqueue watcher 天然 N 会话安全，reap_darwin.go 设计注释逐字）。
 //
 // 序列（研究 §4.1）：Wait 返回 → 退出码提取（lifecycle 内联三行同形，信号
-// 死亡 ExitCode()=-1 语义免费）→ close(waitDone)（teardown 慢半段的收割
-// 同步边）→ hubMu 内置 exitCode+reaped 并触发 teardown（同锁持有内——若
-// 断开路径已先触发则 Once 去重无操作；若本路径先触发，reaped 已在同临界区
-// 置位，快半段栅栏成立）→ 等 teardownDone 落定（Drain/Close/注册表移除
-// 完成后再发 EXIT——终结输出先经 outbox 送达的时序与 lifecycle 同序）→
-// close(inputDone)（inputWriter 收口，shared close(s.inputDone) 同构）→
-// EXIT 私有化直写（S1 直写纪律逐字形态：组帧一次共享只读 → 同步 Write
-// 2s ctx → Close(1000)——禁 outbox 异步入队，Anti-Pattern 6 关闭帧超车
-// 防线；Write 失败不补救直接 Close，server.go lifecycle 授权先例；与
-// Shutdown 1001 竞态由库 Close 幂等承接）。
+// 死亡 ExitCode()=-1 语义免费）→ session_end 事件 emit（13-03，D-09 前半——
+// 位置与 shared lifecycle 母本同位：退出码提取后、一切收口活动前；hubMu
+// 之外（hubMu 内 I/O 禁忌——emitEvent 写 stderr 经动态 writer 锁，锁序不
+// 混入 hubMu），且先于 close(waitDone)——emit → close(waitDone) → 慢半段
+// <-waitDone → delete+Broadcast 的程序序链保证事件先于 pcSupervisor 终结
+// 路径（exitf 生产语义 = os.Exit，事件必须在其前落流）且先于 EXIT 组帧
+// 直写）→ close(waitDone)（teardown 慢半段的收割同步边）→ hubMu 内置
+// exitCode+reaped+last-reaped 记录（13-03：pcLastExitCode/pcHasExitCode
+// 置位——pcSupervisor 消费数据源，退出码两时序逐位对齐 shared：子先死 →
+// exitf(子码)；客户端先断 → HUP → -1 → exitf(-1) → 进程级 255）并触发
+// teardown（同锁持有内——若断开路径已先触发则 Once 去重无操作；若本路径
+// 先触发，reaped 已在同临界区置位，快半段栅栏成立）→ 等 teardownDone
+// 落定（Drain/Close/注册表移除完成后再发 EXIT——终结输出先经 outbox
+// 送达的时序与 lifecycle 同序）→ close(inputDone)（inputWriter 收口，
+// shared close(s.inputDone) 同构）→ EXIT 私有化直写（S1 直写纪律逐字
+// 形态：组帧一次共享只读 → 同步 Write 2s ctx → Close(1000)——禁 outbox
+// 异步入队，Anti-Pattern 6 关闭帧超车防线；Write 失败不补救直接 Close，
+// server.go lifecycle 授权先例；与 Shutdown 1001 竞态由库 Close 幂等承接）。
 //
-// D-04 窗口期：watcher 不 emit session_end（per-client 粒度审计归 Phase 13
-// 一次补齐，client_id 关联键）。
+// session_end schema（shared 母本 server.go lifecycle 逐键 + 关联键）：
+// event/exit_code/duration_seconds（数据源 = pc.startedAt）/signal（仅信号
+// 死亡且 signalName 映射命中出键——KILL 兜底死亡经本字段归因为 "SIGKILL"，
+// 不另起独立事件，D-09）+ client_id（cl.attachSeq——attach/detach 事件
+// 同键先例，会话级事件与连接级事件关联检索）。
 func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 	err := pc.sess.Wait()
 	code := 0
@@ -461,10 +478,29 @@ func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	}
+	// 13-03（D-09 前半）session_end 事件：位置/形态/shared 母本论证见函数
+	// 头注释（emit 先于 close(waitDone)——事件落流先于一切终结链）。
+	endAttrs := []slog.Attr{
+		slog.String("event", "session_end"),
+		slog.Int("exit_code", code),
+		slog.Float64("duration_seconds", time.Since(pc.startedAt).Seconds()),
+		slog.Int64("client_id", cl.attachSeq),
+	}
+	if sig, ok := exitSignalNum(err); ok {
+		if name, ok := signalName(syscall.Signal(sig)); ok {
+			endAttrs = append(endAttrs, slog.String("signal", name))
+		}
+	}
+	emitEvent(endAttrs...)
 	close(pc.waitDone)
 	s.hubMu.Lock()
 	pc.exitCode = code
 	pc.reaped = true
+	// 13-03（PC-09）last-reaped-code 记录（hubMu 保护）：pcSupervisor 出循环
+	// 消费的数据源——与 pc.exitCode 同临界区写（会话级记录与 Server 级
+	// last-reaped 记录同步置位）。
+	s.pcLastExitCode = code
+	s.pcHasExitCode = true
 	s.teardownPCLocked(pc)
 	s.hubMu.Unlock()
 	<-pc.teardownDone
@@ -484,35 +520,59 @@ func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 // 内——两触发路径都只「触发」，执行序列只有一个，Pitfall 3）。调用方必须
 // 已持 hubMu（Locked 后缀纪律）。
 //
-// 快半段（hubMu 持有内同步执行）：reaped 栅栏内发 s.stopSignal（默认 HUP =
-// milestone 字面语义，OPS-04 --stop-signal 可配通道自然继承；SignalGroup
-// 不取 fdMu，hubMu 内发送安全，锁序 hubMu > sess.fdMu 不受影响）且
-// stopTimeout>0 时 AfterFunc 补 SIGKILL——闭包内先取 hubMu 复检 !reaped
-// 才发送（planner 裁定：栅栏覆盖补 KILL 发信号点；pinger pongTimedOut
-// 置位取 hubMu 先例同形态；timer 随会话消亡，ESRCH 幂等静默）。
+// 快半段（hubMu 持有内同步执行）：每会话 RESIZE 防抖停摆 + WR-02 结构性
+// 栅栏（13-03，Phase 11 REVIEW 登记）后的信号面——栅栏形态：reaped 位读
+// 通过后再对 pc.waitDone 做非阻塞 select，waitDone 已关闭即视为已收割
+// 跳过信号（Wait 返回 = 内核态 reap 完成点，close(pc.waitDone) 已在该点
+// 无需移动；reaped 位在 hubMu 内置位晚于 close(waitDone)，Wait-return→
+// hubMu-acquire 微窗口内位读不可信，channel 关闭是结构性同步边——零新
+// 同步件，kill-after-reap 误杀复用 pgid 面结构性闭合，T-13-10）。守卫通过
+// 才进信号分支：发 s.stopSignal（默认 HUP = milestone 字面语义，OPS-04
+// --stop-signal 可配通道自然继承；SignalGroup 不取 fdMu，hubMu 内发送安全，
+// 锁序 hubMu > sess.fdMu 不受影响）且 stopTimeout>0 时 AfterFunc 补
+// SIGKILL——闭包内先取 hubMu 复检 !reaped 并经同一 waitDone 非阻塞 select
+// 栅栏（planner 裁定：Pitfall 2「信号与 reap 序列化」语义对一切
+// kill(-pgid) 同构适用，不只 SIGHUP；pinger pongTimedOut 置位取 hubMu
+// 先例同形态；timer 随会话消亡，ESRCH 幂等静默）。
 //
 // 慢半段（独立 goroutine——Drain/Close/waitDone 等待绝不在 hubMu 内，
 // Pitfall 3 行头阻塞红线）：Drain(200ms) → Close(master) → <-waitDone
 // （watcher Wait 返回信号）→ hubMu 内 delete(pcSessions)（活性记账单点
-// 移除——map delete 幂等）→ close(teardownDone)。
+// 移除——map delete 幂等）+ hubCond.Broadcast()（13-03 PC-09 补行：
+// pcSessions 归零是 pcSupervisor 终结等待条件的组成部分，delete 后
+// Broadcast 唤醒其重估）→ close(teardownDone)。
 func (s *Server) teardownPCLocked(pc *pcSession) {
 	pc.teardownOnce.Do(func() {
 		// 快半段：每会话 RESIZE 防抖停摆（12-02——计时器随会话消亡；teardown
 		// 后在途 RESIZE 再武装亦无害：AfterFunc 回调对 closed 会话 Resize 返回
 		// os.ErrClosed 静默，双防线）。
 		pc.resizeDeb.Stop()
-		// 快半段：信号面（Pitfall 2 reaped 栅栏——收割完成后一切 kill(-pgid)
-		// 禁发，kill-after-reap 误杀复用 pgid 结构性不可能）。
+		// 快半段：信号面（Pitfall 2 reaped 栅栏 + 13-03 WR-02 waitDone 结构性
+		// 栅栏——形态论证见函数头注释）。
 		if !pc.reaped {
-			pc.sess.SignalGroup(s.stopSignal)
-			if s.stopTimeout > 0 {
-				time.AfterFunc(s.stopTimeout, func() {
-					s.hubMu.Lock()
-					defer s.hubMu.Unlock()
-					if !pc.reaped {
+			select {
+			case <-pc.waitDone:
+				// waitDone 已关闭 = watcher Wait 已返回（内核态 reap 完成）——
+				// reaped 置位在途微窗口，视为已收割，信号面整体跳过。
+			default:
+				pc.sess.SignalGroup(s.stopSignal)
+				if s.stopTimeout > 0 {
+					time.AfterFunc(s.stopTimeout, func() {
+						s.hubMu.Lock()
+						defer s.hubMu.Unlock()
+						if pc.reaped {
+							return
+						}
+						// WR-02 栅栏同构覆盖补 KILL 发信号点（planner 裁定：
+						// Pitfall 2 语义对一切 kill(-pgid) 同构适用）。
+						select {
+						case <-pc.waitDone:
+							return // Wait 已返回——reaped 置位在途，KILL 跳过
+						default:
+						}
 						pc.sess.SignalGroup(syscall.SIGKILL)
-					}
-				})
+					})
+				}
 			}
 		}
 		// 慢半段：阻塞面移出 hubMu。
@@ -522,6 +582,8 @@ func (s *Server) teardownPCLocked(pc *pcSession) {
 			<-pc.waitDone
 			s.hubMu.Lock()
 			delete(s.pcSessions, pc)
+			// 13-03（PC-09）pcSupervisor 重估唤醒：见函数头注释。
+			s.hubCond.Broadcast()
 			s.hubMu.Unlock()
 			close(pc.teardownDone)
 		}()
