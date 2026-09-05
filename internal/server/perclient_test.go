@@ -1770,15 +1770,20 @@ func TestPerClientDwellKick(t *testing.T) {
 	assertKicked1013(t, c, 15*time.Second, "per-client stall client")
 }
 
-// PC-11 慢但在前进永不踢（12-03，D-02 判据核心）：SlowDwell=1s 覆写 + 事件
+// PC-11 慢但在前进永不踢（12-03，D-02 判据核心）：SlowDwell=3s 覆写 + 事件
 // 驱动 duty-cycle——每轮「停读形成（gateTransitions +1，dwell 武装）→ 刻意
 // 停读 0.4×dwell → 全速读取至续读（再 +1，dwell 重置）」，循环 3 轮：每轮
-// 停读间隔 ~0.42×dwell < dwell（安全——CI flake 收口：0.5×dwell 时续读链路
-// 「读取→send queue 排空→writer 解阻塞→续读」在负载抖动下偶发超出剩余
-// ~0.48×dwell 预算被误踢，0.4×dwell 将余量放大至 ~0.58×dwell），累计停读
-// ~1.26×dwell > dwell（若 dwell 不随续读重置——跨停读累计形态——第 3 轮
-// 停读中段即被 1013 踢出，测试判别力内建）；3 轮后全速收干 → CloseError
-// 1000 + seq 连续无缺口 + gateTransitions ≥ +6（3 对停读/续读递增点）。
+// 停读间隔 ~0.42×dwell < dwell（安全），累计停读 ~1.26×dwell > dwell（若
+// dwell 不随续读重置——跨停读累计形态——第 3 轮停读中段即被 1013 踢出，
+// 测试判别力内建）；3 轮后全速收干 → CloseError 1000 + seq 连续无缺口 +
+// gateTransitions ≥ +6（3 对停读/续读递增点）。
+//
+// dwell 基数 3s 的两轮 CI flake 收口（1s 两版停读比例 0.5/0.4 均在 ubuntu
+// runner 误踢，kick 恒于 attach+1.37s）：续读链路「客户端读取→多 MB send
+// queue 排空→writer 解阻塞→drain→notFull→续读」的绝对耗时由内核 send
+// queue 容量与 runner 读取速率决定（2 vCPU + race 检测器下 >0.5s 实证），
+// 停读比例缩放不改变绝对预算——唯一稳健收口是放大 dwell 基数（3s 使续读
+// 窗口 ~1.7s ≈ 3.4×实证瓶颈），时长代价 ~+5s/CI 可接受，判别力结构不变。
 //
 // 滴漏形态的执行期实证演化（Rule 3 调试结论，与 plan 文本「每 ~dwell/3 读
 // 一小批」的差异登记）：配额泵滴漏（每 tick 读 128KiB）在本机实证下永不触
@@ -1787,11 +1792,11 @@ func TestPerClientDwellKick(t *testing.T) {
 // 信用不足以完成「管线排空→writer 解阻塞→drain→notFull→续读」链路（停读
 // 态按 D-02 定义持续，dwell 正常触发踢出——机制行为正确，测试形态错误）。
 // 事件驱动 duty-cycle 以停读/续读事件本身为节拍：停读间隔由测试刻意构造
-// （固定 0.5×dwell），续读由全速读取触发（全速续读的可行性由停读续读主测
+// （固定 0.4×dwell），续读由全速读取触发（全速续读的可行性由停读续读主测
 // 锁定）——参数机器无关，判别力内建。
 func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 	floodArgv, floodLast := seqFlood()
-	dwell := 1 * time.Second
+	dwell := 3 * time.Second
 	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
