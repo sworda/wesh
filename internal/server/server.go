@@ -1630,7 +1630,7 @@ func (s *Server) terminate(code int) {
 // 255）：出循环后读 pcHasExitCode→pcLastExitCode（sessionWatcher 收割链
 // 写入；缺省 0 = 从未有会话被收割的形态）。放锁后 terminate(code)——
 // termOnce/terminate 逐字复用 shared 收口件（上方 terminate），
-//「exitf 恰好一次、唯一收口」零漂移；本函数体内绝不直调 s.exitf。
+// 「exitf 恰好一次、唯一收口」零漂移；本函数体内绝不直调 s.exitf。
 //
 // 锁序：hubCond.Wait 释放并重取 hubMu（sync.Cond 语义）——临界区内仅读
 // 三字段与 len，零 I/O 零信号零 spawn（hubMu 单锁纪律；快照在 hubMu 内取、

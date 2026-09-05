@@ -281,6 +281,16 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	}
 	cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, h.Cols, h.Rows, s.sessionMode))
 	s.registry.registerLocked(cl)
+	// 宽限取消点 + 空纪元门闩清零（13-03 补齐 per-client 侧挂点——shared
+	// Attach 路径 server.go 同位同款，registerLocked 登记成功后同一 hubMu
+	// 持有内）：① cancelExitEmptyTimerLocked 取消 exit-when-empty 宽限计时
+	//（宽限内任一端 attach 成功即取消——D-14；11-01 早退守卫期本挂点在
+	// per-client 不可达故未装配，13-03 触发端激活后为必需——缺失则取消只靠
+	// 回调 registry 非空复查兜底、计时锚点漂移）；② exitEmptySignaled 清零
+	// 开新空纪元（08-review WR-01——缺失则门闩永不清零，后续空迁移被门闩
+	// 抑制永不重触发，exit-when-empty 退化为进程生命周期单发）。
+	s.cancelExitEmptyTimerLocked(cl.remote, cl.remoteUser)
+	s.exitEmptySignaled = false
 	s.pcSessions[pc] = struct{}{}
 	s.hubMu.Unlock()
 	// attach 事件（shared 升档同形态同字段集：event=attach + remote +
