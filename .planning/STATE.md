@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 13
 current_phase_name: resource-defense
 status: executing
-stopped_at: Completed 13-04-PLAN.md
-last_updated: "2026-09-05T16:54:48.825Z"
+stopped_at: Completed 13-05-PLAN.md
+last_updated: "2026-09-05T17:24:19.765Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 21
+  completed_plans: 22
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 ## Current Position
 
 Phase: 13 (resource-defense) — EXECUTING
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
 Last activity: 2026-09-05 — Phase 13 execution started
 
-Progress: [████████░░] 84%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [█████████░] 88%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -78,6 +78,7 @@ Progress: [████████░░] 84%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 13 P02 | 50min | 2 tasks | 6 files |
 | Phase 13 P03 | 50min | 2 tasks | 7 files |
 | Phase 13 P04 | 13min | 2 tasks | 2 files |
+| Phase 13 P05 | 19min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -140,6 +141,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 13-03] WR-02 栅栏同构覆盖补 KILL 回调（planner 裁定「Pitfall 2 语义对一切 kill(-pgid) 同构适用」）；子先死断言值 42（判别力收紧）；PC-09/OPS-12 勾选留 phase 末（13-07 phase13.mjs S3 进程级 255 断言未齐）
 - [Phase ?]: [Phase 13-04] Shutdown 侧 D-state 兜底 terminate 落地（Rule 2——T-13-13 mitigation 为 threat register 硬要求而 plan behavior 四锚点未列 terminate 调用）：drained 形态终结仍归 pcSupervisor 零漂移，仅 join 到期未清零分支 Shutdown 直调 terminate（termOnce 交汇恰好一次，退出码同 last-reaped-code 规则）；形态四测试（stopTimeout=0+免疫=D-state 代理）锁定 exitf(0)+存活探针双观测
 - [Phase ?]: [Phase 13-04] 快照信号循环加 WR-02 waitDone 栅栏（研究明示 Discretion——按 13-03 planner 裁定「Pitfall 2 语义对一切 kill(-pgid) 同构适用」选栅栏形态）；join 实现形态选 hubCond.Wait + AfterFunc 兜底 Broadcast（零新同步件）；join 上界余量定值 shutdownJoinMargin=2s（研究 A1 保守形态）；测试夹具复用 startPerClientServerWithSpawn（11-03 已参数化，零新装配）；PC-09/OPS-12 勾选留 phase 末（先例延续）
+- [Phase ?]: [Phase 13-05] TestSpawnEventsSchema 零成功 spawn 构造（per-IP burst=1 + 恒败注入：dial ① spawn_failed + dial ② spawn_throttled 一窗捕获）——零会话零 watcher 使迟到 emit 面结构性不存在（13-03 跨测试迟写教训前置规避）；wire 定值文案逐 dial 绑定 + 注入敏感值三形态（err.Error()/路径/errno）零出现负断言
+- [Phase ?]: [Phase 13-05] ptyKills 恰按 plan 枚举两路径（teardown + 孤儿回收 AfterFunc），13-04 Shutdown 路径补 KILL 不在计数面（plan 白名单明示两路径；series HELP 文案已如实限定 teardown and orphan reaping）——运维面若需 Shutdown KILL 计数属 series 语义扩展，13-07/13-08 复核知悉项
 
 ### Pending Todos
 
@@ -161,6 +164,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-05T16:54:48.803Z
-Stopped at: Completed 13-04-PLAN.md
+Last session: 2026-09-05T17:24:08.096Z
+Stopped at: Completed 13-05-PLAN.md
 Resume file: None
