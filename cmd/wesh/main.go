@@ -1287,6 +1287,27 @@ func loadCustomIndex(path string, max int) ([]byte, error) {
 	return data, nil
 }
 
+// resolveStopTimeout 落定 stop-timeout 终值（13-01 D-01 per-client 双默认值，
+// one-way 公开契约——13-01 Task 1 确认门用户派发 option-a 落定；run() 上方的
+// 纯 helper——loadCustomIndex 同位纪律，值传入值返回零副作用使三态行为可直调
+// 锁定）：per-client 且 --stop-timeout 双源均未显式设置（stopTimeoutSet 零值）
+// → 覆写为 5s，HUP 免疫泄漏防线默认开启（Phase 11 post-merge 实证：bash 4.4
+// 交互模式在「提示符 pselect + 竞态输入行待读」窗口内可无声吸收 SIGHUP——
+// per-client 的产品语义是 ttyd 断开即杀，默认 0 = 泄漏防线默认关闭，默认值的
+// 产品前提翻转了，来源必须按模式分岔）。5s 取值 = PITFALLS P8 推荐值：正常
+// 程序收 HUP 后的清理窗口（shell 写 history 等）足够，泄漏进程存活上界有界。
+// shared 字面 0 逐字不动（parseArgs stopTimeoutDefault 字面 0——「断开不退出、
+// 子进程继续运行」是 v1.0 产品承诺的组成部分，零回归红线）。显式设置（含
+// 显式 0）不覆写——尊重用户意图（「不静默改写用户输入」纪律），per-client ×
+// 显式 0 的泄漏风险由 validateStartup warn 明示（该 warn 判定点先于本覆写且
+// 锚定显式位，两机制互不干扰）。
+func resolveStopTimeout(cfg config) config {
+	if cfg.sessionMode == server.SessionModePerClient && !cfg.stopTimeoutSet {
+		cfg.stopTimeout = 5 * time.Second
+	}
+	return cfg
+}
+
 func run(args []string) int {
 	cfg, argv, err := parseArgs(args)
 	if err != nil {
@@ -1411,23 +1432,12 @@ func run(args []string) int {
 	// 启动打印，server 只存 SHA-256 预哈希（Options 注释）。
 	shareRO := server.GenerateShareToken()
 	shareRW := server.GenerateShareToken()
-	// 13-01 D-01 per-client 双默认值终值落定（one-way 公开契约——Task 1 确认门
-	// 用户派发 option-a 落定）：per-client 且 --stop-timeout 双源均未显式设置
-	//（stopTimeoutSet 零值）→ 覆写为 5s，HUP 免疫泄漏防线默认开启（Phase 11
-	// post-merge 实证：bash 4.4 交互模式在「提示符 pselect + 竞态输入行待读」
-	// 窗口内可无声吸收 SIGHUP——per-client 的产品语义是 ttyd 断开即杀，默认 0
-	// = 泄漏防线默认关闭，默认值的产品前提翻转了，来源必须按模式分岔）。
-	// 5s 取值 = PITFALLS P8 推荐值：正常程序收 HUP 后的清理窗口（shell 写
-	// history 等）足够，泄漏进程存活上界有界。shared 字面 0 逐字不动
-	//（parseArgs stopTimeoutDefault 字面 0——「断开不退出、子进程继续运行」是
-	// v1.0 产品承诺的组成部分，零回归红线）。显式设置（含显式 0）不覆写——
-	// 尊重用户意图，per-client × 显式 0 的泄漏风险由 validateStartup warn
-	// 明示（该 warn 判定点先于本覆写且锚定显式位，两机制互不干扰）。插点在
-	// Options 装配之前：sessionMode 与 stopTimeoutSet 在 parseArgs 出口即已
-	// 完全确定，此处覆写后终值单点进 Options.StopTimeout。
-	if cfg.sessionMode == server.SessionModePerClient && !cfg.stopTimeoutSet {
-		cfg.stopTimeout = 5 * time.Second
-	}
+	// 13-01 D-01：per-client 双默认值终值落定（resolveStopTimeout 单点——插点
+	// 在 Options 装配之前：sessionMode 与 stopTimeoutSet 在 parseArgs 出口即
+	// 已完全确定，覆写后终值单点进 Options.StopTimeout；validateStartup 的
+	// 泄漏 warn 判定点先于本覆写且锚定显式位，两机制互不干扰。论证注释见
+	// resolveStopTimeout 函数头）。
+	cfg = resolveStopTimeout(cfg)
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。

@@ -841,6 +841,40 @@ func TestConfigMerge(t *testing.T) {
 			t.Errorf("sessionMode = %q, want %q (flag > config)", cfg.sessionMode, server.SessionModeShared)
 		}
 	})
+	t.Run("stop-timeout explicit zero from config sets explicit bit", func(t *testing.T) {
+		// 13-01 D-02：TOML stop-timeout = "0s" 键存在 → stopTimeoutSet 置位
+		//（fc.StopTimeout 非 nil，与 CLI --stop-timeout=0 同档双源——「显式
+		// 零」不被吞成「未设置」）；per-client 下 resolveStopTimeout 终值保持
+		// 0（尊重用户意图，覆写只动未置位态）。
+		cfg, _, err := parseConfigArgs(t, "session-mode = \"per-client\"\nstop-timeout = \"0s\"\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		if !cfg.stopTimeoutSet {
+			t.Error("stopTimeoutSet = false, want true（fc.StopTimeout 非 nil 显式位置位——TOML 显式零与 CLI 同档）")
+		}
+		if cfg.stopTimeout != 0 {
+			t.Errorf("stopTimeout = %v, want 0（显式零解析产出值）", cfg.stopTimeout)
+		}
+		if final := resolveStopTimeout(cfg); final.stopTimeout != 0 {
+			t.Errorf("resolveStopTimeout = %v, want 0（per-client × 显式 0 尊重用户意图，D-02）", final.stopTimeout)
+		}
+	})
+	t.Run("stop-timeout key absent leaves explicit bit unset", func(t *testing.T) {
+		// 13-01 D-01：键缺席 → 显式位不置位；per-client 下 resolveStopTimeout
+		// 落双默认值 5s（TOML 键缺席通道的 D-01 终值锁定——HUP 免疫泄漏防线
+		// 默认开启对配置文件来源同样成立）。
+		cfg, _, err := parseConfigArgs(t, "session-mode = \"per-client\"\n", nil, "--", "bash")
+		if err != nil {
+			t.Fatalf("parseArgs: %v", err)
+		}
+		if cfg.stopTimeoutSet {
+			t.Error("stopTimeoutSet = true, want false（键缺席不置位——「未设置」与「显式 0」区分的 TOML 侧证据）")
+		}
+		if final := resolveStopTimeout(cfg); final.stopTimeout != 5*time.Second {
+			t.Errorf("resolveStopTimeout = %v, want 5s（per-client 未设置双默认值，D-01）", final.stopTimeout)
+		}
+	})
 }
 
 // TestConfigPrecedence（D-05 优先级链）：flag > env > 配置文件 > 内置默认。

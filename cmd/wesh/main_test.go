@@ -900,6 +900,109 @@ func TestValidateStartupWarnMerge(t *testing.T) {
 			t.Errorf("warn = %q, want containing %q（socket 早退透出锁）", warn, "--write-policy")
 		}
 	})
+	// 13-01 D-02 stop-timeout 泄漏 warn 三态 + 判别力负例（形态对齐上方既有
+	// 分支：直调 validateStartup 纯函数 + strings.Contains 子串断言；loopback
+	// bind 早退形态——modeWarns 累积通道与 bind 安全形态无关）。
+	t.Run("per-client explicit stop-timeout zero warns leak risk", func(t *testing.T) {
+		warn, err := validateStartup(config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, stopTimeoutSet: true, stopTimeout: 0})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil（warn 明示放行的 D-02 语义）", err)
+		}
+		if !strings.Contains(warn, "--stop-timeout=0") || !strings.Contains(warn, "--session-mode=per-client") {
+			t.Errorf("warn = %q, want containing --stop-timeout=0 与 --session-mode=per-client（SIGHUP 免疫进程泄漏风险明示）", warn)
+		}
+	})
+	t.Run("per-client explicit stop-timeout 5s no leak warn", func(t *testing.T) {
+		warn, err := validateStartup(config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient, stopTimeoutSet: true, stopTimeout: 5 * time.Second})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil", err)
+		}
+		if strings.Contains(warn, "--stop-timeout") {
+			t.Errorf("warn = %q, want 不含 stop-timeout 子串（显式 5s 无泄漏风险面）", warn)
+		}
+	})
+	t.Run("shared explicit stop-timeout zero no leak warn", func(t *testing.T) {
+		warn, err := validateStartup(config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, stopTimeoutSet: true, stopTimeout: 0})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil", err)
+		}
+		if strings.Contains(warn, "--stop-timeout") {
+			t.Errorf("warn = %q, want 不含 stop-timeout 子串（shared 泄漏面不成立——断开不退出语义下 stop-timeout=0 是 v1.0 承诺形态）", warn)
+		}
+	})
+	t.Run("per-client unset stop-timeout no leak warn", func(t *testing.T) {
+		// D-02 判别力负例（Rule 2 补强）：未设置态 stopTimeout 终值同为 0——
+		// 若 warn 判定锚定终值而非显式位（过宽实现 sessionMode×stopTimeout==0），
+		// 本分支必翻车；正确实现锚定 stopTimeoutSet（未设置态走 run()
+		// resolveStopTimeout 双默认值覆写 5s，无泄漏风险面）。
+		warn, err := validateStartup(config{bind: "127.0.0.1", maxClients: 32, indexMaxSize: 16 << 20, sessionMode: server.SessionModePerClient})
+		if err != nil {
+			t.Fatalf("validateStartup = err %v, want nil", err)
+		}
+		if strings.Contains(warn, "--stop-timeout") {
+			t.Errorf("warn = %q, want 不含 stop-timeout 子串（未设置态走双默认值覆写，零泄漏面）", warn)
+		}
+	})
+}
+
+// TestStopTimeoutResolution（13-01 D-01/D-02 stop-timeout 三态断言组）：双默认值
+// 终值与显式位双源置位的全链锁定，两通道——(a) CLI 参数切片经 parseArgs 直调
+//（fs.Visit 第八位置位 + 解析产出值 + resolveStopTimeout 终值三断言一层打尽）；
+// (b) config struct 直构经 resolveStopTimeout 直调（落定函数边界：判定只依赖
+// sessionMode × stopTimeoutSet 两键）。D-01 核心断言：per-client 未显式设置 →
+// 终值 5s（HUP 免疫泄漏防线默认开启——Phase 11 post-merge 实证泄漏窗的默认
+// 闭合，T-13-01 mitigate）；D-02 核心断言：per-client 显式 0 → stopTimeoutSet
+// ==true 且终值保持 0（尊重用户意图——不静默改写用户输入纪律，T-13-02
+// mitigate）；shared 未设 → 终值 0 逐字不变（v1.0 零回归红线——「断开不退出、
+// 子进程继续运行」产品承诺，Pitfall 4）。
+func TestStopTimeoutResolution(t *testing.T) {
+	t.Setenv("WESH_CREDENTIAL", "")
+	tests := []struct {
+		name       string
+		args       []string      // CLI 通道（nil 行走 direct 直构通道）
+		direct     *config       // 直构通道（resolveStopTimeout 边界形态）
+		wantSet    bool          // parseArgs 后 stopTimeoutSet（CLI 通道断言）
+		wantParsed time.Duration // parseArgs 后 stopTimeout（落定前解析产出值）
+		wantFinal  time.Duration // resolveStopTimeout 终值（两通道共同断言）
+	}{
+		// CLI 通道：parseArgs 全链（fs.Visit 置位 + DurationVar 解析 + TOML
+		// 铺底默认 0）→ resolveStopTimeout 终值落定。
+		{name: "shared unset stays 0 (v1.0 red line)", args: []string{"--", "bash"}, wantSet: false, wantParsed: 0, wantFinal: 0},
+		{name: "per-client unset resolves to 5s (D-01)", args: []string{"--session-mode", "per-client", "--", "bash"}, wantSet: false, wantParsed: 0, wantFinal: 5 * time.Second},
+		{name: "per-client explicit zero respected (D-02)", args: []string{"--session-mode", "per-client", "--stop-timeout", "0", "--", "bash"}, wantSet: true, wantParsed: 0, wantFinal: 0},
+		{name: "per-client explicit 3s kept", args: []string{"--session-mode", "per-client", "--stop-timeout", "3s", "--", "bash"}, wantSet: true, wantParsed: 3 * time.Second, wantFinal: 3 * time.Second},
+		{name: "shared explicit zero kept", args: []string{"--stop-timeout", "0", "--", "bash"}, wantSet: true, wantParsed: 0, wantFinal: 0},
+		// 直构通道：resolveStopTimeout 判定只依赖 sessionMode × stopTimeoutSet
+		// 两键的边界证据（CLI 通道形态的锚定压缩——TestConfigMerge 的 TOML
+		// 置位断言补 TOML 源）。
+		{name: "direct per-client unset", direct: &config{sessionMode: server.SessionModePerClient}, wantSet: false, wantParsed: 0, wantFinal: 5 * time.Second},
+		{name: "direct shared unset", direct: &config{}, wantSet: false, wantParsed: 0, wantFinal: 0},
+		{name: "direct per-client set zero kept", direct: &config{sessionMode: server.SessionModePerClient, stopTimeoutSet: true}, wantSet: true, wantParsed: 0, wantFinal: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg config
+			if tt.direct != nil {
+				cfg = *tt.direct
+			} else {
+				var err error
+				cfg, _, err = parseArgs(tt.args)
+				if err != nil {
+					t.Fatalf("parseArgs(%v): %v", tt.args, err)
+				}
+				if cfg.stopTimeoutSet != tt.wantSet {
+					t.Errorf("stopTimeoutSet = %v, want %v（CLI 通道显式位置位——fs.Visit 第八位）", cfg.stopTimeoutSet, tt.wantSet)
+				}
+				if cfg.stopTimeout != tt.wantParsed {
+					t.Errorf("stopTimeout (parsed) = %v, want %v（落定前解析产出值）", cfg.stopTimeout, tt.wantParsed)
+				}
+			}
+			final := resolveStopTimeout(cfg)
+			if final.stopTimeout != tt.wantFinal {
+				t.Errorf("resolveStopTimeout = %v, want %v（终值落定）", final.stopTimeout, tt.wantFinal)
+			}
+		})
+	}
 }
 
 // TestLoadCustomIndex（09-04 D-07/D-08 启动读入矩阵）：不可读拒绝（chmod 000
