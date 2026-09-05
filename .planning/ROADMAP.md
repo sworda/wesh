@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 10: 模式装配与接缝** - --session-mode flag + TOML 键 + Options/StartWithSize 接缝，全部 inert 零回归 (completed 2026-09-03)
 - [x] **Phase 11: per-client 生命周期主干** - attach spawn / 断开即杀进程组 / EXIT 私有化 / teardown 恰好一次 (completed 2026-09-04)
 - [x] **Phase 12: per-client 交互与背压语义** - resize 直通 / ro 门控 / 重连 reset / 停读续读 / 1013 踢出 (completed 2026-09-04)
-- [ ] **Phase 13: 资源防线与终结语义** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组 / 第二终结源 / 退出码对齐 / metrics 审计 per-client 粒度 / WESH_REMOTE_USER
+- [x] **Phase 13: 资源防线与终结语义** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组 / 第二终结源 / 退出码对齐 / metrics 审计 per-client 粒度 / WESH_REMOTE_USER (completed 2026-09-05)
 - [ ] **Phase 14: 双模式验证矩阵、标定与 herdr UAT** - 双模式 -race 门 / 协议层 + Playwright UAT / 负载矩阵回填 / 模式文档
 
 ## Phase Details
@@ -528,7 +528,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   8. 审计日志会话生命周期事件（session_start/session_end/spawn_failed）携带 pid 归因与 client_id 关联键，可串联单个 per-client 会话全生命周期；spawn_failed 事件零敏感值
   9. per-client 模式下 --auth-header 透传的用户名经 SEC-07 sanitize 后作为 WESH_REMOTE_USER 出现在该客户端子进程环境中（Web shell 内 env 可见，键名白名单固定）；shared 模式不注入（D-15 收窄语义不变）
 
-**Plans**: 7/8 plans executed
+**Plans**: 8/8 plans executed
 **Wave 1**
 
 - [x] 13-01-PLAN.md — D-01 one-way 确认门 + stop-timeout 双默认值（per-client 未设默认 5s / 显式 0 尊重+warn / shared 字面 0 不变）+ 显式位第八位 + 三态测试 + 双文档行（PC-08）
@@ -553,7 +553,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 13-08-PLAN.md — 收口闸六段式 + diff 白名单审查 + 四需求勾选 + Key Decisions 登记 + D-10 文档明示段（全需求）
+- [x] 13-08-PLAN.md — 收口闸六段式 + diff 白名单审查 + 四需求勾选 + Key Decisions 登记 + D-10 文档明示段（全需求）
 
 含：容量硬帽机制（闸前检查 + 注册点复检回收）经 Phase 11 D-03 提前落地，本 phase 防线本体为 spawn 双令牌桶 + stop-timeout 默认值重议 + Shutdown N 进程组快照逐组信号（原裁决项④已消解）；churn 负载测试（合法票据 10rps × 30s，断言 RSS/goroutine/fd 有界）；pcSupervisor 单例（hubCond 等 `(pcExitReq||exiting) && active==0`，termOnce/terminate 单点收口——「exitf 唯一收口」per-client 同构映射）、healthz/metrics 四个 OQ 逐项裁决落地（规划期确认门）、metricsSeries17 镜像扩展 + 零身份 label 红线扩到新 series。准则 1-4 为研究锁定防线（PITFALLS #4 fork bomb / #8 HUP 免疫泄漏 ×N / #10 Shutdown 面），是 PC-08 硬不变量在 churn 与关停语境下的操作化。churn 防护先行于 Phase 14 压测（防护缺失会使压测失真）。
 
@@ -593,5 +593,5 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
-| 13. 资源防线与终结语义 | v1.1 | 7/8 | In Progress|  |
+| 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete | 2026-09-05 |
 | 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |

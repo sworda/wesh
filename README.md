@@ -93,7 +93,9 @@ share read-only:  http://127.0.0.1:7681/s/<ro-token>/
 ./wesh --writable --write-policy all --credential alice:密码 --tls-cert cert.pem --tls-key key.pem -- bash
 ```
 
-`--session-mode=shared|per-client` 选择会话模式（默认 `shared`；`per-client` 行为装配中，当前版本与 `shared` 等价）。`--stop-timeout` 默认值按模式分岔：`shared` 默认 `0`（不补发 SIGKILL，子进程继续运行）；`per-client` 未显式设置默认 `5s`（客户端断开后 SIGKILL 兜底回收 SIGHUP 免疫进程），显式 `0` 尊重用户意图但启动时警告泄漏风险。
+`--session-mode=shared|per-client` 选择会话模式（默认 `shared`）。`--stop-timeout` 默认值按模式分岔：`shared` 默认 `0`（不补发 SIGKILL，子进程继续运行）；`per-client` 未显式设置默认 `5s`（客户端断开后 SIGKILL 兜底回收 SIGHUP 免疫进程），显式 `0` 尊重用户意图但启动时警告泄漏风险。
+
+**保活先杀时序**（默认 `--ping-interval=5s`）：TCP 级完全停止读取的连接（不回 pong）会在「停止读取后 5s~10s」窗口内被 pong 超时以 1006 关闭——比慢客户端看门狗（1013）更早收口。真实浏览器结构性不会触发（网络栈自动回 pong，不受页面节流影响）；自管 WebSocket socket 的客户端（如 herdr 类）若停读则适用——不回 pong 的连接本就是死连接，1006 更早回收是正确行为。1006 会触发前端自动重连；`per-client` 模式下重连即获得全新进程，这正是真死连接场景的合理恢复路径。
 
 ## 安全默认值
 

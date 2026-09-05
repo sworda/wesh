@@ -4,16 +4,16 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 13
 current_phase_name: resource-defense
-status: executing
-stopped_at: Completed 13-07-PLAN.md
-last_updated: "2026-09-05T19:20:39.333Z"
+status: verifying
+stopped_at: Completed 13-08-PLAN.md — Phase 13 收口（8/8），ready for verification
+last_updated: "2026-09-05T19:50:20.059Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 25
-  completed_plans: 24
+  completed_plans: 25
 ---
 
 # Project State
@@ -29,10 +29,10 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 
 Phase: 13 (resource-defense) — EXECUTING
 Plan: 8 of 8
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-09-05 — Phase 13 execution started
 
-Progress: [██████████] 96%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -81,6 +81,7 @@ Progress: [██████████] 96%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 13 P05 | 19min | 2 tasks | 6 files |
 | Phase 13 P06 | 23min | 2 tasks | 11 files |
 | Phase 13 P07 | 27min | 2 tasks | 2 files |
+| Phase 13 P08 | 37min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -149,6 +150,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 13-06] SEC-09 WESH_REMOTE_USER 落地：whitelistEnv 第三参空串不出键（键名白名单固定代码常量由 pty 包单侧定义）+ SpawnFunc 三参签名全链 + main.go 闭包 startOpts 局部复制防串台（T-13-21）；startPerClientServer 默认 spawnFn 升级生产镜像完整形态（注释契约真值优先）；签名扩散波及 shutdown/metrics/events 三测试文件（plan files_modified 枚举缺口，WINDOWS #36）；SEC-09 勾选留 phase 末（13-07 S6 进程级 env 回读未齐）
 - [Phase ?]: [Phase 13-07] phase13.mjs 六场景两轮 29/29（phase12 同构第三代 + dialAttach 双形态 dial 合流）；S2 KILL 兜底默认 5s 三面判别（~2s 存活 + ESRCH + elapsed≥4s 下界，实测 5.0s）；S1 事件/计数器/拒绝数三方精确相等 + XFF 换键双态（事件 remote==XFF 链首）；S6c printenv 缺席断言以 echo 标记程序序锚定
 - [Phase ?]: [Phase 13-07] TestChurn churn 负载格：10rps×30s（300 次）生产默认桶参数零覆写——attached=33/rejected=267/throttled=267、gor 8→8/fd 11→11/mem +110KB 精确回落基线；断言全部基线差值形态（gor/mem/fd 双采样 + 回收轮询 + 容差标定注释——Pitfall 7）；spawn_total==attached 程序序精确对照；PC-08/09/SEC-09/OPS-12 勾选留 13-08（Task 2 承载）
+- [Phase ?]: [Phase 13-08] 收口闸六段式全绿（零回归双证据 + phase13 两轮 29/29 + churn 格 + diff 白名单 23 文件零外改）；phase 基点 = e0ae66b^（首提交父提交，12-05 先例同构）；PC-08/09/SEC-09/OPS-12 四需求勾选收口（v1.1 10/15）
+- [Phase ?]: [Phase 13-08] WR-02 闭合回指：waitDone 非阻塞 select 结构性栅栏落地且同构覆盖三处 kill(-pgid) 面（teardown 快半段/补 KILL 回调/Shutdown 快照循环）——结构性消除非风险接受；D-10 文档段落地（README 保活先杀时序 + CONFIGURATION ping-interval 小节）；gofmt 三处 deferred 存量与 README「per-client 装配中」失实残留收口期归一
 
 ### Pending Todos
 
@@ -170,6 +173,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-05T19:20:39.314Z
-Stopped at: Completed 13-07-PLAN.md
+Last session: 2026-09-05T19:50:20.038Z
+Stopped at: Completed 13-08-PLAN.md — Phase 13 收口（8/8），ready for verification
 Resume file: None

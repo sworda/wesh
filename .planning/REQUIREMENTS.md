@@ -84,8 +84,8 @@
 - [x] **PC-05**: per-client 模式下 RESIZE 直通本会话 TIOCSWINSZ（钳制 [1,1000] 与 50ms 防抖保留），无仲裁器、无 'W' 约束帧
 - [x] **PC-06**: per-client 模式下断线重连成功即获得全新进程；前端按 Welcome 下发的模式位在重连分支执行 terminal.reset() 清屏（旧屏残留对新进程无意义）
 - [x] **PC-07**: ro 客户端在 per-client 模式下照常 spawn 独立进程，其 INPUT 被服务端丢弃（ro=自有进程输入门控）；每客户端输入限速保留
-- [ ] **PC-08**: per-client 模式下 `--max-clients` 兼任并发进程上限：握手 503 闸保留 + spawn 前 hubMu 内复检计数（防 ttyd 式 == 闸 + 异步 spawn 窗口的并发超编）；并发子进程数 ≤ max-clients 为硬不变量
-- [ ] **PC-09**: `--once` / `--exit-when-empty` / 优雅关停语义适配：触发条件（计数归零）不变，终结目标为全部存活 per-client 进程组各执行一遍 stop-signal 序列；注册表空迁移存在显式第二终结源（无子进程可等时仍能退出）
+- [x] **PC-08**: per-client 模式下 `--max-clients` 兼任并发进程上限：握手 503 闸保留 + spawn 前 hubMu 内复检计数（防 ttyd 式 == 闸 + 异步 spawn 窗口的并发超编）；并发子进程数 ≤ max-clients 为硬不变量
+- [x] **PC-09**: `--once` / `--exit-when-empty` / 优雅关停语义适配：触发条件（计数归零）不变，终结目标为全部存活 per-client 进程组各执行一遍 stop-signal 序列；注册表空迁移存在显式第二终结源（无子进程可等时仍能退出）
 - [x] **PC-10**: per-client 慢客户端保护：每客户端有界 outbox 写满 1013 踢出（无全局信用门；自然反压为停读该 PTY→内核缓冲满→子进程写阻塞）
 - [x] **PC-11**: per-PTY 停读/续读背压（ttyd pty_pause/resume parity）：慢客户端先停读其 PTY 而非立即踢出，恢复后自动续读；持续过载仍按 PC-10 踢出
 - [ ] **PC-12**: 模式语义文档：README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 时经多路复用汇聚）；修正 v1.0「GoTTY 式共享进程模型」误记（GoTTY 实为 per-connection spawn，源码已核实）
@@ -93,11 +93,11 @@
 
 ### 安全（SEC 续）
 
-- [ ] **SEC-09**: per-client 模式下 `--auth-header` 透传的用户名注入该客户端子进程环境变量（`WESH_REMOTE_USER`；键名白名单固定、值沿用 SEC-07 sanitize 清洗）；shared 模式保持 D-15 收窄语义（仅审计归因）不变
+- [x] **SEC-09**: per-client 模式下 `--auth-header` 透传的用户名注入该客户端子进程环境变量（`WESH_REMOTE_USER`；键名白名单固定、值沿用 SEC-07 sanitize 清洗）；shared 模式保持 D-15 收窄语义（仅审计归因）不变
 
 ### 部署运维（OPS 续）
 
-- [ ] **OPS-12**: /metrics 与审计日志 per-client 粒度：活跃会话数 gauge、spawn/kill 计数器、会话生命周期事件带 pid 归因；零身份 label 红线保持
+- [x] **OPS-12**: /metrics 与审计日志 per-client 粒度：活跃会话数 gauge、spawn/kill 计数器、会话生命周期事件带 pid 归因；零身份 label 红线保持
 
 ## v2 Requirements
 
@@ -195,14 +195,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PC-05 | Phase 12 | Complete |
 | PC-06 | Phase 12 | Complete |
 | PC-07 | Phase 12 | Complete |
-| PC-08 | Phase 13 | Pending |
-| PC-09 | Phase 13 | Pending |
+| PC-08 | Phase 13 | Complete |
+| PC-09 | Phase 13 | Complete |
 | PC-10 | Phase 12 | Complete |
 | PC-11 | Phase 12 | Complete |
 | PC-12 | Phase 14 | Pending |
 | PC-13 | Phase 14 | Pending |
-| SEC-09 | Phase 13 | Pending |
-| OPS-12 | Phase 13 | Pending |
+| SEC-09 | Phase 13 | Complete |
+| OPS-12 | Phase 13 | Complete |
 
 **Coverage:**
 
@@ -213,4 +213,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-09-04 — Phase 12 收口：PC-05/06/07/10/11 五条勾选（12-05 收口闸六段式全绿 + 三证据链：Go 新测组 12 测 + phase12.mjs 六场景两轮 + phase12-dom 三场景；期望值逐字未动 diff 白名单审查）；v1.1 累计 6/15（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12）*
+*Last updated: 2026-09-05 — Phase 13 收口：PC-08/PC-09/SEC-09/OPS-12 四条勾选（13-08 收口闸六段式全绿 + 四证据链：Go 新测组 26 测 -race 逐名 + phase13.mjs 六场景两轮 29/29×2 + churn 负载格 300 次/10rps 资源回落基线 + 期望值逐字未动 diff 白名单审查）；v1.1 累计 10/15（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12；PC-08/09/SEC-09/OPS-12→13）*

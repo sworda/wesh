@@ -54,7 +54,7 @@ command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则
 | `bind` | 字符串 | `"0.0.0.0"` | 监听地址 |
 | `writable` | 布尔 | `false` | 客户端输入总闸（默认只读） |
 | `write-policy` | 字符串 | `"owner"` | `owner`（首写者独占，断线递补）或 `all`（全员可写）；仅 `writable` 开启时有意义 |
-| `session-mode` | 字符串 | `"shared"` | `shared`（多客户端共享同一进程，默认）或 `per-client`（每 WS 客户端独立 PTY 进程——行为装配中，当前版本与 `shared` 等价） |
+| `session-mode` | 字符串 | `"shared"` | `shared`（多客户端共享同一进程，默认）或 `per-client`（每 WS 客户端独立 PTY 进程，断开即终结） |
 | `max-clients` | 整数 | `32` | 最大并发 attach 客户端数；满员新客户端收到 503 |
 | `once` | 布尔 | `false` | 只接受一个客户端并在其断开后退出（≡ `max-clients=1` + `exit-when-empty` 立即退出） |
 | `exit-when-empty` | 字符串 | 不开启 | 所有客户端断开后退出：`"true"`/`"0"` = 立即；`"30s"` = 重连宽限 |
@@ -151,7 +151,7 @@ wesh 采取「显式哲学」：绝大多数键可选且有默认值，以下情
 | `bind` | `0.0.0.0` | 全网卡（非 loopback——触发凭据/明文校验矩阵） |
 | `writable` | `false` | 只读会话 |
 | `write-policy` | `owner` | 首写者独占 + 按序递补 |
-| `session-mode` | `shared` | `per-client` 行为装配中，当前与 `shared` 等价 |
+| `session-mode` | `shared` | `per-client` 下每 WS 客户端独立 PTY 进程（断开即终结，重连=全新进程） |
 | `max-clients` | `32` | 满员 503 |
 | `ping-interval` | `5s` | `0` = 禁用保活 |
 | `osc52` | `false` | 剪贴板写默认关 |
@@ -166,6 +166,16 @@ wesh 采取「显式哲学」：绝大多数键可选且有默认值，以下情
 | `tls-cert`/`tls-key`/`socket`/`socket-owner`/`base-path`/`auth-header`/`cwd`/`index` | 空串 | 未配置 |
 
 TLS 未配置（`--tls-cert`/`--tls-key` 成对给出才启用）时为明文 HTTP——非 loopback + 凭据场景会被启动校验矩阵拒绝，除非给 `--insecure-http`。
+
+### `ping-interval` 与断开时序
+
+WS 保活 ping 按间隔发送、仅 pong 超时断开（读路径恒无 deadline，`"0"` 禁用保活）。一个需要知晓的时序细节：**pong 超时（1006）先于慢客户端踢出（1013）**——
+
+- 默认 `--ping-interval=5s` 下，TCP 级完全停止读取的连接（连 pong 都不回）会在「停止读取后 5s~10s」窗口内被以 1006（pong 超时语义）关闭：服务端写 ping 控制帧的内建 5s 写超时在连接满发送窗口时同样判读为 pong 超时，而 `per-client` 慢客户端看门狗（dwell 10s → 1013 `slow_consumer`）对该类连接结构性后到。
+- **真实浏览器结构性不会触发**：浏览器 WebSocket 网络栈自动回复 pong，页面 JS 节流、后台标签页停读均不影响。
+- **自管 socket 的客户端**（如 herdr 类直接持有 WebSocket socket 的程序）若停止读取则适用该时序——不回 pong 的连接本就是死连接，1006 更早收口是正确行为。
+- 1006 触发前端自动重连；`per-client` 模式下重连即获得全新进程——真死连接场景下这是合理的恢复路径，不要误判为看门狗失效。
+- 测试注记：需要隔离验证 dwell 看门狗行为的场景以 `--ping-interval=0` 关闭保活（仓库 UAT `web/uat/phase12.mjs` S6 的既定形态）。
 
 ## 按环境覆盖
 
