@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 28
+open_count: 30
 waived_count: 0
 fixed_count: 3
-total_count: 31
-last_updated: 2026-09-03T18:55:25.878Z
+total_count: 33
+last_updated: 2026-09-04T15:23:02.537Z
 ---
 
 # Broken Windows Ledger
@@ -46,6 +46,8 @@ last_updated: 2026-09-03T18:55:25.878Z
 | 29 | 11 | deviation | internal/server/perclient_test.go |  | 11-04 执行期勘误：plan 文本 kill -TERM $$ 对交互 shell 不致死（交互 shell 无 trap 忽略 SIGTERM），实测修正为 kill -HUP $$（exit_test.go 信号夹具同款），断言面不变——已修复并锁定，非遗留缺陷 | open |  | 2026-09-03T18:27:12.817Z |  |
 | 30 | 11 | deviation | web/uat/phase11.mjs |  | 11-05: S5d 自杀信号 plan 文本 kill -TERM $$ 勘误为 kill -HUP $$（交互 shell 无 trap 忽略 SIGTERM——11-04 实测先例 + STATE 裁决「后续 plan 信号夹具直接用 HUP/trap」；断言面 -1+大写 SIGHUP+1000 不变） | open |  | 2026-09-03T18:55:25.713Z |  |
 | 31 | 11 | unrun-verify | web/uat/phase11.mjs |  | 11-05: S4b 1006 真实异常断开形态 skipped+reason（CODEBUDDY.md §5 平台豁免——OS 断网时序 + Node 原生 WebSocket 无 TCP 层强杀面）；协议层等价物 S4a（正常关闭→ESRCH）+ 11-01 挂点覆盖论证 + 11-04 竞态注入测已覆盖 | open |  | 2026-09-03T18:55:25.878Z |  |
+| 32 | 12 | deviation | web/uat/phase12.mjs |  | S6 以 --ping-interval=0 隔离 dwell 看门狗取证（默认 ping 下 dwell 1013 被 1006 pong_timeout 先杀——writeControl 5s 写超时交互，Phase 13 裁决，STATE Blockers 登记） | open |  | 2026-09-04T14:59:05.938Z |  |
+| 33 | 12 | deviation | internal/server/export_test.go |  | 12-05 收口闸 diff 审查白名单枚举缺口：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——三轴裁决（plan 授权/append-only/零断言）登记为白名单补充项①，非回归；裁决详情见 12-05-SUMMARY 段⑥ | open |  | 2026-09-04T15:23:02.537Z |  |
 
 ````json
 [
@@ -419,6 +421,30 @@ last_updated: 2026-09-03T18:55:25.878Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-03T18:55:25.878Z",
+    "resolved_at": null
+  },
+  {
+    "id": 32,
+    "kind": "deviation",
+    "phase": "12",
+    "file": "web/uat/phase12.mjs",
+    "line": null,
+    "description": "S6 以 --ping-interval=0 隔离 dwell 看门狗取证（默认 ping 下 dwell 1013 被 1006 pong_timeout 先杀——writeControl 5s 写超时交互，Phase 13 裁决，STATE Blockers 登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-04T14:59:05.938Z",
+    "resolved_at": null
+  },
+  {
+    "id": 33,
+    "kind": "deviation",
+    "phase": "12",
+    "file": "internal/server/export_test.go",
+    "line": null,
+    "description": "12-05 收口闸 diff 审查白名单枚举缺口：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——三轴裁决（plan 授权/append-only/零断言）登记为白名单补充项①，非回归；裁决详情见 12-05-SUMMARY 段⑥",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-04T15:23:02.537Z",
     "resolved_at": null
   }
 ]

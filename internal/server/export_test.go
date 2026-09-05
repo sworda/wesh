@@ -50,3 +50,17 @@ func (s *Server) PCSessionsLenForTest() int {
 	defer s.hubMu.Unlock()
 	return len(s.pcSessions)
 }
+
+// 12-03 观测出口（PC-10/PC-11 停读/续读/dwell 测试的数据源）：返回
+// registry.gateTransitions 当前值（hubMu 内读）。递增点 = shared 信用门
+// 置位/清位（kickOrCreditLocked/afterDrain）与 per-client 停读/续读
+// （perclient.go ReadLoop 输出闭包，D-05 mode-agnostic 聚合）——per-client
+// 单模式实例下只有后两者可达，差值断言即闭包两递增点的直接观测。故障注入
+// 语义仅服务测试：生产路径本计数只经 metrics.go snapshotMetrics 锁内快照
+// 读取（wesh_credit_gate_transitions_total 既有 series）。调用方不得持
+// hubMu（上方 ShrinkOutboxForTest 注释形态同款纪律）。
+func (s *Server) GateTransitionsForTest() int {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	return s.registry.gateTransitions
+}

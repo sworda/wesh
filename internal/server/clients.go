@@ -65,6 +65,28 @@ const (
 	// 为刚 attach 的消费端（attach+6ms / attach+177ms），宽限期直接封堵该窗口。
 	// 活跃消费端恢复是毫秒级（三个数量级余量）。Phase 9 负载测试标定回填。
 	defaultAttachGrace = 500 * time.Millisecond
+	// defaultSlowDwell per-client 慢客户端停读态 dwell 踢出阈值默认值（10s，
+	// 12-03，PC-10/PC-11，D-02/D-03）：per-client ReadLoop 输出闭包停读（阻塞
+	// 持帧）连续无恢复超过本值 → 1013 slow_consumer（kickSlowConsumerLocked
+	// 既有序列）；每次续读（outbox drain 恢复信号唤醒、持帧重试成功）重置计时
+	// ——慢但在前进的客户端永不被踢（D-02 判据核心）。
+	//
+	// 量级依据（12-CONTEXT specifics）：涵盖 attach 初期 outbox 瞬态满（上方
+	// defaultAttachGrace 500ms 场景的 ×20 余量）与分钟级内真慢不踢的「在前进」
+	// 边界；浏览器后台标签页节流（Chrome 定时器 ~1Hz）可超 10s 无消费——已知
+	// 风险接受：该场景 1013 后重连即新进程（PC-06）恢复成本一次 F5，ttyd 同
+	// 场景直接丢数据无提示。如 UAT 实证成为痛点，常量改值非公开契约变更
+	//（D-03）。
+	//
+	// 与 shared 侧废弃的 defaultGateDwell（本块上方第 5 轮实证废弃记录）的
+	// 区别：该方案死于「全体可写端均满 → 置信用保护」语义冲突（TestGlobalCredit
+	// 双 stall 场景踢出持信用端，kickOrCreditLocked 演化记录第 5 轮）——那是
+	// shared fan-out 不能阻塞读循环的特有约束；per-client 单消费者无误判面、
+	// 无信用集，冲突结构性不存在（D-02/D-04 论证）。反面教材而非母本。
+	//
+	// 刻意不暴露 CLI flag/TOML 键（D-03）——零调优需求，公开契约面不膨胀；
+	// Options.SlowDwell 仅为测试覆写通道（OutboxBytes 同档三段式）。
+	defaultSlowDwell = 10 * time.Second
 )
 
 // WritePolicy 取值（D-05 公开 CLI 契约——--write-policy=owner|all，全名无短选项
@@ -176,17 +198,25 @@ type client struct {
 // outbox 是每客户端字节有界输出队列（RESEARCH Pattern 2 逐字形态）：存 hub 组好的
 // 共享只读帧引用，逐客户端只记字节账——共享帧使全局 WS 出站内存 ≈ 最慢者滞后量
 // 而非 Σ。notEmpty 为 cap 1 信号量：trySend 非阻塞投递，writer 阻塞消费。
+//
+// notFull（12-03，PC-10/PC-11，D-01）为 cap 1 恢复信号量（notEmpty 同形）：
+// drain() 整批 swap 后非阻塞发送，消费者 = per-client 持帧闭包（perclient.go
+// ReadLoop 输出闭包停读态 select 等「outbox 由满转非满」）。shared 路径零
+// 消费者（onChunk/kickOrCreditLocked 不等本通道）：token 滞留缓冲至下一次
+// 持帧（若发生）——至多一次伪唤醒，持帧重试失败继续 select 无死锁面（drain
+// 每次都发新 token）。信号频率上界 = writer drain 频率，无广播放大面（T-12-09）。
 type outbox struct {
 	mu       sync.Mutex
 	q        [][]byte // 共享帧（hub 分配、只读，引用计数靠 GC 自然回收）
 	bytes    int
 	cap      int
 	notEmpty chan struct{}
+	notFull  chan struct{}
 }
 
 // newOutbox 构造字节容量为 cap 的 outbox（cap 由 s.outboxBytes 供给，测试可覆写）。
 func newOutbox(cap int) *outbox {
-	return &outbox{cap: cap, notEmpty: make(chan struct{}, 1)}
+	return &outbox{cap: cap, notEmpty: make(chan struct{}, 1), notFull: make(chan struct{}, 1)}
 }
 
 // trySend 非阻塞投递共享帧：超容量返回 false（调用方唯一处置 = 1013 踢出该客户端，
@@ -211,12 +241,21 @@ func (o *outbox) trySend(frame []byte) bool {
 // drain swap 出整队并重置字节计数。信用门半水位恢复判定（afterDrain）在写出成功
 // 后重新读当前字节——drain 返回的预重置计数不参与门判定（写出期间新入队的部分
 // 才是迟滞带语义的承载）。
+//
+// 12-03（PC-10/PC-11，D-01）恢复信号挂点：整批 swap 后 outbox 必为非满——
+// 尾部非阻塞发送 notFull（cap 1，已有信号在飞则接收方必会被唤醒，select
+// default 不阻塞，trySend notEmpty 同款形态）。锁序不受影响（outbox 自有 mu
+// 内，绝不触 hubMu——恢复通道不得引入 hubMu 反向依赖）。
 func (o *outbox) drain() (batch [][]byte, bytes int) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	batch, bytes = o.q, o.bytes
 	o.q = nil
 	o.bytes = 0
+	select {
+	case o.notFull <- struct{}{}:
+	default:
+	}
 	return batch, bytes
 }
 
@@ -312,6 +351,11 @@ type registry struct {
 	// gateTransitions 信用门开闭周期计数（kickOrCreditLocked 置位 creditBlocked 与
 	// afterDrain 清位两点递增）：Phase 8 OPS-07 门开闭周期计数挂点（review #10）；
 	// hubMu 保护，零 atomic 不违 R-07 单锁纪律。
+	// 12-03（PC-10/PC-11，D-05）新增 per-client 停读/续读两递增点（perclient.go
+	// ReadLoop 输出闭包持帧阻塞/恢复，hubMu 内）——mode-agnostic 聚合（与两模式
+	// 1013 kicks 同构），metrics.go 零改动：既有 series
+	// wesh_credit_gate_transitions_total 多两个递增点，非新增 series（17→N 镜像
+	// 扩展归 Phase 13，Phase 11 D-04 红线不违）。
 	gateTransitions int
 	// clientsTotal 累计注册客户端总数（08-04 OPS-07，D-05 连接三件套之二——
 	// counter 只增不减，与 n 的当前 gauge 成对）：hubMu 保护（与 kicks 同形态，
@@ -565,7 +609,7 @@ func (s *Server) afterDrain(c *client) {
 	if mode == proto.ModeRW {
 		prefs = s.clientPrefsRW
 	}
-	_ = c.outbox.trySend(proto.WelcomeFrame(mode, prefs, sd.cols, sd.rows)) // 补发阻塞期错过的尺寸推送
+	_ = c.outbox.trySend(proto.WelcomeFrame(mode, prefs, sd.cols, sd.rows, s.sessionMode)) // 补发阻塞期错过的尺寸推送
 	s.hubCond.Broadcast()
 }
 
@@ -677,7 +721,7 @@ func (s *Server) promoteNextLocked() {
 			s.registry.owner = nil // 无可递补者：下一个 rw attach 按矩阵成为新 owner
 			return
 		}
-		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW, cand.dims.cols, cand.dims.rows)) {
+		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW, cand.dims.cols, cand.dims.rows, s.sessionMode)) {
 			s.kickSlowConsumerLocked(cand) // 升格通知不可达 = stalled，同义踢出后重扫
 			continue
 		}

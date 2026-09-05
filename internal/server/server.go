@@ -118,6 +118,12 @@ type Server struct {
 	inputRate      int
 	inputBurst     int
 	resizeDebounce time.Duration
+	// slowDwell 为 per-client 停读态 dwell 踢出阈值（12-03，PC-10/PC-11，
+	// D-02/D-03）：Options.SlowDwell 经 New 零值兜底（defaultSlowDwell 10s）
+	// 后装配，运行期只读。消费点 = perclient.go ReadLoop 输出闭包停读点
+	// 武装（armSlowDwellLocked）——停读连续无恢复超本值即 1013。shared 模式
+	// 恒不消费（shared 侧 dwell 已废弃，见 defaultSlowDwell 注释反面教材段）。
+	slowDwell time.Duration
 
 	// halfOpen 为 D-04 per-IP 半开（Hello 未完成）连接计数器；
 	// acquire/release 恰好一次不变量见 halfOpenCounter 类型注释。
@@ -314,6 +320,13 @@ type Options struct {
 	// spawn 面结构性不存在）。SessionMode×SpawnFunc 互斥契约由
 	// ValidateOptions fail-fast 承载（New 之前调用）。
 	SpawnFunc func(cols, rows int) (*pty.Session, error)
+	// SlowDwell 为测试可覆写字段（12-03，PC-10/PC-11，D-02/D-03）：per-client
+	// 停读态（ReadLoop 输出闭包阻塞持帧）连续无恢复的 dwell 踢出阈值。零值
+	// 取 defaultSlowDwell（clients.go 常量区，10s——OutboxBytes 同档零值兜底
+	// 先例）。刻意不设 CLI flag/TOML 键（D-03）：零调优需求，公开契约面不
+	// 膨胀；量级依据与 shared 侧废弃 dwell 的区别论证见 defaultSlowDwell
+	// 注释。消费点 = perclient.go 停读点武装（armSlowDwellLocked）。
+	SlowDwell time.Duration
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -394,6 +407,11 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.ResizeDebounce <= 0 {
 		opts.ResizeDebounce = defaultResizeDebounce
 	}
+	// 12-03（PC-10/PC-11，D-03）：SlowDwell 零值兜底 defaultSlowDwell
+	//（OutboxBytes :382-384 三段式先例——常量声明见 clients.go 常量区）。
+	if opts.SlowDwell <= 0 {
+		opts.SlowDwell = defaultSlowDwell
+	}
 	if opts.WritePolicy == "" {
 		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
 	}
@@ -467,6 +485,9 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// SessionModeShared，SpawnFunc 本阶段 inert 零调用方）。
 		sessionMode: opts.SessionMode,
 		spawnFunc:   opts.SpawnFunc,
+		// New 装配直传（12-03，PC-10/PC-11；零值已在上方兜底
+		// defaultSlowDwell——sessionMode 同位形态）。
+		slowDwell: opts.SlowDwell,
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键
 		// 与 remote_user 提取共用同一开关，零双轨）；空串 = 零值不信任。
 		proxy: proxyInfo{trust: opts.AuthHeader != "", userHeader: opts.AuthHeader},
@@ -1075,7 +1096,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			if effMode == proto.ModeRW {
 				prefs = s.clientPrefsRW
 			}
-			cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, sd.cols, sd.rows))
+			cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, sd.cols, sd.rows, s.sessionMode))
 			s.registry.registerLocked(cl)
 			if becomeOwner {
 				s.registry.owner = cl // D-06：首个 rw attach 立 owner
@@ -1179,6 +1200,29 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 				continue // 满则丢（droppedInputs 计数已在 tryEnqueue 内递增）；限速器在前，队列满本应罕见
 			}
 		case proto.Resize:
+			// 12-02（PC-05，D-06）per-client 直通分支：RESIZE 直通本会话 PTY 的
+			// TIOCSWINSZ——DecodeResize 钳制 [1,1000] 既有（proto.go，解码层零
+			// 改动）+ 每会话 50ms 防抖（resizeMu 内写 pendingResize + resizeDeb.Reset，
+			// 到期回调 sess.Resize 仅 fdMu 不持 hubMu——锁序三规则 §5）。ro/rw
+			// 同形直通（D-06：D-09 第二闸在 per-client 分支不生效——ttyd parity，
+			// protocol.c 只门 INPUT 不门 RESIZE；per-client 下 ro 独占自己进程，
+			// 无旁观对象可保护；前端第一闸按模式位放行 = main.ts sendResize 的
+			// sessionMode 判定，两侧闸注释互指，D-06/D-07 同 plan 配对落地）。
+			// 零 Welcome 再推送：本分支不调 recalcNow/pushSessionDimsLocked
+			// （resize 仲裁/owner 递补/fan-out 在 per-client 分支不装配，arbiter
+			// 零值天然 no-op——Welcome cols/rows 即自有尺寸，G-05-1 契约 per-client
+			// 下退化为恒等式，perclient.go Welcome 组帧注释互指）。JSON 解码失败
+			// 静默丢弃（不关连接，与 shared 半侧同语义）。
+			if cl != nil && cl.pc != nil {
+				if cols, rows, ok := proto.DecodeResize(data[1:]); ok {
+					pc := cl.pc
+					pc.resizeMu.Lock()
+					pc.pendingResize = dims{cols: cols, rows: rows}
+					pc.resizeDeb.Reset(s.resizeDebounce)
+					pc.resizeMu.Unlock()
+				}
+				continue
+			}
 			// D-09 第二闸：ro 端 RESIZE 服务端直接忽略（『P2 D-13 ro 放行 RESIZE 为单
 			// 客户端语境，已被 D-09 修订』逐字登记；第一闸 = 前端 ro 不发，05-08 落地）。
 			if cl == nil || cl.mode.Load() == proto.ModeRO {

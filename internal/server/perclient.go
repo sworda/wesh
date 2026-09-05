@@ -56,9 +56,9 @@ import (
 // waitDone/teardownDone/startedAt 写一次于 attach 升档（registerLocked 与
 // pcSessions 登记之前），此后读者为该会话自有 goroutine 群（ReadLoop 闭包/
 // inputWriter/sessionWatcher/teardown 慢半段）与 hubMu 内读者——
-// happens-before 由 goroutine 启动 + hubMu 建立。exitCode/reaped 为运行期
-// 可写字段，hubMu 保护（pinger pongTimedOut「置位取 hubMu 写、detach 同锁读」
-// 先例同形态——与 hubMu 同锁免新锁类型，S6 纪律）。
+// happens-before 由 goroutine 启动 + hubMu 建立。exitCode/reaped/dwellTimer
+// （12-03）为运行期可写字段，hubMu 保护（pinger pongTimedOut「置位取 hubMu
+// 写、detach 同锁读」先例同形态——与 hubMu 同锁免新锁类型，S6 纪律）。
 type pcSession struct {
 	sess *pty.Session
 	inQ  *inputQ // 每会话独享（newInputQ(defaultInputQueueBytes)——容量常量复用）
@@ -90,6 +90,29 @@ type pcSession struct {
 	// teardownOnce 收口双触发路径（detach/kick 断开挂点 × watcher 子死
 	// 路径）——两路径都只「触发」，执行序列只有一个（Pitfall 3 恰好一次）。
 	teardownOnce sync.Once
+	// 12-02（PC-05）RESIZE 直通三字段：resizeMu 为 pendingResize 的叶锁
+	// （锁序三规则 §5——持有期间不取任何其他锁；读循环写 pendingResize 与
+	// 防抖回调读 pendingResize 经它互斥，Reset 与回调执行的并发安全由
+	// Go 1.23+ timer 语义承接）；pendingResize 为最新上报尺寸（防抖窗内
+	// 合并，到期只应用最后值——arbiter 同款语义，Pitfall 7 SIGWINCH 风暴
+	// 防线每会话粒度）；resizeDeb 为每会话防抖（共用件 debouncer，时长源
+	// s.resizeDebounce 与 arbiter 同源——不新增第二份常量，防双写漂移）。
+	// 回调锁序可证：resizeMu 内取 pendingResize → 放锁 → sess.Resize 仅
+	// fdMu（hubMu > sess.fdMu 全序不受影响，回调函数体零 hubMu）；closed
+	// 会话 Resize 返回 os.ErrClosed 静默（Attach 读循环既有纪律同款）。
+	resizeMu      sync.Mutex
+	pendingResize dims
+	resizeDeb     *debouncer
+	// dwellTimer 为停读态看门狗计时器（12-03，PC-10/PC-11，D-02/D-03）：
+	// 停读点武装（ReadLoop 输出闭包持帧阻塞起点，armSlowDwellLocked）、续读点
+	// Stop 置 nil（每次续读重置——计时器只在停读窗口存活，再停重新武装完整
+	// dwell；「慢但在前进的客户端永不被踢」的 D-02 判据核心）；到期回调 hubMu
+	// 内身份比对（pc.dwellTimer != t 即陈旧不动作）+ cl.done 早退后走
+	// kickSlowConsumerLocked 既有序列（1013 slow_consumer）。hubMu 保护——
+	// 运行期可写字段，与 exitCode/reaped 同锁先例（pinger pongTimedOut
+	//「置位取 hubMu 写、detach 同锁读」同形态）。武装/停摆两写点均在 ReadLoop
+	// 输出闭包（单 goroutine 写）+ 到期回调读，hubMu 建立 happens-before。
+	dwellTimer *time.Timer
 }
 
 // capacityMessage 是 D-02 容量拒绝的统一文案（11-03）：pre-spawn 闸与注册点
@@ -171,6 +194,17 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 		teardownDone: make(chan struct{}),
 		startedAt:    time.Now(),
 	}
+	// 12-02（PC-05）每会话 RESIZE 防抖装配（共用件 debouncer，构造即 stopped：
+	// 首次 RESIZE 上报才武装——server.go RESIZE case per-client 直通分支在
+	// resizeMu 内写 pendingResize 后 Reset）。回调：resizeMu 内取 pendingResize
+	// → 放锁 → sess.Resize 仅 fdMu（锁序三规则 §5——回调函数体绝不取 hubMu；
+	// closed 会话返回 os.ErrClosed 静默）。
+	pc.resizeDeb = newDebouncer(s.resizeDebounce, func() {
+		pc.resizeMu.Lock()
+		d := pc.pendingResize
+		pc.resizeMu.Unlock()
+		_ = pc.sess.Resize(d.cols, d.rows)
+	})
 	s.hubMu.Lock()
 	// D-03 注册点复检（11-03）：spawn 成功后在注册段的同一 hubMu 持有内复检
 	// 容量——竞态窗口 = 两并发升档同时过上方 pre-spawn 闸（Pitfall 4 超编形态：
@@ -214,7 +248,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	if effMode == proto.ModeRW {
 		prefs = s.clientPrefsRW
 	}
-	cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, h.Cols, h.Rows))
+	cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, h.Cols, h.Rows, s.sessionMode))
 	s.registry.registerLocked(cl)
 	s.pcSessions[pc] = struct{}{}
 	s.hubMu.Unlock()
@@ -247,9 +281,34 @@ func (s *Server) startSessionGoroutines(ctx context.Context, cl *client, pc *pcS
 	// outbox，不复用全局 onChunk 扇出，Pitfall 6 红线）：detach 门提前返回
 	//（SIGHUP→死亡窗口期不做无谓组帧）；同一 mc.ptyOutputBytes 计数器聚合
 	// 口径不变；每帧 make+copy（P5-1 别名红线——ReadLoop 缓冲复用，
-	// pty/io.go:14）；trySend 失败 → hubMu 内 kickSlowConsumerLocked（1013
-	// 既有机械零改动复用——arbiter 零值下 removeMember/recalcNow 天然
-	// no-op，Go nil map delete 安全，研究 §1.1）。
+	// pty/io.go:14；阻塞持帧期间帧在闭包栈上，读循环自然停摆无别名窗口）。
+	//
+	// 12-03（PC-10/PC-11，D-01/D-02/D-03/D-04/D-05）背压语义：trySend 失败
+	// 不再直踢 1013（Phase 11 形态），改为阻塞持帧 + dwell 看门狗——
+	//   - 停读：闭包阻塞持帧 → ReadLoop 停摆 → PTY 内核缓冲（64KiB）积压 →
+	//     子进程写阻塞（ttyd pty_pause 等效，不丢数据；frames 在闭包栈上）；
+	//   - 续读：outbox drain 至非满（notFull 恢复信号，clients.go）→ 重试
+	//     同一帧成功 → 返回正常读循环（gateTransitions 停读/续读两点递增，
+	//     D-05）；
+	//   - 踢出：停读态连续无恢复超过 s.slowDwell（defaultSlowDwell 10s，
+	//     Options 测试可覆写）→ dwell 到期回调 1013 slow_consumer
+	//     （armSlowDwellLocked → kickSlowConsumerLocked 既有序列）。
+	//
+	// WR-01 闭合（STATE.md Phase 11 REVIEW 遗留，D-04「dwell 涵盖不复刻」）：
+	// dwell 从停读起点武装，结构性涵盖 500ms attach 宽限（×20 余量）与一切
+	// 瞬态满箱；阻塞持帧即暂存——帧在闭包栈上 ≡ shared 侧触发帧暂存字段的
+	// 语义等价（shared fan-out 不能阻塞读循环正是该暂存层的存在理由，
+	// per-client 单消费者自由度下复刻即死代码面）——shared 信用门暂存/重投
+	// 两形态（kickOrCreditLocked/afterDrain）一律不复刻进本路径。shared 侧
+	// dwell 第 5 轮实证废弃（clients.go kickOrCreditLocked 演化记录）为反面
+	// 教材而非母本：其死因「全体可写端均满 → 置信用保护」语义冲突在
+	// per-client 单消费者下结构性不存在（D-02 论证）。
+	//
+	// 锁序红线（D-01）：持帧阻塞段绝不持任何锁（hubMu/outbox.mu 均不放行
+	// ——单消费者自由度 = 阻塞点在闭包栈上、锁全放；clients.go 信用门
+	// hubCond.Wait「持锁等待」是 shared fan-out 的唯一合法形态，本路径反向
+	// 约束）。CR-01 保持：阻塞点只在输出闭包（PTY→WS 方向），INPUT 路径
+	// 零改动。
 	go pc.sess.ReadLoop(func(chunk []byte) {
 		select {
 		case <-cl.done:
@@ -260,14 +319,96 @@ func (s *Server) startSessionGoroutines(ctx context.Context, cl *client, pc *pcS
 		frame := make([]byte, 1+len(chunk))
 		frame[0] = proto.Output
 		copy(frame[1:], chunk)
-		if !cl.outbox.trySend(frame) {
-			s.hubMu.Lock()
-			s.kickSlowConsumerLocked(cl)
-			s.hubMu.Unlock()
+		if cl.outbox.trySend(frame) {
+			return
 		}
+		// 停读点（D-05 递增点之一）：hubMu 内递增 gateTransitions + 武装
+		// dwell 看门狗（AfterFunc 三件套见 armSlowDwellLocked）。
+		s.hubMu.Lock()
+		s.registry.gateTransitions++
+		t := s.armSlowDwellLocked(cl, pc)
+		s.hubMu.Unlock()
+		// 逃逸兜底（T-12-08 双防线之一）：cl.done 逃逸路径（detach/kick/
+		// teardown→conn.Close→reader detach）return 时停掉本闭包武装的
+		// 计时器——身份比对使续读路径（已 Stop 置 nil）经本 defer 二次进入
+		// 时 no-op；另一防线 = 回调内身份比对 + cl.done 早退。
+		defer func() {
+			s.hubMu.Lock()
+			if pc.dwellTimer == t {
+				pc.dwellTimer.Stop()
+				pc.dwellTimer = nil
+			}
+			s.hubMu.Unlock()
+		}()
+		// 持帧阻塞（D-01 核心形态）：select 等 outbox.notFull（drain 恢复
+		// 信号）或 cl.done 逃逸——本段绝不持锁（上方锁序红线）；notFull
+		// 唤醒后重试同一帧，失败（防御分支——单消费者下 drain 后余量 ≥ cap
+		// 数学上必容纳本帧，不可达）继续 select 等待（drain 每次都发新
+		// token，无死锁面）。
+		resumed := false
+		for !resumed {
+			select {
+			case <-cl.done:
+				// 客户端已消亡（detach/kick/teardown）——丢帧合法
+				//（prohibition 只禁「丢帧保活连接」；已消亡端无画面可损坏）。
+				return
+			case <-cl.outbox.notFull:
+				if cl.outbox.trySend(frame) {
+					resumed = true
+				}
+			}
+		}
+		// 续读点（D-05 递增点之二 + dwell 重置，select 等待段之外——持帧
+		// 期间零锁持有的结构面证据）：每次续读重置计时——计时器只在停读
+		// 窗口存活，再停重新武装完整 dwell（D-02「慢但在前进的客户端永不
+		// 被踢」判据核心）。
+		s.hubMu.Lock()
+		s.registry.gateTransitions++
+		if pc.dwellTimer == t {
+			pc.dwellTimer.Stop()
+			pc.dwellTimer = nil
+		}
+		s.hubMu.Unlock()
 	})
 	go inputWriter(pc.sess, pc.inQ, pc.inputDone) // CR-01：读循环永不直写 master（Anti-Pattern 5）
 	go s.sessionWatcher(cl, pc)
+}
+
+// armSlowDwellLocked 武装 per-client 停读态 dwell 看门狗（12-03，PC-10/PC-11，
+// D-02/D-03）并登记 pc.dwellTimer。调用方必须已持 hubMu（停读点临界区内）；
+// 返回计时器供闭包逃逸/续读路径做身份比对与停摆。
+//
+// AfterFunc 三件套（maybeExitWhenEmptyLocked 母本，clients.go）：var 预声明
+// 自引用闭包（:= 短声明作用域起始于声明结束之后，闭包内引用 t 将编译失败）+
+// 回调首句取 hubMu（武装方持锁中，取锁成功时赋值必然已完成且可见——锁同步
+// 边）+ 身份比对/状态复查（陈旧回调不动作）。
+//
+// 到期踢出走 kickSlowConsumerLocked 既有序列（hubMu 内）：1013 wire 形态
+// Close(1013,"slow_consumer") / kicks 计数 / detach reason=kick 事件 /
+// removeMember-recalcNow（arbiter 空集天然 no-op）/ c.pc != nil teardown
+// 挂点全部既有零改动复用。三层防线（T-12-08）：①身份比对（续读 Stop 置 nil
+// 或新停读重武装后，旧回调的 t ≠ pc.dwellTimer——陈旧不动作）；②cl.done
+// 早退（客户端已消亡时 kickSlowConsumerLocked 的 removeLocked 亦幂等兜底）；
+// ③持帧闭包 defer Stop（perclient.go ReadLoop 闭包）。dwell 与 R-08 shared
+// 分工表无语义冲突（单消费者无信用集——见 defaultSlowDwell 注释反面教材段）。
+func (s *Server) armSlowDwellLocked(cl *client, pc *pcSession) *time.Timer {
+	var t *time.Timer
+	t = time.AfterFunc(s.slowDwell, func() {
+		s.hubMu.Lock()
+		defer s.hubMu.Unlock()
+		// 身份比对：陈旧回调（续读已停摆本计时器 / 新停读已重武装）不动作。
+		if pc.dwellTimer != t {
+			return
+		}
+		select {
+		case <-cl.done:
+			return // 客户端已消亡（detach/kick/teardown 收口中）——不动作
+		default:
+		}
+		s.kickSlowConsumerLocked(cl)
+	})
+	pc.dwellTimer = t
+	return t
 }
 
 // sessionWatcher 是 per-client 会话的终结者（每会话一个，子进程死亡的唯一
@@ -331,6 +472,10 @@ func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 // 移除——map delete 幂等）→ close(teardownDone)。
 func (s *Server) teardownPCLocked(pc *pcSession) {
 	pc.teardownOnce.Do(func() {
+		// 快半段：每会话 RESIZE 防抖停摆（12-02——计时器随会话消亡；teardown
+		// 后在途 RESIZE 再武装亦无害：AfterFunc 回调对 closed 会话 Resize 返回
+		// os.ErrClosed 静默，双防线）。
+		pc.resizeDeb.Stop()
 		// 快半段：信号面（Pitfall 2 reaped 栅栏——收割完成后一切 kill(-pgid)
 		// 禁发，kill-after-reap 误杀复用 pgid 结构性不可能）。
 		if !pc.reaped {

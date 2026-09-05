@@ -49,34 +49,67 @@ func arbitrate(members []dims) dims { // members = 参与集最新上报尺寸�
 	}
 }
 
+// debouncer 是「单 time.Timer reset 防抖」共用件（12-02 抽取，ROADMAP「含」：
+// arbiter 与每会话 RESIZE 直通（perclient.go resizeDeb）共用同一组件同一形态，
+// 防两份防抖实现漂移——Pitfall 7 SIGWINCH 风暴防线的组件半侧）。形态沿用
+// initArbiter 既有注释论证：AfterFunc 创建即 Stop 为 stopped 态，首次 Reset 才
+// 武装；Go 1.23+ timer 语义下 Reset/Stop 与回调并发安全，重复触发幂等（回调方
+// 自持锁序与身份复查）。时长恒由调用方传入：arbiter 与每会话实例同源消费
+// s.resizeDebounce（defaultResizeDebounce/Options.ResizeDebounce，clients.go
+// :55-58 唯一时长源）——不新增第二份常量，防双写漂移。
+type debouncer struct {
+	timer *time.Timer
+}
+
+// newDebouncer 构造即 stopped 态（AfterFunc 创建后立即 Stop——到点前永不触发，
+// 首次 Reset 才武装）。fn 为到期回调：arbiter 实例入内先取 hubMu（锁序
+// hubMu > sess.fdMu，recalcNow 既有序列）；per-session 实例只取 resizeMu 叶锁
+// 取 pendingResize 后放锁再 sess.Resize（仅 fdMu，回调函数体绝不取 hubMu——
+// 锁序三规则 §5，perclient.go 12-02）。
+func newDebouncer(d time.Duration, fn func()) *debouncer {
+	db := &debouncer{}
+	db.timer = time.AfterFunc(d, fn)
+	db.timer.Stop()
+	return db
+}
+
+// Reset 重置防抖窗（d 后触发回调；窗口内重复 Reset 合并为窗口末一次）。
+func (db *debouncer) Reset(d time.Duration) {
+	db.timer.Reset(d)
+}
+
+// Stop 停止防抖（计时器随属主消亡——per-session 实例的 teardown 挂点；
+// stopped 态下 Reset 可再武装，Go 1.23+ timer 语义）。
+func (db *debouncer) Stop() {
+	db.timer.Stop()
+}
+
 // arbiter 仲裁器状态（全部字段 hubMu 保护）：sizes 仅参与集成员（D-09 分层——
 // owner 模式仅 owner 一员 / all 模式全部生效 rw 端 / 无 --writable 纯 ro 会话
 // 全部 ro 端；含可写端会话的 ro 旁观者永不入内，其 RESIZE 经 D-09 第二闸忽略）；
-// timer 为 50ms 防抖单 time.Timer（RESIZE 上报 reset 合并风暴——PITFALLS
+// timer 为 50ms 防抖（共用件 debouncer，RESIZE 上报 reset 合并风暴——PITFALLS
 // Pitfall 10 SIGWINCH 风暴防线；attach/detach/递补升格走 recalcNow 即时重算
 // 不防抖，无风暴风险，RESEARCH Pattern 4）；last 为当前 PTY 目标尺寸（变化
 // 检测——目标尺寸不变则不发起 TIOCSWINSZ）。
 type arbiter struct {
 	sizes map[*client]dims
-	timer *time.Timer
+	timer *debouncer
 	last  dims
 }
 
 // initArbiter 装配仲裁器（New 在 hubCond 构造后、goroutine 启动前调用——timer
-// 回调与 ReadLoop 都可能在装配返回后立刻触达 arbiter 字段）。timer 以
-// AfterFunc 创建后立即 Stop 为 stopped 态：首次 reportResize 的 Reset 才武装
-// （单 time.Timer reset 防抖形态，server.go helloTimeout AfterFunc 先例；
-// 回调到期取 hubMu 做 recalcNow——Go 1.23+ timer 语义下 Reset 与回调并发安全，
-// 重复触发只是幂等重算）。Don't Hand-Roll 纪律：除本装配点外无任何 goroutine
+// 回调与 ReadLoop 都可能在装配返回后立刻触达 arbiter 字段）。防抖经共用件
+// newDebouncer 构造即 stopped 态：首次 reportResize 的 Reset 才武装（单
+// time.Timer reset 防抖形态，server.go helloTimeout AfterFunc 先例；回调到期
+// 取 hubMu 做 recalcNow）。Don't Hand-Roll 纪律：除本装配点外无任何 goroutine
 // 计时循环。
 func (s *Server) initArbiter() {
 	s.arbiter = arbiter{sizes: make(map[*client]dims)}
-	s.arbiter.timer = time.AfterFunc(s.resizeDebounce, func() {
+	s.arbiter.timer = newDebouncer(s.resizeDebounce, func() {
 		s.hubMu.Lock()
 		defer s.hubMu.Unlock()
 		s.recalcNow()
 	})
-	s.arbiter.timer.Stop()
 }
 
 // reportResize 是 RESIZE 上报入口（调用方 = server.go RESIZE case，已过 ro
@@ -169,7 +202,7 @@ func (s *Server) pushSessionDimsLocked(target dims) {
 		if mode == proto.ModeRW {
 			prefs = s.clientPrefsRW
 		}
-		frame := proto.WelcomeFrame(mode, prefs, target.cols, target.rows)
+		frame := proto.WelcomeFrame(mode, prefs, target.cols, target.rows, s.sessionMode)
 		if !c.outbox.trySend(frame) {
 			s.kickOrCreditLocked(c, frame)
 			// 踢出可能经 removeMember→嵌套 recalcNow 把 arbiter.last 推进到更新值，

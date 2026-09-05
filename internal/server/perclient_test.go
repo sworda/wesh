@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -292,6 +293,30 @@ func TestPerClientWelcomeDims(t *testing.T) {
 	}
 	if wm["cols"] != float64(111) || wm["rows"] != float64(44) {
 		t.Fatalf("Welcome cols/rows = %v/%v, want 111/44（Hello 钳制尺寸回显，无 80x24 中间态）", wm["cols"], wm["rows"])
+	}
+}
+
+// TestPerClientWelcomeSession（D-08，12-01）：per-client 模式 Welcome.session
+// e2e 断言——harness 装配（SessionMode: per-client）下 dialHelloPayload 回读
+// Welcome JSON：session=="per-client"（服务端组帧第 5 实参 s.sessionMode 的
+// 端到端证据），且 mode/cols/rows 既有键同帧共存不挤压（additive 纪律——
+// 加键不改既有键形态）。shared 模式 Welcome.session=="shared" 的协议层对照
+// 由 12-04 phase12.mjs S1 承担（本文件保 per-client 单一归属，D-11）。
+func TestPerClientWelcomeSession(t *testing.T) {
+	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, wm := dialHelloPayload(t, ctx, wsURL, 80, 24)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if wm["session"] != server.SessionModePerClient {
+		t.Fatalf("Welcome session = %v, want %q（D-08 模式位——per-client 装配组帧）", wm["session"], server.SessionModePerClient)
+	}
+	if wm["mode"] != "rw" {
+		t.Fatalf("Welcome mode = %v, want rw（Writable:true 装配；additive 键不挤压既有键）", wm["mode"])
+	}
+	if wm["cols"] != float64(80) || wm["rows"] != float64(24) {
+		t.Fatalf("Welcome cols/rows = %v/%v, want 80/24（Hello 钳制尺寸回显；additive 键不挤压既有键）", wm["cols"], wm["rows"])
 	}
 }
 
@@ -1277,8 +1302,19 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if n := healthzClients(t, wsURL); n != 0 {
-			t.Fatalf("第 %d 轮 /healthz clients = %d, want 0", i, n)
+		// /healthz 外部视图同样轮询收敛（CI flake 收口：registry.n 外部计数
+		// 递减与 pcSessions 内部视图归零存在异步窗口，macos 慢机一次性断言
+		// 翻车——PC-10 dwell 到期观测同款护栏形态，非断言弱化：2s 护栏内
+		// 必达仍是硬约束）。
+		deadline = time.Now().Add(2 * time.Second)
+		for {
+			if n := healthzClients(t, wsURL); n == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("第 %d 轮 /healthz clients 2s 内未收敛到 0（当前 %d）", i, healthzClients(t, wsURL))
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 		// 轮间 100ms 收敛等待（真实等待 + 护栏上限纪律，phase06.mjs 时序容差
 		// 论证先例的 Go 同构）——并给任何失守的第二终结触发留出暴露窗口，
@@ -1288,4 +1324,587 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 			t.Fatalf("第 %d 轮 exitf 被调用（exitCh len=%d）——per-client 会话终结绝不触达 exitf（D-10/D-13 硬约束）", i, n)
 		}
 	}
+}
+
+// ====== 12-02 增量：RESIZE 直通 / 尺寸隔离 / ro INPUT 门控 / 限速保留断言组
+// （PC-05/PC-07 服务端收口，D-11 单一家纪律——五测全部落本文件；winsize 观测面
+// 复用同包 resize_arb_test.go 的 ptySize/pollSize（creack/pty Getsize 即
+// TIOCGWINSZ 直读，io.go Resize 合法观测依据）；RESIZE 帧发送复用同包 sendResize）======
+
+// TestPerClientResizePassthroughRW（PC-05 rw case，12-02）：rw 端 dialHello(111x44)
+// → spawnedSessions[0] PTY 出生即 111x44（Hello 钳制尺寸直通，PC-03 既有语义）；
+// RESIZE 120x50 → 50ms 防抖窗后 PTY == 120x50（轮询非固定 sleep——Phase 9 flake
+// 教训；直通路径 = server.go RESIZE case cl.pc != nil 分支 → 每会话 debouncer →
+// sess.Resize 仅 fdMu）。DecodeResize 钳制 [1,1000] 在解码层既有（D-16），本测
+// 覆盖正常值域直通；越界钳制为 proto 层既有锁定（proto_test），不重复断言。
+func TestPerClientResizePassthroughRW(t *testing.T) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, mode := dialHello(t, ctx, wsURL, 111, 44)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if mode != proto.ModeRW {
+		t.Fatalf("Welcome mode = %q, want %q（Writable:true 默认装配）", mode, proto.ModeRW)
+	}
+	sess := spawnedSessions()[0]
+	pollSize(t, sess, 111, 44) // Hello 钳制尺寸出生即正确（基线）
+
+	sendResize(t, ctx, c, 120, 50)
+	pollSize(t, sess, 120, 50) // 直通 + 50ms 防抖后应用（轮询至上限 5s）
+}
+
+// TestPerClientResizePassthroughRO（PC-05 ro case，D-06）：mutate 覆写
+// Writable:false（Options 既有字段，零新装配面）→ ro 端照常独立 spawn（PC-07
+// 前半），其 RESIZE 133x55 直通自己 PTY——D-09 第二闸（ro 丢弃）在 per-client
+// 分支不生效的直行为证据；shared 半侧 ro 丢弃闸由既有 TestResizeArbitration
+// 「owner模式参与集与ro忽略闸」子测锁定（零改动全绿即保持）。
+func TestPerClientResizePassthroughRO(t *testing.T) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) { o.Writable = false })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, mode := dialHello(t, ctx, wsURL, 111, 44)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if mode != proto.ModeRO {
+		t.Fatalf("Welcome mode = %q, want %q（mutate 覆写 Writable:false）", mode, proto.ModeRO)
+	}
+	sess := spawnedSessions()[0]
+	pollSize(t, sess, 111, 44) // ro 客户端照常 spawn，Hello 尺寸出生（基线）
+
+	sendResize(t, ctx, c, 133, 55)
+	pollSize(t, sess, 133, 55) // D-06：ro RESIZE 直通自己 PTY
+}
+
+// TestPerClientResizeIsolation（PC-05 成功准则 1，12-02）：双端 attach（Hello
+// 尺寸各异）→ A RESIZE 110x50 → A 的 PTY 变 110x50、B 的 PTY 恒为自己的 Hello
+// 值 120x40（各归各会话，无仲裁无串扰）；且 attach Welcome 之后双端零 'W' 帧
+// （静默窗断言——per-client 运行期线上无 Welcome 约束帧，resize 仲裁/fan-out
+// 不装配，arbiter 零值天然 no-op）。300ms 负向余量 > 50ms 防抖窗（resize_arb_test
+// 「owner模式参与集与ro忽略闸」既有形态）：若 B 被误串扰（仲裁残留路径），防抖
+// 到期早已应用。
+func TestPerClientResizeIsolation(t *testing.T) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cA, _ := dialHello(t, ctx, wsURL, 100, 30)
+	defer cA.Close(websocket.StatusNormalClosure, "")
+	cB, _ := dialHello(t, ctx, wsURL, 120, 40)
+	defer cB.Close(websocket.StatusNormalClosure, "")
+
+	sess := spawnedSessions()
+	if len(sess) != 2 {
+		t.Fatalf("spawned sessions = %d, want 2（双端 attach 各自独立 spawn）", len(sess))
+	}
+	pollSize(t, sess[0], 100, 30) // A 各自 Hello 尺寸
+	pollSize(t, sess[1], 120, 40) // B 各自 Hello 尺寸
+
+	// 双端读泵（夹具纪律：无 per-read deadline，goroutine + 缓冲 channel +
+	// select time.After 竞速）——静默窗 'W' 帧收集通道；泵启动前 Welcome 均已
+	// 被 dialHello 消费，泵内任何 Welcome 帧即运行期约束帧违规。
+	resChA := make(chan frameRes, 16)
+	resChB := make(chan frameRes, 16)
+	quit := make(chan struct{})
+	defer close(quit)
+	go readPump(ctx, cA, resChA, quit)
+	go readPump(ctx, cB, resChB, quit)
+
+	// A resize → A winsize 变（轮询），B winsize 恒为 Hello 值（负向断言）。
+	sendResize(t, ctx, cA, 110, 50)
+	pollSize(t, sess[0], 110, 50)
+	time.Sleep(300 * time.Millisecond) // > 50ms 防抖窗余量——B 若被误串扰早已应用
+	if cols, rows := ptySize(t, sess[1]); cols != 120 || rows != 40 {
+		t.Fatalf("B PTY size = %dx%d, want 120x40——per-client 双端 resize 互不影响（PC-05）", cols, rows)
+	}
+
+	// 静默窗（select + time.After 竞速）：泵启动以来双端累积帧零 'W'——
+	// 窗口内其余帧（sh 提示符/回显等自身会话输出）允许，唯独不得有 Welcome。
+	silent := time.After(500 * time.Millisecond)
+	welcomes := 0
+	for {
+		select {
+		case r := <-resChA:
+			if r.err != nil {
+				t.Fatalf("A 静默窗 read error: %v", r.err)
+			}
+			if len(r.data) > 0 && r.data[0] == proto.Welcome {
+				welcomes++
+			}
+		case r := <-resChB:
+			if r.err != nil {
+				t.Fatalf("B 静默窗 read error: %v", r.err)
+			}
+			if len(r.data) > 0 && r.data[0] == proto.Welcome {
+				welcomes++
+			}
+		case <-silent:
+			if welcomes != 0 {
+				t.Fatalf("双端静默窗内收到 %d 帧 'W'——per-client 运行期零 Welcome 约束帧（PC-05）", welcomes)
+			}
+			return
+		}
+	}
+}
+
+// TestPerClientROInputDropped（PC-07 INPUT 门控，12-02）：ro 端（Writable:false
+// 实例）发 INPUT `echo SHOULD_NOT_ECHO\r` → 静默窗内其 OUTPUT 零 MARKER 命中
+// ——INPUT 在服务端 mode 闸被丢弃，对自身进程同样无效（ro 独占进程不构成放开
+// 输入面的理由，T-05-08 越权面保持）；rw 对照（Writable:true 实例）echo 正常
+// 回显——同一断言通道证明丢弃是 mode 闸语义而非链路故障。
+func TestPerClientROInputDropped(t *testing.T) {
+	// 半场一：ro 实例（mutate 覆写 Writable:false）——INPUT 丢弃证据。
+	{
+		_, wsURL := startPerClientServer(t, []string{"sh"}, func(o *server.Options) { o.Writable = false })
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		c, mode := dialHello(t, ctx, wsURL, 80, 24)
+		defer c.Close(websocket.StatusNormalClosure, "")
+		if mode != proto.ModeRO {
+			t.Fatalf("ro 实例 Welcome mode = %q, want %q", mode, proto.ModeRO)
+		}
+		marker := []byte("SHOULD_NOT_ECHO")
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo SHOULD_NOT_ECHO\r")...)); err != nil {
+			t.Fatalf("ro write INPUT: %v", err)
+		}
+		resCh := make(chan frameRes, 16)
+		quit := make(chan struct{})
+		defer close(quit)
+		go readPump(ctx, c, resCh, quit)
+		var acc []byte
+		silent := time.After(2 * time.Second)
+	roSilent:
+		for {
+			select {
+			case r := <-resCh:
+				if r.err != nil {
+					t.Fatalf("ro 静默窗 read error: %v", r.err)
+				}
+				if len(r.data) > 0 && r.data[0] == proto.Output {
+					acc = append(acc, r.data[1:]...)
+					if bytes.Contains(acc, marker) {
+						t.Fatalf("ro INPUT 到达自身进程——echo 结果出现在 OUTPUT（PC-07 丢弃闸失效）")
+					}
+				}
+			case <-silent:
+				if bytes.Contains(acc, marker) {
+					t.Fatalf("ro 静默窗后 OUTPUT 含 %q（PC-07 丢弃闸失效）", marker)
+				}
+				// 12-03 Rule 1 修复：原 return 使半场二（rw 对照）不可达——
+				// go vet unreachable 暴露的 12-02 真缺陷（rw 半场从未执行，
+				// 「丢弃是 mode 闸语义而非链路故障」对照证据缺位）。labeled
+				// break 退出静默窗循环，断言语义逐字不动。
+				break roSilent
+			}
+		}
+	}
+	// 半场二：rw 对照（默认 Writable:true）——同通道 echo 正常（丢弃是 mode 闸
+	// 语义而非链路故障的对照证据）。(?:\$ )? 容忍 PS1 交错形态（11-07 CI flake
+	// 修正先例）。
+	{
+		_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		c, mode := dialHello(t, ctx, wsURL, 80, 24)
+		defer c.Close(websocket.StatusNormalClosure, "")
+		if mode != proto.ModeRW {
+			t.Fatalf("rw 对照 Welcome mode = %q, want %q", mode, proto.ModeRW)
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo ECHOK_PC07\r")...)); err != nil {
+			t.Fatalf("rw write INPUT: %v", err)
+		}
+		readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^(?:\$ )?ECHOK_PC07\r?$`))
+	}
+}
+
+// TestPerClientInputRateLimitKept（PC-07 限速保留，12-02）：rw 端超速率 flood
+// INPUT（50×(3KiB+'\n') ≈ 153KiB 瞬时，≫ 64KiB burst + 32KiB/s 补充——远超
+// 每客户端限速，超限帧按 R-02 drop 语义丢弃）→ 连接不被踢不关闭（RES-02：
+// 超限唯一动作 = 丢弃 + inputDrops 计数，不断开），后续正常输入照常回显
+//（洪水后令牌恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶
+// 数学确定性：250ms × 32KiB/s = 8KiB 令牌 ≫ 探针帧 14B——非时序断言，是
+// 回充护栏）；探针命令前的 `\r` 先收口 canonical 行缓冲中的残留 'x'。探针
+// 为轮询重发形态（CI flake 收口）：统护 ctx 下并发读累积（readUntilError
+// 形态变体——夹具纪律红线 Read 无 per-read deadline；websocket Read 随
+// ctx 取消杀连接，故「短 deadline 试读后重发」不可行，改主循环只 Write
+// 探针 + 检查累积），每 300ms 重发收口 + 探针，重发幂等（'\r' 于空行缓冲
+// 仅产出空命令回显，探针串重复出现不影响 Find 首中），重发窗 12s（ctx
+// 15s 留 3s 洪水写入与收尾余量）。
+//
+// 洪水分片带 '\n' 的执行期实证演化（CI flake 收口，与 12-03 滴漏形态登记
+// 同纪律）：首版 10×15KiB 无换行在 darwin 上 3 次失败——macos BSD pty 输
+// 入队列对无换行洪水 flow-control 堵死（master write 阻塞等 bash 消费，
+// bash 等 '\r' 交付，'\r' 滞留于堵死字节之后——三方死锁，重发探针亦滞留）；
+// Linux n_tty 对超长行溢出字符静默丢弃故从未暴露。分片带 '\n' 使 canonical
+// 行缓冲完整交付，bash 持续消费，输入侧结构性不堵死——测试判别面（drop
+// 计数 / 不断开 / 探针回显）零改动。
+func TestPerClientInputRateLimitKept(t *testing.T) {
+	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, mode := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	if mode != proto.ModeRW {
+		t.Fatalf("Welcome mode = %q, want %q", mode, proto.ModeRW)
+	}
+
+	// 超速率洪水：50×(3KiB 'x' + '\n')（帧总 ≈153KiB，均 < 16KiB
+	// ReadLimitPostAuth 单帧硬顶）。分片带换行让 canonical 行缓冲（4096）
+	// 完整交付、bash 持续消费输入（CI flake 收口：无换行洪水在 darwin BSD
+	// pty 上触发输入队列 flow-control 堵死——收口 '\r' 与探针滞留于堵死
+	// 洪水之后永不交付，重发探针同样滞留；Linux n_tty 对溢出字符静默丢弃
+	// 故从未暴露）。判别面不变：总字节 ≫ 64KiB burst，超限帧按 R-02 drop
+	// 语义丢弃（不断开），通过帧进 inQ（≈64KiB < 256KiB 容量）由
+	// inputWriter 写 master；bash 执行 'x' 命令的 not found 噪声是 tty
+	// 语义（无换行形态「超长行丢弃」的分片化等价），与本测无关。
+	flood := append(bytes.Repeat([]byte{'x'}, 3*1024), '\n')
+	for i := 0; i < 50; i++ {
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, flood...)); err != nil {
+			t.Fatalf("write flood INPUT #%d: %v", i, err)
+		}
+	}
+	// 并发读累积（统护 ctx，夹具纪律红线）；readErr 供主循环即时报告连接被
+	// 服务端终结（若发生即 drop 语义 RES-02 违反的直接证据，不等 12s 护栏）。
+	var (
+		accMu   sync.Mutex
+		acc     []byte
+		readErr = make(chan error, 1)
+	)
+	go func() {
+		for {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				readErr <- err
+				return
+			}
+			if len(data) == 0 || data[0] != proto.Output {
+				continue // Welcome 已由 dialHello 消费；静默跳过非 OUTPUT 帧
+			}
+			accMu.Lock()
+			acc = append(acc, data[1:]...)
+			accMu.Unlock()
+		}
+	}()
+	probeRe := regexp.MustCompile(`(?m)^(?:\$ )?RATEOK_PC07\r?$`)
+	time.Sleep(250 * time.Millisecond)
+	probeDeadline := time.Now().Add(12 * time.Second)
+	for {
+		accMu.Lock()
+		hit := probeRe.Find(acc) != nil
+		tail := acc
+		if len(tail) > 200 {
+			tail = tail[len(tail)-200:]
+		}
+		accMu.Unlock()
+		if hit {
+			break
+		}
+		select {
+		case err := <-readErr:
+			t.Fatalf("read OUTPUT: %v（连接被服务端终结——drop 语义 RES-02 违反；已累积尾部 %q）", err, tail)
+		default:
+		}
+		if time.Now().After(probeDeadline) {
+			t.Fatalf("探针回显在 12s 重发窗内未出现（已累积尾部 %q）", tail)
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, '\r')); err != nil {
+			t.Fatalf("write flush newline: %v", err)
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo RATEOK_PC07\r")...)); err != nil {
+			t.Fatalf("write probe INPUT: %v", err)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// ====== 12-03 增量：per-client 背压语义断言组（PC-10/PC-11 服务端收口，D-11
+// 单一家纪律——四测全部落本文件；stall 夹具与 seqFlood/assertKicked1013/
+// readUntilError 同包 slowclient_test.go 直接复用；停读/续读观测经 12-03 新增
+// GateTransitionsForTest 出口——per-client 单模式实例下该计数只有 ReadLoop
+// 输出闭包两个递增点（shared 信用门路径结构性不装配），差值即闭包行为直接
+// 观测。测名仅出现于 func 声明行——验收 grep 行计数闸，doc 注释不引测名
+// 字面量，同 11-01/11-03/12-02 纪律）======
+
+// waitGateTransitions 轮询 GateTransitionsForTest 直至相对起点递增 ≥ want
+// （间隔 15ms、guard 总护栏——轮询替代固定 sleep，STATE.md Blockers Phase 9
+// flake 教训既定规避形态；hubMu 内读纪律由 ForTest 出口承载）。返回观测值。
+func waitGateTransitions(t *testing.T, srv *server.Server, from, want int, guard time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(guard)
+	for {
+		cur := srv.GateTransitionsForTest()
+		if cur-from >= want {
+			return cur
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("gateTransitions %v 内未达 +%d（当前 %d，起点 %d）——停读/续读递增点未发生", guard, want, cur, from)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+}
+
+// assertSeqContinuity 断言 seqFlood 洪水的完整字节流连续性：fields 严格 +1
+// 无缺口（首值恒 1——stall 客户端自洪水首字节起接收，无中段接合切面；任何
+// 断裂 = 停读/续读转换丢段 = PC-11 违反），末位 floodLast（darwin 容忍 ≥95%：
+// watcher EXIT 直写绕过 outbox 与残余批的 close 竞态——TestGlobalCredit
+// darwin 实测同源形态；连续性断言才是字节精确的核心证据）。
+func assertSeqContinuity(t *testing.T, acc []byte, floodLast int) {
+	t.Helper()
+	fields := strings.Fields(string(acc))
+	if len(fields) == 0 {
+		t.Fatal("未收到任何 OUTPUT 载荷——洪水为空")
+	}
+	prev := 0
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("field %d = %q 不是 seq 整数（字节流损坏）: %v", i, f, err)
+		}
+		if n != prev+1 {
+			t.Fatalf("seq 在 field %d 断裂: %d（want %d）——停读/续读转换丢段（PC-11 违反）", i, n, prev+1)
+		}
+		prev = n
+	}
+	if prev != floodLast {
+		if runtime.GOOS == "darwin" {
+			if prev < floodLast*95/100 {
+				t.Fatalf("seq 末位 = %d, want ≥ %d（95%% of %d，darwin outbox-close 竞态容忍）", prev, floodLast*95/100, floodLast)
+			}
+			t.Logf("darwin 容忍：seq 末位 = %d（< %d，outbox-close 竞态；连续性断言为核心证据）", prev, floodLast)
+		} else {
+			t.Fatalf("seq 末位 = %d, want %d（洪水未收齐即终结）", prev, floodLast)
+		}
+	}
+}
+
+// PC-11 停读续读不丢数据（12-03，D-01）：seqFlood 洪水 + stall 夹具（dialHello
+// 后不 Read——TCP 吸收带 ~10MiB 填满 → writer 阻塞 → outbox 涨满）→ ReadLoop
+// 闭包阻塞持帧停读（gateTransitions +1 轮询观测——停读点递增；闭包停摆 →
+// PTY 内核缓冲积压 → 子进程写阻塞，ttyd pty_pause 等效）→ 静默窗
+// （clamp(2×停读确认时长, 1s, 5s)，≪ dwell）内连接不被踢 → 恢复读取 → 续读
+// （gateTransitions 再 +1——drain 恢复信号唤醒持帧闭包重试同一帧成功）→ 全量
+// 收齐至子进程退出广播 1000 → seq 字节连续性断言（停读期输出零丢失）。
+//
+// SlowDwell 覆写 30s（D-03/D-12 测试覆写通道）：默认 10s 下慢 CI 的洪水填充
+// 时长会侵蚀「静默窗 ≪ dwell」约束——30s 使该约束在任何环境稳健成立；dwell
+// 到期踢出语义由短值覆写的踢出测承担。静默窗「不被踢」的观测通道：窗内不读
+// （读即破坏 stall），证据推迟到恢复阶段——窗内被踢则恢复读取必以 1013 终结
+// 而非 1000 退出广播。
+func TestPerClientStallBlocksAndResumes(t *testing.T) {
+	floodArgv, floodLast := seqFlood()
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = 30 * time.Second
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	// writer 同类型连续段合并使积压后的单条 WS 消息可达 outbox cap（64KiB）
+	//——超过 Go 客户端库默认 32KiB 读上限触发 1009（TestSlowConsumerKick
+	// 实测先例；生产前端为浏览器 WebSocket 无此上限）。
+	c.SetReadLimit(4 * 1024 * 1024)
+
+	// 停读观测（+1 轮询；护栏 15s = 洪水填满 TCP 吸收带 ~10MiB 的慢环境上界，
+	// TestSlowConsumerKick 12MiB/15s 先例）。
+	t0 := time.Now()
+	base := srv.GateTransitionsForTest()
+	waitGateTransitions(t, srv, base, 1, 15*time.Second)
+	confirmDur := time.Since(t0)
+
+	// 静默窗：clamp(2×停读确认时长, 1s, 5s)——下限保「持续停读」判别力，
+	// 上限防慢环境（确认窗本身已长）侵蚀 ≪ dwell(30s) 约束。
+	silent := 2 * confirmDur
+	if silent < time.Second {
+		silent = time.Second
+	}
+	if silent > 5*time.Second {
+		silent = 5 * time.Second
+	}
+	time.Sleep(silent)
+
+	// 恢复读取：readUntilError 全速收干至终结；同时观测续读点递增（+1）。
+	res := readUntilError(c)
+	waitGateTransitions(t, srv, base, 2, 15*time.Second)
+
+	select {
+	case r := <-res:
+		var ce websocket.CloseError
+		if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
+			t.Fatalf("恢复读取后终结 = %v, want CloseError 1000（子进程退出广播；静默窗内被踢则此处为 1013——PC-11 违反）", r.err)
+		}
+		assertSeqContinuity(t, r.acc, floodLast)
+	case <-time.After(45 * time.Second):
+		t.Fatal("恢复读取后 45s 内未收齐洪水——续读后流未恢复（持帧阻塞未被唤醒，死锁）")
+	}
+}
+
+// PC-10 持续过载 1013（12-03，D-02/D-03）：SlowDwell=500ms 覆写（o.StopTimeout
+// 覆写先例形态）+ stall 恒不读 → outbox 写满停读（+1 轮询观测——dwell 自
+// 停读起点武装）→ dwell 到期回调 → kickSlowConsumerLocked 既有序列 →
+// /healthz clients 归零（只读 HTTP 观测通道不打扰 WS stall 面，轮询替代固定
+// sleep）→ wire 面证据：assertKicked1013 两合法终结形态逐字复用
+// （CloseError 1013 slow_consumer 机器串逐字 / CI 慢速 frame-cut EOF + acc
+// 阈值）。
+func TestPerClientDwellKick(t *testing.T) {
+	floodArgv, _ := seqFlood()
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = 500 * time.Millisecond
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	c.SetReadLimit(4 * 1024 * 1024) // writer 合并消息可达 outbox cap——慢客户端测试既定放宽
+
+	// 停读就位（+1）——此后 dwell 500ms 从停读起点武装。
+	base := srv.GateTransitionsForTest()
+	waitGateTransitions(t, srv, base, 1, 15*time.Second)
+
+	// dwell 到期观测：kick → removeLocked → /healthz clients 归零。护栏 5s
+	//（= dwell 500ms + 调度余量；到期未被踢即护栏翻车——「护栏内到达」断言，
+	// 非精确时点断言）。
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if n := healthzClients(t, wsURL); n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("dwell(500ms) 到期后 5s 内客户端未被移除——持续过载 1013 踢出未发生（PC-10 违反）")
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	// wire 面证据：两合法终结形态逐字复用（slowclient_test.go）。
+	assertKicked1013(t, c, 15*time.Second, "per-client stall client")
+}
+
+// PC-11 慢但在前进永不踢（12-03，D-02 判据核心）：SlowDwell=3s 覆写 + 事件
+// 驱动 duty-cycle——每轮「停读形成（gateTransitions +1，dwell 武装）→ 刻意
+// 停读 0.4×dwell → 全速读取至续读（再 +1，dwell 重置）」，循环 3 轮：每轮
+// 停读间隔 ~0.42×dwell < dwell（安全），累计停读 ~1.26×dwell > dwell（若
+// dwell 不随续读重置——跨停读累计形态——第 3 轮停读中段即被 1013 踢出，
+// 测试判别力内建）；3 轮后全速收干 → CloseError 1000 + seq 连续无缺口 +
+// gateTransitions ≥ +6（3 对停读/续读递增点）。
+//
+// dwell 基数 3s 的两轮 CI flake 收口（1s 两版停读比例 0.5/0.4 均在 ubuntu
+// runner 误踢，kick 恒于 attach+1.37s）：续读链路「客户端读取→多 MB send
+// queue 排空→writer 解阻塞→drain→notFull→续读」的绝对耗时由内核 send
+// queue 容量与 runner 读取速率决定（2 vCPU + race 检测器下 >0.5s 实证），
+// 停读比例缩放不改变绝对预算——唯一稳健收口是放大 dwell 基数（3s 使续读
+// 窗口 ~1.7s ≈ 3.4×实证瓶颈），时长代价 ~+5s/CI 可接受，判别力结构不变。
+//
+// 滴漏形态的执行期实证演化（Rule 3 调试结论，与 plan 文本「每 ~dwell/3 读
+// 一小批」的差异登记）：配额泵滴漏（每 tick 读 128KiB）在本机实证下永不触
+// 发服务端续读——PTY 行规程使 seq 逐行产出 ~50-500B 微帧，内核 send queue
+// 自适应至 ~3-4MiB，writer 阻塞写在多 MB 管线之后，亚秒级配额滴漏的窗口
+// 信用不足以完成「管线排空→writer 解阻塞→drain→notFull→续读」链路（停读
+// 态按 D-02 定义持续，dwell 正常触发踢出——机制行为正确，测试形态错误）。
+// 事件驱动 duty-cycle 以停读/续读事件本身为节拍：停读间隔由测试刻意构造
+// （固定 0.4×dwell），续读由全速读取触发（全速续读的可行性由停读续读主测
+// 锁定）——参数机器无关，判别力内建。
+func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
+	floodArgv, floodLast := seqFlood()
+	dwell := 3 * time.Second
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = dwell
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	c.SetReadLimit(4 * 1024 * 1024)
+
+	var acc []byte
+	base := srv.GateTransitionsForTest()
+	// 三轮 duty-cycle：停读（不读，等 +1）→ 刻意停读 0.5×dwell（dwell 计时
+	// 中——本段是判别力的载体）→ 全速读到续读（+1）。
+	for cycle := 0; cycle < 3; cycle++ {
+		stalled := waitGateTransitions(t, srv, base, 2*cycle+1, 15*time.Second)
+		time.Sleep(dwell * 2 / 5) // 停读持续 0.4×dwell——累计跨轮 > dwell，单轮 < dwell
+		for srv.GateTransitionsForTest() < stalled+1 {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				var ce websocket.CloseError
+				if errors.As(err, &ce) && ce.Code == websocket.StatusTryAgainLater {
+					t.Fatalf("第 %d 轮被 1013 踢出——慢但在前进的客户端不得被 dwell 踢（D-02/PC-11 违反）", cycle)
+				}
+				t.Fatalf("第 %d 轮续读段 read: %v", cycle, err)
+			}
+			if len(data) > 0 && data[0] == proto.Output {
+				acc = append(acc, data[1:]...)
+			}
+		}
+	}
+	// 三对停读/续读递增点齐备（+6；此后全速收干段的瞬态二次停读可能追加
+	// 成对增量——下界断言）。
+	if diff := srv.GateTransitionsForTest() - base; diff < 6 {
+		t.Fatalf("duty-cycle gateTransitions 差值 = %d, want ≥ 6（3 对停读/续读递增点未齐备）", diff)
+	}
+	// 全速收干至终结：零 1013、退出广播 1000、seq 连续（慢消费全程零丢数据）。
+	res := readUntilError(c)
+	select {
+	case r := <-res:
+		acc = append(acc, r.acc...)
+		var ce websocket.CloseError
+		if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
+			t.Fatalf("duty-cycle 后终结 = %v, want CloseError 1000（慢但在前进全程未被踢——D-02 违反）", r.err)
+		}
+		assertSeqContinuity(t, acc, floodLast)
+	case <-time.After(45 * time.Second):
+		t.Fatal("duty-cycle 后 45s 内未收齐洪水——全速收干阶段流未恢复")
+	}
+}
+
+// D-05 观测计数收口（12-03）：起止快照 GateTransitionsForTest 差值断言——
+// 停读+续读一轮 = +2。per-client 单模式实例下 gateTransitions 只有 ReadLoop
+// 输出闭包两个递增点（shared 信用门路径结构性不装配）：+1 于「客户端恒不读」
+// 窗口观测到（停读点唯一可能——续读需 notFull 需 drain 需读取），读取启动后
+// 再 +1（续读点），配对成立即两递增点经差值锁定。差值下界 ≥2 而非精确 ==2：
+// 恢复读取后的瞬态二次停读（慢 CI 下 TCP 写瞬断 + outbox 64KiB 亚毫秒回填）
+// 会追加成对增量——精确计数断言有 flake 面（STATE.md Blockers Phase 9 教训
+// 同源，「禁精确时点断言」纪律的计数面同构）。
+func TestPerClientStallGateTransitions(t *testing.T) {
+	floodArgv, _ := seqFlood()
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.OutboxBytes = 64 * 1024
+		o.SlowDwell = 30 * time.Second
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer c.CloseNow()
+	c.SetReadLimit(4 * 1024 * 1024)
+
+	// 起点快照 → 停读（+1，客户端恒不读窗口）→ 恢复读取 → 续读（再 +1）→
+	// 终点快照差值 ≥2。
+	start := srv.GateTransitionsForTest()
+	waitGateTransitions(t, srv, start, 1, 15*time.Second)
+	readUntilError(c) // 恢复读取（计数断言达成即收口，无需收齐洪水——harness Cleanup 收尾）
+	end := waitGateTransitions(t, srv, start, 2, 15*time.Second)
+	if diff := end - start; diff < 2 {
+		t.Fatalf("gateTransitions 起止差值 = %d, want ≥ 2（停读+续读两递增点，D-05）", diff)
+	}
+	t.Logf("gateTransitions 起止差值 = %d（≥2 达成；瞬态二次停读可能追加成对增量）", end-start)
 }

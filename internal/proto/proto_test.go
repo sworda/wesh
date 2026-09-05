@@ -62,7 +62,10 @@ func TestDecodeHello(t *testing.T) {
 // TestWelcomeFrameErrorFrame 锁定 S→C 控制帧组帧形状：
 // 1 字节类型 + JSON 载荷，解码往返后字段精确相等。
 func TestWelcomeFrameErrorFrame(t *testing.T) {
-	wf := WelcomeFrame(ModeRO, nil, 80, 24)
+	// 第 5 参 session（D-08）本文件一律传 "shared" 字面量——proto 包不引
+	// server 包常量（SessionModeShared/SessionModePerClient，
+	// server/clients.go:88-92），值域同源声明见 proto.go WelcomePayload.Session。
+	wf := WelcomeFrame(ModeRO, nil, 80, 24, "shared")
 	if len(wf) == 0 || wf[0] != Welcome {
 		t.Fatalf("WelcomeFrame[0] = %#x, want 'W'(%#x)", wf[0], Welcome)
 	}
@@ -97,7 +100,7 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 
 	// P4 D-13：prefs 往返与 omitempty 缺席两回归锁（各自独立 subtest，回归可定位）。
 	t.Run("prefs round-trip", func(t *testing.T) {
-		wf := WelcomeFrame(ModeRW, json.RawMessage(`{"fontSize":16,"resizeOverlay":false}`), 132, 43)
+		wf := WelcomeFrame(ModeRW, json.RawMessage(`{"fontSize":16,"resizeOverlay":false}`), 132, 43, "shared")
 		var wp WelcomePayload
 		if err := json.Unmarshal(wf[1:], &wp); err != nil {
 			t.Fatalf("WelcomeFrame prefs payload unmarshal: %v", err)
@@ -112,7 +115,7 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 	})
 	t.Run("prefs omitted when nil (omitempty)", func(t *testing.T) {
 		// 旧前端零漂移回归锁：nil prefs 组帧后帧体无 "prefs" 键（P2 D-02 加字段纪律）。
-		wf := WelcomeFrame(ModeRO, nil, 80, 24)
+		wf := WelcomeFrame(ModeRO, nil, 80, 24, "shared")
 		if bytes.Contains(wf, []byte("prefs")) {
 			t.Errorf("WelcomeFrame(ModeRO, nil, ...) = %s, must not contain %q key", wf[1:], "prefs")
 		}
@@ -121,7 +124,7 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 		// 恒序列化契约锁：prefs nil 时 cols/rows 键仍恒在（无 omitempty——新前端靠
 		//「缺席 = 旧服务端」识别遗留形态）。map 解码断言键存在性（struct 解码对
 		// 缺席键零值静默，无法区分「键缺席」与「键值为 0」）。
-		wf := WelcomeFrame(ModeRO, nil, 80, 24)
+		wf := WelcomeFrame(ModeRO, nil, 80, 24, "shared")
 		var wm map[string]any
 		if err := json.Unmarshal(wf[1:], &wm); err != nil {
 			t.Fatalf("WelcomeFrame payload unmarshal to map: %v", err)
@@ -131,6 +134,50 @@ func TestWelcomeFrameErrorFrame(t *testing.T) {
 		}
 		if _, present := wm["rows"]; !present {
 			t.Errorf("Welcome JSON = %v, must always contain %q key（G-05-1 恒序列化契约）", wm, "rows")
+		}
+	})
+}
+
+// TestWelcomeFrameSession（D-08，12-01）：session 模式位恒序列化契约锁——
+// 两值组帧（"shared"/"per-client"）解码 round-trip 精确相等；JSON map 键
+// 存在性断言（恒序列化无省略语义——G-05-1 Cols/Rows「恒在键」同形态先例：
+// 新前端靠「缺席 = 旧服务端」识别遗留形态）。proto 包不引 server 包常量
+// （SessionModeShared/SessionModePerClient，server/clients.go:88-92——值域
+// 同源声明见 proto.go WelcomePayload.Session 注释），两值以字面量直写。
+func TestWelcomeFrameSession(t *testing.T) {
+	t.Run("session round-trip 两值", func(t *testing.T) {
+		wf := WelcomeFrame(ModeRO, nil, 80, 24, "shared")
+		var wp WelcomePayload
+		if err := json.Unmarshal(wf[1:], &wp); err != nil {
+			t.Fatalf("WelcomeFrame payload unmarshal: %v", err)
+		}
+		if wp.Session != "shared" {
+			t.Errorf("WelcomeFrame session = %q, want %q（D-08 模式位 round-trip）", wp.Session, "shared")
+		}
+		wf2 := WelcomeFrame(ModeRW, nil, 132, 43, "per-client")
+		var wp2 WelcomePayload
+		if err := json.Unmarshal(wf2[1:], &wp2); err != nil {
+			t.Fatalf("WelcomeFrame payload unmarshal: %v", err)
+		}
+		if wp2.Session != "per-client" {
+			t.Errorf("WelcomeFrame session = %q, want %q（D-08 模式位 round-trip 第二形态）", wp2.Session, "per-client")
+		}
+	})
+	t.Run("session key always present (D-08 恒序列化)", func(t *testing.T) {
+		// 恒序列化契约锁：无 omitempty——「缺席 = 旧服务端」识别契约（前端防御性
+		// 缺省依据）。map 解码断言键存在性（struct 解码对缺席键零值静默，无法区分
+		// 「键缺席」与「键值为空串」，G-05-1 dims subtest 同款论证）。
+		wf := WelcomeFrame(ModeRO, nil, 80, 24, "shared")
+		var wm map[string]any
+		if err := json.Unmarshal(wf[1:], &wm); err != nil {
+			t.Fatalf("WelcomeFrame payload unmarshal to map: %v", err)
+		}
+		v, present := wm["session"]
+		if !present {
+			t.Errorf("Welcome JSON = %v, must always contain %q key（D-08 恒序列化契约）", wm, "session")
+		}
+		if present && v != "shared" {
+			t.Errorf("Welcome session = %v, want %q", v, "shared")
 		}
 	})
 }
