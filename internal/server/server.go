@@ -1601,8 +1601,11 @@ func (s *Server) lifecycle() {
 
 // terminate 以 sync.Once 收口终结路径，exitf 只触发一次（调用方 = shared
 // lifecycle（P1 D-11 单次语义终结，wsDisconnected/SIGHUP 路径已消亡）+
-// per-client pcSupervisor（13-03 第二终结源，PC-09）——两源并发交汇时
-// termOnce 保证恰好一次，T-13-11）。
+// per-client pcSupervisor（13-03 第二终结源，PC-09）+ per-client Shutdown
+// 的 D-state 兜底（13-04——有界 join 到期未清零时 Shutdown 侧直接收口，
+// PITFALLS P10「有界 join 后无条件经 termOnce 退出」；正常 drained 形态
+// 终结仍归 pcSupervisor，本兜底仅在不可杀残余阻塞其 len==0 谓词时到达）——
+// 多源并发交汇时 termOnce 保证恰好一次，T-13-11/T-13-13）。
 func (s *Server) terminate(code int) {
 	s.termOnce.Do(func() {
 		s.exitf(code)
@@ -1648,6 +1651,14 @@ func (s *Server) pcSupervisor() {
 	s.terminate(code) // termOnce 单点——与 shared 同一收口件
 }
 
+// shutdownJoinMargin 是 13-04 per-client Shutdown 有界 join 的余量（研究 A1
+// 保守形态定值，Claude's Discretion 既定项）：join 上界 = stopTimeout + 本
+// 余量——KILL 兜底在 stopTimeout 到期，余量覆盖 Drain(200ms)/Close/收割/
+// pcSessions 删除的收尾链。内部常量可后调（零公开契约面，throttle.go
+// defaultThrottleBase 先例形态）；stopTimeout=0（无 KILL 兜底）时 join 上界
+// 即本余量——HUP 免疫残余在此界限后不再等待（PITFALLS P10）。
+const shutdownJoinMargin = 2 * time.Second
+
 // Shutdown 是 D-23 1001 优雅下线的触发源（07-05，P6 deferred 兑现；调用方 =
 // main 的 SIGTERM/SIGINT NotifyContext goroutine）：exiting 门置位 → 注册表
 // 快照 → 每客户端 goroutine 同步 Close(1001 Going Away) → wg.Wait() →
@@ -1675,6 +1686,14 @@ func (s *Server) pcSupervisor() {
 //     既定不变量）+ ESRCH 幂等静默（已死进程组重复发送无害）；Shutdown 不在
 //     hubMu 内等待（锁序 hubMu > sess.fdMu 不受影响），与 lifecycle 并发
 //     安全——stopTimeout 期间进程若已退出，补发 KILL 到达空 pgid 静默。
+//   - 13-04（PC-09）per-client N 进程组形态：stop-signal 段对 pcSessions
+//     快照逐组发信号（含「客户端已断开、会话 HUP 免疫待收割」的残留者——
+//     Pitfall 6：1001 广播驱动的 detach→teardown 链路覆盖不了无客户端会话，
+//     registry 快照必漏；pcSessions 独立于 registry 存在的核心理由）+ 有界
+//     join（上界 = stopTimeout + shutdownJoinMargin）+ 尾部 Broadcast 唤醒
+//     pcSupervisor（13-03 第二终结源消费端——exiting 位置入口原位，本段
+//     注释详论证）；join 到期未清零（D-state 不可杀残余）Shutdown 侧直接经
+//     terminate 收口，绝不等最坏子进程（PITFALLS P10，详见段内注释）。
 func (s *Server) Shutdown() {
 	// 08-03 D-11：draining 置位 = Shutdown 入口首行（hubMu 锁定之前，与
 	// s.exiting 同源触发点）——1001 广播开始前 /healthz 即翻转为 503
@@ -1704,11 +1723,102 @@ func (s *Server) Shutdown() {
 		}()
 	}
 	wg.Wait()
-	// 11-01（PC-02）stop-signal 段模式守卫：per-client 空操作——s.sess 恒 nil
-	//（nil-deref 防线）；1001 广播引发的 detach 经注册表移除挂点各自 SIGHUP
-	// 其会话（clients.go teardownPCLocked 挂点），残留待收割会话的 N 组快照
-	// 信号归 Phase 13（D-01 注记窗口期）。
+	// 13-04（PC-09）stop-signal 段 per-client 分支：N 进程组快照逐组信号 +
+	// 有界 join + Broadcast 补行（11-01 空操作占位的本 phase 既定填充）。
+	//
+	// 快照源 = pcSessions 非 registry（Pitfall 6）：「客户端已断开、会话
+	// HUP 免疫待收割」的残留会话只在 pcSessions 在册（registry 无对应客户
+	// 端）——1001 广播驱动 detach→teardown 链路覆盖不了无客户端会话，快照
+	// 漏掉残留者即服务端退出后进程泄漏。锁序红线：快照在 hubMu 内取（map
+	// 读需锁）、信号在 hubMu 外发（shared 分支同纪律——下方 shared else 体
+	// 逐字不动，v1.0 关停语义零回归）。
+	//
+	// 1001 广播段（detach→teardown 链）与本快照信号对同一会话双触发，由
+	// teardownOnce 幂等承接（perclient.go——两路径都只「触发」，执行序列
+	// 只有一个；快照信号对已触发 teardown 的会话是冗余第二发，ESRCH/无效
+	// 化静默无害）；残留会话只被本快照链覆盖（其客户端早已不在——这是本
+	// 分支存在的核心理由）。
 	if s.sessionMode == SessionModePerClient {
+		s.hubMu.Lock()
+		pcs := make([]*pcSession, 0, len(s.pcSessions))
+		for pc := range s.pcSessions {
+			pcs = append(pcs, pc)
+		}
+		s.hubMu.Unlock()
+		for _, pc := range pcs {
+			// WR-02 栅栏（13-03 planner 裁定「Pitfall 2 信号/reap 序列化
+			// 语义对一切 kill(-pgid) 同构适用」）：快照→发信号间隔内
+			// watcher 可能已收割（waitDone 已关闭 = Wait 已返回）——跳过
+			// 信号，kill-after-reap 误杀复用 pgid 面结构性闭合（channel
+			// 关闭态读零锁安全，teardownPCLocked 快半段同形态）。
+			select {
+			case <-pc.waitDone:
+			default:
+				pc.sess.SignalGroup(s.stopSignal) // ESRCH 幂等——已死 pgid 静默
+			}
+			// 补 KILL 兜底（teardownPCLocked 快半段同形态母本每会话化）：
+			// 回调 hubMu 内复检 !reaped + waitDone 非阻塞 select 栅栏双
+			// 防线后才发 SIGKILL（与 detach 路径武装的兜底计时器双发幂等，
+			// 后到者必被栅栏拦截；timer 随会话消亡）。
+			if s.stopTimeout > 0 {
+				time.AfterFunc(s.stopTimeout, func() {
+					s.hubMu.Lock()
+					defer s.hubMu.Unlock()
+					if pc.reaped {
+						return
+					}
+					select {
+					case <-pc.waitDone:
+						return // Wait 已返回——reaped 置位在途，KILL 跳过
+					default:
+					}
+					pc.sess.SignalGroup(syscall.SIGKILL)
+				})
+			}
+		}
+		// 有界 join（PITFALLS P10——不等 D-state）：等 len(pcSessions)==0
+		// 收割收敛，上界 = stopTimeout + shutdownJoinMargin（KILL 兜底在
+		// stopTimeout 到期，余量覆盖 Drain/Close/收割/删除收尾链；正常
+		// 死亡会话的 session_end 事件在界限内正常 emit——emit→
+		// close(waitDone)→delete 程序序链，join 观测到 len==0 即全部事件
+		// 已落流）。实现形态：hubCond.Wait（teardown 慢半段 delete 点
+		// Broadcast 唤醒）+ AfterFunc 到期兜底 Broadcast（sync.Cond 无
+		// 超时等待形态；Wait 期间 hubMu 已释放，兜底回调可取锁无死锁面）；
+		// 到期无论收割完毕与否无条件继续——无界等待全部 Wait 返回即把关停
+		// 控制权让给最坏子进程（D-state 不可杀进程拖死关停，P10 红线）。
+		bound := s.stopTimeout + shutdownJoinMargin
+		wake := time.AfterFunc(bound, func() {
+			s.hubMu.Lock()
+			s.hubCond.Broadcast()
+			s.hubMu.Unlock()
+		})
+		defer wake.Stop()
+		deadline := time.Now().Add(bound)
+		s.hubMu.Lock()
+		for len(s.pcSessions) > 0 && time.Now().Before(deadline) {
+			s.hubCond.Wait()
+		}
+		drained := len(s.pcSessions) == 0
+		code := 0
+		if s.pcHasExitCode {
+			code = s.pcLastExitCode
+		}
+		// Broadcast 补行（13-03 pcSupervisor 消费端）：exiting 已在入口
+		// 置位（原位不动——早于 1001 广播注册表快照，D-13 防线序保持），
+		// 此处补一行唤醒 pcSupervisor 重估 (pcExitReq||exiting)&&len==0——
+		// drained 形态下终结由 pcSupervisor 经 terminate/termOnce 收口
+		//（last-reaped-code 规则，13-03）；pcSessions 全空形态下本补行是
+		// 其唯一唤醒源（入口置位不发信号，watcher 链静止无 Broadcast）。
+		s.hubCond.Broadcast()
+		s.hubMu.Unlock()
+		if !drained {
+			// D-state 兜底（T-13-13/PITFALLS P10「有界 join 后无条件经
+			// termOnce 退出」）：join 到期未清零——Shutdown 侧直接经唯一
+			// 收口件 terminate 退出（退出码同 last-reaped-code 规则），不
+			// 等不可杀残余；与 pcSupervisor 的 terminate 交汇由 termOnce
+			// 保证恰好一次（terminate 上方注释调用方清单随之三源化）。
+			s.terminate(code)
+		}
 	} else {
 		s.sess.SignalGroup(s.stopSignal)
 		if s.stopTimeout > 0 {
