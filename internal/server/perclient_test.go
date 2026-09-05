@@ -1302,8 +1302,19 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if n := healthzClients(t, wsURL); n != 0 {
-			t.Fatalf("第 %d 轮 /healthz clients = %d, want 0", i, n)
+		// /healthz 外部视图同样轮询收敛（CI flake 收口：registry.n 外部计数
+		// 递减与 pcSessions 内部视图归零存在异步窗口，macos 慢机一次性断言
+		// 翻车——PC-10 dwell 到期观测同款护栏形态，非断言弱化：2s 护栏内
+		// 必达仍是硬约束）。
+		deadline = time.Now().Add(2 * time.Second)
+		for {
+			if n := healthzClients(t, wsURL); n == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("第 %d 轮 /healthz clients 2s 内未收敛到 0（当前 %d）", i, healthzClients(t, wsURL))
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 		// 轮间 100ms 收敛等待（真实等待 + 护栏上限纪律，phase06.mjs 时序容差
 		// 论证先例的 Go 同构）——并给任何失守的第二终结触发留出暴露窗口，
@@ -1513,20 +1524,26 @@ func TestPerClientROInputDropped(t *testing.T) {
 }
 
 // TestPerClientInputRateLimitKept（PC-07 限速保留，12-02）：rw 端超速率 flood
-// INPUT（10×15KiB ≈ 150KiB 瞬时，≫ 64KiB burst + 32KiB/s 补充——远超每客户端
-// 限速，超限帧按 R-02 drop 语义丢弃）→ 连接不被踢不关闭（RES-02：超限唯一
-// 动作 = 丢弃 + inputDrops 计数，不断开），后续正常输入照常回显（洪水后令牌
-// 恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶数学确定性：
-// 250ms × 32KiB/s = 8KiB 令牌 ≫ 探针帧 14B——非时序断言，是回充护栏）；
-// 探针命令前的 `\r` 先收口 canonical 行缓冲中的残留 'x'（超长行被行规程
-// 丢弃是 tty 语义，与本测无关）。探针为轮询重发形态（CI flake 收口）：统护
-// ctx 下并发读累积（readUntilError 形态变体——夹具纪律红线 Read 无 per-read
-// deadline；websocket Read 随 ctx 取消杀连接，故「短 deadline 试读后重发」
-// 不可行，改主循环只 Write 探针 + 检查累积），每 300ms 重发收口 + 探针——
-// darwin 侧 bash 3.2 对无换行洪水的 tty 消化偶发迟滞（CI 实证：单发探针
-// 回显 15s 未产出），重发幂等（'\r' 于空行缓冲仅产出空命令回显，探针串
-// 重复出现不影响 Find 首中），重发窗 12s（ctx 15s 留 3s 洪水写入与收尾
-// 余量）。
+// INPUT（50×(3KiB+'\n') ≈ 153KiB 瞬时，≫ 64KiB burst + 32KiB/s 补充——远超
+// 每客户端限速，超限帧按 R-02 drop 语义丢弃）→ 连接不被踢不关闭（RES-02：
+// 超限唯一动作 = 丢弃 + inputDrops 计数，不断开），后续正常输入照常回显
+//（洪水后令牌恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶
+// 数学确定性：250ms × 32KiB/s = 8KiB 令牌 ≫ 探针帧 14B——非时序断言，是
+// 回充护栏）；探针命令前的 `\r` 先收口 canonical 行缓冲中的残留 'x'。探针
+// 为轮询重发形态（CI flake 收口）：统护 ctx 下并发读累积（readUntilError
+// 形态变体——夹具纪律红线 Read 无 per-read deadline；websocket Read 随
+// ctx 取消杀连接，故「短 deadline 试读后重发」不可行，改主循环只 Write
+// 探针 + 检查累积），每 300ms 重发收口 + 探针，重发幂等（'\r' 于空行缓冲
+// 仅产出空命令回显，探针串重复出现不影响 Find 首中），重发窗 12s（ctx
+// 15s 留 3s 洪水写入与收尾余量）。
+//
+// 洪水分片带 '\n' 的执行期实证演化（CI flake 收口，与 12-03 滴漏形态登记
+// 同纪律）：首版 10×15KiB 无换行在 darwin 上 3 次失败——macos BSD pty 输
+// 入队列对无换行洪水 flow-control 堵死（master write 阻塞等 bash 消费，
+// bash 等 '\r' 交付，'\r' 滞留于堵死字节之后——三方死锁，重发探针亦滞留）；
+// Linux n_tty 对超长行溢出字符静默丢弃故从未暴露。分片带 '\n' 使 canonical
+// 行缓冲完整交付，bash 持续消费，输入侧结构性不堵死——测试判别面（drop
+// 计数 / 不断开 / 探针回显）零改动。
 func TestPerClientInputRateLimitKept(t *testing.T) {
 	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
 
@@ -1538,11 +1555,17 @@ func TestPerClientInputRateLimitKept(t *testing.T) {
 		t.Fatalf("Welcome mode = %q, want %q", mode, proto.ModeRW)
 	}
 
-	// 超速率洪水：10×15KiB 'x'（帧总 150KiB+10B 类型字节，均 < 16KiB
-	// ReadLimitPostAuth 单帧硬顶）。超限帧被丢弃（不断开），通过帧进 inQ
-	//（≈64KiB < 256KiB 容量）由 inputWriter 写 master。
-	flood := bytes.Repeat([]byte{'x'}, 15*1024)
-	for i := 0; i < 10; i++ {
+	// 超速率洪水：50×(3KiB 'x' + '\n')（帧总 ≈153KiB，均 < 16KiB
+	// ReadLimitPostAuth 单帧硬顶）。分片带换行让 canonical 行缓冲（4096）
+	// 完整交付、bash 持续消费输入（CI flake 收口：无换行洪水在 darwin BSD
+	// pty 上触发输入队列 flow-control 堵死——收口 '\r' 与探针滞留于堵死
+	// 洪水之后永不交付，重发探针同样滞留；Linux n_tty 对溢出字符静默丢弃
+	// 故从未暴露）。判别面不变：总字节 ≫ 64KiB burst，超限帧按 R-02 drop
+	// 语义丢弃（不断开），通过帧进 inQ（≈64KiB < 256KiB 容量）由
+	// inputWriter 写 master；bash 执行 'x' 命令的 not found 噪声是 tty
+	// 语义（无换行形态「超长行丢弃」的分片化等价），与本测无关。
+	flood := append(bytes.Repeat([]byte{'x'}, 3*1024), '\n')
+	for i := 0; i < 50; i++ {
 		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, flood...)); err != nil {
 			t.Fatalf("write flood INPUT #%d: %v", i, err)
 		}
