@@ -6,6 +6,14 @@ package server_test
 // 复用 e2e_test.go/exit_test.go/slowclient_test.go/limits_test.go 同包零改动
 // （06-PATTERNS exact）。
 //
+// 13-03 增量（PC-09）：per-client 断言分叉两测（TestEmptyExitPerClient*）——
+// 退出码两时序逐位对齐证明（研究 ARCHITECTURE §4.3）：子先死 → watcher 收割
+// 子码 → exitf(子码)；客户端先断 → detach teardown HUP → watcher 收割 -1 →
+// exitf(-1)。shared 既有断言逐字不动（零回归红线）。断言常量 -1 = accept-255
+// 门裁决（下段头注释）；子先死形态取 42（SESS-01/02 UAT 既有断言值 exit 42
+// 透传）而非研究表例值 0——缺省 0 与「pcLastExitCode 未记录」缺陷同值，42
+// 才有判别力（防 vacuous pass；plan 文本例值经此收紧，非断言放宽）。
+//
 // OQ1 门裁决（06-02 Task 1，2026-08-23 用户裁决 accept-255）：断开退出收口路径
 // exitf 以子进程原码收口——SIGHUP 致死 ExitCode()=-1（GOROOT exec_posix.go:155-157
 // 语义，与 D-09「信号死亡 exit_code=-1」同源），故本文件断言常量 = -1；os.Exit(-1)
@@ -374,5 +382,98 @@ func TestExitWhenEmptyPromoteKickOnce(t *testing.T) {
 	}
 	if kickN != 1 {
 		t.Fatalf("detach reason=kick count = %d, want 1（promote 同义踢出分支证据；out=%q）", kickN, out)
+	}
+}
+
+// ====== 13-03 增量（PC-09）：per-client 断言分叉——退出码两时序逐位对齐 ======
+// 两时序对齐证明（研究 ARCHITECTURE §4.3 表逐行映射；accept-255 门注释见文件
+// 头——Go 内断言常量 -1，进程级 255 归 13-07 phase13.mjs S3）：
+//
+//	时序            shared --once（现状）                    per-client（本组锁定）
+//	子进程先死      lifecycle Wait→exitf(子码)               watcher 收割子码 →
+//	                （TestExitWhenEmptyLifecycleGate）        EXIT+1000 → detach 致空 →
+//	                                                         pcExitReq → supervisor →
+//	                                                         exitf(子码)
+//	客户端先断      detach→HUP→子死(-1)→exitf(-1) → 255     detach→pcExitReq+HUP→
+//	                                                         watcher 收割(-1)→
+//	                                                         exitf(-1) → 255
+//
+// harness 复用 perclient_test.go startPerClientServer（同包 server_test——本文件
+// 头注释 helper 复用纪律的延伸；per-client 装配面该 harness 唯一拥有）。
+
+// TestEmptyExitPerClientChildFirst（两时序之一——子先死）：per-client +
+// ExitWhenEmpty grace=0 + argv `sh -c 'sleep 1; exit 42'` → 客户端在线等子进程
+// 自然退出（sleep 1 保 attach 窗口）→ watcher 收割 42 → EXIT{exit_code:42} +
+// 1000（per-client EXIT 私有化直写）→ 客户端终结触发 reader detach 致空 →
+// pcExitReq 置位 + Broadcast → supervisor：pcSessions 已随 watcher teardown
+// 慢半段归零（EXIT 帧直写在 <-teardownDone 之后——客户端观测到帧即 delete 已
+// 完成，supervisor 条件随即成立）→ exitf(42) 恰好一次（last-reaped-code 规则：
+// 退出码 = 子进程退出码，与 shared lifecycle 同码——「exitf(42) 而非 -1」即
+// SIGHUP 未染指本路径的语义证据，TestExitWhenEmptyLifecycleGate per-client
+// 同构）。恰好一次：termOnce 收口 + 200ms 静默锁定无第二次。
+func TestEmptyExitPerClientChildFirst(t *testing.T) {
+	exitCh, wsURL := startPerClientServer(t, []string{"sh", "-c", "sleep 1; exit 42"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 0
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24) // sleep 1 保 attach 窗口
+
+	// wire 观测（06-01 形态）：EXIT{42} + 1000——先证子码透传到帧面。
+	frames, code := readExitClose(t, ctx, c)
+	if code != websocket.StatusNormalClosure {
+		t.Fatalf("close code = %d, want %d (1000)", code, websocket.StatusNormalClosure)
+	}
+	if len(frames) == 0 {
+		t.Fatal("no frames collected——EXIT 帧缺失")
+	}
+	ep := decodeExitFrame(t, frames[len(frames)-1])
+	if ep.ExitCode != 42 {
+		t.Fatalf("EXIT exit_code = %d, want 42（子进程退出码透传）", ep.ExitCode)
+	}
+
+	// last-reaped-code：supervisor 以 watcher 收割码收口——42 而非 -1（被
+	// SIGHUP 翻码则 -1）恰好一次。
+	waitExit(t, exitCh, 42)
+	assertNoExit(t, exitCh)
+}
+
+// TestEmptyExitPerClientClientFirst（两时序之二——客户端先断）：per-client +
+// ExitWhenEmpty grace=0 + argv /bin/cat → 唯一客户端断开 → detach：teardown
+// 快半段 SIGHUP 其会话 + maybeExitWhenEmptyLocked per-client 分支置位 pcExitReq
+// （不发信号）→ cat HUP 致死 → watcher 收割 -1（last-reaped-code）→ 慢半段
+// delete+Broadcast → supervisor 终结条件成立 → exitf(-1) 恰好一次（accept-255
+// 断言常量；进程级 255 归 13-07 phase13.mjs S3 进程级断言）。同步边：exit_when_empty
+// 事件 emit（reader detach 路径）先于 pcExitReq 置位/Broadcast → supervisor →
+// exitf —— waitExit 收码即事件已落流，stderr 断言无独立同步需求。
+func TestEmptyExitPerClientClientFirst(t *testing.T) {
+	restore := captureStderr(t)
+	defer restore() // 失败路径兜底恢复 os.Stderr（幂等，limits_test.go 先例）
+
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 0
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// SIGHUP 致死 → ExitCode()=-1 → watcher 收割 → exitf(-1) 恰好一次
+	//（accept-255 断言常量，见文件头 OQ1 门注释）。
+	waitExit(t, exitCh, -1)
+	assertNoExit(t, exitCh)
+
+	// 触发端正面证据：per-client 立即形态 emit exit_when_empty 事件恰 1 条
+	//（remote/code 1000 同 shared schema——mode 分歧只在动作面不在事件面）。
+	out := restore()
+	evs := parseEvents(t, out)
+	if n := countByEvent(evs, "exit_when_empty"); n != 1 {
+		t.Fatalf("exit_when_empty count = %d, want 1（per-client 立即形态触发事件；out=%q）", n, out)
 	}
 }

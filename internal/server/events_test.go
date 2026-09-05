@@ -605,7 +605,13 @@ func TestAuthFailedNoUsername(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCredential: %v", err)
 	}
-	_, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
+	// 13-03 装配面调整：startTrackedServerWith → startEventsServerWith（补
+	// sess/exitCh 句柄——断言面与同步边语义逐字不变）。原装配把 exitCh 弃置，
+	// t.Cleanup killServer 的 SIGKILL 触发 lifecycle goroutine 的 session_end
+	// emit 与本测试的捕获窗收口无同步边——迟到的 emit 会落入后继捕获测试的
+	// 窗口（13-03 TestPerClientSessionEnd 严格计数在全程 -race 下实测受害）。
+	// 本测试改为体内显式收口（下方 Kill + waitExit）。
+	exitCh, wsURL, _, sess, waitHandlers := startEventsServerWith(t, []string{"/bin/cat"}, server.Options{
 		Writable:    true,
 		Credentials: []server.Credential{cred},
 	})
@@ -623,6 +629,16 @@ func TestAuthFailedNoUsername(t *testing.T) {
 	}
 
 	waitHandlers()
+
+	// 13-03 lifecycle 收口同步边（跨测试迟写防线）：体内显式 Kill 子进程触发
+	// lifecycle 全链（session_end emit 先于 terminate→exitf——waitExit 收码即
+	// emit 已落本测试捕获窗内），后继测试的 captureStderr 置换不再可能截获
+	// 本实例的迟到事件。Kill 幂等（killServer cleanup 对已死进程静默）。
+	if sess.Cmd != nil && sess.Cmd.Process != nil {
+		_ = sess.Cmd.Process.Kill()
+	}
+	waitExit(t, exitCh, -1)
+
 	out := restore()
 	evs := parseEvents(t, out)
 	fails := eventsNamed(evs, proto.ErrAuthFailed)
@@ -641,4 +657,132 @@ func TestAuthFailedNoUsername(t *testing.T) {
 	if strings.Contains(out, "no-such-user-7f3a") {
 		t.Fatalf("stderr 含错凭据用户名（SEC-01 红线）: %q", out)
 	}
+}
+
+// ====== 13-03 增量（PC-09/D-09 前半）：per-client 粒度 session_end schema ======
+
+// TestPerClientSessionEnd（13-03，D-09 前半——sessionWatcher emit 的 per-client
+// session_end）：schema = shared 母本（上方 TestSessionEnd 断言形态同构——
+// exit_code/duration_seconds/signal 键）+ client_id 关联键（cl.attachSeq，
+// attach/detach 事件同键先例——会话级事件与连接级事件关联检索）。两形态：
+//
+//   - exit_code_42：正常退出——exit_code==42（与 EXIT 帧同源）、无 signal 键
+//     （非信号死亡）、duration_seconds>0（pc.startedAt 起点）、client_id 与
+//     attach 事件同值。同步边 = wire 观测：session_end emit 先于 EXIT 帧直写
+//     （watcher 程序序），readExitClose 收帧即事件已落流。
+//   - signal_sigkill：KILL 兜底归因面（D-09：经 signal 字段归因不另起独立
+//     事件）——trap "" HUP 免疫 + StopTimeout 覆写短值 → detach → 快半段 HUP
+//     被免疫 → AfterFunc 补 SIGKILL → watcher 收割信号死亡 → signal=="SIGKILL"
+//     （signalName 映射命中出键——显式大写名，exitSignalNum 同链）。同步边 =
+//     pcSessions 收敛观测：emit → close(waitDone) → 慢半段 <-waitDone →
+//     delete+Broadcast 程序序链——观测到 len==0 即事件已落流。
+func TestPerClientSessionEnd(t *testing.T) {
+	// exit 42 形态：正常退出码传递——session_end exit_code==42、无 signal 键。
+	t.Run("exit_code_42", func(t *testing.T) {
+		restore := captureStderr(t)
+		defer restore()
+
+		exitCh, wsURL := startPerClientServer(t, []string{"sh", "-c", "exit 42"}, nil)
+		_ = exitCh // 无 exit-when-empty——supervisor 等待中，exitf 不触发
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		c, _ := dialHello(t, ctx, wsURL, 80, 24)
+
+		// wire 观测：EXIT{42} + 1000（per-client EXIT 私有化直写）——收帧即
+		// session_end emit 已完成（watcher 程序序）。
+		frames, code := readExitClose(t, ctx, c)
+		if code != websocket.StatusNormalClosure {
+			t.Fatalf("close code = %d, want %d (1000)", code, websocket.StatusNormalClosure)
+		}
+		if len(frames) == 0 {
+			t.Fatal("no frames collected——EXIT 帧缺失")
+		}
+		if ep := decodeExitFrame(t, frames[len(frames)-1]); ep.ExitCode != 42 {
+			t.Fatalf("EXIT exit_code = %d, want 42（事件同源正面证据）", ep.ExitCode)
+		}
+
+		out := restore()
+		evs := parseEvents(t, out)
+		ends := eventsNamed(evs, "session_end")
+		if len(ends) != 1 {
+			t.Fatalf("session_end count = %d, want 1: %q", len(ends), out)
+		}
+		atts := eventsNamed(evs, "attach")
+		if len(atts) != 1 {
+			t.Fatalf("attach count = %d, want 1（关联键数据源）: %q", len(atts), out)
+		}
+		if ends[0]["exit_code"] != float64(42) {
+			t.Fatalf("session_end exit_code = %v, want 42", ends[0]["exit_code"])
+		}
+		if dur, _ := ends[0]["duration_seconds"].(float64); dur <= 0 {
+			t.Fatalf("session_end duration_seconds = %v, want >0（pc.startedAt 起点）", ends[0]["duration_seconds"])
+		}
+		// client_id 关联键：与 attach 事件同值（D-20 关联检索锁同构）。
+		if ends[0]["client_id"] != atts[0]["client_id"] {
+			t.Fatalf("client_id 关联失败：attach=%v session_end.client_id=%v (out=%q)", atts[0]["client_id"], ends[0]["client_id"], out)
+		}
+		// 非信号死亡——不应出 signal 键（TestSessionEnd 同款双向断言）。
+		if _, ok := ends[0]["signal"]; ok {
+			t.Fatalf("session_end 不应出 signal 键（非信号死亡）: %v", ends[0])
+		}
+	})
+
+	// KILL 兜底形态：trap 免疫 HUP → stopTimeout 补 SIGKILL → 信号死亡归因。
+	t.Run("signal_sigkill", func(t *testing.T) {
+		restore := captureStderr(t)
+		defer restore()
+
+		argv := []string{"sh", "-c", "trap '' HUP; echo PCSEPID=$$; while true; do sleep 1; done"}
+		exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+			return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+		}, func(o *server.Options) { o.StopTimeout = 500 * time.Millisecond })
+		_ = exitCh // 无 exit-when-empty——exitf 不触发
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		c, _ := dialHello(t, ctx, wsURL, 80, 24)
+		// trap 安装先于 echo——回读 pid 即 trap 已就位同步点（11-03 免落盘
+		// 纪律；HUP 早到致死则归因为 SIGHUP，断言必翻车——夹具前提自证）。
+		pid := readSessionPid(t, ctx, c, "PCSEPID")
+		_ = pid // 夹具同步点（无独立断言面——harness Cleanup 收口残余）
+
+		// 断开 → 快半段 HUP（被 trap 免疫）→ 500ms AfterFunc 补 SIGKILL。
+		if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+
+		// pcSessions 收敛 0（emit → close(waitDone) → delete 程序序链——观测
+		// 到 len==0 即 session_end 已落流；5s 护栏 = 500ms stopTimeout +
+		// Drain 200ms + 余量）。
+		deadline := time.Now().Add(5 * time.Second)
+		for srv.PCSessionsLenForTest() != 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("pcSessions 5s 内未收敛到 0（当前 %d）——KILL 兜底收割未落定", srv.PCSessionsLenForTest())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		out := restore()
+		evs := parseEvents(t, out)
+		ends := eventsNamed(evs, "session_end")
+		if len(ends) != 1 {
+			t.Fatalf("session_end count = %d, want 1: %q", len(ends), out)
+		}
+		atts := eventsNamed(evs, "attach")
+		if len(atts) != 1 {
+			t.Fatalf("attach count = %d, want 1（关联键数据源）: %q", len(atts), out)
+		}
+		// 信号死亡：exit_code==-1 + signal=="SIGKILL"（KILL 兜底经 signal 字段
+		// 归因，D-09——signalName 映射命中出键，不另起独立事件）。
+		if ends[0]["exit_code"] != float64(-1) {
+			t.Fatalf("session_end exit_code = %v, want -1（SIGKILL 致死不得粉饰为正常退出码）", ends[0]["exit_code"])
+		}
+		if ends[0]["signal"] != "SIGKILL" {
+			t.Fatalf("session_end signal = %v, want %q（KILL 兜底归因）", ends[0]["signal"], "SIGKILL")
+		}
+		if ends[0]["client_id"] != atts[0]["client_id"] {
+			t.Fatalf("client_id 关联失败：attach=%v session_end.client_id=%v (out=%q)", atts[0]["client_id"], ends[0]["client_id"], out)
+		}
+	})
 }

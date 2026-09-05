@@ -2,7 +2,11 @@ package server
 
 // export_test.go —— 测试期专属出口（仅 -test 编译，零生产 API 面）。
 
-import "time"
+import (
+	"time"
+
+	"github.com/sworda/wesh/internal/pty"
+)
 
 // LockStderr 供 server_test 包的 captureStderr 在置换/恢复 os.Stderr 两个
 // 写点持写锁：与 stderrW.Write 的 RLock 配对，把「置换写」与「在途事件读」
@@ -93,4 +97,35 @@ func NewSpawnThrottleProbeForTest(globalRate, globalBurst, perIPRate, perIPBurst
 // Allow 时间注入直调（store.allow 同签名同语义）。
 func (p *SpawnThrottleProbeForTest) Allow(ip string, now time.Time) bool {
 	return p.st.allow(ip, now)
+}
+
+// TeardownReapedFenceForTest（13-03 WR-02 白盒构造出口，PC-09/T-13-10）：
+// 构造「waitDone 已预关闭 + reaped 未置位」的 pcSession 并持 hubMu 直调
+// teardownPCLocked，返回 teardownDone 通道供调用方断言收口完成。该状态在
+// 正常时序下不可观测——sessionWatcher 序列中 close(waitDone) 与 hubMu 内
+// 置 reaped 相邻建立（Wait-return→hubMu-acquire 微窗口 = Phase 11 REVIEW
+// WR-02 登记的 kill-after-reap 理论面），本出口将其确定性注入：被测行为
+// = WR-02 栅栏跳过信号面后收口链仍完整（Drain/Close/waitDone/delete/
+// teardownDone）。行为面不可区分「未发信号」半边（kill 已收割 pgid 收
+// ESRCH 静默）由 perclient_test.go TestPerClientReapedFence 的源码 region
+// 断言承载。ForTest 四件套纪律：仅 -test 编译零生产 API 面；调用方不得
+// 持 hubMu（上方 ShrinkOutboxForTest 同款纪律）；传入真实 *pty.Session
+// （慢半段 Drain/Close 对真实 master fd 收口，测试侧为本会话唯一 Wait
+// 调用方——无 watcher 无僵尸残留）。
+func (s *Server) TeardownReapedFenceForTest(pcSess *pty.Session) <-chan struct{} {
+	pc := &pcSession{
+		sess:         pcSess,
+		inQ:          newInputQ(defaultInputQueueBytes),
+		inputDone:    make(chan struct{}),
+		waitDone:     make(chan struct{}),
+		teardownDone: make(chan struct{}),
+		startedAt:    time.Now(),
+		resizeDeb:    newDebouncer(time.Hour, func() {}),
+	}
+	close(pc.waitDone) // 预关闭：Wait 已返回形态（内核态 reap 完成点）
+	// reaped 零值 false——「置位在途」微窗口注入（构造即栅栏触发面）。
+	s.hubMu.Lock()
+	s.teardownPCLocked(pc)
+	s.hubMu.Unlock()
+	return pc.teardownDone
 }

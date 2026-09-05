@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -2302,4 +2303,242 @@ func TestPerClientSpawnThrottleWireForm(t *testing.T) {
 	if throttled[0]["code"] != float64(websocket.StatusInternalError) {
 		t.Fatalf("spawn_throttled code = %v, want float64(1011)", throttled[0]["code"])
 	}
+}
+
+// ====== 13-03 增量（PC-09）：exit-when-empty 三形态 + --once 形态 + WR-02 栅栏 ======
+// Pitfall 1 窗口期闭合的行为锁：per-client --once/--exit-when-empty 三形态全部
+// 可退出（13-03 前 maybeExitWhenEmptyLocked 早退守卫使永不退出——「注册表已空
+// 且无子进程可等」资源驻留防线破口）。断言常量 -1 = accept-255 门裁决
+//（emptyexit_test.go 头注释 OQ1 门形态——进程级 255 归 13-07 phase13.mjs）。
+// 时序纪律：轮询/静默窗 select+time.After 竞速替代固定 sleep 时点断言
+//（Phase 9 flake 教训），统护 ctx 只做护栏。
+
+// TestPerClientExitWhenEmptyImmediate（三形态之一，grace=0 立即）：唯一客户端
+// 断开 → 注册表空迁移 → 立即形态触发（无计时器）：pcExitReq 置位 +
+// Broadcast——不发信号（detach 的 teardown 已 SIGHUP 其会话，Pitfall 1 分支表
+// 立即形态行）→ cat HUP 致死 → watcher 收割 -1 → 慢半段 delete+Broadcast →
+// supervisor → exitf(-1) 恰好一次。
+func TestPerClientExitWhenEmptyImmediate(t *testing.T) {
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 0
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// 第二终结源全链（置位 → 收割 → 归零唤醒 → terminate）：5s 护栏内
+	// exitf(-1)（accept-255 断言常量）。
+	waitExit(t, exitCh, -1)
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientExitWhenEmptyGraceExpire（三形态之二，grace>0 宽限到期）：
+// grace=400ms → 唯一客户端断开启动宽限计时（exit_when_empty_wait）→ 到期前
+// 100ms 时点 exitCh 静默（不过早退出——计时器真实武装且未触发）→ 到期回调
+// 复查通过（身份比对/仍空/未 exiting）→ pcExitReq 置位 + Broadcast（分支表
+// 宽限到期行）→ 会话已于断开时 HUP 收割归零 → supervisor → exitf(-1)。
+func TestPerClientExitWhenEmptyGraceExpire(t *testing.T) {
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 400 * time.Millisecond
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// 到期前 100ms 时点静默（grace=400ms 远未到期——不过早退出；静默窗
+	// select+time.After 竞速形态，夹具纪律红线）。
+	select {
+	case code := <-exitCh:
+		t.Fatalf("exitf called with code %d at 100ms, before grace expiry (400ms) — premature exit", code)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// 到期 → 复查 → 第二终结源触发 → exitf(-1)（3s 护栏——400ms 到期 +
+	// supervisor 唤醒余量；accept-255 断言常量）恰好一次。
+	select {
+	case code := <-exitCh:
+		if code != -1 {
+			t.Fatalf("exit code = %d, want -1（accept-255 门裁决断言常量）", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("exitf not called within 3s after grace expiry — second terminator did not fire")
+	}
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientExitWhenEmptyGraceCancel（三形态之三，宽限取消——绝不置位）：
+// grace=2s → 客户端断开启动宽限计时 → 300ms 后再 attach（per-client 重连 =
+// 全新 spawn，11-04 S7 语义）→ registerLocked 成功触发取消点
+// cancelExitEmptyTimerLocked（Stop + 置 nil，两模式共用零改动）+ 空纪元门闩
+// 清零 → echo 验证新会话存活 → 越过旧计时器到期点 +500ms 余量 exitCh 静默
+// （取消实证——取消形态绝不置位 pcExitReq，Pitfall 1 分支表取消行）→ 再次
+// 断开重新计时 → 到期收码。per-IP spawn 桶默认 burst 4 > 本测 2 次 attach，
+// 无需覆写（13-02 Rule 3 教训核对）。
+func TestPerClientExitWhenEmptyGraceCancel(t *testing.T) {
+	const grace = 2 * time.Second
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = grace
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c1, _ := dialHello(t, ctx, wsURL, 80, 24)
+	closedAt := time.Now()
+	if err := c1.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close c1: %v", err)
+	}
+
+	// 宽限内 300ms 再 attach：取消点触发（恰好一次，置 nil 防重复）。
+	time.Sleep(300 * time.Millisecond)
+	c2, _ := dialHello(t, ctx, wsURL, 80, 24)
+
+	// echo 验证新会话存活（全新 spawn 的 PTY——取消后会话照常服务）。
+	payload := []byte("grace cancel echo")
+	if err := c2.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+		t.Fatalf("write INPUT after re-attach: %v", err)
+	}
+	got := make([]byte, 0, len(payload))
+	for len(got) < len(payload) {
+		_, data, err := c2.Read(ctx)
+		if err != nil {
+			t.Fatalf("read OUTPUT after re-attach: %v (got %q so far)", err, got)
+		}
+		if len(data) == 0 || data[0] != proto.Output {
+			t.Fatalf("unexpected frame: %v", data)
+		}
+		got = append(got, data[1:]...)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("echo payload = %q, want %q", got, payload)
+	}
+
+	// 越过旧计时器到期点（closedAt+grace）+500ms 余量，exitCh 静默 = 取消实证
+	//（旧 timer 若未取消，到期复查通过 → pcExitReq → exitf(-1)）。
+	if remain := time.Until(closedAt.Add(grace + 500*time.Millisecond)); remain > 0 {
+		select {
+		case code := <-exitCh:
+			t.Fatalf("exitf called with code %d past old timer expiry — grace timer not canceled by re-attach", code)
+		case <-time.After(remain):
+		}
+	}
+
+	// 再次断开 → 注册表再次空迁移（门闩已随 c2 attach 清零开新纪元）→
+	// 重新计时 → 到期 → exitf(-1)（grace+2s 余量护栏；accept-255 断言常量）。
+	if err := c2.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close c2: %v", err)
+	}
+	select {
+	case code := <-exitCh:
+		if code != -1 {
+			t.Fatalf("exit code = %d, want -1（accept-255 门裁决断言常量）", code)
+		}
+	case <-time.After(grace + 2*time.Second):
+		t.Fatal("exitf not called within grace+2s after second detach — re-armed timer did not fire")
+	}
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientOnce（--once 形态）：--once ≡ maxClients=1 + exit-when-empty
+// grace=0（main.go 语法糖展开，服务端无 --once 概念——CLI 层零改动分层保持，
+// 研究 §4.3）→ 唯一客户端断开 → 同立即形态路径 → exitf(-1) 恰好一次
+// （06-04 先例：--once 场景经 Options 展开装配驱动同一路径）。
+func TestPerClientOnce(t *testing.T) {
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.MaxClients = 1
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 0
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	waitExit(t, exitCh, -1)
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientReapedFence（WR-02 结构性栅栏，T-13-10，双通道锁定）：
+//
+// 半边一（行为面，白盒构造）：经 export_test TeardownReapedFenceForTest 注入
+// 「waitDone 已关闭 + reaped 未置位」微窗口态（sessionWatcher 正常时序下
+// close(waitDone) 与 hubMu 置位 reaped 相邻建立，竞态窗不可观测——Phase 11
+// REVIEW WR-02 登记的 Wait-return→hubMu-acquire 微窗口确定性注入）→ 直调
+// teardownPCLocked → 断言收口完整（teardownDone 护栏内关闭、不阻塞不 panic
+// ——恰好一次由 teardownOnce 结构承载：Do 体二次执行即 double-close panic
+// 必现形）。本会话无 watcher——测试侧为唯一 Wait 调用方（防僵尸）。
+//
+// 半边二（源码 region 断言，「未发信号」的行为面不可观测承载）：kill 已收割
+// pgid 收 ESRCH 静默——行为无判别力，栅栏形态由源码锁定：teardownPCLocked
+// 函数体内 waitDone 非阻塞 select 守卫必须存在于 SignalGroup(s.stopSignal)
+// 之前（快半段信号分支的门卫形态）。region 边界 = 下一函数声明
+// reapOrphanSession（文件内相邻既定）。
+func TestPerClientReapedFence(t *testing.T) {
+	// —— 半边二：源码 region 断言（先行——形态漂移即 Fail，行为半边免跑）——
+	src, err := os.ReadFile("perclient.go")
+	if err != nil {
+		t.Fatalf("read perclient.go source: %v", err)
+	}
+	fnStart := bytes.Index(src, []byte("func (s *Server) teardownPCLocked"))
+	if fnStart < 0 {
+		t.Fatal("teardownPCLocked 函数声明未找到——region 锚点漂移")
+	}
+	rest := src[fnStart:]
+	fnEnd := bytes.Index(rest, []byte("func (s *Server) reapOrphanSession"))
+	if fnEnd < 0 {
+		t.Fatal("reapOrphanSession 函数声明未找到——region 边界锚点漂移")
+	}
+	region := string(rest[:fnEnd])
+	selIdx := strings.Index(region, "case <-pc.waitDone:")
+	sigIdx := strings.Index(region, "pc.sess.SignalGroup(s.stopSignal)")
+	if selIdx < 0 || sigIdx < 0 {
+		t.Fatalf("teardownPCLocked 缺栅栏锚点（select@%d SignalGroup@%d）——WR-02 waitDone 非阻塞 select 守卫缺失", selIdx, sigIdx)
+	}
+	if selIdx > sigIdx {
+		t.Fatalf("waitDone select 守卫（@%d）不在 SignalGroup（@%d）之前——WR-02 栅栏形态漂移（守卫必须先于信号分支）", selIdx, sigIdx)
+	}
+
+	// —— 半边一：白盒构造（行为面）——
+	_, _, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	// 真实会话（慢半段 Drain/Close 对真实 master fd 收口）；测试侧唯一 Wait
+	// 调用方（本会话无 watcher——白盒注入即无 goroutine 群）。
+	pcSess, err := pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, 80, 24)
+	if err != nil {
+		t.Fatalf("pty.StartWithSize: %v", err)
+	}
+	t.Cleanup(func() {
+		if pcSess.Cmd != nil && pcSess.Cmd.Process != nil {
+			_ = pcSess.Cmd.Process.Kill()
+		}
+		_ = pcSess.Close()
+	})
+
+	done := srv.TeardownReapedFenceForTest(pcSess)
+	select {
+	case <-done:
+		// 收口完整：栅栏路径（跳过信号面）下 Drain/Close/waitDone/delete/
+		// teardownDone 全链不阻塞不 panic。
+	case <-time.After(3 * time.Second):
+		t.Fatal("teardown 未在护栏内收口——WR-02 栅栏路径阻塞或 panic")
+	}
+
+	// 本会话唯一 Wait 调用方（防僵尸；master 已被慢半段 Close——sh 收
+	// SIGHUP 死亡，Wait 即收割）。
+	_ = pcSess.Wait()
 }
