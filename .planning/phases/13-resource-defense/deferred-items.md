@@ -7,3 +7,4 @@
 |------|------|------|------|--------|
 | GOROOT gofmt（go1.26.3）CJK 标点接续注释命中：`//（fs.Visit 第八位...` 行需补空格 | cmd/wesh/main_test.go（TestStopTimeoutResolution doc 注释） | 13-01（bfe6291） | 13-01 SUMMARY 记「gofmt -l cmd/wesh/ 零输出」用的是 PATH 旧版 gofmt；GOROOT gofmt（10-05 收口闸工具）命中一行。一行注释空格修正，无行为面 | 13-02 |
 | GOROOT gofmt 同类命中：`//（洪水后令牌恢复...` 行需补空格 | internal/server/perclient_test.go:1535（限速洪水测 doc 注释） | Phase 12（f38a170） | 同上——PATH gofmt 双 clean 时代提交的存量行；13-02 Task 2 重建 diff 时刻意保持既有形态（白名单纯新增纪律） | 13-02 |
+| GOROOT gofmt 命中：dialHelloWithXFF 声明前双空行（顶层声明间应单空行） | internal/server/perclient_test.go:2007-2009 | 13-02（202348e） | 13-03 执行期新发现（13-02 SUMMARY 的 gofmt 核查遗漏——PATH gofmt 对该形态亦有命中，推测 13-02 核查时被 perclient_test.go 整体单文件命中遮蔽后逐 hunk 未审）。纯空行修正，无行为面 | 13-03 |

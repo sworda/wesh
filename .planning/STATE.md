@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 13
 current_phase_name: resource-defense
 status: executing
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-09-05T15:21:02.899Z"
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-09-05T16:17:14.925Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 19
+  completed_plans: 20
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 ## Current Position
 
 Phase: 13 (resource-defense) — EXECUTING
-Plan: 3 of 8
+Plan: 4 of 8
 Status: Ready to execute
 Last activity: 2026-09-05 — Phase 13 execution started
 
-Progress: [████████░░] 76%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [████████░░] 80%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -76,6 +76,7 @@ Progress: [████████░░] 76%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 12-per-client P05 | 22min | 2 tasks | 2 files |
 | Phase 13 P01 | 30min | 3 tasks | 5 files |
 | Phase 13 P02 | 50min | 2 tasks | 6 files |
+| Phase 13 P03 | 50min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -133,6 +134,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 13-02] 事件 schema 键集白名单含日志封套（time/level/msg）+ 四段 schema——parseEvents 解析整行 JSON，纯四段白名单必翻车（Task 2 内自愈的 Rule 1 测试 bug）
 - [Phase ?]: [Phase 13-02] PC-08 勾选留 phase 末收口 plan（11-01/12-01/13-01 先例：ID 跨 plan 共享——机制本体已落地，13-03 场景面/13-07 压测面证据未齐）
 - [Phase ?]: [Phase 13-02] GOROOT gofmt（go1.26.3）存量命中两处（cmd/wesh/main_test.go 13-01 遗留 + perclient_test.go:1535 Phase 12 遗留，均为 //（ CJK 标点接续行）登记 deferred-items.md——范围外不修，13-08 收口闸应知悉
+- [Phase ?]: [Phase 13-03] session_end emit 位置取 close(waitDone) 前（plan「hubMu 解锁后」的 Rule 1 偏差）：与 shared lifecycle 母本同位 + 建立 emit→close(waitDone)→delete+Broadcast→exitf 的 happens-before 链——plan 位置与慢半段 Broadcast 无同步边，调度停摆下 exitf(os.Exit) 可先于事件落流
+- [Phase ?]: [Phase 13-03] Rule 1 关键补齐：upgradePerClient registerLocked 后补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷）——GraceCancel 测试首跑实测暴露，单独 fix 提交
+- [Phase ?]: [Phase 13-03] WR-02 栅栏同构覆盖补 KILL 回调（planner 裁定「Pitfall 2 语义对一切 kill(-pgid) 同构适用」）；子先死断言值 42（判别力收紧）；PC-09/OPS-12 勾选留 phase 末（13-07 phase13.mjs S3 进程级 255 断言未齐）
 
 ### Pending Todos
 
@@ -154,6 +158,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-05T15:21:02.880Z
-Stopped at: Completed 13-02-PLAN.md
+Last session: 2026-09-05T16:17:14.907Z
+Stopped at: Completed 13-03-PLAN.md
 Resume file: None
