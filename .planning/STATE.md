@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 13
 current_phase_name: resource-defense
 status: executing
-stopped_at: Completed 13-06-PLAN.md
-last_updated: "2026-09-05T18:40:45.054Z"
+stopped_at: Completed 13-07-PLAN.md
+last_updated: "2026-09-05T19:20:39.333Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 23
+  completed_plans: 24
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 ## Current Position
 
 Phase: 13 (resource-defense) — EXECUTING
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Ready to execute
 Last activity: 2026-09-05 — Phase 13 execution started
 
-Progress: [█████████░] 92%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [██████████] 96%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -80,6 +80,7 @@ Progress: [█████████░] 92%（v1.1；v1.0 已 9/9 阶段 70/7
 | Phase 13 P04 | 13min | 2 tasks | 2 files |
 | Phase 13 P05 | 19min | 2 tasks | 6 files |
 | Phase 13 P06 | 23min | 2 tasks | 11 files |
+| Phase 13 P07 | 27min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -146,6 +147,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 13-05] ptyKills 恰按 plan 枚举两路径（teardown + 孤儿回收 AfterFunc），13-04 Shutdown 路径补 KILL 不在计数面（plan 白名单明示两路径；series HELP 文案已如实限定 teardown and orphan reaping）——运维面若需 Shutdown KILL 计数属 series 语义扩展，13-07/13-08 复核知悉项
 - [Phase ?]: [Phase 13-06] Task 1/2 TDD 按先例单 feat 提交收口（RED=编译红任务内观察即转 GREEN）；darwin 双编译闸前移抓出 reap_darwin_test.go whitelistEnv 两参遗漏（build-tag 文件 Linux 编译面不含，独立 fix 提交）——签名扩散类改动 darwin 闸应随任务即跑
 - [Phase ?]: [Phase 13-06] SEC-09 WESH_REMOTE_USER 落地：whitelistEnv 第三参空串不出键（键名白名单固定代码常量由 pty 包单侧定义）+ SpawnFunc 三参签名全链 + main.go 闭包 startOpts 局部复制防串台（T-13-21）；startPerClientServer 默认 spawnFn 升级生产镜像完整形态（注释契约真值优先）；签名扩散波及 shutdown/metrics/events 三测试文件（plan files_modified 枚举缺口，WINDOWS #36）；SEC-09 勾选留 phase 末（13-07 S6 进程级 env 回读未齐）
+- [Phase ?]: [Phase 13-07] phase13.mjs 六场景两轮 29/29（phase12 同构第三代 + dialAttach 双形态 dial 合流）；S2 KILL 兜底默认 5s 三面判别（~2s 存活 + ESRCH + elapsed≥4s 下界，实测 5.0s）；S1 事件/计数器/拒绝数三方精确相等 + XFF 换键双态（事件 remote==XFF 链首）；S6c printenv 缺席断言以 echo 标记程序序锚定
+- [Phase ?]: [Phase 13-07] TestChurn churn 负载格：10rps×30s（300 次）生产默认桶参数零覆写——attached=33/rejected=267/throttled=267、gor 8→8/fd 11→11/mem +110KB 精确回落基线；断言全部基线差值形态（gor/mem/fd 双采样 + 回收轮询 + 容差标定注释——Pitfall 7）；spawn_total==attached 程序序精确对照；PC-08/09/SEC-09/OPS-12 勾选留 13-08（Task 2 承载）
 
 ### Pending Todos
 
@@ -167,6 +170,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-05T18:40:45.036Z
-Stopped at: Completed 13-06-PLAN.md
+Last session: 2026-09-05T19:20:39.314Z
+Stopped at: Completed 13-07-PLAN.md
 Resume file: None
