@@ -64,3 +64,12 @@ func (s *Server) GateTransitionsForTest() int {
 	defer s.hubMu.Unlock()
 	return s.registry.gateTransitions
 }
+
+// 13-02 观测出口（PC-08 spawn 节流 tracer e2e 的计数器递增观测）：返回
+// ptySpawnThrottled 计数器当前值（atomic Load——mc 注释的锁外读合法形态）。
+// 本阶段 /metrics 尚无对应 series（wesh_pty_spawn_throttled_total 输出归
+// 13-05 接线），tracer e2e 经本出口观测递增；GateTransitionsForTest 观测
+// 出口先例同形态。故障注入语义仅服务测试。
+func (s *Server) PTYSpawnThrottledForTest() int64 {
+	return s.mc.ptySpawnThrottled.Load()
+}

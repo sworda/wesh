@@ -49,12 +49,21 @@ import (
 //     （fan-out ×N 真实带宽）；ws_recv = Attach 读循环 Hello 首读 + 稳态循环
 //     两站点（忠实「WS 网络流量」字面，RESEARCH A4）。ws_sent ÷ pty_output
 //     即吞吐放大比。
+//   - ptySpawn/ptySpawnFailures/ptyKills/ptySpawnThrottled（13-02，D-08
+//     四件一次性全加——per-client spawn 热路径计数器组）：13-02 仅接线
+//     ptySpawnThrottled 递增点（perclient.go upgradePerClient 桶拒绝）；
+//     其余三件递增点与全部四件的 series 输出（snapshotMetrics/
+//     metricsHandler 扩展）归 13-05 接线——本阶段先立字段。
 type metricsCounters struct {
-	authFailed     atomic.Int64
-	authThrottled  atomic.Int64
-	ptyOutputBytes atomic.Int64
-	wsSentBytes    atomic.Int64
-	wsRecvBytes    atomic.Int64
+	authFailed        atomic.Int64
+	authThrottled     atomic.Int64
+	ptyOutputBytes    atomic.Int64
+	wsSentBytes       atomic.Int64
+	wsRecvBytes       atomic.Int64
+	ptySpawn          atomic.Int64
+	ptySpawnFailures  atomic.Int64
+	ptyKills          atomic.Int64
+	ptySpawnThrottled atomic.Int64
 }
 
 // metricsSnap 为一次采集的 registry 状态快照（字段全部在 snapshotMetrics 的

@@ -2,7 +2,8 @@ package server
 
 // perclient.go —— per-client 会话生命周期主干（11-01/11-03，PC-02/PC-03/PC-04，
 // D-01/D-02/D-03/D-04；研究 ARCHITECTURE §2.1/§3.1/§3.5/§4.1/§5 与 PITFALLS
-// Pitfall 2/3/4/5 锚点登记）：
+// Pitfall 2/3/4/5 锚点登记；13-02 增量：spawn 双令牌桶 pre-spawn 判定——
+// PC-08 churn 防线，存储件 spawnthrottle.go）：
 //
 //   - pcSession：单客户端会话的全部服务端状态（pty.Session + 每会话输入
 //     队列 + 收口信号集 + 收割/终结同步边）；
@@ -140,12 +141,36 @@ func rejectCapacity(ctx context.Context, c *websocket.Conn, remote, remoteUser s
 // §1/§6b；调用点 = server.go Attach 分岔，close(helloDone)+release() 已在其前
 // 执行——半开名额不泄漏）。拒绝/失败路径自行写 Error+Close 并返回 nil，调用方
 // 据此直接 return；成功路径完成装配并启动五 goroutine 后返回 cl。
-func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote, remoteUser string, h proto.HelloPayload, ticketMode string, cancel context.CancelFunc) *client {
+// 13-02：throttleIP 为 spawn 节流桶键（Attach 上游 :883 既有 clientIP 提取点
+// 产物——trust 开启时 XFF 链首换键，D-05；本函数不碰 *http.Request）。
+func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote, remoteUser, throttleIP string, h proto.HelloPayload, ticketMode string, cancel context.CancelFunc) *client {
 	// 单行门算 effMode（decideModeLocked 不调用——write-policy 仲裁矩阵在
 	// per-client 不装配，owner 递补语义不存在）。
 	effMode := proto.ModeRO
 	if s.writable && ticketMode == proto.ModeRW {
 		effMode = proto.ModeRW
+	}
+	// 13-02（PC-08，D-03/D-04/D-05）spawn 双令牌桶判定（pre-spawn 容量闸
+	// 之前——fork 预算保护必须在 spawn 调用点之前，T-13-04/T-13-05）：全局
+	// 桶（8/s burst 16）收断网惊群、per-IP 桶（1/s burst 4）收单点 churn
+	//（键 = throttleIP，trust 开启时 XFF 链首——反代部署合法多用户不共享
+	// 一桶，D-05）。判定纯内存无阻塞（store 自有 mu 最小临界区），spawnFunc
+	// 调用点保持 hubMu 之外不动（Anti-Pattern 1）。取不到令牌即拒——拒绝
+	// 序列与 rejectCapacity 同码同串不同事件名（D-04 wire 聚合、日志细分
+	// 第三次应用：Error{server_error, capacityMessage} 定值文案——三拒绝
+	// wire 不可区分是有意为之 → spawn_throttled 单行审计 → Close(1011,
+	// server_error) → ptySpawnThrottled 计数递增）。1011 不在前端
+	// shouldReconnect 触发集（main.ts:1023 仅 1006，reconnect.test.ts 对
+	// 1011 false）——节流拒绝不触发自动重连，无重连放大 fork 循环
+	//（T-13-06；1008 亦禁用——认证/版本策略受众不混入容量/节流策略）。
+	// 拒绝路径零注册零登记零残留——半开名额已在升档分岔前 release() 既有
+	// 结构性保证（下方容量闸注释同款论证）。
+	if !s.spawnThrottle.allow(throttleIP, time.Now()) {
+		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, capacityMessage))
+		logEvent(remote, websocket.StatusInternalError, "spawn_throttled", remoteUser)
+		_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
+		s.mc.ptySpawnThrottled.Add(1)
+		return nil
 	}
 	// D-02 pre-spawn 容量再闸（11-03）：hubMu 短临界区只读 len(pcSessions)
 	// 计数——绝不持锁 spawn（Anti-Pattern 1：fork/exec 阻塞不得冻结全控制面；

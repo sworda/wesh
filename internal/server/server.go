@@ -191,6 +191,12 @@ type Server struct {
 	// 慢半段）。shared 模式恒 nil（New 尾部分岔仅 per-client 初始化）。
 	pcSessions map[*pcSession]struct{}
 
+	// 13-02（PC-08）：spawnThrottle 为 spawn 双令牌桶存储（全局桶 + per-IP
+	// map，spawnthrottle.go）——churn/惊群 fork 预算防线（D-03/D-04/D-05）。
+	// New 尾部仅 per-client 分支装配（shared 零 spawn 热路径，装配期一次
+	// 分岔纪律）；消费点 = upgradePerClient pre-spawn 桶判定（perclient.go）。
+	spawnThrottle *spawnThrottleStore
+
 	// Phase 7 反代信任装配（07-03，SEC-07 D-15..D-20）：proxy 为 New 装配期
 	// 固化、运行期只读的信任配置（AuthHeader 非空 = 信任闸开——XFF 换键与
 	// remote_user 提取共用同一开关，D-20 零双轨；零值 = 不信任，行为与现状
@@ -327,6 +333,17 @@ type Options struct {
 	// 膨胀；量级依据与 shared 侧废弃 dwell 的区别论证见 defaultSlowDwell
 	// 注释。消费点 = perclient.go 停读点武装（armSlowDwellLocked）。
 	SlowDwell time.Duration
+	// SpawnGlobalRate/SpawnGlobalBurst/SpawnPerIPRate/SpawnPerIPBurst 为测试
+	// 可覆写字段（13-02，PC-08，D-03）：spawn 双令牌桶参数——全局桶
+	//（8/s burst 16）防断网惊群 + per-IP 桶（1/s burst 4）防单点 churn。
+	// 零值各取 default 常量（spawnthrottle.go 常量区，InputRate/InputBurst
+	// 同档零值兜底先例）。刻意不设 CLI flag/TOML 键（D-03，SlowDwell 同构）：
+	// 零调优需求，公开契约面不膨胀。消费点 = perclient.go upgradePerClient
+	// pre-spawn 桶判定；shared 模式零装配零消费（装配期一次分岔）。
+	SpawnGlobalRate  int
+	SpawnGlobalBurst int
+	SpawnPerIPRate   int
+	SpawnPerIPBurst  int
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -411,6 +428,20 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	//（OutboxBytes :382-384 三段式先例——常量声明见 clients.go 常量区）。
 	if opts.SlowDwell <= 0 {
 		opts.SlowDwell = defaultSlowDwell
+	}
+	// 13-02（PC-08，D-03）：spawn 双令牌桶四参数零值兜底（InputRate/
+	// InputBurst 同位先例——常量声明见 spawnthrottle.go）。
+	if opts.SpawnGlobalRate <= 0 {
+		opts.SpawnGlobalRate = defaultSpawnGlobalRate
+	}
+	if opts.SpawnGlobalBurst <= 0 {
+		opts.SpawnGlobalBurst = defaultSpawnGlobalBurst
+	}
+	if opts.SpawnPerIPRate <= 0 {
+		opts.SpawnPerIPRate = defaultSpawnPerIPRate
+	}
+	if opts.SpawnPerIPBurst <= 0 {
+		opts.SpawnPerIPBurst = defaultSpawnPerIPBurst
 	}
 	if opts.WritePolicy == "" {
 		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
@@ -534,6 +565,10 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// 中间态，语义裁决归 Phase 13 OQ①②）。
 	if s.sessionMode == SessionModePerClient {
 		s.pcSessions = make(map[*pcSession]struct{})
+		// 13-02（PC-08）：spawn 双令牌桶装配（四参数已在上方零值兜底；
+		// spawnthrottle.go 构造内兜底为直构防御面）。shared 分支零装配
+		//（桶字段 nil，upgradePerClient 为唯一消费点——装配期一次分岔）。
+		s.spawnThrottle = newSpawnThrottleStore(opts.SpawnGlobalRate, opts.SpawnGlobalBurst, opts.SpawnPerIPRate, opts.SpawnPerIPBurst)
 		return s
 	}
 	// shared 分支（现状逐字——零回归红线）。
@@ -1043,9 +1078,12 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// participates/addMember/recalcNow/sessionDimsLocked/SignalForegroundGroup
 		//（下方参与集登记与序列尾部 SignalForegroundGroup 整段为 shared-only
 		// ——子进程以 Hello 钳制尺寸出生即正确，无重绘需求，研究 §1.2）。
+		// 13-02（D-05）：ip 透传 spawn 节流桶键（throttleIP 形参）——:883
+		// 既有 clientIP 提取点复用，trust 开启时 XFF 链首换键与 halfOpen/
+		// checkTicket 同源（键提取单点，不另写一份）。
 		// cl==nil = spawn 失败等拒绝路径已自行写 Error+Close 收口，直接 return。
 		if s.sessionMode == SessionModePerClient {
-			cl = s.upgradePerClient(ctx, c, remote, remoteUser, h, mode, cancel)
+			cl = s.upgradePerClient(ctx, c, remote, remoteUser, ip, h, mode, cancel)
 			if cl == nil {
 				return
 			}

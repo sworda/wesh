@@ -1220,9 +1220,17 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 	// KILL 兜底生产路径达成——HUP 被吸收场景的 1s 补发正是该序列的真实消费点，
 	// 恰好一次/quiescent/exitf 零调用三不变量锁定面逐字不动。1s 到期 + ESRCH
 	// < 2s 护栏的时序容差论证同 TestPerClientStopTimeoutKillFallback。
+	// SpawnPerIP 桶放宽（13-02 Rule 3 偏差登记）：本测 10 轮同 IP 连续 attach
+	// 超 per-IP 默认桶（1/s burst 4——第 5 轮起被 spawn 节流拒绝）；本测对象
+	// 是 teardown 竞态不变量非 churn 防线，放宽隔离两测试面（节流行为由
+	// TestPerClientSpawnThrottle 专测；断言行零改动）。
 	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
-	}, func(o *server.Options) { o.StopTimeout = time.Second })
+	}, func(o *server.Options) {
+		o.StopTimeout = time.Second
+		o.SpawnPerIPRate = 100
+		o.SpawnPerIPBurst = 100
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -1907,4 +1915,93 @@ func TestPerClientStallGateTransitions(t *testing.T) {
 		t.Fatalf("gateTransitions 起止差值 = %d, want ≥ 2（停读+续读两递增点，D-05）", diff)
 	}
 	t.Logf("gateTransitions 起止差值 = %d（≥2 达成；瞬态二次停读可能追加成对增量）", end-start)
+}
+
+// ====== 13-02 增量：spawn 双令牌桶（PC-08 churn 防线，D-03/D-04/D-05）======
+
+// TestPerClientSpawnThrottle（13-02 tracer e2e）：同 IP 高频 attach 被 per-IP
+// 桶限速收口。mutate 覆写桶参数（per-IP rate=1 burst=2 小值 + 全局放宽 100/100
+// 隔离——本测只证 per-IP 桶，全局桶独立判定归扩展组）→ 前两次 dialHello
+// 正常（burst 令牌耗尽；三次握手均为本地回环毫秒级——rate 1/s 补给窗在测试
+// 时序下不可达）→ 第三次裸握手收恰一帧 Error{server_error, "server is at
+// capacity"}（D-04 wire 聚合：与容量拒绝同码同串——三拒绝 wire 不可区分是
+// 有意为之，分辨率由事件名承担）+ close 1011 逐值（Pitfall 3 判别面：绝不
+// 1006——前端 shouldReconnect 仅 1006 触发，节流拒绝不重连放大）。
+// 三通道收口：wire（1011+定值文案）/ 事件（spawn_throttled 恰一，四段
+// schema 零敏感值）/ 计数器（ptySpawnThrottled 递增经 export_test 观测出口
+// ——series 输出归 13-05）。事件名分治：max_clients 零命中（节流拒绝不冒名
+// 容量拒绝）；第三次尝试零 spawn（spawnedSessions==2）零注册（/healthz==2、
+// attach 事件恰 2）——拒绝点在容量闸之前、spawnFunc 之前。
+func TestPerClientSpawnThrottle(t *testing.T) {
+	restore := captureStderr(t)
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.SpawnPerIPRate = 1
+		o.SpawnPerIPBurst = 2
+		o.SpawnGlobalRate = 100
+		o.SpawnGlobalBurst = 100
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	before := srv.PTYSpawnThrottledForTest()
+
+	// 前两次 attach 正常（per-IP burst=2 令牌耗尽）。
+	cA, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer cA.Close(websocket.StatusNormalClosure, "")
+	cB, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer cB.Close(websocket.StatusNormalClosure, "")
+
+	// 第三次：per-IP 桶空 → 拒绝（Error 帧 + 1011）。
+	frames, code := handshakeCollectUntilClose(t, ctx, wsURL)
+	if code != websocket.StatusInternalError {
+		t.Fatalf("close code = %d, want %d (1011——Pitfall 3：绝不 1006 重连放大)", code, websocket.StatusInternalError)
+	}
+	ep := decodeSingleErrorFrame(t, frames)
+	if ep.Code != proto.ErrServerError {
+		t.Fatalf("Error code = %q, want %q", ep.Code, proto.ErrServerError)
+	}
+	if ep.Message != "server is at capacity" {
+		t.Fatalf("Error message = %q, want %q 逐字（D-04 wire 聚合——与容量拒绝同串）", ep.Message, "server is at capacity")
+	}
+
+	// 零 spawn 零注册：两次成功 + 第三次被拒于 spawn 之前。
+	if n := len(spawnedSessions()); n != 2 {
+		t.Fatalf("spawned sessions = %d, want 2（节流拒绝零 spawn）", n)
+	}
+	if n := healthzClients(t, wsURL); n != 2 {
+		t.Fatalf("/healthz clients = %d, want 2（节流拒绝零注册）", n)
+	}
+
+	out := restore()
+	evs := parseEvents(t, out)
+	throttled := eventsNamed(evs, "spawn_throttled")
+	if len(throttled) != 1 {
+		t.Fatalf("spawn_throttled event count = %d, want exactly 1: %q", len(throttled), out)
+	}
+	// 事件四段 schema（event/remote/code；无 remote_user——未配置 auth-header）
+	// + 零敏感值（定值事件名/对端/码值，无请求材料入参）。
+	if remote, _ := throttled[0]["remote"].(string); !strings.HasPrefix(remote, "127.0.0.1:") {
+		t.Fatalf("spawn_throttled remote = %q, want 127.0.0.1: 前缀（四段 schema）", remote)
+	}
+	if throttled[0]["code"] != float64(websocket.StatusInternalError) {
+		t.Fatalf("spawn_throttled code = %v, want float64(1011)", throttled[0]["code"])
+	}
+	if _, ok := throttled[0]["remote_user"]; ok {
+		t.Fatalf("spawn_throttled 不应出 remote_user 键（未配置 auth-header）: %v", throttled[0])
+	}
+	// 事件名分治（D-04 日志细分）：节流拒绝不冒名容量拒绝。
+	if n := len(eventsNamed(evs, "max_clients")); n != 0 {
+		t.Fatalf("max_clients event count = %d, want 0（分治——节流拒绝独立事件名）: %q", n, out)
+	}
+	// attach 恰 2（第三次被拒于注册之前——零注册零登记零残留）。
+	if n := len(eventsNamed(evs, "attach")); n != 2 {
+		t.Fatalf("attach event count = %d, want exactly 2: %q", n, out)
+	}
+
+	// 计数器递增观测（三通道之三；series 输出归 13-05）。
+	if after := srv.PTYSpawnThrottledForTest(); after-before != 1 {
+		t.Fatalf("ptySpawnThrottled delta = %d, want 1（计数器递增观测）", after-before)
+	}
 }
