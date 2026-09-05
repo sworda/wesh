@@ -1544,7 +1544,7 @@ func TestPerClientROInputDropped(t *testing.T) {
 // INPUT（50×(3KiB+'\n') ≈ 153KiB 瞬时，≫ 64KiB burst + 32KiB/s 补充——远超
 // 每客户端限速，超限帧按 R-02 drop 语义丢弃）→ 连接不被踢不关闭（RES-02：
 // 超限唯一动作 = 丢弃 + inputDrops 计数，不断开），后续正常输入照常回显
-//（洪水后令牌恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶
+// （洪水后令牌恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶
 // 数学确定性：250ms × 32KiB/s = 8KiB 令牌 ≫ 探针帧 14B——非时序断言，是
 // 回充护栏）；探针命令前的 `\r` 先收口 canonical 行缓冲中的残留 'x'。探针
 // 为轮询重发形态（CI flake 收口）：统护 ctx 下并发读累积（readUntilError
@@ -2014,7 +2014,6 @@ func TestPerClientSpawnThrottle(t *testing.T) {
 		t.Fatalf("ptySpawnThrottled delta = %d, want 1（计数器递增观测）", after-before)
 	}
 }
-
 
 // dialHelloWithXFF 是 dialHello 的 XFF 注入变体（13-02 Task 2：X-Forwarded-For
 // 头经 ws.DialOptions.HTTPHeader 注入——per-IP 桶键 XFF 换键两态测试的请求面；

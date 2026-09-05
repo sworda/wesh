@@ -947,7 +947,7 @@ func TestValidateStartupWarnMerge(t *testing.T) {
 
 // TestStopTimeoutResolution（13-01 D-01/D-02 stop-timeout 三态断言组）：双默认值
 // 终值与显式位双源置位的全链锁定，两通道——(a) CLI 参数切片经 parseArgs 直调
-//（fs.Visit 第八位置位 + 解析产出值 + resolveStopTimeout 终值三断言一层打尽）；
+// （fs.Visit 第八位置位 + 解析产出值 + resolveStopTimeout 终值三断言一层打尽）；
 // (b) config struct 直构经 resolveStopTimeout 直调（落定函数边界：判定只依赖
 // sessionMode × stopTimeoutSet 两键）。D-01 核心断言：per-client 未显式设置 →
 // 终值 5s（HUP 免疫泄漏防线默认开启——Phase 11 post-merge 实证泄漏窗的默认
