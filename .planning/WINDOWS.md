@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 34
+open_count: 35
 waived_count: 0
 fixed_count: 3
-total_count: 37
-last_updated: 2026-09-05T16:18:55.275Z
+total_count: 38
+last_updated: 2026-09-05T16:54:07.441Z
 ---
 
 # Broken Windows Ledger
@@ -52,6 +52,7 @@ last_updated: 2026-09-05T16:18:55.275Z
 | 35 | 13 | deviation | internal/server/perclient.go |  | 13-03 Rule 1：session_end emit 位置取 close(waitDone) 前（plan 文本「hubMu 解锁后」偏差——plan 位置与慢半段 Broadcast 无同步边，exitf(os.Exit) 可先于事件落流；emit→close(waitDone)→delete→Broadcast→exitf happens-before 链论证，SUMMARY 偏差①登记） | open |  | 2026-09-05T16:18:54.963Z |  |
 | 36 | 13 | deviation | internal/server/perclient.go |  | 13-03 Rule 1：upgradePerClient 补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷；GraceCancel 测试首跑实测暴露，fix c44a8d9，SUMMARY 偏差②登记） | open |  | 2026-09-05T16:18:55.126Z |  |
 | 37 | 13 | deviation | internal/server/events_test.go |  | 13-03 Rule 1：TestAuthFailedNoUsername 装配改 startEventsServerWith + 体内 Kill→waitExit lifecycle 收口同步边（原装配弃置 exitCh，cleanup SIGKILL 迟到 session_end emit 落入后继捕获窗——全量 -race 下 TestPerClientSessionEnd 严格计数实测受害；断言行零改动，SUMMARY 偏差③登记） | open |  | 2026-09-05T16:18:55.275Z |  |
+| 38 | 13 | deviation | internal/server/server.go |  | 13-04 Rule 2：Shutdown 侧 D-state 兜底 terminate（join 到期未清零经 termOnce 直接收口——T-13-13 mitigation「有界 join 后无条件经 termOnce 退出」为 threat register 硬要求而 plan behavior 四锚点未列；drained 形态终结仍归 pcSupervisor 零漂移，SUMMARY 偏差①登记） | open |  | 2026-09-05T16:54:07.441Z |  |
 
 ````json
 [
@@ -497,6 +498,18 @@ last_updated: 2026-09-05T16:18:55.275Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-05T16:18:55.275Z",
+    "resolved_at": null
+  },
+  {
+    "id": 38,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/server.go",
+    "line": null,
+    "description": "13-04 Rule 2：Shutdown 侧 D-state 兜底 terminate（join 到期未清零经 termOnce 直接收口——T-13-13 mitigation「有界 join 后无条件经 termOnce 退出」为 threat register 硬要求而 plan behavior 四锚点未列；drained 形态终结仍归 pcSupervisor 零漂移，SUMMARY 偏差①登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:54:07.441Z",
     "resolved_at": null
   }
 ]
