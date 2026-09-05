@@ -593,5 +593,5 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 10. 模式装配与接缝 | v1.1 | 5/5 | Complete    | 2026-09-03 |
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
-| 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete | 2026-09-05 |
+| 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete    | 2026-09-05 |
 | 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |
