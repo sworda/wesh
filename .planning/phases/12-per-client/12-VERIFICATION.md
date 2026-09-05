@@ -1,7 +1,7 @@
 ---
 phase: 12-per-client
 verified: 2026-09-04T16:48:52Z
-status: human_needed
+status: passed
 score: 25/25 must-haves verified
 behavior_unverified: 0 # 全部行为依赖型 truth 均有本次独立复跑的通过测试实证（Go 定向组 -race / phase12.mjs 两轮 / phase12-dom / phase06-dom / TestPerClientReconnectNewPid）
 overrides_applied: 0
@@ -164,6 +164,7 @@ human_verification: # status: human_needed 的唯一来源——CR-01 修复的�
 **Test:** 在 Windows 工作站 Playwright 层（双机拓扑）per-client 模式 attach 后拖窗放大/缩小往复，观察渲染尺寸是否即时跟随窗口；随后 1006 断线重连，观察旧屏残影清除与新会话画面。
 **Expected:** 渲染尺寸随窗口即时跟随 fit——无折行错位、无 attach 时旧尺寸钳制（jsdom D2e/D2f/D2g 三断言的真实浏览器成立：行数 24→30、RESIZE 载荷 {cols:98,rows:30}、90 字符单行不折）；重连后画面干净无残影（SC3 浏览器半侧观感）。
 **Why human:** Linux 开发机 headless 禁 Playwright（CODEBUDDY.md 双机拓扑硬约束），浏览器观感属视觉面 grep/jsdom 无法覆盖；12-REVIEW-FIX 将 CR-01 修复标注 *requires human verification*（逻辑面已由 jsdom 红→绿 17/17 端到端证据覆盖，残余人工面仅真实浏览器观感），已登记归 Phase 14 pw 层——**本项为登记确认（accept-or-verify-now 决策），非新发现缺口**。
+**Resolution:** 用户裁决（2026-09-05 ship 时）接受登记延后——浏览器观感验证归 Phase 14 pw 层执行；12-UAT.md 该项以 skipped + reason 记录（平台豁免，风险接受）。status 据此转 passed。
 
 ### Gaps Summary
 
