@@ -486,22 +486,25 @@ if s.sessionMode == SessionModePerClient {
 
 **表外说明：** 上表四条均为「实现细节选型」级不确定项，非事实性假设；本研究全部事实性断言（file:line、常量值、schema、API 签名）均已 VERIFIED 或 CITED，无「可能记错」级风险项。
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **pcSessions 计数 gauge 的快照读取形态**
    - What we know: D-07 锁定「快照内读」；snapshotMetrics 现状单趟 hubMu 持有内填齐（metrics.go:87-110）
    - What's unclear: metricsSnap 是否新增 pcSessions 字段（顺手单趟读出）vs handler 内单独取锁——两形态锁序均安全
    - Recommendation: 新增 metricsSnap 字段（单趟纪律保持，避免第二趟 hubMu）
+   - RESOLVED: 采纳 Recommendation，落点 13-05（must_haves.truths 第 4 条：metricsSnap 新字段单趟快照内读，绝不第二趟取锁）
 
 2. **session_start emit 与 Welcome 入队的相对顺序**
    - What we know: shared 侧 session_start 在 goroutine 启动前 emit（server.go:546-547 注释「审计事件先于任何连接/会话流量落流」）
    - What's unclear: per-client 侧 emit 挂点在 pcSessions 登记后、startSessionGoroutines 前即可；与 attach 事件（:258-267）的先后序对检索无影响（client_id 同键关联）
    - Recommendation: 紧随 attach 事件之后、startSessionGoroutines 之前（:267-269 之间）——程序序保证事件先于会话流量
+   - RESOLVED: 采纳 Recommendation，落点 13-05（must_haves.truths 第 7 条：session_start emit 挂点 :267-269 区间，per D-09）
 
 3. **wesh_pty_kills_total 递增点的双路径覆盖**
    - What we know: 补 KILL 发送点有两处——teardownPCLocked AfterFunc（perclient.go:484-491）与 reapOrphanSession AfterFunc（:531-535）
    - What's unclear: 计数语义是否含孤儿回收路径
    - Recommendation: 两处都计（「SIGKILL 兜底次数」字面语义不区分路径；若 planner 认为孤儿路径应区分，事件名细分属 wire 聚合纪律外溢，不建议）
+   - RESOLVED: 采纳 Recommendation，落点 13-05（must_haves.truths 第 8 条：ptyKills = teardownPCLocked :488 与 reapOrphanSession :533 两路径都计）
 
 ## Environment Availability
 
