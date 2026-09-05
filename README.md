@@ -93,7 +93,7 @@ share read-only:  http://127.0.0.1:7681/s/<ro-token>/
 ./wesh --writable --write-policy all --credential alice:密码 --tls-cert cert.pem --tls-key key.pem -- bash
 ```
 
-`--session-mode=shared|per-client` 选择会话模式（默认 `shared`；`per-client` 行为装配中，当前版本与 `shared` 等价）。
+`--session-mode=shared|per-client` 选择会话模式（默认 `shared`；`per-client` 行为装配中，当前版本与 `shared` 等价）。`--stop-timeout` 默认值按模式分岔：`shared` 默认 `0`（不补发 SIGKILL，子进程继续运行）；`per-client` 未显式设置默认 `5s`（客户端断开后 SIGKILL 兜底回收 SIGHUP 免疫进程），显式 `0` 尊重用户意图但启动时警告泄漏风险。
 
 ## 安全默认值
 

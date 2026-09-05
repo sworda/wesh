@@ -74,7 +74,7 @@ command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则
 | `cwd` | 字符串 | 继承 | 子进程工作目录 |
 | `term` | 字符串 | `xterm-256color` 语义 | 子进程 TERM；空串按未配置处理 |
 | `stop-signal` | 字符串 | `"HUP"` | 关停时发子进程进程组的信号：`HUP`/`TERM`/`INT`/`KILL` |
-| `stop-timeout` | duration 串 | `"0"` | stop-signal 后补发 SIGKILL 的宽限（`0` = 不补发） |
+| `stop-timeout` | duration 串 | 按模式分岔（见「默认值」表） | stop-signal 后补发 SIGKILL 的宽限：`shared` 默认 `"0"`（不补发）；`per-client` 未显式设置默认 `"5s"`（断开后 SIGKILL 兜底回收），显式 `"0"` 尊重用户意图但启动时警告泄漏风险 |
 | `uid` | 整数 | `-1`（不降权） | 降权目标 uid（与 `gid` 成对强制） |
 | `gid` | 整数 | `-1`（不降权） | 降权目标 gid（与 `uid` 成对强制） |
 | `open` | 布尔 | `false` | 启动后自动打开分享链接（headless 提示后跳过） |
@@ -157,7 +157,7 @@ wesh 采取「显式哲学」：绝大多数键可选且有默认值，以下情
 | `osc52` | `false` | 剪贴板写默认关 |
 | `socket-mode` | `0660` | listen 后显式 Chmod 达成，不随 umask 漂移 |
 | `stop-signal` | `HUP` | 纯单信号关停 |
-| `stop-timeout` | `0` | 不补发 SIGKILL |
+| `stop-timeout` | `shared`：`0`；`per-client`：`5s` | 双默认值：`shared` 不补发 SIGKILL（断开不退出、子进程继续运行）；`per-client` 未显式设置默认 `5s`（客户端断开后 SIGKILL 兜底回收 SIGHUP 免疫进程），显式 `0` 尊重并警告泄漏风险 |
 | `term` | `xterm-256color` | 空串按未配置处理 |
 | `uid`/`gid` | `-1` | 不降权（`-1` 哨兵；`0` 是 root 合法值） |
 | `index-max-size` | `16777216`（16MiB） | 自定义首页读入硬顶（上限上界 2GiB） |
