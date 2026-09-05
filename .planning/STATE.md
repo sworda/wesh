@@ -4,16 +4,16 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 12
 current_phase_name: per-client
-status: verifying
+status: "Phase 12 shipped — PR #16"
 stopped_at: Completed 12-per-client 12-05-PLAN.md（Phase 12 收口：五需求勾选 + WR-01 闭合登记——phase 5/5 ready for verification）
-last_updated: "2026-09-04T15:24:04.878Z"
-last_activity: 2026-09-04
-last_activity_desc: Phase 11 gap closure complete
+last_updated: "2026-09-05T05:57:03.849Z"
+last_activity: 2026-09-05
 progress:
   total_phases: 3
   completed_phases: 3
   total_plans: 17
   completed_plans: 17
+last_activity_desc: Phase 11 gap closure complete
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-09-04)
 
 Phase: 12 (per-client) — EXECUTING
 Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-09-04 — Phase 12 execution started
+Status: Phase 12 shipped — PR #16
+Last activity: 2026-09-05
 
 Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
