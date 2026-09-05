@@ -2005,3 +2005,301 @@ func TestPerClientSpawnThrottle(t *testing.T) {
 		t.Fatalf("ptySpawnThrottled delta = %d, want 1（计数器递增观测）", after-before)
 	}
 }
+
+
+// dialHelloWithXFF 是 dialHello 的 XFF 注入变体（13-02 Task 2：X-Forwarded-For
+// 头经 ws.DialOptions.HTTPHeader 注入——per-IP 桶键 XFF 换键两态测试的请求面；
+// 其余握手/Welcome 首帧行为与 dialHello 逐字同构，mode 返回省略——调用点
+// 均不消费）。
+func dialHelloWithXFF(t *testing.T, ctx context.Context, wsURL, xff string, cols, rows int) *websocket.Conn {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{proto.Subprotocol},
+		HTTPHeader:   http.Header{"X-Forwarded-For": []string{xff}},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: cols, Rows: rows})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	return c
+}
+
+// handshakeCollectUntilCloseWithXFF 是 handshakeCollectUntilClose 的 XFF 注入
+// 变体（拒绝路径收集通道，头注入形态同 dialHelloWithXFF；其余逐字同构）。
+func handshakeCollectUntilCloseWithXFF(t *testing.T, ctx context.Context, wsURL, xff string) (frames [][]byte, code websocket.StatusCode) {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{proto.Subprotocol},
+		HTTPHeader:   http.Header{"X-Forwarded-For": []string{xff}},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	for {
+		_, data, rerr := c.Read(ctx)
+		if rerr != nil {
+			var ce websocket.CloseError
+			if !errors.As(rerr, &ce) {
+				t.Fatalf("read terminated without CloseError: %v（已收集 %d 帧）", rerr, len(frames))
+			}
+			return frames, ce.Code
+		}
+		frames = append(frames, data)
+	}
+}
+
+// TestPerClientSpawnGlobal（13-02 扩展组一，T-13-05 惊群防线独立成立）：全局
+// 桶独立判定——per-IP 放宽（100/100）+ 全局小值（rate=1 burst=2）+ trust 开启
+// 下三 XFF 各自独立满额 per-IP 桶：前两次 attach 放行（全局 burst 耗尽）→
+// 第三次（全新 IP、per-IP 桶满额未动）仍 1011——拒绝源只能是全局桶。文案/
+// 事件/计数器与 tracer 同口径；remote = XFF 值（trust 换键——proxy.remote
+// sanitize 产物，无端口后缀）。
+func TestPerClientSpawnGlobal(t *testing.T) {
+	restore := captureStderr(t)
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.SpawnPerIPRate = 100
+		o.SpawnPerIPBurst = 100
+		o.SpawnGlobalRate = 1
+		o.SpawnGlobalBurst = 2
+		o.AuthHeader = "X-Remote-User" // trust 开——XFF 换键启用（三 IP 独立 per-IP 桶）
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	before := srv.PTYSpawnThrottledForTest()
+
+	cA := dialHelloWithXFF(t, ctx, wsURL, "203.0.113.7", 80, 24)
+	defer cA.Close(websocket.StatusNormalClosure, "")
+	cB := dialHelloWithXFF(t, ctx, wsURL, "198.51.100.9", 80, 24)
+	defer cB.Close(websocket.StatusNormalClosure, "")
+
+	frames, code := handshakeCollectUntilCloseWithXFF(t, ctx, wsURL, "192.0.2.11")
+	if code != websocket.StatusInternalError {
+		t.Fatalf("close code = %d, want %d (1011)", code, websocket.StatusInternalError)
+	}
+	ep := decodeSingleErrorFrame(t, frames)
+	if ep.Code != proto.ErrServerError || ep.Message != "server is at capacity" {
+		t.Fatalf("Error payload = {%q, %q}, want {server_error, server is at capacity} 逐字（D-04 wire 聚合）", ep.Code, ep.Message)
+	}
+	if n := len(spawnedSessions()); n != 2 {
+		t.Fatalf("spawned sessions = %d, want 2（全局节流拒绝零 spawn）", n)
+	}
+
+	out := restore()
+	evs := parseEvents(t, out)
+	throttled := eventsNamed(evs, "spawn_throttled")
+	if len(throttled) != 1 {
+		t.Fatalf("spawn_throttled event count = %d, want exactly 1: %q", len(throttled), out)
+	}
+	if remote, _ := throttled[0]["remote"].(string); remote != "192.0.2.11" {
+		t.Fatalf("spawn_throttled remote = %q, want 192.0.2.11（trust 换键——XFF 链首入 remote）", remote)
+	}
+	if after := srv.PTYSpawnThrottledForTest(); after-before != 1 {
+		t.Fatalf("ptySpawnThrottled delta = %d, want 1", after-before)
+	}
+}
+
+// TestPerClientSpawnXFF（13-02 扩展组二，D-05 两态——Pitfall 2 误伤防线）：
+// per-IP 桶键 XFF 换键两态。trust 开（AuthHeader 配置）：不同 XFF 值各自独立
+// 桶——A 耗尽不影响 B（反代后合法多用户不共享一桶，prohibition 红线）；
+// trust off（未配置）：XFF 完全忽略，全部客户端共享 TCP 对端回退键（任一
+// 耗尽皆拒——自设 XFF 头零效果）。两半边各起独立 server，两 t.Run 结构同
+// proxy_e2e_test.go TestXFFThrottleKey 先例。误用 XFF 键的错误实现两半边各
+// 有翻车面：trust off 半边第二次 attach 会以异键新桶放行（裸握手读不到
+// CloseError 超时 Fatal）。
+func TestPerClientSpawnXFF(t *testing.T) {
+	// 每半边独立 server 的公共装配：per-IP rate=1 burst=1（最小判别值）+
+	// 全局放宽隔离（本测只证键语义）。
+	newServer := func(authHeader string) string {
+		_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+			return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+		}, func(o *server.Options) {
+			o.SpawnPerIPRate = 1
+			o.SpawnPerIPBurst = 1
+			o.SpawnGlobalRate = 100
+			o.SpawnGlobalBurst = 100
+			o.AuthHeader = authHeader
+		})
+		return wsURL
+	}
+
+	t.Run("trust on: XFF 异键独立桶", func(t *testing.T) {
+		wsURL := newServer("X-Remote-User")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cA := dialHelloWithXFF(t, ctx, wsURL, "203.0.113.7", 80, 24)
+		defer cA.Close(websocket.StatusNormalClosure, "")
+
+		// 同 XFF 二连：A 桶耗尽被拒（burst=1）。
+		frames, code := handshakeCollectUntilCloseWithXFF(t, ctx, wsURL, "203.0.113.7")
+		if code != websocket.StatusInternalError {
+			t.Fatalf("A 二连 close code = %d, want 1011（per-IP burst=1 耗尽）", code)
+		}
+		if ep := decodeSingleErrorFrame(t, frames); ep.Code != proto.ErrServerError || ep.Message != "server is at capacity" {
+			t.Fatalf("A 二连 Error = {%q, %q}, want {server_error, server is at capacity}", ep.Code, ep.Message)
+		}
+
+		// B（异 XFF）不受 A 耗尽影响：attach 成功收 Welcome。
+		cB := dialHelloWithXFF(t, ctx, wsURL, "198.51.100.9", 80, 24)
+		defer cB.Close(websocket.StatusNormalClosure, "")
+	})
+
+	t.Run("trust off: XFF 忽略共享回退键", func(t *testing.T) {
+		wsURL := newServer("")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		// XFF 头存在但信任闸未开——键回退 TCP 对端（loopback 同键）。
+		cA := dialHelloWithXFF(t, ctx, wsURL, "203.0.113.7", 80, 24)
+		defer cA.Close(websocket.StatusNormalClosure, "")
+
+		frames, code := handshakeCollectUntilCloseWithXFF(t, ctx, wsURL, "198.51.100.9")
+		if code != websocket.StatusInternalError {
+			t.Fatalf("异 XFF 二连 close code = %d, want 1011（XFF 忽略——loopback 同键共享计数）", code)
+		}
+		if ep := decodeSingleErrorFrame(t, frames); ep.Code != proto.ErrServerError || ep.Message != "server is at capacity" {
+			t.Fatalf("异 XFF 二连 Error = {%q, %q}, want {server_error, server is at capacity}", ep.Code, ep.Message)
+		}
+	})
+}
+
+// TestSpawnThrottleExpiry（13-02 扩展组三，map 无界增长防线）：per-IP 条目
+// 惰性过期经 now 时间注入直调（export_test 薄桥——零真实等待 15min）。判别
+// 面构造：perIPRate=1/s、perIPBurst=1200 > 15min TTL 补给上限（900s×1/s=
+// 900）——无重置实现超窗后至多 900 令牌，重置实现得满额 1200（相位三精确
+// 计数必翻车）；全局桶 1<<30 放宽不绑（三相位总消耗 2520 << 1<<30）。
+// 三相位：T0 满额 1200 → T0+2min（窗内）仅补给 120（惰性过期不误清活跃桶
+// ——过早重置实现必翻车）→ T0+18min（距上次活动 16min > 15min TTL）重置
+// 满额 1200。
+func TestSpawnThrottleExpiry(t *testing.T) {
+	p := server.NewSpawnThrottleProbeForTest(1<<30, 1<<30, 1, 1200)
+	t0 := time.Now()
+	const ip = "203.0.113.7"
+
+	countAllows := func(now time.Time) int {
+		n := 0
+		for i := 0; i < 1200; i++ {
+			if !p.Allow(ip, now) {
+				break
+			}
+			n++
+		}
+		return n
+	}
+
+	if n := countAllows(t0); n != 1200 {
+		t.Fatalf("相位一（T0 全新桶）放行 %d, want 1200（满额 burst）", n)
+	}
+	if n := countAllows(t0.Add(2 * time.Minute)); n != 120 {
+		t.Fatalf("相位二（T0+2min 窗内）放行 %d, want 120（2min×1/s 补给——不重置）", n)
+	}
+	if n := countAllows(t0.Add(18 * time.Minute)); n != 1200 {
+		t.Fatalf("相位三（T0+18min 超窗）放行 %d, want 1200（>15min 惰性过期重置满额；无重置实现 ≤900 必翻车）", n)
+	}
+}
+
+// TestPerClientSpawnThrottleWireForm（13-02 扩展组四，文案定值收口）：拒绝
+// wire 形态字节级锁定——Error 帧与容量拒绝逐字相同（D-04 wire 聚合：三拒绝
+// wire 不可区分是有意为之；帧字节 = 'E' + {"code":"server_error","message":
+// "server is at capacity"}——字段序/零多余键/定值串全锁，json.Marshal 固定
+// schema 确定性产物）；spawn_throttled 事件键集恰四段 schema 白名单
+// （event/remote/code[/remote_user]）——零敏感值红线（token/ticket/凭据永不
+// 入参）以 canary ticket 全程不落 stderr 承载。
+func TestPerClientSpawnThrottleWireForm(t *testing.T) {
+	restore := captureStderr(t)
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.SpawnPerIPRate = 1
+		o.SpawnPerIPBurst = 1
+		o.SpawnGlobalRate = 100
+		o.SpawnGlobalBurst = 100
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cA, _ := dialHello(t, ctx, wsURL, 80, 24) // 首次 attach 耗尽 per-IP burst=1
+	defer cA.Close(websocket.StatusNormalClosure, "")
+
+	// 第二次握手携带 canary ticket（无认证模式核销忽略——值永不入拒绝路径）。
+	const canary = "TICKET-CANARY-x7q9"
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24, Ticket: canary})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	var frames [][]byte
+	var code websocket.StatusCode
+	for {
+		_, data, rerr := c.Read(ctx)
+		if rerr != nil {
+			var ce websocket.CloseError
+			if !errors.As(rerr, &ce) {
+				t.Fatalf("read terminated without CloseError: %v", rerr)
+			}
+			code = ce.Code
+			break
+		}
+		frames = append(frames, data)
+	}
+	if code != websocket.StatusInternalError {
+		t.Fatalf("close code = %d, want %d (1011)", code, websocket.StatusInternalError)
+	}
+	// 字节级锁定：恰一帧，与容量拒绝同串逐字节相等。
+	want := append([]byte{proto.Error}, []byte(`{"code":"server_error","message":"server is at capacity"}`)...)
+	if len(frames) != 1 || !bytes.Equal(frames[0], want) {
+		t.Fatalf("frames = %q, want 恰一帧字节级 %q（D-04 wire 聚合——与容量拒绝逐字相同）", frames, want)
+	}
+	if n := len(spawnedSessions()); n != 1 {
+		t.Fatalf("spawned sessions = %d, want 1（节流拒绝零 spawn）", n)
+	}
+
+	out := restore()
+	if strings.Contains(out, canary) {
+		t.Fatalf("stderr 含 canary ticket %q（零敏感值红线——token/ticket 永不入参）: %q", canary, out)
+	}
+	evs := parseEvents(t, out)
+	throttled := eventsNamed(evs, "spawn_throttled")
+	if len(throttled) != 1 {
+		t.Fatalf("spawn_throttled event count = %d, want exactly 1: %q", len(throttled), out)
+	}
+	// 键集恰「日志封套（time/level/msg）+ 四段 schema（event/remote/code
+	// [/remote_user]）」白名单（未配置 auth-header——remote_user 缺席）。
+	for k := range throttled[0] {
+		switch k {
+		case "event", "remote", "code", "remote_user", "time", "level", "msg":
+		default:
+			t.Fatalf("spawn_throttled 出白名单外键 %q（封套+四段 schema 之外零键——零敏感值）: %v", k, throttled[0])
+		}
+	}
+	if throttled[0]["code"] != float64(websocket.StatusInternalError) {
+		t.Fatalf("spawn_throttled code = %v, want float64(1011)", throttled[0]["code"])
+	}
+}

@@ -71,7 +71,7 @@ type spawnThrottleStore struct {
 }
 
 // newSpawnThrottleStore 构造双桶；四参数零值逐一兜底 default 常量
-//（newThrottleStore base/cap 零值兜底先例——测试经参数覆写提速；New 侧
+// （newThrottleStore base/cap 零值兜底先例——测试经参数覆写提速；New 侧
 // Options 兜底后的本兜底为直构形态的防御面）。
 func newSpawnThrottleStore(globalRate, globalBurst, perIPRate, perIPBurst int) *spawnThrottleStore {
 	if globalRate <= 0 {

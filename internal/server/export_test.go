@@ -2,6 +2,8 @@ package server
 
 // export_test.go —— 测试期专属出口（仅 -test 编译，零生产 API 面）。
 
+import "time"
+
 // LockStderr 供 server_test 包的 captureStderr 在置换/恢复 os.Stderr 两个
 // 写点持写锁：与 stderrW.Write 的 RLock 配对，把「置换写」与「在途事件读」
 // 串行化（08-01 门禁修正——跨测试遗留 handler 的事件写出曾与下一测试的
@@ -72,4 +74,23 @@ func (s *Server) GateTransitionsForTest() int {
 // 出口先例同形态。故障注入语义仅服务测试。
 func (s *Server) PTYSpawnThrottledForTest() int64 {
 	return s.mc.ptySpawnThrottled.Load()
+}
+
+// 13-02 直调薄桥（Task 2 惰性过期单元级断言的数据源）：spawnThrottleStore
+// 与 allow 为包内私有，server_test 经本包装类型以 now 注入直调（时间注入面 =
+// throttleStore recordFail(now) 先例）；ForTest 四件套纪律——仅 -test 编译，
+// 零生产 API 面，包装直通构造/调用不改变被测行为。
+type SpawnThrottleProbeForTest struct {
+	st *spawnThrottleStore
+}
+
+// NewSpawnThrottleProbeForTest 构造直调探针（newSpawnThrottleStore 四参数
+// 直通——零值兜底语义同生产构造）。
+func NewSpawnThrottleProbeForTest(globalRate, globalBurst, perIPRate, perIPBurst int) *SpawnThrottleProbeForTest {
+	return &SpawnThrottleProbeForTest{st: newSpawnThrottleStore(globalRate, globalBurst, perIPRate, perIPBurst)}
+}
+
+// Allow 时间注入直调（store.allow 同签名同语义）。
+func (p *SpawnThrottleProbeForTest) Allow(ip string, now time.Time) bool {
+	return p.st.allow(ip, now)
 }
