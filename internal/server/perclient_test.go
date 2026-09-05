@@ -388,18 +388,20 @@ func TestNewModeSessContract(t *testing.T) {
 	}
 }
 
-// D-04 窗口期空白锁：captureStderr 窗口内构造 per-client server → 事件流零
-// session_start 行；随后 GET /healthz → 200 且 session_active==false
-// （11→13 已知中间态显式锁——Phase 13 语义裁决 OQ①② 落地时本断言按裁决
-// 翻转）。同步纪律（events_test.go 文件头）：New 内 emit 先于本函数返回
-// （程序序），restore() 前的 happens-before 边由 harness 构造序列天然成立
-// （本窗口期无 goroutine emit 面——零事件正是断言对象）。
+// D-04 窗口期收口后的形态锁（13-05 D-06/D-09 落地）：captureStderr 窗口内
+// 构造 per-client server → 事件流零 session_start 行（session_start 归属
+// 每次 spawn 成功的 upgradePerClient emit——New 本体零 emit 语义保持）；随后
+// GET /healthz → 200 且 session_active==true（13-05 D-06：per-client 无
+// 「会话死亡=服务终结」态——「会话服务可用」语义诚实恒 true；编排探活只看
+// 200/503 status，draining 分支既有不受影响）。同步纪律（events_test.go
+// 文件头）：New 内零 emit，restore() 前的 happens-before 边由 harness 构造
+// 序列天然成立（本窗口期无 goroutine emit 面——零事件正是断言对象）。
 func TestPerClientNoSessionStartEvent(t *testing.T) {
 	restore := captureStderr(t)
 	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
 	out := restore()
 	if starts := eventsNamed(parseEvents(t, out), "session_start"); len(starts) != 0 {
-		t.Fatalf("per-client New emit 了 %d 条 session_start——D-04 窗口期空白语义违反: %q", len(starts), out)
+		t.Fatalf("per-client New emit 了 %d 条 session_start——New 本体零 emit 语义违反（session_start 归属 upgradePerClient 每次 spawn 成功）: %q", len(starts), out)
 	}
 
 	// wsURL → http URL（attachURL e2e_test.go 形态同款 scheme/路径替换）。
@@ -418,8 +420,8 @@ func TestPerClientNoSessionStartEvent(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode /healthz body: %v", err)
 	}
-	if body.SessionActive {
-		t.Fatal("/healthz session_active = true, want false（D-04 窗口期：sessionAlive 不置位；Phase 13 OQ①② 裁决落地时本断言随之翻转）")
+	if !body.SessionActive {
+		t.Fatal("/healthz session_active = false, want true（13-05 D-06 落地：per-client「会话服务可用」恒 true——无「会话死亡=服务终结」态；编排探活只看 200/503 status）")
 	}
 }
 

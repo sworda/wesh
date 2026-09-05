@@ -33,8 +33,11 @@ package server
 // 第二终结源已落地——pcSupervisor 单例 goroutine（server.go，New per-client
 // 分支钉死；触发端 = clients.go maybeExitWhenEmptyLocked per-client 分支，
 // Pitfall 1 窗口期闭合）；session_end 审计事件已由 sessionWatcher emit
-//（per-client 粒度 + client_id 关联键，D-09 前半——session_start emit 归
-// 13-05）。
+//（per-client 粒度 + client_id 关联键，D-09 前半）。13-05 落地登记：D-09
+// 后半闭合——session_start 审计事件由 upgradePerClient emit（每次 spawn
+// 成功恰一条：pid + client_id，紧随 attach 事件之后、startSessionGoroutines
+// 之前）；三计数器递增点接线（ptySpawn/ptySpawnFailures/ptyKills——
+// metrics.go 四 series 的数据源，D-08）。
 
 import (
 	"context"
@@ -314,6 +317,16 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 		attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
 	}
 	emitEvent(attachAttrs...)
+	// 13-05（OPS-12 D-09 后半）session_start 事件（每次 spawn 成功恰一条）：
+	// 紧随 attach 事件之后、startSessionGoroutines 之前（shared 母本
+	// server.go :597-601「审计事件先于任何连接/会话流量落流」同序——程序序
+	// 保证事件先于会话流量落流）；pid = 子进程 PID、client_id = cl.attachSeq
+	//（attach/detach 事件同键先例——会话级事件与连接级事件关联检索，与
+	// session_end 同键闭合单个会话全生命周期串联）；startedAt 为 pc 既有
+	// 写一次字段（13-03 session_end duration 数据源，本事件起点同源）。
+	// 零敏感值红线（log.go:85-89）：pid 数值 + client_id 定长数值关联键，
+	// 无 token/ticket/凭据面（T-13-17）。
+	emitEvent(slog.String("event", "session_start"), slog.Int("pid", pc.sess.Cmd.Process.Pid), slog.Int64("client_id", cl.attachSeq))
 	c.SetReadLimit(proto.ReadLimitPostAuth)
 	s.startSessionGoroutines(ctx, cl, pc)
 	return cl

@@ -786,3 +786,160 @@ func TestPerClientSessionEnd(t *testing.T) {
 		}
 	})
 }
+
+// ====== 13-05 增量（OPS-12/D-09 后半）：session_start emit + 拒绝事件零敏感值 ======
+
+// TestPerClientSessionStart（13-05，D-09 后半——upgradePerClient emit 的
+// per-client session_start，每次 spawn 成功恰一条）：schema = shared 母本
+// pid 键（进程级事件——无 remote/code 键）+ client_id 关联键；pid 与 spawned
+// 会话实际 PID 相等（正整数由相等断言蕴含）；client_id 与 attach 事件同值；
+// session_start 与 session_end 同 client_id——单个 per-client 会话全生命周期
+// 可经审计日志串联（OPS-12 成功准则 3：session_start pid+client_id →
+// session_end exit_code/duration+client_id）。
+//
+// 同步边 = wire 观测：session_start emit 位于 attach 事件之后、
+// startSessionGoroutines 之前（程序序），session_end emit 又先于 EXIT 帧直写
+// （watcher 程序序）——readExitClose 收帧即全部事件已落流，且零残留会话
+// （子进程自死）——后继捕获窗无迟到 emit 面。
+func TestPerClientSessionStart(t *testing.T) {
+	restore := captureStderr(t)
+	defer restore()
+
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh", "-c", "exit 42"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	frames, code := readExitClose(t, ctx, c)
+	if code != websocket.StatusNormalClosure {
+		t.Fatalf("close code = %d, want %d (1000)", code, websocket.StatusNormalClosure)
+	}
+	if ep := decodeExitFrame(t, frames[len(frames)-1]); ep.ExitCode != 42 {
+		t.Fatalf("EXIT exit_code = %d, want 42（事件同源正面证据）", ep.ExitCode)
+	}
+
+	out := restore()
+	evs := parseEvents(t, out)
+	starts := eventsNamed(evs, "session_start")
+	atts := eventsNamed(evs, "attach")
+	ends := eventsNamed(evs, "session_end")
+	if len(starts) != 1 || len(atts) != 1 || len(ends) != 1 {
+		t.Fatalf("session_start=%d attach=%d session_end=%d, want 各 1（每次 spawn 成功恰一条）: %q", len(starts), len(atts), len(ends), out)
+	}
+	// pid：与 spawned 会话实际 PID 相等（shared 母本 TestSessionEnd 同款
+	// 相等断言——比正整数判别更强）。
+	if len(spawnedSessions()) != 1 {
+		t.Fatalf("spawned sessions = %d, want 1", len(spawnedSessions()))
+	}
+	if starts[0]["pid"] != float64(spawnedSessions()[0].Cmd.Process.Pid) {
+		t.Fatalf("session_start pid = %v, want %d（spawned 会话实际 PID）", starts[0]["pid"], spawnedSessions()[0].Cmd.Process.Pid)
+	}
+	// client_id：与 attach 事件同值（D-20 关联检索锁同构）。
+	if starts[0]["client_id"] != atts[0]["client_id"] {
+		t.Fatalf("client_id 关联失败：attach=%v session_start.client_id=%v (out=%q)", atts[0]["client_id"], starts[0]["client_id"], out)
+	}
+	// 全生命周期串联：session_start 与 session_end 同 client_id（OPS-12 SC3）。
+	if ends[0]["client_id"] != starts[0]["client_id"] {
+		t.Fatalf("生命周期串联失败：session_start.client_id=%v session_end.client_id=%v (out=%q)", starts[0]["client_id"], ends[0]["client_id"], out)
+	}
+	// 键集白名单：日志封套（time/level/msg）+ {event, pid, client_id}——
+	// 零 remote/code 键（进程级事件，shared 母本同形）+ 封套外零键（零敏感值
+	// 红线的结构性承载——schema 本身无自由文本字段）。
+	for k := range starts[0] {
+		switch k {
+		case "event", "pid", "client_id", "time", "level", "msg":
+		default:
+			t.Fatalf("session_start 出白名单外键 %q（封套+event/pid/client_id 之外零键）: %v", k, starts[0])
+		}
+	}
+}
+
+// TestSpawnEventsSchema（13-05，OPS-12/T-13-17）：spawn_failed 与
+// spawn_throttled 两拒绝事件的零敏感值红线——四段 schema 键集白名单
+// （event/remote/code[/remote_user]）+ 定值文案（事件面结构性无自由文本
+// 字段；wire 面定值串绑定到逐 dial 断言）+ 注入错误文本/路径/errno 形态
+// 零出现（SEC-01 红线扩到新事件）。
+//
+// 构造：per-IP burst=1 + spawn 恒败注入——dial ① 耗尽令牌后 spawn 失败
+// （spawn_failed），dial ② 令牌未补给即节流拒绝（spawn_throttled）；零成功
+// spawn = 零会话零 watcher——本测试零迟到 emit 面（后继捕获窗不受染）。
+// 同步边 = wire 观测：logEvent 先于 Close（同 goroutine 程序序），观测到
+// CloseError 即事件已落流。
+func TestSpawnEventsSchema(t *testing.T) {
+	restore := captureStderr(t)
+	defer restore()
+
+	// 注入错误文本携带三形态敏感值样张：err.Error() 文本 / 路径 / errno——
+	// 只进 stub 返回值，wire 面与事件面断言其零出现。
+	const injectedErr = "spawn stub failure ENOENT=2 /nonexistent/binary errno-42"
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		return nil, errors.New(injectedErr)
+	}, func(o *server.Options) {
+		o.SpawnPerIPBurst = 1
+		o.SpawnGlobalRate = 100
+		o.SpawnGlobalBurst = 100
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// dial ①：桶放行（耗尽 burst=1）→ spawn 失败——Error 定值文案 +
+	// close 1011（D-07 code 与 reason 同名机器串）。
+	frames1, code1 := handshakeCollectUntilClose(t, ctx, wsURL)
+	if code1 != websocket.StatusInternalError {
+		t.Fatalf("dial-1 close code = %d, want %d (1011)", code1, websocket.StatusInternalError)
+	}
+	if ep := decodeSingleErrorFrame(t, frames1); ep.Message != "failed to start process" {
+		t.Fatalf("dial-1 Error message = %q, want %q 逐字（定值常量，零底层错误细节）", ep.Message, "failed to start process")
+	}
+	// dial ②：令牌未补给（1/s）→ 节流拒绝——Error 与容量拒绝同串
+	//（D-04 wire 聚合）+ close 1011。
+	frames2, code2 := handshakeCollectUntilClose(t, ctx, wsURL)
+	if code2 != websocket.StatusInternalError {
+		t.Fatalf("dial-2 close code = %d, want %d (1011)", code2, websocket.StatusInternalError)
+	}
+	if ep := decodeSingleErrorFrame(t, frames2); ep.Message != "server is at capacity" {
+		t.Fatalf("dial-2 Error message = %q, want %q 逐字（D-04 wire 聚合——与容量拒绝同串）", ep.Message, "server is at capacity")
+	}
+	if n := len(spawnedSessions()); n != 0 {
+		t.Fatalf("spawned sessions = %d, want 0（两拒绝路径零成功 spawn——零会话零迟到 emit 面）", n)
+	}
+
+	out := restore()
+	evs := parseEvents(t, out)
+	fails := eventsNamed(evs, "spawn_failed")
+	throttled := eventsNamed(evs, "spawn_throttled")
+	if len(fails) != 1 || len(throttled) != 1 {
+		t.Fatalf("spawn_failed=%d spawn_throttled=%d, want 各 1: %q", len(fails), len(throttled), out)
+	}
+	if atts := eventsNamed(evs, "attach"); len(atts) != 0 {
+		t.Fatalf("attach count = %d, want 0（两拒绝均在注册之前——零注册零登记）: %q", len(atts), out)
+	}
+	// 四段 schema 键集白名单：封套（time/level/msg）+ event/remote/code
+	//（未配置 auth-header——remote_user 缺席）；封套外零键 = 零敏感值的
+	// 结构性承载（事件面无自由文本字段，定值文案纪律的 schema 面证据）。
+	for name, ev := range map[string]map[string]any{"spawn_failed": fails[0], "spawn_throttled": throttled[0]} {
+		for k := range ev {
+			switch k {
+			case "event", "remote", "code", "remote_user", "time", "level", "msg":
+			default:
+				t.Fatalf("%s 出白名单外键 %q（封套+四段 schema 之外零键——零敏感值）: %v", name, k, ev)
+			}
+		}
+		if ev["code"] != float64(websocket.StatusInternalError) {
+			t.Fatalf("%s code = %v, want float64(1011)", name, ev["code"])
+		}
+		if remote, _ := ev["remote"].(string); !strings.HasPrefix(remote, "127.0.0.1:") {
+			t.Fatalf("%s remote = %q, want 127.0.0.1: 前缀（四段 schema）", name, remote)
+		}
+	}
+	// 零敏感值负断言：注入错误文本三形态样张（err.Error() 文本/路径/errno）
+	// 零出现于捕获全文。
+	for _, marker := range []string{"spawn stub failure", "ENOENT=2", "/nonexistent/binary", "errno-42"} {
+		if strings.Contains(out, marker) {
+			t.Fatalf("stderr 含注入敏感值 %q（SEC-01 红线扩到 spawn 拒绝事件）: %q", marker, out)
+		}
+	}
+}
