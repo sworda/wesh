@@ -1519,7 +1519,14 @@ func TestPerClientROInputDropped(t *testing.T) {
 // 恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶数学确定性：
 // 250ms × 32KiB/s = 8KiB 令牌 ≫ 探针帧 14B——非时序断言，是回充护栏）；
 // 探针命令前的 `\r` 先收口 canonical 行缓冲中的残留 'x'（超长行被行规程
-// 丢弃是 tty 语义，与本测无关）。
+// 丢弃是 tty 语义，与本测无关）。探针为轮询重发形态（CI flake 收口）：统护
+// ctx 下并发读累积（readUntilError 形态变体——夹具纪律红线 Read 无 per-read
+// deadline；websocket Read 随 ctx 取消杀连接，故「短 deadline 试读后重发」
+// 不可行，改主循环只 Write 探针 + 检查累积），每 300ms 重发收口 + 探针——
+// darwin 侧 bash 3.2 对无换行洪水的 tty 消化偶发迟滞（CI 实证：单发探针
+// 回显 15s 未产出），重发幂等（'\r' 于空行缓冲仅产出空命令回显，探针串
+// 重复出现不影响 Find 首中），重发窗 12s（ctx 15s 留 3s 洪水写入与收尾
+// 余量）。
 func TestPerClientInputRateLimitKept(t *testing.T) {
 	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
 
@@ -1540,16 +1547,58 @@ func TestPerClientInputRateLimitKept(t *testing.T) {
 			t.Fatalf("write flood INPUT #%d: %v", i, err)
 		}
 	}
-	// 回充等待后：行缓冲收口 + 探针 echo——连接存活与正常输入回显的双重证据
-	//（连接若被踢/关闭，Read 在 readOutputUntil 内即出错 Fatal）。
+	// 并发读累积（统护 ctx，夹具纪律红线）；readErr 供主循环即时报告连接被
+	// 服务端终结（若发生即 drop 语义 RES-02 违反的直接证据，不等 12s 护栏）。
+	var (
+		accMu   sync.Mutex
+		acc     []byte
+		readErr = make(chan error, 1)
+	)
+	go func() {
+		for {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				readErr <- err
+				return
+			}
+			if len(data) == 0 || data[0] != proto.Output {
+				continue // Welcome 已由 dialHello 消费；静默跳过非 OUTPUT 帧
+			}
+			accMu.Lock()
+			acc = append(acc, data[1:]...)
+			accMu.Unlock()
+		}
+	}()
+	probeRe := regexp.MustCompile(`(?m)^(?:\$ )?RATEOK_PC07\r?$`)
 	time.Sleep(250 * time.Millisecond)
-	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, '\r')); err != nil {
-		t.Fatalf("write flush newline: %v", err)
+	probeDeadline := time.Now().Add(12 * time.Second)
+	for {
+		accMu.Lock()
+		hit := probeRe.Find(acc) != nil
+		tail := acc
+		if len(tail) > 200 {
+			tail = tail[len(tail)-200:]
+		}
+		accMu.Unlock()
+		if hit {
+			break
+		}
+		select {
+		case err := <-readErr:
+			t.Fatalf("read OUTPUT: %v（连接被服务端终结——drop 语义 RES-02 违反；已累积尾部 %q）", err, tail)
+		default:
+		}
+		if time.Now().After(probeDeadline) {
+			t.Fatalf("探针回显在 12s 重发窗内未出现（已累积尾部 %q）", tail)
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, '\r')); err != nil {
+			t.Fatalf("write flush newline: %v", err)
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo RATEOK_PC07\r")...)); err != nil {
+			t.Fatalf("write probe INPUT: %v", err)
+		}
+		time.Sleep(300 * time.Millisecond)
 	}
-	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo RATEOK_PC07\r")...)); err != nil {
-		t.Fatalf("write probe INPUT: %v", err)
-	}
-	readOutputUntil(t, ctx, c, regexp.MustCompile(`(?m)^(?:\$ )?RATEOK_PC07\r?$`))
 }
 
 // ====== 12-03 增量：per-client 背压语义断言组（PC-10/PC-11 服务端收口，D-11
@@ -1723,11 +1772,13 @@ func TestPerClientDwellKick(t *testing.T) {
 
 // PC-11 慢但在前进永不踢（12-03，D-02 判据核心）：SlowDwell=1s 覆写 + 事件
 // 驱动 duty-cycle——每轮「停读形成（gateTransitions +1，dwell 武装）→ 刻意
-// 停读 0.5×dwell → 全速读取至续读（再 +1，dwell 重置）」，循环 3 轮：每轮
-// 停读间隔 ~0.52×dwell < dwell（安全），累计停读 ~1.56×dwell > dwell（若
-// dwell 不随续读重置——跨停读累计形态——第 2 轮即被 1013 踢出，测试判别力
-// 内建）；3 轮后全速收干 → CloseError 1000 + seq 连续无缺口 + gateTransitions
-// ≥ +6（3 对停读/续读递增点）。
+// 停读 0.4×dwell → 全速读取至续读（再 +1，dwell 重置）」，循环 3 轮：每轮
+// 停读间隔 ~0.42×dwell < dwell（安全——CI flake 收口：0.5×dwell 时续读链路
+// 「读取→send queue 排空→writer 解阻塞→续读」在负载抖动下偶发超出剩余
+// ~0.48×dwell 预算被误踢，0.4×dwell 将余量放大至 ~0.58×dwell），累计停读
+// ~1.26×dwell > dwell（若 dwell 不随续读重置——跨停读累计形态——第 3 轮
+// 停读中段即被 1013 踢出，测试判别力内建）；3 轮后全速收干 → CloseError
+// 1000 + seq 连续无缺口 + gateTransitions ≥ +6（3 对停读/续读递增点）。
 //
 // 滴漏形态的执行期实证演化（Rule 3 调试结论，与 plan 文本「每 ~dwell/3 读
 // 一小批」的差异登记）：配额泵滴漏（每 tick 读 128KiB）在本机实证下永不触
@@ -1760,7 +1811,7 @@ func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 	// 中——本段是判别力的载体）→ 全速读到续读（+1）。
 	for cycle := 0; cycle < 3; cycle++ {
 		stalled := waitGateTransitions(t, srv, base, 2*cycle+1, 15*time.Second)
-		time.Sleep(dwell / 2) // 停读持续 0.5×dwell——累计跨轮 > dwell，单轮 < dwell
+		time.Sleep(dwell * 2 / 5) // 停读持续 0.4×dwell——累计跨轮 > dwell，单轮 < dwell
 		for srv.GateTransitionsForTest() < stalled+1 {
 			_, data, err := c.Read(ctx)
 			if err != nil {
