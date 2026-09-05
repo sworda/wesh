@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
-current_phase: 12
-current_phase_name: per-client
-status: "Phase 12 shipped — PR #16"
-stopped_at: Phase 13 context gathered
-last_updated: "2026-09-05T13:34:32.424Z"
+current_phase: 13
+current_phase_name: resource-defense
+status: executing
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-09-05T14:26:11.906Z"
 last_activity: 2026-09-05
 last_activity_desc: Phase 11 gap closure complete
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 25
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-04)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 12 — per-client
+**Current focus:** Phase 13 — resource-defense
 
 ## Current Position
 
-Phase: 12 (per-client) — EXECUTING
-Plan: 5 of 5
-Status: Phase 12 shipped — PR #16
-Last activity: 2026-09-05 — Phase 13 planning complete
+Phase: 13 (resource-defense) — EXECUTING
+Plan: 2 of 8
+Status: Ready to execute
+Last activity: 2026-09-05 — Phase 13 execution started
 
-Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [███████░░░] 72%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -74,6 +74,7 @@ Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/
 | Phase 12 P03 | 42min | 2 tasks | 5 files |
 | Phase 12 P04 | 22min | 2 tasks | 1 files |
 | Phase 12-per-client P05 | 22min | 2 tasks | 2 files |
+| Phase 13 P01 | 30min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 12-05] Phase 12 收口闸六段式全绿：静态面（gofmt/vet 零输出）+ 全量 -race 5 包 1m21s（新测 12/12 逐名）+ darwin 双编译闸 + dist byte-identical + UAT 矩阵 16 轮（既有 10 协议脚本默认 shared 零修改与基线逐脚本一致 + 3 jsdom + phase12 两轮 20/20 + phase12-dom 14/14）+ diff 白名单审查（放宽形态零命中/红线文件零 diff/零新依赖 0 行）；PC-05/06/07/10/11 五需求勾选收口（三证据链映射表）
 - [Phase ?]: [Phase 12-05] WR-01（Phase 11 REVIEW 遗留）闭合回指登记（D-04「dwell 涵盖不复刻」形态）：dwell 10s 从停读起点武装结构性涵盖 500ms attach 宽限（×20 余量）；阻塞持帧即暂存（帧在闭包栈上 ≡ creditPending 语义等价）——宽限门与 creditPending/afterDrain 重投均不复刻；若瞬态满箱误踢案例实证出现则回写重开（CONTEXT deferred 口径）；登记项 STATE.md 规划期 :99 现位 :103（12-01..04 决策追加行移，内容逐字核对）
 - [Phase ?]: [Phase 12-05] diff 审查白名单补充项①：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——12-05 plan 白名单枚举未列属 plan 文本枚举缺口而非回归，三轴裁决（plan 授权/append-only/零断言）如实登记（WINDOWS #33）不判收口失败；phase 基点 = e8b39c0（86433a6^ Phase 12 首提交父提交，11-06 先例同构）
+- [Phase ?]: [Phase 13-01] D-01 one-way 门 option-a 用户派发确认落定：per-client --stop-timeout 未显式设置默认 5s（HUP 免疫泄漏防线默认开启）+ 显式 0 经 stopTimeoutSet 显式位尊重并 warn 泄漏风险；shared 字面 0 逐字不动（12-01 D-08 one-way 门先例同形态）
+- [Phase ?]: [Phase 13-01] Task 3 Rule 3 可测性提取：run() 内联双默认值覆写提取为纯函数 resolveStopTimeout（loadCustomIndex 同位纪律）——plan「终值落定直调」的直调点；TestValidateStartupWarnMerge 加第四枚负例（per-client 未设无 warn，Rule 2 判别力——锚定显式位而非终值的过宽实现必翻车）
 
 ### Pending Todos
 
@@ -144,6 +147,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-05T11:27:11.611Z
-Stopped at: Phase 13 context gathered
-Resume file: .planning/phases/13-resource-defense/13-CONTEXT.md
+Last session: 2026-09-05T14:26:11.888Z
+Stopped at: Completed 13-01-PLAN.md
+Resume file: None
