@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 31
+open_count: 34
 waived_count: 0
 fixed_count: 3
-total_count: 34
-last_updated: 2026-09-05T15:21:22.252Z
+total_count: 37
+last_updated: 2026-09-05T16:18:55.275Z
 ---
 
 # Broken Windows Ledger
@@ -49,6 +49,9 @@ last_updated: 2026-09-05T15:21:22.252Z
 | 32 | 12 | deviation | web/uat/phase12.mjs |  | S6 以 --ping-interval=0 隔离 dwell 看门狗取证（默认 ping 下 dwell 1013 被 1006 pong_timeout 先杀——writeControl 5s 写超时交互，Phase 13 裁决，STATE Blockers 登记） | open |  | 2026-09-04T14:59:05.938Z |  |
 | 33 | 12 | deviation | internal/server/export_test.go |  | 12-05 收口闸 diff 审查白名单枚举缺口：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——三轴裁决（plan 授权/append-only/零断言）登记为白名单补充项①，非回归；裁决详情见 12-05-SUMMARY 段⑥ | open |  | 2026-09-04T15:23:02.537Z |  |
 | 34 | 13 | deviation | internal/server/perclient_test.go | 1237 | 13-02 Rule 3：TestPerClientTeardownRaceOnce mutate 追加 SpawnPerIP 桶放宽两行（10 轮同 IP attach 超默认 burst 4 被 per-IP 桶误伤——测试对象 teardown 竞态非 churn 防线；断言行零改动，plan 白名单「仅新增函数」之外的两行，SUMMARY 偏差①登记） | open |  | 2026-09-05T15:21:22.252Z |  |
+| 35 | 13 | deviation | internal/server/perclient.go |  | 13-03 Rule 1：session_end emit 位置取 close(waitDone) 前（plan 文本「hubMu 解锁后」偏差——plan 位置与慢半段 Broadcast 无同步边，exitf(os.Exit) 可先于事件落流；emit→close(waitDone)→delete→Broadcast→exitf happens-before 链论证，SUMMARY 偏差①登记） | open |  | 2026-09-05T16:18:54.963Z |  |
+| 36 | 13 | deviation | internal/server/perclient.go |  | 13-03 Rule 1：upgradePerClient 补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷；GraceCancel 测试首跑实测暴露，fix c44a8d9，SUMMARY 偏差②登记） | open |  | 2026-09-05T16:18:55.126Z |  |
+| 37 | 13 | deviation | internal/server/events_test.go |  | 13-03 Rule 1：TestAuthFailedNoUsername 装配改 startEventsServerWith + 体内 Kill→waitExit lifecycle 收口同步边（原装配弃置 exitCh，cleanup SIGKILL 迟到 session_end emit 落入后继捕获窗——全量 -race 下 TestPerClientSessionEnd 严格计数实测受害；断言行零改动，SUMMARY 偏差③登记） | open |  | 2026-09-05T16:18:55.275Z |  |
 
 ````json
 [
@@ -458,6 +461,42 @@ last_updated: 2026-09-05T15:21:22.252Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-05T15:21:22.252Z",
+    "resolved_at": null
+  },
+  {
+    "id": 35,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/perclient.go",
+    "line": null,
+    "description": "13-03 Rule 1：session_end emit 位置取 close(waitDone) 前（plan 文本「hubMu 解锁后」偏差——plan 位置与慢半段 Broadcast 无同步边，exitf(os.Exit) 可先于事件落流；emit→close(waitDone)→delete→Broadcast→exitf happens-before 链论证，SUMMARY 偏差①登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:18:54.963Z",
+    "resolved_at": null
+  },
+  {
+    "id": 36,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/perclient.go",
+    "line": null,
+    "description": "13-03 Rule 1：upgradePerClient 补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷；GraceCancel 测试首跑实测暴露，fix c44a8d9，SUMMARY 偏差②登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:18:55.126Z",
+    "resolved_at": null
+  },
+  {
+    "id": 37,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/events_test.go",
+    "line": null,
+    "description": "13-03 Rule 1：TestAuthFailedNoUsername 装配改 startEventsServerWith + 体内 Kill→waitExit lifecycle 收口同步边（原装配弃置 exitCh，cleanup SIGKILL 迟到 session_end emit 落入后继捕获窗——全量 -race 下 TestPerClientSessionEnd 严格计数实测受害；断言行零改动，SUMMARY 偏差③登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:18:55.275Z",
     "resolved_at": null
   }
 ]
