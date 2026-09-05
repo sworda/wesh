@@ -202,7 +202,7 @@ func trapHupLoopArgv(tag string) []string {
 func TestPerClientShutdownTwoGroups(t *testing.T) {
 	restore := captureStderr(t)
 	defer restore()
-	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -262,7 +262,7 @@ func TestPerClientShutdownTwoGroups(t *testing.T) {
 func TestPerClientShutdownResidualGroup(t *testing.T) {
 	restore := captureStderr(t)
 	defer restore()
-	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(trapHupLoopArgv("PCSH2R"), pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.StopTimeout = 2 * time.Second })
 
@@ -327,7 +327,7 @@ func TestPerClientShutdownResidualGroup(t *testing.T) {
 func TestPerClientShutdownJoinBounded(t *testing.T) {
 	restore := captureStderr(t)
 	defer restore()
-	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(trapHupLoopArgv("PCSH3J"), pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.StopTimeout = 500 * time.Millisecond })
 
@@ -384,7 +384,7 @@ func TestPerClientShutdownJoinBounded(t *testing.T) {
 func TestPerClientShutdownDeadlineExits(t *testing.T) {
 	restore := captureStderr(t)
 	defer restore()
-	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(trapHupLoopArgv("PCSH4D"), pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 

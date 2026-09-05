@@ -590,7 +590,7 @@ func TestMetricsPerClient(t *testing.T) {
 	// spawn_total==2（递增点端到端出数）+ HELP 会话计数文案；断开一端 →
 	// gauge 收敛 1、spawn_total 恒 2。
 	t.Run("per_client_branch", func(t *testing.T) {
-		_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 			return pty.StartWithSize([]string{"/bin/cat"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 		}, nil)
 		base := httpBaseOf(wsURL)

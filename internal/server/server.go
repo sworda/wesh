@@ -180,10 +180,12 @@ type Server struct {
 	// 运行期只读的会话模式（shared|per-client，零值已在 New 兜底
 	// SessionModeShared）；spawnFunc 为 per-client attach 期 PTY spawn 闭包
 	//（10-01 装配挂点，11-01 起由 upgradePerClient 消费——attach 升档 spawn；
-	// shared 模式恒 nil，SessionMode×SpawnFunc 互斥契约由 ValidateOptions
-	// 承载）。
+	// 13-06 起第三参 remoteUser = Attach 提取的 sanitize 后反代用户名
+	//（SEC-09 WESH_REMOTE_USER 注入链——生产闭包经 StartOptions.RemoteUser
+	// 落子进程 env）；shared 模式恒 nil，SessionMode×SpawnFunc 互斥契约由
+	// ValidateOptions 承载）。
 	sessionMode string
-	spawnFunc   func(cols, rows int) (*pty.Session, error)
+	spawnFunc   func(cols, rows int, remoteUser string) (*pty.Session, error)
 
 	// 11-01（PC-02）：pcSessions 为 per-client 会话活性注册表（hubMu 保护）——
 	// ≠ registry：registry 记 WS 连接活性（detach/kick 移除），pcSessions 记
@@ -334,12 +336,15 @@ type Options struct {
 	// SpawnFunc 为生产直传字段（10-01 PC-01 装配挂点，11-01 起生效）：
 	// per-client 模式 attach 期 PTY spawn 闭包（run() 分岔处捕获
 	// argv+StartOptions，函数体为 pty.StartWithSize 直通；cols/rows 为
-	// attach 期 Hello 钳制尺寸）。消费点 = perclient.go upgradePerClient
+	// attach 期 Hello 钳制尺寸；remoteUser 为 Attach 提取的 sanitize 后
+	// 反代用户名——13-06 SEC-09 WESH_REMOTE_USER 注入链第三参，闭包内经
+	// startOpts 局部复制赋 StartOptions.RemoteUser，共享 startOpts 直改即
+	// 多客户端环境串台）。消费点 = perclient.go upgradePerClient
 	//（11-01——Phase 10 的 inert 零调用方形态随 attach spawn 落地结束；
 	// T-10-01c 注记保留：SpawnFunc 只许在该升档分岔内被调用，预认证
 	// spawn 面结构性不存在）。SessionMode×SpawnFunc 互斥契约由
 	// ValidateOptions fail-fast 承载（New 之前调用）。
-	SpawnFunc func(cols, rows int) (*pty.Session, error)
+	SpawnFunc func(cols, rows int, remoteUser string) (*pty.Session, error)
 	// SlowDwell 为测试可覆写字段（12-03，PC-10/PC-11，D-02/D-03）：per-client
 	// 停读态（ReadLoop 输出闭包阻塞持帧）连续无恢复的 dwell 踢出阈值。零值
 	// 取 defaultSlowDwell（clients.go 常量区，10s——OutboxBytes 同档零值兜底

@@ -1370,11 +1370,19 @@ func run(args []string) int {
 	// pty.Start 创建 sess」）随本落地失效——Phase 11 已落地 sess=nil +
 	// attach 期 spawn：New 体 sess.Cmd.Process.Pid 取引用冲突由 New 尾部
 	// 模式分岔消化（per-client 分支不 emit session_start，D-04 窗口期）。
+	// 13-06（SEC-09）第三参 remoteUser：Attach 提取的 sanitize 后反代用户名
+	// → 闭包内 startOpts 局部复制后赋 StartOptions.RemoteUser（pty 包
+	// whitelistEnv 出键 WESH_REMOTE_USER，空串不出键）。防串台论证
+	// （T-13-21）：startOpts 为 run() 共享变量（shared 分支 pty.Start 亦
+	// 消费），每客户端 remoteUser 不同——直接改共享字段即多客户端环境串台
+	//（A 的用户名落进 B 的子进程 env），局部复制后赋值使本次调用快照隔离。
 	startOpts := pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid}
-	var spawnFunc func(cols, rows int) (*pty.Session, error)
+	var spawnFunc func(cols, rows int, remoteUser string) (*pty.Session, error)
 	if cfg.sessionMode == server.SessionModePerClient {
-		spawnFunc = func(cols, rows int) (*pty.Session, error) {
-			return pty.StartWithSize(argv, startOpts, cols, rows)
+		spawnFunc = func(cols, rows int, remoteUser string) (*pty.Session, error) {
+			opts := startOpts
+			opts.RemoteUser = remoteUser
+			return pty.StartWithSize(argv, opts, cols, rows)
 		}
 	}
 	// 10-01 PC-01：装配契约 fail-fast——ValidateOptions 前移至资源获取之前

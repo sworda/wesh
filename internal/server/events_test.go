@@ -734,7 +734,7 @@ func TestPerClientSessionEnd(t *testing.T) {
 		defer restore()
 
 		argv := []string{"sh", "-c", "trap '' HUP; echo PCSEPID=$$; while true; do sleep 1; done"}
-		exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 			return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 		}, func(o *server.Options) { o.StopTimeout = 500 * time.Millisecond })
 		_ = exitCh // 无 exit-when-empty——exitf 不触发
@@ -805,7 +805,7 @@ func TestPerClientSessionStart(t *testing.T) {
 	restore := captureStderr(t)
 	defer restore()
 
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh", "-c", "exit 42"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -874,7 +874,7 @@ func TestSpawnEventsSchema(t *testing.T) {
 	// 注入错误文本携带三形态敏感值样张：err.Error() 文本 / 路径 / errno——
 	// 只进 stub 返回值，wire 面与事件面断言其零出现。
 	const injectedErr = "spawn stub failure ENOENT=2 /nonexistent/binary errno-42"
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return nil, errors.New(injectedErr)
 	}, func(o *server.Options) {
 		o.SpawnPerIPBurst = 1

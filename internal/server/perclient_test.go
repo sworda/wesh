@@ -42,7 +42,9 @@ import (
 // startPerClientServerWithSpawn 是 per-client 模式测试装配 harness 的通用形态
 // （e2e_test.go startTestServerWith 的 per-client 变体，D-05：不碰既有 harness
 // 装配点；11-03 扩展——spawnFn 可注入：失败桩/竞态 barrier 注入均经此参数，
-// 生产闭包的测试镜像）。装配：New(nil, exitf 捕获桩, Options{SessionMode:
+// 生产闭包的测试镜像；13-06 扩展——spawnFn 第三参 remoteUser 透传：SpawnFunc
+// 签名扩散的断言捕获面，TestPerClientRemoteUserEnv 经此捕获 Attach 提取的
+// sanitize 产物）。装配：New(nil, exitf 捕获桩, Options{SessionMode:
 // per-client, SpawnFunc: spawnFn 追踪包装, Writable: true} + mutate 覆写) +
 // 127.0.0.1:0 监听。返回 srv（测试期观测口出口消费面）与 spawnedSessions
 // 访问器（mu 保护拷贝返回——每次成功 spawn 的 *pty.Session 追踪切片；spawnFn
@@ -55,15 +57,15 @@ import (
 // harness 经 SpawnFunc 包装追踪全部已 spawn 会话，Cleanup 逐一 Kill+Close
 // （Kill 对已收割进程收 os.ErrProcessDone 静默忽略；Close 幂等——teardown
 // 慢半段已关则 no-op，pty/io.go:65-76）。
-func startPerClientServerWithSpawn(t *testing.T, spawnFn func(cols, rows int) (*pty.Session, error), mutate func(*server.Options)) (exitCh chan int, wsURL string, srv *server.Server, spawnedSessions func() []*pty.Session) {
+func startPerClientServerWithSpawn(t *testing.T, spawnFn func(cols, rows int, remoteUser string) (*pty.Session, error), mutate func(*server.Options)) (exitCh chan int, wsURL string, srv *server.Server, spawnedSessions func() []*pty.Session) {
 	t.Helper()
 	var mu sync.Mutex
 	var spawned []*pty.Session
 	exitCh = make(chan int, 1)
 	opts := server.Options{
 		SessionMode: server.SessionModePerClient,
-		SpawnFunc: func(cols, rows int) (*pty.Session, error) {
-			sess, err := spawnFn(cols, rows)
+		SpawnFunc: func(cols, rows int, remoteUser string) (*pty.Session, error) {
+			sess, err := spawnFn(cols, rows, remoteUser)
 			if err != nil {
 				return nil, err
 			}
@@ -106,11 +108,15 @@ func startPerClientServerWithSpawn(t *testing.T, spawnFn func(cols, rows int) (*
 // startPerClientServer 是 startPerClientServerWithSpawn 的薄包装（11-01 五测
 // 调用点签名保持，断言零改动）：默认 spawnFn = pty.StartWithSize 直通闭包捕获
 // argv——即 cmd/wesh/main.go run() 生产闭包的镜像形态（Options.SpawnFunc
-// 注释描述的消费形态）。
+// 注释描述的消费形态；13-06 起镜像含 startOpts 局部复制 + RemoteUser 赋值
+// 同构——SEC-09 注入链：每客户端 remoteUser 不同，opts 必须每次局部构造，
+// 共享字段直改即多客户端环境串台）。
 func startPerClientServer(t *testing.T, argv []string, mutate func(*server.Options)) (exitCh chan int, wsURL string) {
 	t.Helper()
-	exitCh, wsURL, _, _ = startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
-		return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	exitCh, wsURL, _, _ = startPerClientServerWithSpawn(t, func(cols, rows int, remoteUser string) (*pty.Session, error) {
+		opts := pty.StartOptions{Uid: -1, Gid: -1}
+		opts.RemoteUser = remoteUser
+		return pty.StartWithSize(argv, opts, cols, rows)
 	}, mutate)
 	return exitCh, wsURL
 }
@@ -365,7 +371,7 @@ func TestNewModeSessContract(t *testing.T) {
 		{"shared requires non-nil sess", nil, server.Options{}, "requires non-nil sess"},
 		{"per-client requires nil sess", &pty.Session{}, server.Options{
 			SessionMode: server.SessionModePerClient,
-			SpawnFunc:   func(cols, rows int) (*pty.Session, error) { return nil, nil },
+			SpawnFunc:   func(cols, rows int, _ string) (*pty.Session, error) { return nil, nil },
 		}, "requires nil sess"},
 	}
 	for _, tt := range tests {
@@ -445,7 +451,7 @@ func TestPerClientSpawnFailure(t *testing.T) {
 	argv := []string{"/bin/sh"}
 	var failSpawn atomic.Bool
 	restore := captureStderr(t)
-	_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		if failSpawn.Load() {
 			// 注入错误文本只进 stub 返回值——wire 面与事件面断言其零出现
 			//（定值常量文案纪律，T-11-03b）。
@@ -528,7 +534,7 @@ func TestPerClientSpawnFailure(t *testing.T) {
 func TestPerClientCapacityGate(t *testing.T) {
 	argv := []string{"sh", "-c", "trap '' HUP; echo PCAPID=$$; while true; do sleep 1; done"}
 	restore := captureStderr(t)
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.MaxClients = 1 })
 
@@ -604,7 +610,7 @@ func TestPerClientCapacityRecheckRace(t *testing.T) {
 	barrier := make(chan struct{})
 	var barrierOnce sync.Once
 	defer barrierOnce.Do(func() { close(barrier) }) // 失败路径兜底放行（防 spawnFn 挂死泄漏）
-	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		entered.Add(1)
 		<-barrier // 双端进入后测试放行——两并发升档同过 pre-spawn 闸
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
@@ -1067,7 +1073,7 @@ func TestPerClientExitSignalMinus1(t *testing.T) {
 // 增大，断线不死需求由子进程侧 herdr/tmux 承接）→ pcSessions 收敛 0 →
 // /healthz clients==0。
 func TestPerClientDisconnectSIGHUP(t *testing.T) {
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -1142,7 +1148,7 @@ func TestPerClientReconnectNewPid(t *testing.T) {
 // 已收割会话幂等无害。
 func TestPerClientStopTimeoutKillFallback(t *testing.T) {
 	argv := []string{"sh", "-c", "trap '' HUP; echo PCKPID=$$; while true; do sleep 1; done"}
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.StopTimeout = time.Second })
 
@@ -1227,7 +1233,7 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 	// 超 per-IP 默认桶（1/s burst 4——第 5 轮起被 spawn 节流拒绝）；本测对象
 	// 是 teardown 竞态不变量非 churn 防线，放宽隔离两测试面（节流行为由
 	// TestPerClientSpawnThrottle 专测；断言行零改动）。
-	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.StopTimeout = time.Second
@@ -1349,7 +1355,7 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 // sess.Resize 仅 fdMu）。DecodeResize 钳制 [1,1000] 在解码层既有（D-16），本测
 // 覆盖正常值域直通；越界钳制为 proto 层既有锁定（proto_test），不重复断言。
 func TestPerClientResizePassthroughRW(t *testing.T) {
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -1373,7 +1379,7 @@ func TestPerClientResizePassthroughRW(t *testing.T) {
 // 分支不生效的直行为证据；shared 半侧 ro 丢弃闸由既有 TestResizeArbitration
 // 「owner模式参与集与ro忽略闸」子测锁定（零改动全绿即保持）。
 func TestPerClientResizePassthroughRO(t *testing.T) {
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.Writable = false })
 
@@ -1399,7 +1405,7 @@ func TestPerClientResizePassthroughRO(t *testing.T) {
 // 「owner模式参与集与ro忽略闸」既有形态）：若 B 被误串扰（仲裁残留路径），防抖
 // 到期早已应用。
 func TestPerClientResizeIsolation(t *testing.T) {
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -1710,7 +1716,7 @@ func assertSeqContinuity(t *testing.T, acc []byte, floodLast int) {
 // 而非 1000 退出广播。
 func TestPerClientStallBlocksAndResumes(t *testing.T) {
 	floodArgv, floodLast := seqFlood()
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1769,7 +1775,7 @@ func TestPerClientStallBlocksAndResumes(t *testing.T) {
 // 阈值）。
 func TestPerClientDwellKick(t *testing.T) {
 	floodArgv, _ := seqFlood()
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1831,7 +1837,7 @@ func TestPerClientDwellKick(t *testing.T) {
 func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 	floodArgv, floodLast := seqFlood()
 	dwell := 3 * time.Second
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1895,7 +1901,7 @@ func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 // 同源，「禁精确时点断言」纪律的计数面同构）。
 func TestPerClientStallGateTransitions(t *testing.T) {
 	floodArgv, _ := seqFlood()
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1937,7 +1943,7 @@ func TestPerClientStallGateTransitions(t *testing.T) {
 // attach 事件恰 2）——拒绝点在容量闸之前、spawnFunc 之前。
 func TestPerClientSpawnThrottle(t *testing.T) {
 	restore := captureStderr(t)
-	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.SpawnPerIPRate = 1
@@ -2079,7 +2085,7 @@ func handshakeCollectUntilCloseWithXFF(t *testing.T, ctx context.Context, wsURL,
 // sanitize 产物，无端口后缀）。
 func TestPerClientSpawnGlobal(t *testing.T) {
 	restore := captureStderr(t)
-	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.SpawnPerIPRate = 100
@@ -2136,7 +2142,7 @@ func TestPerClientSpawnXFF(t *testing.T) {
 	// 每半边独立 server 的公共装配：per-IP rate=1 burst=1（最小判别值）+
 	// 全局放宽隔离（本测只证键语义）。
 	newServer := func(authHeader string) string {
-		_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+		_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 			return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 		}, func(o *server.Options) {
 			o.SpawnPerIPRate = 1
@@ -2231,7 +2237,7 @@ func TestSpawnThrottleExpiry(t *testing.T) {
 // 入参）以 canary ticket 全程不落 stderr 承载。
 func TestPerClientSpawnThrottleWireForm(t *testing.T) {
 	restore := captureStderr(t)
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.SpawnPerIPRate = 1
@@ -2514,7 +2520,7 @@ func TestPerClientReapedFence(t *testing.T) {
 	}
 
 	// —— 半边一：白盒构造（行为面）——
-	_, _, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, _, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -2543,4 +2549,108 @@ func TestPerClientReapedFence(t *testing.T) {
 	// 本会话唯一 Wait 调用方（防僵尸；master 已被慢半段 Close——sh 收
 	// SIGHUP 死亡，Wait 即收割）。
 	_ = pcSess.Wait()
+}
+
+// ====== 13-06 增量：SEC-09 WESH_REMOTE_USER 传递链收口（测名仅出现于 func
+// 声明行——验收 grep 行计数闸，同 11-03 Task 2 纪律）======
+
+// dialHelloHeader 是 dialHello 的携 HTTP 头变体（13-06 SEC-09 断言通道）：
+// 反代部署形态下 X-Remote-User 头经 Upgrade 请求到达 Attach handler——
+// websocket.Dial HTTPHeader 注入（proxy_e2e_test.go dialBadTicket 同款；
+// dialHello 零参数面不碰，本函数独立）。headerKey 空串 = 不携头形态。
+func dialHelloHeader(t *testing.T, ctx context.Context, wsURL string, headerKey, headerVal string) (*websocket.Conn, string) {
+	t.Helper()
+	hdr := http.Header{}
+	if headerKey != "" {
+		hdr.Set(headerKey, headerVal)
+	}
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}, HTTPHeader: hdr})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	var wp proto.WelcomePayload
+	if err := json.Unmarshal(data[1:], &wp); err != nil {
+		t.Fatalf("decode Welcome: %v", err)
+	}
+	return c, wp.Mode
+}
+
+// TestPerClientRemoteUserEnv（13-06 SEC-09 传递链收口）：per-client +
+// AuthHeader 配置（trust 开）下，Attach 携 X-Remote-User 头 → spawnFn 捕获
+// remoteUser == 头值 sanitize 产物——提取点 sanitizeRemoteUser（proxy.go）
+// 清洗在到达 spawn 前完成（C1 控制字符头值 U+0085——Go http 客户端合法可发、
+// C0/DEL 客户端侧即被拒 httpguts.ValidHeaderFieldValue，07-03 前例同款）捕获
+// 后已剥离；头缺席 → 捕获空串（空串不出键链路由 pty 包 TestEnvWhitelist
+// 承载）；trust 关闭（AuthHeader 未配置）→ 头被忽略捕获恒空串（D-20 单一
+// 信任闸：头只在 trust 开启时被采信，伪造头不得进 env 面）。传递链断言锚点
+// = spawnFn 第三参（upgradePerClient :208 s.spawnFunc(h.Cols, h.Rows,
+// remoteUser)——Attach 提取链 :953 sanitize 产物直传，零新管道）。
+// 共享 startOpts 串台防线（T-13-21）由 main.go 闭包局部复制形态承载（Go 级
+// 不可达生产装配面）；子进程 env 进程级回读断言由 13-07 phase13.mjs S6 承接。
+func TestPerClientRemoteUserEnv(t *testing.T) {
+	// 服务端 A：AuthHeader 配置（trust 开）——三形态：干净头值 / C1 控制字符
+	// 头值 / 头缺席。每 dial 恰一次 spawn，userCh 缓冲 3 恰收三次。
+	userCh := make(chan string, 3)
+	_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, remoteUser string) (*pty.Session, error) {
+		userCh <- remoteUser
+		return pty.StartWithSize([]string{"/bin/sh"}, pty.StartOptions{Uid: -1, Gid: -1, RemoteUser: remoteUser}, cols, rows)
+	}, func(o *server.Options) { o.AuthHeader = "X-Remote-User" })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	recvUser := func(label string) string {
+		t.Helper()
+		select {
+		case u := <-userCh:
+			return u
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: 5s 护栏内未见 spawn（userCh 无值——attach 未到达 spawn 点）", label)
+			return ""
+		}
+	}
+
+	// 形态一：干净头值原样到达（sanitize 幂等）。
+	cA1, _ := dialHelloHeader(t, ctx, wsURL, "X-Remote-User", "alice")
+	defer cA1.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("形态一 alice"); got != "alice" {
+		t.Fatalf("干净头值捕获 = %q, want %q（头值应原样到达 spawnFn）", got, "alice")
+	}
+	// 形态二：C1 控制字符头值（U+0085 NEL）——捕获值已剥离（提取点清洗证据）。
+	cA2, _ := dialHelloHeader(t, ctx, wsURL, "X-Remote-User", "ad\u0085min")
+	defer cA2.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("形态二 C1 剥离"); got != "admin" {
+		t.Fatalf("C1 头值捕获 = %q, want %q（sanitizeRemoteUser 剥离 U+0085 后产物）", got, "admin")
+	}
+	// 形态三：头缺席 → 空串（remote_user 提取缺席即空串——下游空串不出键）。
+	cA3, _ := dialHelloHeader(t, ctx, wsURL, "", "")
+	defer cA3.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("形态三 无头空串"); got != "" {
+		t.Fatalf("无头捕获 = %q, want 空串（头缺席 → remoteUser 空串到达 spawnFn）", got)
+	}
+
+	// 服务端 B：AuthHeader 未配置（trust 关）——携 X-Remote-User 头也被忽略，
+	// 捕获恒空串（D-20：头值只在 trust 开启时被采信，伪造头不得进 env 面）。
+	_, wsURLB, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, remoteUser string) (*pty.Session, error) {
+		userCh <- remoteUser
+		return pty.StartWithSize([]string{"/bin/sh"}, pty.StartOptions{Uid: -1, Gid: -1, RemoteUser: remoteUser}, cols, rows)
+	}, nil)
+	cB, _ := dialHelloHeader(t, ctx, wsURLB, "X-Remote-User", "alice")
+	defer cB.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("trust 关闭头忽略"); got != "" {
+		t.Fatalf("trust 关闭捕获 = %q, want 空串（未配置 --auth-header 时头被忽略——remoteUser 恒空串）", got)
+	}
 }

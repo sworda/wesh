@@ -37,7 +37,10 @@ package server
 // 后半闭合——session_start 审计事件由 upgradePerClient emit（每次 spawn
 // 成功恰一条：pid + client_id，紧随 attach 事件之后、startSessionGoroutines
 // 之前）；三计数器递增点接线（ptySpawn/ptySpawnFailures/ptyKills——
-// metrics.go 四 series 的数据源，D-08）。
+// metrics.go 四 series 的数据源，D-08）。13-06 落地登记：SEC-09
+// WESH_REMOTE_USER 注入——spawnFunc 第三参 remoteUser（Attach 提取
+// sanitize 产物直传，生产闭包 main.go 经 StartOptions.RemoteUser 落子
+// 进程 env；shared 模式 D-15 收窄语义零漂移）。
 
 import (
 	"context"
@@ -204,8 +207,11 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	// h.Cols/h.Rows 已经 DecodeHello ClampDim 钳制，满足 StartWithSize
 	//「调用方已钳制」契约——直通出生即正确尺寸（无 80x24 中间态，SC1 后半）。
 	// SEC-08 + Anti-Pattern 3：checkTicket 成功是 spawn 唯一前置，本调用点
-	// 在升档分岔内结构性保证。
-	sess, err := s.spawnFunc(h.Cols, h.Rows)
+	// 在升档分岔内结构性保证。13-06（SEC-09）第三参 remoteUser = 本函数
+	// 既有形参（Attach :953 提取点 s.proxy.remoteUser(r) 的 sanitize 产物
+	// 直传——upgradePerClient 与 Attach 入口同值的写一次字段链，零新管道；
+	// shared 模式零漂移：spawnFunc 恒 nil 不经本调用点）。
+	sess, err := s.spawnFunc(h.Cols, h.Rows, remoteUser)
 	if err != nil {
 		// 失败路径（D-04/Pitfall 5 清理清单）：Error 帧直写（握手期 Error 直写
 		// 先例——注册前维持直写不变；message 为定值常量，绝不携带底层错误
