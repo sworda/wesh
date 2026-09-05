@@ -213,6 +213,9 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 		// pcSessions 登记；spawn 失败由 pty 包保证 fd 完好（Pitfall 5）。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, "failed to start process"))
 		logEvent(remote, websocket.StatusInternalError, "spawn_failed", remoteUser)
+		// 13-05（OPS-12 D-08）ptySpawnFailures 递增点：logEvent 同点（失败分支
+		// 单点——与 13-02 throttled 拒绝序列同形态的计数器分辨率）。
+		s.mc.ptySpawnFailures.Add(1)
 		_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
 		return nil
 	}
@@ -292,6 +295,11 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	s.cancelExitEmptyTimerLocked(cl.remote, cl.remoteUser)
 	s.exitEmptySignaled = false
 	s.pcSessions[pc] = struct{}{}
+	// 13-05（OPS-12 D-08）ptySpawn 递增点：登记成功点（hubMu 持有内——atomic
+	// Add 本可锁外，取登记点为语义锚：唯有真正入册的 spawn 才计「成功」，
+	// 注册点复检淘汰的孤儿 spawn 不计）。递增点 → snapshotMetrics 单趟快照
+	// 读出 → metricsHandler wesh_pty_spawn_total 输出。
+	s.mc.ptySpawn.Add(1)
 	s.hubMu.Unlock()
 	// attach 事件（shared 升档同形态同字段集：event=attach + remote +
 	// client_id=attachSeq + mode + remote_user 非空出键；registerLocked 分配
@@ -573,6 +581,9 @@ func (s *Server) teardownPCLocked(pc *pcSession) {
 						if pc.reaped {
 							return
 						}
+						if pc.reaped {
+							return
+						}
 						// WR-02 栅栏同构覆盖补 KILL 发信号点（planner 裁定：
 						// Pitfall 2 语义对一切 kill(-pgid) 同构适用）。
 						select {
@@ -580,6 +591,10 @@ func (s *Server) teardownPCLocked(pc *pcSession) {
 							return // Wait 已返回——reaped 置位在途，KILL 跳过
 						default:
 						}
+						// 13-05（OPS-12 D-08）ptyKills 递增点之一：SIGKILL 兜底
+						//「实际发送」才计（复检/栅栏通过后、SignalGroup 之前——
+						// 被栅栏拦截的空转回调不计）。
+						s.mc.ptyKills.Add(1)
 						pc.sess.SignalGroup(syscall.SIGKILL)
 					})
 				}
@@ -627,6 +642,10 @@ func (s *Server) reapOrphanSession(pcSess *pty.Session) {
 		if s.stopTimeout > 0 {
 			time.AfterFunc(s.stopTimeout, func() {
 				if !reaped.Load() {
+					// 13-05（OPS-12 D-08）ptyKills 递增点之二：孤儿回收路径
+					// 补 KILL 实际发送点（teardown 路径同计——两路径覆盖
+					// 全部 SIGKILL 兜底发送面）。
+					s.mc.ptyKills.Add(1)
 					pcSess.SignalGroup(syscall.SIGKILL)
 				}
 			})
