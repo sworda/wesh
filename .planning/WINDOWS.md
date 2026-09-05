@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 35
+open_count: 36
 waived_count: 0
 fixed_count: 3
-total_count: 38
-last_updated: 2026-09-05T16:54:07.441Z
+total_count: 39
+last_updated: 2026-09-05T18:38:42.514Z
 ---
 
 # Broken Windows Ledger
@@ -53,6 +53,7 @@ last_updated: 2026-09-05T16:54:07.441Z
 | 36 | 13 | deviation | internal/server/perclient.go |  | 13-03 Rule 1：upgradePerClient 补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷；GraceCancel 测试首跑实测暴露，fix c44a8d9，SUMMARY 偏差②登记） | open |  | 2026-09-05T16:18:55.126Z |  |
 | 37 | 13 | deviation | internal/server/events_test.go |  | 13-03 Rule 1：TestAuthFailedNoUsername 装配改 startEventsServerWith + 体内 Kill→waitExit lifecycle 收口同步边（原装配弃置 exitCh，cleanup SIGKILL 迟到 session_end emit 落入后继捕获窗——全量 -race 下 TestPerClientSessionEnd 严格计数实测受害；断言行零改动，SUMMARY 偏差③登记） | open |  | 2026-09-05T16:18:55.275Z |  |
 | 38 | 13 | deviation | internal/server/server.go |  | 13-04 Rule 2：Shutdown 侧 D-state 兜底 terminate（join 到期未清零经 termOnce 直接收口——T-13-13 mitigation「有界 join 后无条件经 termOnce 退出」为 threat register 硬要求而 plan behavior 四锚点未列；drained 形态终结仍归 pcSupervisor 零漂移，SUMMARY 偏差①登记） | open |  | 2026-09-05T16:54:07.441Z |  |
+| 39 | 13 | deviation | internal/server/shutdown_test.go |  | 13-06 files_modified 枚举缺口：SpawnFunc 签名扩散波及 shutdown_test.go/metrics_test.go/events_test.go 三文件注入点机械加参（plan 白名单未列但编译必需——12-05 export_test.go 先例同构，非回归） | open |  | 2026-09-05T18:38:42.514Z |  |
 
 ````json
 [
@@ -510,6 +511,18 @@ last_updated: 2026-09-05T16:54:07.441Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-05T16:54:07.441Z",
+    "resolved_at": null
+  },
+  {
+    "id": 39,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/shutdown_test.go",
+    "line": null,
+    "description": "13-06 files_modified 枚举缺口：SpawnFunc 签名扩散波及 shutdown_test.go/metrics_test.go/events_test.go 三文件注入点机械加参（plan 白名单未列但编译必需——12-05 export_test.go 先例同构，非回归）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T18:38:42.514Z",
     "resolved_at": null
   }
 ]
