@@ -4,16 +4,16 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
-status: "Phase 13 shipped — PR #17"
-stopped_at: Phase 14 context gathered
-last_updated: "2026-09-06T10:49:42.589Z"
+status: executing
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-09-06T12:38:01.514Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 25
+  completed_plans: 26
 ---
 
 # Project State
@@ -27,12 +27,12 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 
 ## Current Position
 
-Phase: 14 — 双模式验证矩阵、标定与 herdr UAT
-Plan: Not started
-Status: Phase 13 shipped — PR #17
-Last activity: 2026-09-06 — Phase 14 planning complete
+Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
+Plan: 2 of 12
+Status: Ready to execute
+Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [████████████████████] 25/25 plans（v1.1 已执行面 10-13 全收口；Phase 14 待规划；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
@@ -82,6 +82,7 @@ Progress: [████████████████████] 25/25 p
 | Phase 13 P06 | 23min | 2 tasks | 11 files |
 | Phase 13 P07 | 27min | 2 tasks | 2 files |
 | Phase 13 P08 | 37min | 2 tasks | 11 files |
+| Phase 14 P01 | 43min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -152,6 +153,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 13-07] TestChurn churn 负载格：10rps×30s（300 次）生产默认桶参数零覆写——attached=33/rejected=267/throttled=267、gor 8→8/fd 11→11/mem +110KB 精确回落基线；断言全部基线差值形态（gor/mem/fd 双采样 + 回收轮询 + 容差标定注释——Pitfall 7）；spawn_total==attached 程序序精确对照；PC-08/09/SEC-09/OPS-12 勾选留 13-08（Task 2 承载）
 - [Phase ?]: [Phase 13-08] 收口闸六段式全绿（零回归双证据 + phase13 两轮 29/29 + churn 格 + diff 白名单 23 文件零外改）；phase 基点 = e0ae66b^（首提交父提交，12-05 先例同构）；PC-08/09/SEC-09/OPS-12 四需求勾选收口（v1.1 10/15）
 - [Phase ?]: [Phase 13-08] WR-02 闭合回指：waitDone 非阻塞 select 结构性栅栏落地且同构覆盖三处 kill(-pgid) 面（teardown 快半段/补 KILL 回调/Shutdown 快照循环）——结构性消除非风险接受；D-10 文档段落地（README 保活先杀时序 + CONFIGURATION ping-interval 小节）；gofmt 三处 deferred 存量与 README「per-client 装配中」失实残留收口期归一
+- [Phase ?]: [Phase 14-01] D-01 小族四形态落地并双模式实证：newTestServer/newTracked/newHandle/newSess 两分支直传两族母本零改写；tracked 形态经 TestOversize1009、handle 形态经 TestHealthzDraining 获运行期首证，sess 形态编译期在场（14-04 首证）——后续 14-02..06 改造 plan 直接复用
+- [Phase ?]: [Phase 14-01] TestSlowConsumerKick per-client 列同步边勘误（Rule 1）：独立洪水拓扑下 shared 的「正常端 12MiB 等待」不构成踢出同步——首次 Read 过早续读重置 dwell 使会话 1000 收尾（全量 -race 负载实测命中）；kick 观测统一走 /healthz clients 计数轮询（TestPerClientDwellKick 先例通道），Read 推迟到踢出可观测后
+- [Phase ?]: [Phase 14-01] CI 时长增量实测：双跑使 internal/server -race 全量从 ~98.5s 增至 ~104-106s（+6-8s，洪水类测双跑为主贡献）；14-02..06 批量推开持续累积——14-12 收口闸知悉 CI 时长预算（蓝本估算 3-4 min/leg）
+- [Phase ?]: [Phase 14-01] TestReadLimitBoundary D-02 偏差登记：startRawCatServer 的 pre-listen stty 装配与 per-client attach 期 spawn 结构性不等价（无 pre-listen 窗口）——蓝本 limits 同断言双跑行的例外，保持 shared 单跑（边界值断言与进程模型无关，per-client 同值面由 TestOversize1009/PreHelloReadLimit 双跑承载）
 
 ### Pending Todos
 
@@ -173,6 +178,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T07:05:15.859Z
-Stopped at: Phase 14 context gathered
-Resume file: .planning/phases/14-herdr-uat/14-CONTEXT.md
+Last session: 2026-09-06T12:37:47.149Z
+Stopped at: Completed 14-01-PLAN.md
+Resume file: None

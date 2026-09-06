@@ -570,10 +570,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 并发进程负载矩阵（1/4/16/32 会话）实测内存/fd/goroutine/吞吐有界，数据回填 maxClients 默认建议值与 README 资源义务段
   5. README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 经多路复用汇聚）；v1.0「GoTTY 式共享进程模型」误记已修正（GoTTY 实为 per-connection spawn，源码已核实）
 
-**Plans**: 12 plans
+**Plans**: 1/12 plans executed
 **Wave 1**
 
-- [ ] 14-01-PLAN.md — 三维归类 tracer：newTestServer 单一装配点（D-01）+ exit/stopseq/health/slowclient 小型 mode-mapped 批双模式改造（PC-13）
+- [x] 14-01-PLAN.md — 三维归类 tracer：newTestServer 单一装配点（D-01）+ exit/stopseq/health/slowclient 小型 mode-mapped 批双模式改造（PC-13）
 - [ ] 14-07-PLAN.md — per-client 负载矩阵：TestLoadPerClientFloodMatrix 洪水格 + TestLoadPerClientResident 驻留格（D-10/D-12）+ LOADDATA 产出 + D-11 两段式判定（PC-12）
 - [ ] 14-08-PLAN.md — phase14.mjs：herdr driving（api snapshot 翻转链 + 流层互证）+ ro 汇聚协议层 UAT（D-05/D-06/D-08/D-09，PC-13）
 
@@ -614,4 +614,4 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
 | 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete    | 2026-09-05 |
-| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/12 | Planned | - |
+| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 1/12 | In Progress|  |
