@@ -570,7 +570,27 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 并发进程负载矩阵（1/4/16/32 会话）实测内存/fd/goroutine/吞吐有界，数据回填 maxClients 默认建议值与 README 资源义务段
   5. README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 经多路复用汇聚）；v1.0「GoTTY 式共享进程模型」误记已修正（GoTTY 实为 per-connection spawn，源码已核实）
 
-**Plans**: TBD
+**Plans**: 12 plans
+**Wave 1**
+
+- [ ] 14-01-PLAN.md — 三维归类 tracer：newTestServer 单一装配点（D-01）+ exit/stopseq/health/slowclient 小型 mode-mapped 批双模式改造（PC-13）
+- [ ] 14-07-PLAN.md — per-client 负载矩阵：TestLoadPerClientFloodMatrix 洪水格 + TestLoadPerClientResident 驻留格（D-10/D-12）+ LOADDATA 产出 + D-11 两段式判定（PC-12）
+- [ ] 14-08-PLAN.md — phase14.mjs：herdr driving（api snapshot 翻转链 + 流层互证）+ ro 汇聚协议层 UAT（D-05/D-06/D-08/D-09，PC-13）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 14-02-PLAN.md — mode-mapped 大型批：e2e_test 生命周期八测 + multi_test fanout/容量/计数十一测断言分叉表（PC-13）
+- [ ] 14-03-PLAN.md — mode-mapped 终结/观测批：emptyexit/shutdown/metrics 三文件 Phase 13 混入归一（第二终结源/N 组信号/session_active 列，PC-13）
+- [ ] 14-04-PLAN.md — resize 直通分叉 + mode-exclusive 批：resize_arb/clients 的 D-03 显式断言未装配（PC-13）
+- [ ] 14-05-PLAN.md — mode-agnostic 协议守卫+认证批：handshake/limits/keepalive + auth*/origin/throttle/tickets 八文件同断言双跑（PC-13）
+- [ ] 14-06-PLAN.md — mode-agnostic 部署面批：sharetoken/tls/customindex/proxy*/basepath 六文件双跑 + 三维归类 32 文件收口核对（PC-13）
+- [ ] 14-09-PLAN.md — phase14-pw.mjs：Windows Playwright 双 tab 观感断言（边框列逐字不变）+ 人工执行确认门（D-07，PC-13）
+- [ ] 14-10-PLAN.md — run-all.mjs 一键矩阵 runner（D-04：15 既有脚本 + phase14.mjs 串行聚合 + 基线计数核对，PC-13）
+- [ ] 14-11-PLAN.md — PC-12 文档三件套：README「会话模式」节 + 标定表回填 + ARCHITECTURE 双模式段与 GoTTY 误记修正 + CONFIGURATION max-clients 行（D-14/D-11）
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 14-12-PLAN.md — 收口闸六段式 + UAT 矩阵人工闸 + diff 白名单终审 + PC-12/PC-13 勾选 + flagged_assumptions 终验（全需求）
 
 **Research flag**: 32 会话资源曲线为账面推算（唯一 MEDIUM 置信面），负载矩阵实测回填；herdr 端到端断言设计依赖外部子程序行为，需实测标定——建议 `/gsd-plan-phase --research-phase 14`。测试拓扑遵循双机分工（CODEBUDDY.md）：协议层 UAT 在 Linux 开发机（headless，禁浏览器），Playwright 浏览器全链在 Windows 工作站（经 TCP 转发器 kill/restore 模拟断网）。
 
@@ -594,4 +614,4 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
 | 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete    | 2026-09-05 |
-| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/? | Not started | - |
+| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 0/12 | Planned | - |
