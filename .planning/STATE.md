@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-05-PLAN.md
-last_updated: "2026-09-06T16:22:22.384Z"
+stopped_at: Completed 14-06-PLAN.md
+last_updated: "2026-09-06T17:03:35.882Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 32
+  completed_plans: 33
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 8 of 12
+Plan: 9 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [█████████░] 86%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -89,6 +89,7 @@ Progress: [█████████░] 86%
 | Phase 14 P03 | 25min | 3 tasks | 3 files |
 | Phase 14 P04 | 21min | 2 tasks | 4 files |
 | Phase 14 P05 | 25min | 2 tasks | 8 files |
+| Phase 14 P06 | 28min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -180,6 +181,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-05] TestReadOnlyAllowsResize 为 handshake 行唯一分叉面：ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通）——按 14-01 断言分叉表落地（shared 逐字 + per-client 断言直通真值 50/120），exitf 面同 TestExitFrameSignal 分叉；WINDOWS #44
 - [Phase ?]: [Phase 14-05] 零值/Writable:false Options 经 mutate 显式回写（Pattern 9）：小族基线 Writable:true 下 TestNoAuthMode/TestReadOnly* 覆写回 false 保期望值零改写；TestPingDisabled 显式 PingInterval=0 锁定禁用语义防基线漂移
 - [Phase ?]: [Phase 14-05] auth/origin/throttle/tickets 四文件 6 测纯函数白盒形态判定保持单跑（无装配可参数化，非覆盖缺口）；auth_e2e :403 收编 newTrackedTestServer（tracked 形态第二消费方）；startTestServer 零引用收编删除（14-02/04 闭环第三例，WINDOWS #45）
+- [Phase ?]: [Phase 14-06] sharetoken 白盒镜像双分支落地：package server 白盒文件经本地 startShareServer(t,mode) 镜像小族两分支（per-client = New(nil)+SpawnFunc 生产闭包镜像+spawned Kill+Close Cleanup）——包墙结构性不可达 server_test 小族的 D-01 同构形态；部署面 9 测双跑收口（sharetoken 2+customindex 8+proxy_e2e 4+basepath 3，proxy_e2e 5 调用点按 waitHandlers 用途分流）
+- [Phase ?]: [Phase 14-06] 三维归类收口核对：server 包实测 34 文件（plan 33+harness_test.go 小族本体零测桶）= ① 18 文件 81 测双跑（-v mode= 子测 216 PASS）+② perclient 36 测单模式+③ load 8 测+④ 纯白盒/纯函数 10 文件+⑤ events 9/log 1 单跑（D-02 续登第 4/5 则）+⑥ export 零测桶；蓝本 :378-399 十七行全命中或偏差登记，零静默漏网——SC1 单 step 双模式 CI 门形态达成（ci.yml 零 diff）
+- [Phase ?]: [Phase 14-06] TestMaxClients503/mode=per-client 隔离复跑 flake 判 14-02 遗留（基线 9af7ce1 worktree 复现 3/3，pcSessions linger 窗口竞态，轮询仅覆盖 HTTP 503 形态）——与本 plan 无关（全量 -race 两轮全绿），deferred-items.md 登记三修复方向，14-12 知悉
 
 ### Pending Todos
 
@@ -192,6 +196,7 @@ None yet.
 - [v1.1 规划期裁决项]: ① per-client stop-timeout 默认值重议（0=不补 KILL 在新模式下=HUP 免疫泄漏，公开契约变更，Pitfall 8）→ Phase 13——**Phase 11 post-merge 调查已实证泄漏窗真实存在**（2026-09-04）：本机 bash 4.4 交互模式在「提示符 pselect + 竞态输入行待读」窗口内可无声吸收 SIGHUP（kill 成功发出、非阻塞非 pending、进程存活；cat 对照组 50/50 全收，服务端信号面零缺陷），11-04 竞态测试经 StopTimeout=1s 覆写走 KILL 兜底确定性收口（14143fe）；③ healthz/metrics 四个 OQ（session_alive 语义/series 双语义/1013 vs 阻塞/spawn 失败 wire 面，研究均有推荐答案）→ Phase 13（② write-policy×per-client 经 Phase 10 D-01/D-02 闭合；④ spawn-intent 口径经 Phase 11 D-03 复检回收提前消解）
 - [v1.1 测试拓扑]: 协议层 UAT 在 Linux 开发机（headless 禁浏览器/禁 playwright）；Playwright 浏览器全链在 Windows 工作站（TCP 转发器 kill/restore 模拟断网）——见 CODEBUDDY.md 双机拓扑
 - [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态：默认 --ping-interval=5s 下 TCP 级停读客户端在 (停读+5s, 停读+10s] 被 1006 pong_timeout 先杀，PC-10 dwell 1013 结构性后到（writeControl 5s 写超时 × pinger 单一 DeadlineExceeded 判读；Go 测 harness PingInterval 零值未暴露，phase12.mjs S6 以 --ping-interval=0 隔离取证）。真实浏览器端网络栈自动回 pong 不触发；herdr 类自管 socket 客户端可触发。裁决面：pinger 区分「写阻塞超时」与「pong 等待超时」（lib 错误链 failed to acquire lock vs failed to wait for pong 可区分）或接受 1006 语义（死连接更早收口）
+- [14-06 执行期发现→14-12 知悉] TestMaxClients503/mode=per-client 隔离复跑（-run 过滤非 -race 形态）高概率 flake：pcSessions linger 窗口竞态（detach 槽位释放早于收割，pre-spawn 容量再闸 1011；轮询仅重试 HTTP 503）——14-02 遗留（基线 9af7ce1 复现 3/3），全量 -race CI 同款命令不受影响；deferred-items.md 已登记修复方向
 
 ## Deferred Items
 
@@ -201,6 +206,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T16:22:22.363Z
-Stopped at: Completed 14-05-PLAN.md
+Last session: 2026-09-06T17:03:35.859Z
+Stopped at: Completed 14-06-PLAN.md
 Resume file: None
