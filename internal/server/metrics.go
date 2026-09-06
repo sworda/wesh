@@ -16,7 +16,9 @@ package server
 // 全部 series 零身份 label（remote/remote_user/client_id/ticket 永不进
 // label——隐私 + 基数纪律）；outbox 深度为 max/sum 聚合 gauge（max 即慢客户端
 // 检测的运维信号）；build_info 仅 version 单 label 且值过 escLabel 单侧定义
-// 转义。per-IP/每连接明细查日志事件，metrics 只看总量与聚合。
+// 转义。per-IP/每连接明细查日志事件，metrics 只看总量与聚合。13-05（OPS-12，
+// T-13-16）：红线扩到四枚新 spawn 计数器 series——per-client 明细一律查审计
+// 日志（client_id 关联检索），series 带身份 label 即基数爆炸 DoS + 信息泄露面。
 //
 // D-08/D-09：/metrics 跟随认证闸（凭据模式过 basicAuth——Prometheus
 // scrape_config 原生 basic_auth 可采集；--no-auth 模式直通），根路径固定不带
@@ -49,12 +51,21 @@ import (
 //     （fan-out ×N 真实带宽）；ws_recv = Attach 读循环 Hello 首读 + 稳态循环
 //     两站点（忠实「WS 网络流量」字面，RESEARCH A4）。ws_sent ÷ pty_output
 //     即吞吐放大比。
+//   - ptySpawn/ptySpawnFailures/ptyKills/ptySpawnThrottled（13-02，D-08
+//     四件一次性全加——per-client spawn 热路径计数器组）：递增点全部由 13-05
+//     接线（perclient.go——ptySpawn 登记成功点 / ptySpawnFailures spawn 失败
+//     分支 / ptySpawnThrottled 桶拒绝（13-02 已接）/ ptyKills 补 KILL 两路径
+//     实际发送点）；series 输出见 metricsHandler 尾部四条（17→21 扩展）。
 type metricsCounters struct {
-	authFailed     atomic.Int64
-	authThrottled  atomic.Int64
-	ptyOutputBytes atomic.Int64
-	wsSentBytes    atomic.Int64
-	wsRecvBytes    atomic.Int64
+	authFailed        atomic.Int64
+	authThrottled     atomic.Int64
+	ptyOutputBytes    atomic.Int64
+	wsSentBytes       atomic.Int64
+	wsRecvBytes       atomic.Int64
+	ptySpawn          atomic.Int64
+	ptySpawnFailures  atomic.Int64
+	ptyKills          atomic.Int64
+	ptySpawnThrottled atomic.Int64
 }
 
 // metricsSnap 为一次采集的 registry 状态快照（字段全部在 snapshotMetrics 的
@@ -66,13 +77,22 @@ type metricsSnap struct {
 	gateTransitions  int64 // registry.gateTransitions（同上）
 	outboxMax        int   // 逐客户端 outbox.bytes 聚合 max（D-02 慢客户端信号）
 	outboxSum        int   // 聚合 sum
-	// 五枚 atomic 计数器的锁内 Load——hubMu 外读本合法（atomic 天性），纳入
+	// 九枚 atomic 计数器的锁内 Load——hubMu 外读本合法（atomic 天性），纳入
 	// 快照仅为一站式取数（与快照内 plain int 读取并存，场景化选型注释）。
 	authFailed     int64
 	authThrottled  int64
 	ptyOutputBytes int64
 	wsSentBytes    int64
 	wsRecvBytes    int64
+	// 13-05（OPS-12 D-07/D-08）per-client 观测面扩展：pcSessions 为活跃
+	// per-client 会话计数（session_active per-client 分支数据源——shared 下
+	// s.pcSessions 为 nil，len==0 自然成立，零分支单趟形态）；四枚 spawn
+	// 热路径计数器为 13-02 预埋字段（D-08 四件一次性全加）的读取端。
+	pcSessions        int64
+	ptySpawn          int64
+	ptySpawnFailures  int64
+	ptyKills          int64
+	ptySpawnThrottled int64
 }
 
 // snapshotMetrics 采集 registry 单趟快照。锁序 R-07 唯一合法形态（08-RESEARCH
@@ -92,6 +112,10 @@ func (s *Server) snapshotMetrics() metricsSnap {
 	sn.clientsTotal = s.registry.clientsTotal
 	sn.kicks = int64(s.registry.kicks)
 	sn.gateTransitions = int64(s.registry.gateTransitions)
+	// 13-05（D-07）：per-client 注册表活跃计数——单趟快照内读（Open Question 1
+	// 推荐形态：绝不第二趟取锁）；shared 下 s.pcSessions 为 nil，len==0
+	// 自然成立，同一行两模式零分支。
+	sn.pcSessions = int64(len(s.pcSessions))
 	for c := range s.registry.set {
 		c.outbox.mu.Lock()
 		d := c.outbox.bytes
@@ -106,14 +130,21 @@ func (s *Server) snapshotMetrics() metricsSnap {
 	sn.ptyOutputBytes = s.mc.ptyOutputBytes.Load()
 	sn.wsSentBytes = s.mc.wsSentBytes.Load()
 	sn.wsRecvBytes = s.mc.wsRecvBytes.Load()
+	sn.ptySpawn = s.mc.ptySpawn.Load()
+	sn.ptySpawnFailures = s.mc.ptySpawnFailures.Load()
+	sn.ptyKills = s.mc.ptyKills.Load()
+	sn.ptySpawnThrottled = s.mc.ptySpawnThrottled.Load()
 	return sn
 }
 
 // metricsHandler 为 GET /metrics 的处理函数：快照 → Content-Type → builder
-// 逐 series 输出 17 条（契约清单与序见 metricsSeries17 测试侧镜像）→ 末行
-// 恒 \n（builder 每行 \n 收尾——规范硬性要求）。runtime gauge 直采
-// （NumGoroutine/ReadMemStats，D-03）；session_active 读 sessionAlive
-// （08-03 字段，hubMu 外 atomic 读）；input 两计数器读既有 atomic 预埋挂点
+// 逐 series 输出 21 条（契约清单与序见 metricsSeries21 测试侧镜像；13-05 前
+// 17 条，四计数器尾部追加——D-08）→ 末行恒 \n（builder 每行 \n 收尾——规范
+// 硬性要求）。runtime gauge 直采（NumGoroutine/ReadMemStats，D-03）；
+// session_active 按模式分支（13-05 D-07：shared 读 sessionAlive 探活语义
+// 现状逐字不动——08-03 字段 hubMu 外 atomic 读；per-client 读快照
+// pcSessions 活跃会话计数）；HELP 文案按模式生成（同名 series 语义随部署
+// 模式——采集方按部署形态理解取值）；input 两计数器读既有 atomic 预埋挂点
 // （server.go inputDrops / clients.go inputQ.droppedInputs，review #10）。
 func (s *Server) metricsHandler(w http.ResponseWriter, _ *http.Request) {
 	snap := s.snapshotMetrics()
@@ -122,12 +153,19 @@ func (s *Server) metricsHandler(w http.ResponseWriter, _ *http.Request) {
 	writeGauge(&b, "wesh_clients_connected", "Currently attached WebSocket clients.", snap.clientsConnected)
 	writeCounter(&b, "wesh_clients_total", "Total attached clients since process start.", snap.clientsTotal)
 	writeCounter(&b, "wesh_clients_kicked_total", "Clients kicked with 1013 (slow consumer).", snap.kicks)
-	// D-05：共享进程模型下会话数恒 1 退化——session_active gauge 落探活语义。
+	// D-05/D-07：session_active 同名 series 按模式分支取值——shared 会话数
+	// 恒 1 退化落探活语义（0/1，现状逐字不动）；per-client 落活跃会话计数
+	// （snap.pcSessions = len(pcSessions) 单趟快照内读）。HELP 文案按模式
+	// 生成（否决另起 series 名：清单膨胀且 shared 侧恒 0 徒增噪音）。
+	sessionActiveHelp := "Whether the PTY session is alive (1) or exited (0)."
 	var sessionActive int64
-	if s.sessionAlive.Load() {
+	if s.sessionMode == SessionModePerClient {
+		sessionActive = snap.pcSessions
+		sessionActiveHelp = "Number of active per-client PTY sessions."
+	} else if s.sessionAlive.Load() {
 		sessionActive = 1
 	}
-	writeGauge(&b, "wesh_session_active", "Whether the PTY session is alive (1) or exited (0).", sessionActive)
+	writeGauge(&b, "wesh_session_active", sessionActiveHelp, sessionActive)
 	writeGauge(&b, "wesh_outbox_depth_bytes_max", "Maximum per-client outbox depth in bytes (aggregate over clients).", int64(snap.outboxMax))
 	writeGauge(&b, "wesh_outbox_depth_bytes_sum", "Sum of per-client outbox depths in bytes (aggregate over clients).", int64(snap.outboxSum))
 	writeCounter(&b, "wesh_pty_output_bytes_total", "Bytes read from the PTY master (fan-out source, counted once).", snap.ptyOutputBytes)
@@ -143,6 +181,16 @@ func (s *Server) metricsHandler(w http.ResponseWriter, _ *http.Request) {
 	runtime.ReadMemStats(&m)
 	writeGauge(&b, "wesh_mem_alloc_bytes", "Heap bytes allocated and in use (runtime.MemStats.Alloc).", int64(m.Alloc)) // Alloc==HeapAlloc，GOROOT mstats.go:58-61
 	writeBuildInfo(&b, "wesh_build_info", "wesh build metadata.", s.version)
+	// 13-05（OPS-12 D-08）四枚 spawn 计数器尾部追加（17→21，既有 17 条逐字
+	// 不动）：per-client-only 出数，shared 恒 0 series 保留不摘（credit_gate
+	// 恒 0 先例）；wesh_pty_spawn_throttled_total 是 churn 防线「生效过」的
+	// 唯一 metrics 面信号（否则只能事后日志检索）；递增点见 perclient.go
+	// （13-02 已接线 throttled，本 phase 接线其余三件）。零身份 label——
+	// per-client 明细一律查审计日志（文件头红线注释）。
+	writeCounter(&b, "wesh_pty_spawn_total", "Successful per-client PTY spawns.", snap.ptySpawn)
+	writeCounter(&b, "wesh_pty_spawn_failures_total", "Per-client PTY spawns that failed to start.", snap.ptySpawnFailures)
+	writeCounter(&b, "wesh_pty_kills_total", "SIGKILL fallbacks sent to per-client process groups (teardown and orphan reaping).", snap.ptyKills)
+	writeCounter(&b, "wesh_pty_spawn_throttled_total", "Per-client spawns rejected by the spawn throttle gate (churn defense).", snap.ptySpawnThrottled)
 	_, _ = fmt.Fprint(w, b.String())
 }
 

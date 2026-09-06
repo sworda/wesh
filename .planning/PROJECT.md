@@ -151,6 +151,8 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 | opener 子进程 goroutine Wait + 非零退出 stderr 警告行 | fire-and-forget 使桌面异常不可观测且每次 --open 驻留一个僵尸；Wait err 仅 exit status N 结构性保证警告行不含 URL（token 红线） | ✓ Phase 7 G-07-8 闭合（选项 A）：main.go:1282 + b6 7/7 |
 | v1.0.0 发布链形态：release.sh 单命令全链（四闸→race 全量→build→fuzz 2×10min→负载矩阵→确认闸→tag push）+ goreleaser/release.yml CI 侧接管 | 发布前操作整合单一脚本一次跑完，崩溃即中止（语料自动落 testdata 进回归）；CI 侧 pnpm build 先于 goreleaser 防 dist 陈旧 | ✓ Phase 9 首证（2026-08-30）：第一轮中止于 fuzz 断言误报（见下条）修复后第二轮全链绿，v1.0.0 上架 |
 | FuzzDecodeFileConfig 值红线断言的键名回显豁免口径 | fuzzer 可把探针搬进键名位置（表头 ["FUZZ_PROBE_SECRET"] 语料实证），全文字面断言误判合法键名回显；stripKeyNameEcho 剥除 configErr 单写口仅有的两处键名上下文后再断，值透传形态仍 FAIL（fail-closed）+ 六形态行为锁 | ✓ 发布长跑实证修复（7850bc4，2026-08-30）：产品代码零改动（值剥离经「只取 Key()」实现本就正确） |
+| per-client `--stop-timeout` 双默认值：未显式设置默认 5s（shared 字面 0 逐字不动） | Phase 11 post-merge 实证 bash 4.4 交互模式可无声吸收 SIGHUP（泄漏窗真实存在）——per-client 产品语义相反（断开=进程该死），默认 0 = HUP 免疫泄漏防线默认关闭；5s = 正常程序收 HUP 后清理窗口充分 + 泄漏存活上界有界。one-way 公开契约变更（13-01 D-01 用户派发确认 option-a；显式 0 经 stopTimeoutSet 显式位尊重 + 启动 warn） | ✓ Phase 13-01 落地（27909f8）：三态断言组 + TOML 双源置位 + 双文档行；13-07 S2 零配置实测断开至收割 ≈5.0s |
+| per-client 第二终结源 pcSupervisor/pcExitReq（「注册表空且无子进程可等」形态退出） | --once/--exit-when-empty 在「注册表已空迁移」形态下无计数归零事件可触发——单例 supervisor goroutine 等 `(pcExitReq\|\|exiting) && len(pcSessions)==0` 经 termOnce/terminate 单点收口（「exitf 恰好一次」不变量保持）；退出码 last-reaped-code 规则与 shared 逐位对齐（子先死透传 / 客户端先断 -1→255），Shutdown 侧 join 到期 D-state 兜底 terminate 三源交汇恰好一次 | ✓ Phase 13-03/13-04 落地（2c5fd6e/fe3ca4a）：两时序分叉 + Shutdown 四形态测试组 + phase13.mjs S3 三形态进程级 255 + S4 双组 ESRCH/session_end==2 |
 
 ## Evolution
 
@@ -170,4 +172,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-04 — Phase 11（per-client 生命周期主干）完成：PC-02/03/04 验证 12/12 passed（十四测 + UAT 21/21 + CI 双平台全绿 + 零回归三重证据），G-11-2 gap closure 闭合，SECURITY 21 威胁全 closed；v1.0 于 2026-08-31 全量收口（44/44 需求，v1.0.0 已发布上架）*
+*Last updated: 2026-09-05 — Phase 13（资源防线与终结语义）完成：PC-08/PC-09/SEC-09/OPS-12 四需求收口（13-08 六段式收口闸全绿：全量 -race 五包 + UAT 矩阵 17 轮基线一致 + phase13.mjs 两轮 29/29 + churn 负载格 + diff 白名单审查零放宽）；v1.1 累计 10/15 需求；此前 v1.0 于 2026-08-31 全量收口（44/44，v1.0.0 已发布上架）*

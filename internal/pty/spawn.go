@@ -47,15 +47,21 @@ const (
 //     会使终端能力丢失，--term="" 按未配置处理）；
 //   - Uid/Gid = --uid/--gid 降权对（-1 = 不降权现状；Credential 分支与 creack/pty
 //     StartWithSize 兼容——它只补 Setsid/Setctty 两字段不覆盖调用方 SysProcAttr，
-//     GOMODCACHE start.go:18-25 核实）。
+//     GOMODCACHE start.go:18-25 核实）；
+//   - RemoteUser = SEC-09（13-06）反代身份注入值——仅 per-client 分支赋值
+//     （shared 路径零值 "" 结构性不出键，D-15 收窄语义保持）；值必须是提取点
+//     sanitizeRemoteUser 的清洗产物（server 包 proxy.go，C0/C1/DEL 剥离 + 128
+//     rune 截断）——pty 包零二次清洗（单一写口纪律），本字段也是唯一注入通道
+//     （零绕过）。
 //
-// 零值等价纪律：Dir "" + Term "" + Uid -1 + Gid -1 时行为与选项化前逐字节一致
-// （TestStartZeroValueParity 锁定）。
+// 零值等价纪律：Dir "" + Term "" + Uid -1 + Gid -1 + RemoteUser "" 时行为与
+// 选项化前逐字节一致（TestStartZeroValueParity 锁定）。
 type StartOptions struct {
-	Dir  string
-	Term string
-	Uid  int
-	Gid  int
+	Dir        string
+	Term       string
+	Uid        int
+	Gid        int
+	RemoteUser string
 }
 
 // Start 以 exec 数组形式 spawn argv（绝不经 shell，D-02/D-15），替换式注入 env
@@ -77,8 +83,8 @@ func StartWithSize(argv []string, opts StartOptions, cols, rows int) (*Session, 
 	if len(argv) == 0 {
 		return nil, errors.New("pty: empty argv")
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)   // exec 数组，绝不经 shell
-	cmd.Env = whitelistEnv(opts.Term, opts.Uid) // SEC-06：替换式注入，非追加
+	cmd := exec.Command(argv[0], argv[1:]...)                    // exec 数组，绝不经 shell
+	cmd.Env = whitelistEnv(opts.Term, opts.Uid, opts.RemoteUser) // SEC-06：替换式注入，非追加（SEC-09：remoteUser 空串不出键）
 	// 不设 cmd.Stdin/Stdout/Stderr（StartWithAttrs 仅在三者全 nil 时接管 tty）。
 	cmd.Dir = opts.Dir // D-21（07-04 已兑现）：--cwd；空串 = 继承服务端 cwd（exec.Cmd 零值语义）
 	if opts.Uid >= 0 {
@@ -112,7 +118,14 @@ func StartWithSize(argv []string, opts StartOptions, cols, rows int) (*Session, 
 // 07-04（D-21/D-25）：term 参数化 TERM= 行（空串 = "xterm-256color" 现状语义）；
 // uid 为 --uid 降权目标（-1 = 不降权按名继承现状；>=0 时按目标 uid passwd 条目
 // 改写 HOME/USER/LOGNAME 三键，D-25 挂点在下方继承循环内）。
-func whitelistEnv(term string, uid int) []string {
+// 13-06（SEC-09）：remoteUser 非空时产物尾部追加 "WESH_REMOTE_USER=" + remoteUser；
+// 空串不出键——shared 路径与未携头场景零漂移的结构性保证（零值形态，非分支
+// 判断）。键名白名单固定 = 代码常量（非配置面，cmd/wesh 零对应 flag/键），
+// 由本函数单侧定义——SEC-06 防线内聚：键名合法性责任留在防线所在函数，
+// StartOptions.Env 通道那类把键名合法性推给调用方的误用面不引入；值须为
+// 提取点 sanitizeRemoteUser（server 包 proxy.go）清洗产物，本包零二次清洗
+// （单一写口纪律），本形参也是唯一注入通道（零绕过）。
+func whitelistEnv(term string, uid int, remoteUser string) []string {
 	if term == "" {
 		term = "xterm-256color" // D-21：空 = 默认现状语义（显式空 TERM 防能力丢失）
 	}
@@ -159,6 +172,11 @@ func whitelistEnv(term string, uid int) []string {
 	}
 	if v, ok := os.LookupEnv("PATH"); !ok || v == "" {
 		env = append(env, "PATH=/usr/local/bin:/usr/bin:/bin")
+	}
+	// 13-06（SEC-09）：remoteUser 非空时尾部追加 WESH_REMOTE_USER（空串不出键
+	// ——形式与语义论证见函数头注释）。
+	if remoteUser != "" {
+		env = append(env, "WESH_REMOTE_USER="+remoteUser)
 	}
 	return env
 }

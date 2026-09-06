@@ -29,6 +29,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -653,4 +654,182 @@ func TestLoadDefunct(t *testing.T) {
 	}
 	t.Logf("LOADDATA cell=defunct rounds=%d goroutine_base=%d goroutine_end=%d fd_base=%d fd_end=%d zombies=%d dur_ms=%d",
 		rounds, baseGor, endGor, baseFDs, endFDs, zombies, dur.Milliseconds())
+}
+
+// ====== churn 负载格（13-07 PC-08 churn 语境操作化） ======
+
+// churnDial 单次 churn 连接尝试（13-07 churn 格注入单元）：dial → Hello → 读
+// 首帧判定——Welcome = attach 成功（spawn 已发生，调用方立即断开，构成
+// connect→Hello→close 一循环）；Error 帧 = 节流/容量拒绝族（继续读至
+// CloseError 收口——分辨率在 /metrics 计数器与日志事件名，wire 面三拒绝
+// 同码同串是 D-04 有意聚合）。返回 attached bool。
+func churnDial(t *testing.T, ctx context.Context, wsURL string) bool {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatalf("churn dial: %v", err)
+	}
+	defer c.CloseNow()
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("churn write Hello: %v", err)
+	}
+	for {
+		_, data, rerr := c.Read(ctx)
+		if rerr != nil {
+			var ce websocket.CloseError
+			if !errors.As(rerr, &ce) {
+				t.Fatalf("churn read 终结于非 CloseError: %v", rerr)
+			}
+			return false
+		}
+		if len(data) > 0 && data[0] == proto.Welcome {
+			return true
+		}
+		// Error 帧等非 Welcome 帧——继续读至 close
+	}
+}
+
+// TestChurnPerClientSpawnThrottle（13-07 Task 2，PC-08 churn 语境操作化——
+// PITFALLS P4 既定形态 10rps×30s 合法连接 + 13-RESEARCH Pitfall 7 假绿防线
+// 断言纪律）：per-client 服务端零 Options 覆写（生产默认桶参数：全局 8/s
+// burst 16 + per-IP 1/s burst 4——spawnthrottle.go 内部常量，D-03）承载合法
+// 连接 churn：300 次（10rps × 30s）WS dial → Hello → 立即断开（无认证
+// harness 下为直接 attach 形态）。10rps ≫ per-IP 1/s burst 4 → 首 4 次
+// attach 放行耗尽 burst 后结构性节流（拒绝不 spawn 零资源消耗），稳态放行
+// ~1 attach/s。
+//
+// 断言三面（Pitfall 7 纪律——起点/终点双采样 + 差值上界 + 多次轮询；PC-08
+// prohibition：禁无基线对照的单个硬编码绝对上限）：
+//   - goroutine 回落基线 +8：churn 停止后回收窗口轮询（wesh_session_active==0
+//     且 wesh_goroutines ≤ 基线+8）再终点采样。+8 容差标定来源：keep-alive
+//     scrape 连接池并发窗第二连接 +2 goroutine、teardown 异步收口 straggler
+//     调度裕度（TestLoadDefunct +4 先例的 churn 异步收口放宽倍）——任一滞留
+//     会话泄漏 ~6 goroutine/会话，≥2 会话泄漏即翻车；
+//   - mem/fd 差值上界：wesh_mem_alloc_bytes 双采样差值 ≤ 16MiB（GC 后——
+//     in-process 装配使测试侧 runtime.GC() 即服务端 GC，TestLoadMemoryBound
+//     双 GC 形态沿用；~34 spawn/teardown 周期对象图 + perIP map 单条目残余的
+//     保守上界——TestLoadMemoryBound 32 端 30MB 洪水 64MiB 界的 1/4）；
+//     /proc/self/fd 差值 ≤ +8（Linux-only——darwin 无 /proc 面，fd 断言跳过，
+//     goroutine/mem 面平台无关照常）；
+//   - wesh_pty_spawn_throttled_total > 0：防线「生效过」的 metrics 面唯一
+//     信号（13-CONTEXT D-08）+ wesh_pty_spawn_total == 循环 attached 计数
+//     （登记成功点计数器与注入循环的精确对照——Welcome 观测与计数递增同在
+//     注册段程序序内）。
+//
+// 时序纪律：全程 2s 间隔采样轮询观测（scrapePeakSampler——goroutine/mem 格内
+// 峰值入 LOADDATA）+ 回收窗口 10s 护栏轮询（禁固定 sleep 精确时点断言）。
+func TestChurnPerClientSpawnThrottle(t *testing.T) {
+	_, wsURL := startPerClientServer(t, []string{"sh"}, nil) // 生产默认桶参数——零覆写
+	base := httpBaseOf(wsURL)
+
+	// 基线双采样（首次 scrape 建立后续复用的 keep-alive 连接——基线含连接池侧影，
+	// 终点采样复用同连接使 scrape 通道对差值零贡献）
+	baseBody := getMetrics(t, base+"/metrics")
+	baseGor, ok := metricSample(t, baseBody, "wesh_goroutines")
+	if !ok {
+		t.Fatalf("基线 wesh_goroutines series 缺席")
+	}
+	baseMem, ok := metricSample(t, baseBody, "wesh_mem_alloc_bytes")
+	if !ok {
+		t.Fatalf("基线 wesh_mem_alloc_bytes series 缺席")
+	}
+	baseFDs := 0
+	if runtime.GOOS == "linux" {
+		baseFDs = countFds(t)
+	}
+
+	// 全程轮询观测：goroutine/mem 格内峰值（Pitfall 7 多次轮询纪律）
+	stopScrape := make(chan struct{})
+	peakCh := scrapePeakSampler(base+"/metrics", []string{"wesh_goroutines", "wesh_mem_alloc_bytes"}, 2*time.Second, stopScrape)
+
+	// churn 注入：300 次 × 100ms 间隔 = 10rps × 30s（护栏 60s 只防挂死；单
+	// dial 5s 超时 fail-fast——慢机不至于假红）
+	const attempts = 300
+	attached, rejected := 0, 0
+	tk := time.NewTicker(100 * time.Millisecond)
+	defer tk.Stop()
+	start := time.Now()
+	for i := 0; i < attempts; i++ {
+		<-tk.C
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if churnDial(t, dialCtx, wsURL) {
+			attached++
+		} else {
+			rejected++
+		}
+		dialCancel()
+		if time.Since(start) > 60*time.Second {
+			t.Fatalf("churn 60s 护栏超限（第 %d/%d 次）——注入循环失控保护", i+1, attempts)
+		}
+	}
+	dur := time.Since(start)
+	close(stopScrape)
+	peaks := <-peakCh
+
+	// 回收窗口：轮询至 session_active==0（全部会话收割）且 goroutine 回落
+	// 基线+容差（200ms 间隔多次轮询——禁固定 sleep；10s 护栏到期交由终点
+	// 断言转 FAIL 并携带诊断值）
+	t0 := time.Now()
+	var endGor, sessionActive int64
+	for {
+		body := getMetrics(t, base+"/metrics")
+		sessionActive, _ = metricSample(t, body, "wesh_session_active")
+		endGor, _ = metricSample(t, body, "wesh_goroutines")
+		if sessionActive == 0 && endGor <= baseGor+8 {
+			break
+		}
+		if time.Since(t0) > 10*time.Second {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// GC 后终点采样（TestLoadMemoryBound 双 GC 形态——in-process 装配使测试侧
+	// GC 即服务端 GC，mem 差值断言不受未回收瞬态垃圾干扰）
+	runtime.GC()
+	time.Sleep(150 * time.Millisecond)
+	runtime.GC()
+	endBody := getMetrics(t, base+"/metrics")
+	endGor, _ = metricSample(t, endBody, "wesh_goroutines")
+	endMem, _ := metricSample(t, endBody, "wesh_mem_alloc_bytes")
+	sessionActive, _ = metricSample(t, endBody, "wesh_session_active")
+	throttled, ok := metricSample(t, endBody, "wesh_pty_spawn_throttled_total")
+	if !ok {
+		t.Fatalf("wesh_pty_spawn_throttled_total series 缺席")
+	}
+	spawnTotal, ok := metricSample(t, endBody, "wesh_pty_spawn_total")
+	if !ok {
+		t.Fatalf("wesh_pty_spawn_total series 缺席")
+	}
+
+	// 断言面（全部差值/对照形态——无基线对照的绝对上限零命中）
+	if throttled <= 0 {
+		t.Fatalf("wesh_pty_spawn_throttled_total = %d, want > 0（churn 防线生效证据——10rps 超 per-IP 1/s burst 4 结构性触发节流）", throttled)
+	}
+	if spawnTotal != int64(attached) {
+		t.Fatalf("wesh_pty_spawn_total = %d, want == 循环 attached 计数 %d（登记成功点计数器精确对照——Welcome 观测与递增同在注册段程序序）", spawnTotal, attached)
+	}
+	if sessionActive != 0 {
+		t.Fatalf("wesh_session_active = %d, want 0（churn 停止回收后零滞留会话——泄漏信号）", sessionActive)
+	}
+	if endGor > baseGor+8 {
+		t.Fatalf("goroutine 终态 = %d, want ≤ 基线 %d +8（churn 建销后 goroutine 泄漏——Pitfall 7 双采样差值上界）", endGor, baseGor)
+	}
+	const memDeltaCeil = int64(16 * 1024 * 1024) // 16MiB——标定来源见函数头注释
+	if endMem-baseMem > memDeltaCeil {
+		t.Fatalf("mem_alloc 终态差值 = %d, want ≤ %d（GC 后 spawn/teardown 周期残余保守上界）", endMem-baseMem, memDeltaCeil)
+	}
+	endFDs := 0
+	if runtime.GOOS == "linux" {
+		endFDs = countFds(t)
+		if endFDs > baseFDs+8 {
+			t.Fatalf("fd 终态 = %d, want ≤ 基线 %d +8（churn 建销后 fd 泄漏——PTY master/accept 连接收口失败信号）", endFDs, baseFDs)
+		}
+	}
+	t.Logf("LOADDATA cell=churn attempts=%d rate=10rps attached=%d rejected=%d throttled=%d gor_base=%d gor_end=%d gor_peak=%d mem_base=%d mem_end=%d mem_peak=%d fd_base=%d fd_end=%d dur_ms=%d",
+		attempts, attached, rejected, throttled, baseGor, endGor, peaks["wesh_goroutines"], baseMem, endMem, peaks["wesh_mem_alloc_bytes"], baseFDs, endFDs, dur.Milliseconds())
 }

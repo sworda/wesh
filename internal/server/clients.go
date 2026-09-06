@@ -918,10 +918,21 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 }
 
 // maybeExitWhenEmptyLocked 是注册表空触发断开退出的判定与执行（06-02，
-// SESS-01/02，D-13/D-14；07-04 D-22 换入可配 stop-signal 序列）。调用方必须
-// 已持 hubMu 且刚 removeLocked(c) 成功——事件 = 非空→空迁移（RESEARCH
-// Pitfall 2：启动期恒空天然免疫，检测只挂 detach/kickSlowConsumerLocked 两
-// 移除点，严禁轮询/状态式检测）。
+// SESS-01/02，D-13/D-14；07-04 D-22 换入可配 stop-signal 序列；13-03 PC-09
+// per-client 第二终结源触发端）。调用方必须已持 hubMu 且刚 removeLocked(c)
+// 成功——事件 = 非空→空迁移（RESEARCH Pitfall 2：启动期恒空天然免疫，
+// 检测只挂 detach/kickSlowConsumerLocked 两移除点，严禁轮询/状态式检测）。
+//
+// 四守卫与计时器机械两模式共用（下方同代码）；per-client 分歧仅在两触发点
+// 的动作面（13-03，Pitfall 1 窗口期闭合——原 11-01 早退守卫移除）：shared
+// 发 stop-signal 序列（stopChildLocked——默认 SIGHUP，D-22，终结由既有
+// lifecycle 单一路径收口）；per-client 置位 pcExitReq + hubCond.Broadcast()
+// 唤醒 pcSupervisor（server.go——(pcExitReq || exiting) && len(pcSessions)
+// ==0 时 terminate 收口）。per-client 分支绝不调 stopChildLocked（s.sess
+// 恒 nil——原早退守卫的 nil-deref 防线语义由本注释承接）、不发任何信号：
+// 末端断开的 teardown 挂点（detach/kick 的 teardownPCLocked）已 SIGHUP
+// 其会话，会话收割由 watcher 链驱动、pcSessions 归零由慢半段 Broadcast
+// 通知 pcSupervisor 重估。
 //
 // 四守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
 // 子进程继续运行，P5『断开不退出』产品承诺，D-14）|| exiting（lifecycle 终结
@@ -932,39 +943,41 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 // 移除点二次到达；门闩使每纪元恰好一次，Attach 升档清零开启新纪元）。
 //
 // grace==0（立即形态——0 是合法显式值，D-14 set/grace 分离）：logEvent
-// exit_when_empty + stop-signal 序列（stopChildLocked——默认 SIGHUP 与 06-02
-// 现状语义一致，D-22）。只发信号，不调 exitf、不经旁路 terminate——零新
-// exitf 分支（D-13 硬约束），终结由既有 lifecycle 单一路径收口（信号 →
-// 子进程死亡 → sess.Wait 返回 → exitf 以子进程退出码收口，两模式零分支差异）。
+// exit_when_empty + 模式分支动作。两模式均只触发不收口——不调 exitf、不经
+// 旁路 terminate（零新 exitf 分支，D-13 硬约束）：shared 终结由既有
+// lifecycle 单一路径收口（信号 → 子进程死亡 → sess.Wait 返回 → exitf 以
+// 子进程退出码收口）；per-client 终结由 pcSupervisor 单点收口（13-03）。
 //
 // grace>0（宽限形态）：既有 timer 先 Stop（幂等重启——再次断开重新计时）→
 // AfterFunc 启动 exitEmptyTimer（回调捕获最后离开者 remote 与计时器身份 t）→
 // logEvent exit_when_empty_wait。回调到期取 hubMu 复查『计时器身份未易主且
-// 仍空且未 exiting』才发 stop-signal 序列（RESEARCH Pitfall 4：复查是恰好
+// 仍空且未 exiting』才执行模式分支动作（RESEARCH Pitfall 4：复查是恰好
 // 一次的兜底——宽限内 attach 已由取消点 Stop+置 nil；10-review WR-03：对
 // 已触发但尚未取得 hubMu 的回调，取消点 Stop 返回 false 无效——若该窗口内
 // 完成一轮 attach+detach，取消点置 nil 后新纪元已武装新计时器，身份比对
 // s.exitEmptyTimer != t 成为陈旧回调的唯一闸：不动作，新纪元的宽限不得被
-// 旧回调架空）；信号幂等（kill 已死 pgid 收 ESRCH 静默忽略）；timer 随会话消亡。
+// 旧回调架空）；shared 信号幂等（kill 已死 pgid 收 ESRCH 静默忽略）；
+// per-client 两行动作幂等（pcExitReq 重置位与重复 Broadcast 均无害）；timer
+// 随会话消亡。宽限取消点（cancelExitEmptyTimerLocked）两模式共用零改动。
 //
 // logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
 // （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
 func (s *Server) maybeExitWhenEmptyLocked(c *client) {
-	// 11-01（PC-02）per-client 早退守卫：per-client 下 --once/--exit-when-empty
-	// 本阶段永不退出（已知中间态明示接受——第二终结源 pcSupervisor/pcExitReq
-	// 归 Phase 13，Pitfall 1 窗口期）；本守卫同时是 s.sess 恒 nil 下
-	// stopChildLocked 的 nil-deref 防线（PATTERNS 已标记陷阱）。
-	if s.sessionMode == SessionModePerClient {
-		return
-	}
 	if !s.exitWhenEmpty || s.exiting || len(s.registry.set) != 0 || s.exitEmptySignaled {
 		return
 	}
 	s.exitEmptySignaled = true // 空纪元内幂等（08-review WR-01）：promote 踢出致空与外层移除点只发一次；新 attach（registerLocked 成功后同 hubMu 清零）开启新纪元
 	if s.exitWhenEmptyGrace == 0 {
-		// 立即形态：无计时器，迁移点直接发 stop-signal 序列（D-22）。
+		// 立即形态：无计时器，迁移点直接触发（模式分支动作见函数头注释）。
 		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)
-		s.stopChildLocked()
+		if s.sessionMode == SessionModePerClient {
+			// 第二终结源触发（不发信号——末端断开的 teardown 已 SIGHUP
+			// 其会话；置位 + 唤醒 pcSupervisor 重估两行动作）。
+			s.pcExitReq = true
+			s.hubCond.Broadcast()
+			return
+		}
+		s.stopChildLocked() // shared：stop-signal 序列（D-22），终结由 lifecycle 收口
 		return
 	}
 	if s.exitEmptyTimer != nil {
@@ -986,12 +999,18 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 		// 取消点 Stop 对已触发计时器无效、exitEmptyTimer 已被新纪元重武装——
 		// 身份不等即陈旧回调，不动作（新纪元宽限不得被旧回调架空）。赋值与
 		// 比较均在 hubMu 内无窗口（武装方持锁，回调取锁后 t 已可见）。不调
-		// exitf——零新 exitf 分支（D-13 硬约束）；信号幂等（已死 pgid ESRCH 静默）。
+		// exitf——零新 exitf 分支（D-13 硬约束）。
 		if s.exitEmptyTimer != t || s.exiting || len(s.registry.set) != 0 {
 			return
 		}
 		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
-		s.stopChildLocked()
+		if s.sessionMode == SessionModePerClient {
+			// 第二终结源触发（宽限到期形态——同立即形态两行动作）。
+			s.pcExitReq = true
+			s.hubCond.Broadcast()
+			return
+		}
+		s.stopChildLocked() // shared：信号幂等（已死 pgid ESRCH 静默）
 	})
 	s.exitEmptyTimer = t
 	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait", c.remoteUser)

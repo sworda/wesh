@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -41,7 +42,9 @@ import (
 // startPerClientServerWithSpawn 是 per-client 模式测试装配 harness 的通用形态
 // （e2e_test.go startTestServerWith 的 per-client 变体，D-05：不碰既有 harness
 // 装配点；11-03 扩展——spawnFn 可注入：失败桩/竞态 barrier 注入均经此参数，
-// 生产闭包的测试镜像）。装配：New(nil, exitf 捕获桩, Options{SessionMode:
+// 生产闭包的测试镜像；13-06 扩展——spawnFn 第三参 remoteUser 透传：SpawnFunc
+// 签名扩散的断言捕获面，TestPerClientRemoteUserEnv 经此捕获 Attach 提取的
+// sanitize 产物）。装配：New(nil, exitf 捕获桩, Options{SessionMode:
 // per-client, SpawnFunc: spawnFn 追踪包装, Writable: true} + mutate 覆写) +
 // 127.0.0.1:0 监听。返回 srv（测试期观测口出口消费面）与 spawnedSessions
 // 访问器（mu 保护拷贝返回——每次成功 spawn 的 *pty.Session 追踪切片；spawnFn
@@ -54,15 +57,15 @@ import (
 // harness 经 SpawnFunc 包装追踪全部已 spawn 会话，Cleanup 逐一 Kill+Close
 // （Kill 对已收割进程收 os.ErrProcessDone 静默忽略；Close 幂等——teardown
 // 慢半段已关则 no-op，pty/io.go:65-76）。
-func startPerClientServerWithSpawn(t *testing.T, spawnFn func(cols, rows int) (*pty.Session, error), mutate func(*server.Options)) (exitCh chan int, wsURL string, srv *server.Server, spawnedSessions func() []*pty.Session) {
+func startPerClientServerWithSpawn(t *testing.T, spawnFn func(cols, rows int, remoteUser string) (*pty.Session, error), mutate func(*server.Options)) (exitCh chan int, wsURL string, srv *server.Server, spawnedSessions func() []*pty.Session) {
 	t.Helper()
 	var mu sync.Mutex
 	var spawned []*pty.Session
 	exitCh = make(chan int, 1)
 	opts := server.Options{
 		SessionMode: server.SessionModePerClient,
-		SpawnFunc: func(cols, rows int) (*pty.Session, error) {
-			sess, err := spawnFn(cols, rows)
+		SpawnFunc: func(cols, rows int, remoteUser string) (*pty.Session, error) {
+			sess, err := spawnFn(cols, rows, remoteUser)
 			if err != nil {
 				return nil, err
 			}
@@ -105,11 +108,15 @@ func startPerClientServerWithSpawn(t *testing.T, spawnFn func(cols, rows int) (*
 // startPerClientServer 是 startPerClientServerWithSpawn 的薄包装（11-01 五测
 // 调用点签名保持，断言零改动）：默认 spawnFn = pty.StartWithSize 直通闭包捕获
 // argv——即 cmd/wesh/main.go run() 生产闭包的镜像形态（Options.SpawnFunc
-// 注释描述的消费形态）。
+// 注释描述的消费形态；13-06 起镜像含 startOpts 局部复制 + RemoteUser 赋值
+// 同构——SEC-09 注入链：每客户端 remoteUser 不同，opts 必须每次局部构造，
+// 共享字段直改即多客户端环境串台）。
 func startPerClientServer(t *testing.T, argv []string, mutate func(*server.Options)) (exitCh chan int, wsURL string) {
 	t.Helper()
-	exitCh, wsURL, _, _ = startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
-		return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	exitCh, wsURL, _, _ = startPerClientServerWithSpawn(t, func(cols, rows int, remoteUser string) (*pty.Session, error) {
+		opts := pty.StartOptions{Uid: -1, Gid: -1}
+		opts.RemoteUser = remoteUser
+		return pty.StartWithSize(argv, opts, cols, rows)
 	}, mutate)
 	return exitCh, wsURL
 }
@@ -364,7 +371,7 @@ func TestNewModeSessContract(t *testing.T) {
 		{"shared requires non-nil sess", nil, server.Options{}, "requires non-nil sess"},
 		{"per-client requires nil sess", &pty.Session{}, server.Options{
 			SessionMode: server.SessionModePerClient,
-			SpawnFunc:   func(cols, rows int) (*pty.Session, error) { return nil, nil },
+			SpawnFunc:   func(cols, rows int, _ string) (*pty.Session, error) { return nil, nil },
 		}, "requires nil sess"},
 	}
 	for _, tt := range tests {
@@ -387,18 +394,20 @@ func TestNewModeSessContract(t *testing.T) {
 	}
 }
 
-// D-04 窗口期空白锁：captureStderr 窗口内构造 per-client server → 事件流零
-// session_start 行；随后 GET /healthz → 200 且 session_active==false
-// （11→13 已知中间态显式锁——Phase 13 语义裁决 OQ①② 落地时本断言按裁决
-// 翻转）。同步纪律（events_test.go 文件头）：New 内 emit 先于本函数返回
-// （程序序），restore() 前的 happens-before 边由 harness 构造序列天然成立
-// （本窗口期无 goroutine emit 面——零事件正是断言对象）。
+// D-04 窗口期收口后的形态锁（13-05 D-06/D-09 落地）：captureStderr 窗口内
+// 构造 per-client server → 事件流零 session_start 行（session_start 归属
+// 每次 spawn 成功的 upgradePerClient emit——New 本体零 emit 语义保持）；随后
+// GET /healthz → 200 且 session_active==true（13-05 D-06：per-client 无
+// 「会话死亡=服务终结」态——「会话服务可用」语义诚实恒 true；编排探活只看
+// 200/503 status，draining 分支既有不受影响）。同步纪律（events_test.go
+// 文件头）：New 内零 emit，restore() 前的 happens-before 边由 harness 构造
+// 序列天然成立（本窗口期无 goroutine emit 面——零事件正是断言对象）。
 func TestPerClientNoSessionStartEvent(t *testing.T) {
 	restore := captureStderr(t)
 	_, wsURL := startPerClientServer(t, []string{"sh"}, nil)
 	out := restore()
 	if starts := eventsNamed(parseEvents(t, out), "session_start"); len(starts) != 0 {
-		t.Fatalf("per-client New emit 了 %d 条 session_start——D-04 窗口期空白语义违反: %q", len(starts), out)
+		t.Fatalf("per-client New emit 了 %d 条 session_start——New 本体零 emit 语义违反（session_start 归属 upgradePerClient 每次 spawn 成功）: %q", len(starts), out)
 	}
 
 	// wsURL → http URL（attachURL e2e_test.go 形态同款 scheme/路径替换）。
@@ -417,8 +426,8 @@ func TestPerClientNoSessionStartEvent(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode /healthz body: %v", err)
 	}
-	if body.SessionActive {
-		t.Fatal("/healthz session_active = true, want false（D-04 窗口期：sessionAlive 不置位；Phase 13 OQ①② 裁决落地时本断言随之翻转）")
+	if !body.SessionActive {
+		t.Fatal("/healthz session_active = false, want true（13-05 D-06 落地：per-client「会话服务可用」恒 true——无「会话死亡=服务终结」态；编排探活只看 200/503 status）")
 	}
 }
 
@@ -442,7 +451,7 @@ func TestPerClientSpawnFailure(t *testing.T) {
 	argv := []string{"/bin/sh"}
 	var failSpawn atomic.Bool
 	restore := captureStderr(t)
-	_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		if failSpawn.Load() {
 			// 注入错误文本只进 stub 返回值——wire 面与事件面断言其零出现
 			//（定值常量文案纪律，T-11-03b）。
@@ -525,7 +534,7 @@ func TestPerClientSpawnFailure(t *testing.T) {
 func TestPerClientCapacityGate(t *testing.T) {
 	argv := []string{"sh", "-c", "trap '' HUP; echo PCAPID=$$; while true; do sleep 1; done"}
 	restore := captureStderr(t)
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.MaxClients = 1 })
 
@@ -601,7 +610,7 @@ func TestPerClientCapacityRecheckRace(t *testing.T) {
 	barrier := make(chan struct{})
 	var barrierOnce sync.Once
 	defer barrierOnce.Do(func() { close(barrier) }) // 失败路径兜底放行（防 spawnFn 挂死泄漏）
-	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		entered.Add(1)
 		<-barrier // 双端进入后测试放行——两并发升档同过 pre-spawn 闸
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
@@ -1064,7 +1073,7 @@ func TestPerClientExitSignalMinus1(t *testing.T) {
 // 增大，断线不死需求由子进程侧 herdr/tmux 承接）→ pcSessions 收敛 0 →
 // /healthz clients==0。
 func TestPerClientDisconnectSIGHUP(t *testing.T) {
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -1139,7 +1148,7 @@ func TestPerClientReconnectNewPid(t *testing.T) {
 // 已收割会话幂等无害。
 func TestPerClientStopTimeoutKillFallback(t *testing.T) {
 	argv := []string{"sh", "-c", "trap '' HUP; echo PCKPID=$$; while true; do sleep 1; done"}
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(argv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.StopTimeout = time.Second })
 
@@ -1220,9 +1229,17 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 	// KILL 兜底生产路径达成——HUP 被吸收场景的 1s 补发正是该序列的真实消费点，
 	// 恰好一次/quiescent/exitf 零调用三不变量锁定面逐字不动。1s 到期 + ESRCH
 	// < 2s 护栏的时序容差论证同 TestPerClientStopTimeoutKillFallback。
-	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	// SpawnPerIP 桶放宽（13-02 Rule 3 偏差登记）：本测 10 轮同 IP 连续 attach
+	// 超 per-IP 默认桶（1/s burst 4——第 5 轮起被 spawn 节流拒绝）；本测对象
+	// 是 teardown 竞态不变量非 churn 防线，放宽隔离两测试面（节流行为由
+	// TestPerClientSpawnThrottle 专测；断言行零改动）。
+	exitCh, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
-	}, func(o *server.Options) { o.StopTimeout = time.Second })
+	}, func(o *server.Options) {
+		o.StopTimeout = time.Second
+		o.SpawnPerIPRate = 100
+		o.SpawnPerIPBurst = 100
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -1338,7 +1355,7 @@ func TestPerClientTeardownRaceOnce(t *testing.T) {
 // sess.Resize 仅 fdMu）。DecodeResize 钳制 [1,1000] 在解码层既有（D-16），本测
 // 覆盖正常值域直通；越界钳制为 proto 层既有锁定（proto_test），不重复断言。
 func TestPerClientResizePassthroughRW(t *testing.T) {
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -1362,7 +1379,7 @@ func TestPerClientResizePassthroughRW(t *testing.T) {
 // 分支不生效的直行为证据；shared 半侧 ro 丢弃闸由既有 TestResizeArbitration
 // 「owner模式参与集与ro忽略闸」子测锁定（零改动全绿即保持）。
 func TestPerClientResizePassthroughRO(t *testing.T) {
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) { o.Writable = false })
 
@@ -1388,7 +1405,7 @@ func TestPerClientResizePassthroughRO(t *testing.T) {
 // 「owner模式参与集与ro忽略闸」既有形态）：若 B 被误串扰（仲裁残留路径），防抖
 // 到期早已应用。
 func TestPerClientResizeIsolation(t *testing.T) {
-	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, nil)
 
@@ -1527,7 +1544,7 @@ func TestPerClientROInputDropped(t *testing.T) {
 // INPUT（50×(3KiB+'\n') ≈ 153KiB 瞬时，≫ 64KiB burst + 32KiB/s 补充——远超
 // 每客户端限速，超限帧按 R-02 drop 语义丢弃）→ 连接不被踢不关闭（RES-02：
 // 超限唯一动作 = 丢弃 + inputDrops 计数，不断开），后续正常输入照常回显
-//（洪水后令牌恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶
+// （洪水后令牌恢复，drop 语义不损伤连接）。洪水后 250ms 回充等待（令牌桶
 // 数学确定性：250ms × 32KiB/s = 8KiB 令牌 ≫ 探针帧 14B——非时序断言，是
 // 回充护栏）；探针命令前的 `\r` 先收口 canonical 行缓冲中的残留 'x'。探针
 // 为轮询重发形态（CI flake 收口）：统护 ctx 下并发读累积（readUntilError
@@ -1699,7 +1716,7 @@ func assertSeqContinuity(t *testing.T, acc []byte, floodLast int) {
 // 而非 1000 退出广播。
 func TestPerClientStallBlocksAndResumes(t *testing.T) {
 	floodArgv, floodLast := seqFlood()
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1758,7 +1775,7 @@ func TestPerClientStallBlocksAndResumes(t *testing.T) {
 // 阈值）。
 func TestPerClientDwellKick(t *testing.T) {
 	floodArgv, _ := seqFlood()
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1820,7 +1837,7 @@ func TestPerClientDwellKick(t *testing.T) {
 func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 	floodArgv, floodLast := seqFlood()
 	dwell := 3 * time.Second
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1884,7 +1901,7 @@ func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 // 同源，「禁精确时点断言」纪律的计数面同构）。
 func TestPerClientStallGateTransitions(t *testing.T) {
 	floodArgv, _ := seqFlood()
-	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int) (*pty.Session, error) {
+	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
 		o.OutboxBytes = 64 * 1024
@@ -1907,4 +1924,732 @@ func TestPerClientStallGateTransitions(t *testing.T) {
 		t.Fatalf("gateTransitions 起止差值 = %d, want ≥ 2（停读+续读两递增点，D-05）", diff)
 	}
 	t.Logf("gateTransitions 起止差值 = %d（≥2 达成；瞬态二次停读可能追加成对增量）", end-start)
+}
+
+// ====== 13-02 增量：spawn 双令牌桶（PC-08 churn 防线，D-03/D-04/D-05）======
+
+// TestPerClientSpawnThrottle（13-02 tracer e2e）：同 IP 高频 attach 被 per-IP
+// 桶限速收口。mutate 覆写桶参数（per-IP rate=1 burst=2 小值 + 全局放宽 100/100
+// 隔离——本测只证 per-IP 桶，全局桶独立判定归扩展组）→ 前两次 dialHello
+// 正常（burst 令牌耗尽；三次握手均为本地回环毫秒级——rate 1/s 补给窗在测试
+// 时序下不可达）→ 第三次裸握手收恰一帧 Error{server_error, "server is at
+// capacity"}（D-04 wire 聚合：与容量拒绝同码同串——三拒绝 wire 不可区分是
+// 有意为之，分辨率由事件名承担）+ close 1011 逐值（Pitfall 3 判别面：绝不
+// 1006——前端 shouldReconnect 仅 1006 触发，节流拒绝不重连放大）。
+// 三通道收口：wire（1011+定值文案）/ 事件（spawn_throttled 恰一，四段
+// schema 零敏感值）/ 计数器（ptySpawnThrottled 递增经 export_test 观测出口
+// ——series 输出归 13-05）。事件名分治：max_clients 零命中（节流拒绝不冒名
+// 容量拒绝）；第三次尝试零 spawn（spawnedSessions==2）零注册（/healthz==2、
+// attach 事件恰 2）——拒绝点在容量闸之前、spawnFunc 之前。
+func TestPerClientSpawnThrottle(t *testing.T) {
+	restore := captureStderr(t)
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.SpawnPerIPRate = 1
+		o.SpawnPerIPBurst = 2
+		o.SpawnGlobalRate = 100
+		o.SpawnGlobalBurst = 100
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	before := srv.PTYSpawnThrottledForTest()
+
+	// 前两次 attach 正常（per-IP burst=2 令牌耗尽）。
+	cA, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer cA.Close(websocket.StatusNormalClosure, "")
+	cB, _ := dialHello(t, ctx, wsURL, 80, 24)
+	defer cB.Close(websocket.StatusNormalClosure, "")
+
+	// 第三次：per-IP 桶空 → 拒绝（Error 帧 + 1011）。
+	frames, code := handshakeCollectUntilClose(t, ctx, wsURL)
+	if code != websocket.StatusInternalError {
+		t.Fatalf("close code = %d, want %d (1011——Pitfall 3：绝不 1006 重连放大)", code, websocket.StatusInternalError)
+	}
+	ep := decodeSingleErrorFrame(t, frames)
+	if ep.Code != proto.ErrServerError {
+		t.Fatalf("Error code = %q, want %q", ep.Code, proto.ErrServerError)
+	}
+	if ep.Message != "server is at capacity" {
+		t.Fatalf("Error message = %q, want %q 逐字（D-04 wire 聚合——与容量拒绝同串）", ep.Message, "server is at capacity")
+	}
+
+	// 零 spawn 零注册：两次成功 + 第三次被拒于 spawn 之前。
+	if n := len(spawnedSessions()); n != 2 {
+		t.Fatalf("spawned sessions = %d, want 2（节流拒绝零 spawn）", n)
+	}
+	if n := healthzClients(t, wsURL); n != 2 {
+		t.Fatalf("/healthz clients = %d, want 2（节流拒绝零注册）", n)
+	}
+
+	out := restore()
+	evs := parseEvents(t, out)
+	throttled := eventsNamed(evs, "spawn_throttled")
+	if len(throttled) != 1 {
+		t.Fatalf("spawn_throttled event count = %d, want exactly 1: %q", len(throttled), out)
+	}
+	// 事件四段 schema（event/remote/code；无 remote_user——未配置 auth-header）
+	// + 零敏感值（定值事件名/对端/码值，无请求材料入参）。
+	if remote, _ := throttled[0]["remote"].(string); !strings.HasPrefix(remote, "127.0.0.1:") {
+		t.Fatalf("spawn_throttled remote = %q, want 127.0.0.1: 前缀（四段 schema）", remote)
+	}
+	if throttled[0]["code"] != float64(websocket.StatusInternalError) {
+		t.Fatalf("spawn_throttled code = %v, want float64(1011)", throttled[0]["code"])
+	}
+	if _, ok := throttled[0]["remote_user"]; ok {
+		t.Fatalf("spawn_throttled 不应出 remote_user 键（未配置 auth-header）: %v", throttled[0])
+	}
+	// 事件名分治（D-04 日志细分）：节流拒绝不冒名容量拒绝。
+	if n := len(eventsNamed(evs, "max_clients")); n != 0 {
+		t.Fatalf("max_clients event count = %d, want 0（分治——节流拒绝独立事件名）: %q", n, out)
+	}
+	// attach 恰 2（第三次被拒于注册之前——零注册零登记零残留）。
+	if n := len(eventsNamed(evs, "attach")); n != 2 {
+		t.Fatalf("attach event count = %d, want exactly 2: %q", n, out)
+	}
+
+	// 计数器递增观测（三通道之三；series 输出归 13-05）。
+	if after := srv.PTYSpawnThrottledForTest(); after-before != 1 {
+		t.Fatalf("ptySpawnThrottled delta = %d, want 1（计数器递增观测）", after-before)
+	}
+}
+
+// dialHelloWithXFF 是 dialHello 的 XFF 注入变体（13-02 Task 2：X-Forwarded-For
+// 头经 ws.DialOptions.HTTPHeader 注入——per-IP 桶键 XFF 换键两态测试的请求面；
+// 其余握手/Welcome 首帧行为与 dialHello 逐字同构，mode 返回省略——调用点
+// 均不消费）。
+func dialHelloWithXFF(t *testing.T, ctx context.Context, wsURL, xff string, cols, rows int) *websocket.Conn {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{proto.Subprotocol},
+		HTTPHeader:   http.Header{"X-Forwarded-For": []string{xff}},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: cols, Rows: rows})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	return c
+}
+
+// handshakeCollectUntilCloseWithXFF 是 handshakeCollectUntilClose 的 XFF 注入
+// 变体（拒绝路径收集通道，头注入形态同 dialHelloWithXFF；其余逐字同构）。
+func handshakeCollectUntilCloseWithXFF(t *testing.T, ctx context.Context, wsURL, xff string) (frames [][]byte, code websocket.StatusCode) {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{proto.Subprotocol},
+		HTTPHeader:   http.Header{"X-Forwarded-For": []string{xff}},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	for {
+		_, data, rerr := c.Read(ctx)
+		if rerr != nil {
+			var ce websocket.CloseError
+			if !errors.As(rerr, &ce) {
+				t.Fatalf("read terminated without CloseError: %v（已收集 %d 帧）", rerr, len(frames))
+			}
+			return frames, ce.Code
+		}
+		frames = append(frames, data)
+	}
+}
+
+// TestPerClientSpawnGlobal（13-02 扩展组一，T-13-05 惊群防线独立成立）：全局
+// 桶独立判定——per-IP 放宽（100/100）+ 全局小值（rate=1 burst=2）+ trust 开启
+// 下三 XFF 各自独立满额 per-IP 桶：前两次 attach 放行（全局 burst 耗尽）→
+// 第三次（全新 IP、per-IP 桶满额未动）仍 1011——拒绝源只能是全局桶。文案/
+// 事件/计数器与 tracer 同口径；remote = XFF 值（trust 换键——proxy.remote
+// sanitize 产物，无端口后缀）。
+func TestPerClientSpawnGlobal(t *testing.T) {
+	restore := captureStderr(t)
+	_, wsURL, srv, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.SpawnPerIPRate = 100
+		o.SpawnPerIPBurst = 100
+		o.SpawnGlobalRate = 1
+		o.SpawnGlobalBurst = 2
+		o.AuthHeader = "X-Remote-User" // trust 开——XFF 换键启用（三 IP 独立 per-IP 桶）
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	before := srv.PTYSpawnThrottledForTest()
+
+	cA := dialHelloWithXFF(t, ctx, wsURL, "203.0.113.7", 80, 24)
+	defer cA.Close(websocket.StatusNormalClosure, "")
+	cB := dialHelloWithXFF(t, ctx, wsURL, "198.51.100.9", 80, 24)
+	defer cB.Close(websocket.StatusNormalClosure, "")
+
+	frames, code := handshakeCollectUntilCloseWithXFF(t, ctx, wsURL, "192.0.2.11")
+	if code != websocket.StatusInternalError {
+		t.Fatalf("close code = %d, want %d (1011)", code, websocket.StatusInternalError)
+	}
+	ep := decodeSingleErrorFrame(t, frames)
+	if ep.Code != proto.ErrServerError || ep.Message != "server is at capacity" {
+		t.Fatalf("Error payload = {%q, %q}, want {server_error, server is at capacity} 逐字（D-04 wire 聚合）", ep.Code, ep.Message)
+	}
+	if n := len(spawnedSessions()); n != 2 {
+		t.Fatalf("spawned sessions = %d, want 2（全局节流拒绝零 spawn）", n)
+	}
+
+	out := restore()
+	evs := parseEvents(t, out)
+	throttled := eventsNamed(evs, "spawn_throttled")
+	if len(throttled) != 1 {
+		t.Fatalf("spawn_throttled event count = %d, want exactly 1: %q", len(throttled), out)
+	}
+	if remote, _ := throttled[0]["remote"].(string); remote != "192.0.2.11" {
+		t.Fatalf("spawn_throttled remote = %q, want 192.0.2.11（trust 换键——XFF 链首入 remote）", remote)
+	}
+	if after := srv.PTYSpawnThrottledForTest(); after-before != 1 {
+		t.Fatalf("ptySpawnThrottled delta = %d, want 1", after-before)
+	}
+}
+
+// TestPerClientSpawnXFF（13-02 扩展组二，D-05 两态——Pitfall 2 误伤防线）：
+// per-IP 桶键 XFF 换键两态。trust 开（AuthHeader 配置）：不同 XFF 值各自独立
+// 桶——A 耗尽不影响 B（反代后合法多用户不共享一桶，prohibition 红线）；
+// trust off（未配置）：XFF 完全忽略，全部客户端共享 TCP 对端回退键（任一
+// 耗尽皆拒——自设 XFF 头零效果）。两半边各起独立 server，两 t.Run 结构同
+// proxy_e2e_test.go TestXFFThrottleKey 先例。误用 XFF 键的错误实现两半边各
+// 有翻车面：trust off 半边第二次 attach 会以异键新桶放行（裸握手读不到
+// CloseError 超时 Fatal）。
+func TestPerClientSpawnXFF(t *testing.T) {
+	// 每半边独立 server 的公共装配：per-IP rate=1 burst=1（最小判别值）+
+	// 全局放宽隔离（本测只证键语义）。
+	newServer := func(authHeader string) string {
+		_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
+			return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+		}, func(o *server.Options) {
+			o.SpawnPerIPRate = 1
+			o.SpawnPerIPBurst = 1
+			o.SpawnGlobalRate = 100
+			o.SpawnGlobalBurst = 100
+			o.AuthHeader = authHeader
+		})
+		return wsURL
+	}
+
+	t.Run("trust on: XFF 异键独立桶", func(t *testing.T) {
+		wsURL := newServer("X-Remote-User")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cA := dialHelloWithXFF(t, ctx, wsURL, "203.0.113.7", 80, 24)
+		defer cA.Close(websocket.StatusNormalClosure, "")
+
+		// 同 XFF 二连：A 桶耗尽被拒（burst=1）。
+		frames, code := handshakeCollectUntilCloseWithXFF(t, ctx, wsURL, "203.0.113.7")
+		if code != websocket.StatusInternalError {
+			t.Fatalf("A 二连 close code = %d, want 1011（per-IP burst=1 耗尽）", code)
+		}
+		if ep := decodeSingleErrorFrame(t, frames); ep.Code != proto.ErrServerError || ep.Message != "server is at capacity" {
+			t.Fatalf("A 二连 Error = {%q, %q}, want {server_error, server is at capacity}", ep.Code, ep.Message)
+		}
+
+		// B（异 XFF）不受 A 耗尽影响：attach 成功收 Welcome。
+		cB := dialHelloWithXFF(t, ctx, wsURL, "198.51.100.9", 80, 24)
+		defer cB.Close(websocket.StatusNormalClosure, "")
+	})
+
+	t.Run("trust off: XFF 忽略共享回退键", func(t *testing.T) {
+		wsURL := newServer("")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		// XFF 头存在但信任闸未开——键回退 TCP 对端（loopback 同键）。
+		cA := dialHelloWithXFF(t, ctx, wsURL, "203.0.113.7", 80, 24)
+		defer cA.Close(websocket.StatusNormalClosure, "")
+
+		frames, code := handshakeCollectUntilCloseWithXFF(t, ctx, wsURL, "198.51.100.9")
+		if code != websocket.StatusInternalError {
+			t.Fatalf("异 XFF 二连 close code = %d, want 1011（XFF 忽略——loopback 同键共享计数）", code)
+		}
+		if ep := decodeSingleErrorFrame(t, frames); ep.Code != proto.ErrServerError || ep.Message != "server is at capacity" {
+			t.Fatalf("异 XFF 二连 Error = {%q, %q}, want {server_error, server is at capacity}", ep.Code, ep.Message)
+		}
+	})
+}
+
+// TestSpawnThrottleExpiry（13-02 扩展组三，map 无界增长防线）：per-IP 条目
+// 惰性过期经 now 时间注入直调（export_test 薄桥——零真实等待 15min）。判别
+// 面构造：perIPRate=1/s、perIPBurst=1200 > 15min TTL 补给上限（900s×1/s=
+// 900）——无重置实现超窗后至多 900 令牌，重置实现得满额 1200（相位三精确
+// 计数必翻车）；全局桶 1<<30 放宽不绑（三相位总消耗 2520 << 1<<30）。
+// 三相位：T0 满额 1200 → T0+2min（窗内）仅补给 120（惰性过期不误清活跃桶
+// ——过早重置实现必翻车）→ T0+18min（距上次活动 16min > 15min TTL）重置
+// 满额 1200。
+func TestSpawnThrottleExpiry(t *testing.T) {
+	p := server.NewSpawnThrottleProbeForTest(1<<30, 1<<30, 1, 1200)
+	t0 := time.Now()
+	const ip = "203.0.113.7"
+
+	countAllows := func(now time.Time) int {
+		n := 0
+		for i := 0; i < 1200; i++ {
+			if !p.Allow(ip, now) {
+				break
+			}
+			n++
+		}
+		return n
+	}
+
+	if n := countAllows(t0); n != 1200 {
+		t.Fatalf("相位一（T0 全新桶）放行 %d, want 1200（满额 burst）", n)
+	}
+	if n := countAllows(t0.Add(2 * time.Minute)); n != 120 {
+		t.Fatalf("相位二（T0+2min 窗内）放行 %d, want 120（2min×1/s 补给——不重置）", n)
+	}
+	if n := countAllows(t0.Add(18 * time.Minute)); n != 1200 {
+		t.Fatalf("相位三（T0+18min 超窗）放行 %d, want 1200（>15min 惰性过期重置满额；无重置实现 ≤900 必翻车）", n)
+	}
+}
+
+// TestPerClientSpawnThrottleWireForm（13-02 扩展组四，文案定值收口）：拒绝
+// wire 形态字节级锁定——Error 帧与容量拒绝逐字相同（D-04 wire 聚合：三拒绝
+// wire 不可区分是有意为之；帧字节 = 'E' + {"code":"server_error","message":
+// "server is at capacity"}——字段序/零多余键/定值串全锁，json.Marshal 固定
+// schema 确定性产物）；spawn_throttled 事件键集恰四段 schema 白名单
+// （event/remote/code[/remote_user]）——零敏感值红线（token/ticket/凭据永不
+// 入参）以 canary ticket 全程不落 stderr 承载。
+func TestPerClientSpawnThrottleWireForm(t *testing.T) {
+	restore := captureStderr(t)
+	_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, func(o *server.Options) {
+		o.SpawnPerIPRate = 1
+		o.SpawnPerIPBurst = 1
+		o.SpawnGlobalRate = 100
+		o.SpawnGlobalBurst = 100
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cA, _ := dialHello(t, ctx, wsURL, 80, 24) // 首次 attach 耗尽 per-IP burst=1
+	defer cA.Close(websocket.StatusNormalClosure, "")
+
+	// 第二次握手携带 canary ticket（无认证模式核销忽略——值永不入拒绝路径）。
+	const canary = "TICKET-CANARY-x7q9"
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24, Ticket: canary})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	var frames [][]byte
+	var code websocket.StatusCode
+	for {
+		_, data, rerr := c.Read(ctx)
+		if rerr != nil {
+			var ce websocket.CloseError
+			if !errors.As(rerr, &ce) {
+				t.Fatalf("read terminated without CloseError: %v", rerr)
+			}
+			code = ce.Code
+			break
+		}
+		frames = append(frames, data)
+	}
+	if code != websocket.StatusInternalError {
+		t.Fatalf("close code = %d, want %d (1011)", code, websocket.StatusInternalError)
+	}
+	// 字节级锁定：恰一帧，与容量拒绝同串逐字节相等。
+	want := append([]byte{proto.Error}, []byte(`{"code":"server_error","message":"server is at capacity"}`)...)
+	if len(frames) != 1 || !bytes.Equal(frames[0], want) {
+		t.Fatalf("frames = %q, want 恰一帧字节级 %q（D-04 wire 聚合——与容量拒绝逐字相同）", frames, want)
+	}
+	if n := len(spawnedSessions()); n != 1 {
+		t.Fatalf("spawned sessions = %d, want 1（节流拒绝零 spawn）", n)
+	}
+
+	out := restore()
+	if strings.Contains(out, canary) {
+		t.Fatalf("stderr 含 canary ticket %q（零敏感值红线——token/ticket 永不入参）: %q", canary, out)
+	}
+	evs := parseEvents(t, out)
+	throttled := eventsNamed(evs, "spawn_throttled")
+	if len(throttled) != 1 {
+		t.Fatalf("spawn_throttled event count = %d, want exactly 1: %q", len(throttled), out)
+	}
+	// 键集恰「日志封套（time/level/msg）+ 四段 schema（event/remote/code
+	// [/remote_user]）」白名单（未配置 auth-header——remote_user 缺席）。
+	for k := range throttled[0] {
+		switch k {
+		case "event", "remote", "code", "remote_user", "time", "level", "msg":
+		default:
+			t.Fatalf("spawn_throttled 出白名单外键 %q（封套+四段 schema 之外零键——零敏感值）: %v", k, throttled[0])
+		}
+	}
+	if throttled[0]["code"] != float64(websocket.StatusInternalError) {
+		t.Fatalf("spawn_throttled code = %v, want float64(1011)", throttled[0]["code"])
+	}
+}
+
+// ====== 13-03 增量（PC-09）：exit-when-empty 三形态 + --once 形态 + WR-02 栅栏 ======
+// Pitfall 1 窗口期闭合的行为锁：per-client --once/--exit-when-empty 三形态全部
+// 可退出（13-03 前 maybeExitWhenEmptyLocked 早退守卫使永不退出——「注册表已空
+// 且无子进程可等」资源驻留防线破口）。断言常量 -1 = accept-255 门裁决
+//（emptyexit_test.go 头注释 OQ1 门形态——进程级 255 归 13-07 phase13.mjs）。
+// 时序纪律：轮询/静默窗 select+time.After 竞速替代固定 sleep 时点断言
+//（Phase 9 flake 教训），统护 ctx 只做护栏。
+
+// TestPerClientExitWhenEmptyImmediate（三形态之一，grace=0 立即）：唯一客户端
+// 断开 → 注册表空迁移 → 立即形态触发（无计时器）：pcExitReq 置位 +
+// Broadcast——不发信号（detach 的 teardown 已 SIGHUP 其会话，Pitfall 1 分支表
+// 立即形态行）→ cat HUP 致死 → watcher 收割 -1 → 慢半段 delete+Broadcast →
+// supervisor → exitf(-1) 恰好一次。
+func TestPerClientExitWhenEmptyImmediate(t *testing.T) {
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 0
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// 第二终结源全链（置位 → 收割 → 归零唤醒 → terminate）：5s 护栏内
+	// exitf(-1)（accept-255 断言常量）。
+	waitExit(t, exitCh, -1)
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientExitWhenEmptyGraceExpire（三形态之二，grace>0 宽限到期）：
+// grace=400ms → 唯一客户端断开启动宽限计时（exit_when_empty_wait）→ 到期前
+// 100ms 时点 exitCh 静默（不过早退出——计时器真实武装且未触发）→ 到期回调
+// 复查通过（身份比对/仍空/未 exiting）→ pcExitReq 置位 + Broadcast（分支表
+// 宽限到期行）→ 会话已于断开时 HUP 收割归零 → supervisor → exitf(-1)。
+func TestPerClientExitWhenEmptyGraceExpire(t *testing.T) {
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 400 * time.Millisecond
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// 到期前 100ms 时点静默（grace=400ms 远未到期——不过早退出；静默窗
+	// select+time.After 竞速形态，夹具纪律红线）。
+	select {
+	case code := <-exitCh:
+		t.Fatalf("exitf called with code %d at 100ms, before grace expiry (400ms) — premature exit", code)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// 到期 → 复查 → 第二终结源触发 → exitf(-1)（3s 护栏——400ms 到期 +
+	// supervisor 唤醒余量；accept-255 断言常量）恰好一次。
+	select {
+	case code := <-exitCh:
+		if code != -1 {
+			t.Fatalf("exit code = %d, want -1（accept-255 门裁决断言常量）", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("exitf not called within 3s after grace expiry — second terminator did not fire")
+	}
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientExitWhenEmptyGraceCancel（三形态之三，宽限取消——绝不置位）：
+// grace=2s → 客户端断开启动宽限计时 → 300ms 后再 attach（per-client 重连 =
+// 全新 spawn，11-04 S7 语义）→ registerLocked 成功触发取消点
+// cancelExitEmptyTimerLocked（Stop + 置 nil，两模式共用零改动）+ 空纪元门闩
+// 清零 → echo 验证新会话存活 → 越过旧计时器到期点 +500ms 余量 exitCh 静默
+// （取消实证——取消形态绝不置位 pcExitReq，Pitfall 1 分支表取消行）→ 再次
+// 断开重新计时 → 到期收码。per-IP spawn 桶默认 burst 4 > 本测 2 次 attach，
+// 无需覆写（13-02 Rule 3 教训核对）。
+func TestPerClientExitWhenEmptyGraceCancel(t *testing.T) {
+	const grace = 2 * time.Second
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = grace
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c1, _ := dialHello(t, ctx, wsURL, 80, 24)
+	closedAt := time.Now()
+	if err := c1.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close c1: %v", err)
+	}
+
+	// 宽限内 300ms 再 attach：取消点触发（恰好一次，置 nil 防重复）。
+	time.Sleep(300 * time.Millisecond)
+	c2, _ := dialHello(t, ctx, wsURL, 80, 24)
+
+	// echo 验证新会话存活（全新 spawn 的 PTY——取消后会话照常服务）。
+	payload := []byte("grace cancel echo")
+	if err := c2.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+		t.Fatalf("write INPUT after re-attach: %v", err)
+	}
+	got := make([]byte, 0, len(payload))
+	for len(got) < len(payload) {
+		_, data, err := c2.Read(ctx)
+		if err != nil {
+			t.Fatalf("read OUTPUT after re-attach: %v (got %q so far)", err, got)
+		}
+		if len(data) == 0 || data[0] != proto.Output {
+			t.Fatalf("unexpected frame: %v", data)
+		}
+		got = append(got, data[1:]...)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("echo payload = %q, want %q", got, payload)
+	}
+
+	// 越过旧计时器到期点（closedAt+grace）+500ms 余量，exitCh 静默 = 取消实证
+	//（旧 timer 若未取消，到期复查通过 → pcExitReq → exitf(-1)）。
+	if remain := time.Until(closedAt.Add(grace + 500*time.Millisecond)); remain > 0 {
+		select {
+		case code := <-exitCh:
+			t.Fatalf("exitf called with code %d past old timer expiry — grace timer not canceled by re-attach", code)
+		case <-time.After(remain):
+		}
+	}
+
+	// 再次断开 → 注册表再次空迁移（门闩已随 c2 attach 清零开新纪元）→
+	// 重新计时 → 到期 → exitf(-1)（grace+2s 余量护栏；accept-255 断言常量）。
+	if err := c2.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close c2: %v", err)
+	}
+	select {
+	case code := <-exitCh:
+		if code != -1 {
+			t.Fatalf("exit code = %d, want -1（accept-255 门裁决断言常量）", code)
+		}
+	case <-time.After(grace + 2*time.Second):
+		t.Fatal("exitf not called within grace+2s after second detach — re-armed timer did not fire")
+	}
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientOnce（--once 形态）：--once ≡ maxClients=1 + exit-when-empty
+// grace=0（main.go 语法糖展开，服务端无 --once 概念——CLI 层零改动分层保持，
+// 研究 §4.3）→ 唯一客户端断开 → 同立即形态路径 → exitf(-1) 恰好一次
+// （06-04 先例：--once 场景经 Options 展开装配驱动同一路径）。
+func TestPerClientOnce(t *testing.T) {
+	exitCh, wsURL := startPerClientServer(t, []string{"/bin/cat"}, func(o *server.Options) {
+		o.MaxClients = 1
+		o.ExitWhenEmpty = true
+		o.ExitWhenEmptyGrace = 0
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+	if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	waitExit(t, exitCh, -1)
+	assertNoExit(t, exitCh)
+}
+
+// TestPerClientReapedFence（WR-02 结构性栅栏，T-13-10，双通道锁定）：
+//
+// 半边一（行为面，白盒构造）：经 export_test TeardownReapedFenceForTest 注入
+// 「waitDone 已关闭 + reaped 未置位」微窗口态（sessionWatcher 正常时序下
+// close(waitDone) 与 hubMu 置位 reaped 相邻建立，竞态窗不可观测——Phase 11
+// REVIEW WR-02 登记的 Wait-return→hubMu-acquire 微窗口确定性注入）→ 直调
+// teardownPCLocked → 断言收口完整（teardownDone 护栏内关闭、不阻塞不 panic
+// ——恰好一次由 teardownOnce 结构承载：Do 体二次执行即 double-close panic
+// 必现形）。本会话无 watcher——测试侧为唯一 Wait 调用方（防僵尸）。
+//
+// 半边二（源码 region 断言，「未发信号」的行为面不可观测承载）：kill 已收割
+// pgid 收 ESRCH 静默——行为无判别力，栅栏形态由源码锁定：teardownPCLocked
+// 函数体内 waitDone 非阻塞 select 守卫必须存在于 SignalGroup(s.stopSignal)
+// 之前（快半段信号分支的门卫形态）。region 边界 = 下一函数声明
+// reapOrphanSession（文件内相邻既定）。
+func TestPerClientReapedFence(t *testing.T) {
+	// —— 半边二：源码 region 断言（先行——形态漂移即 Fail，行为半边免跑）——
+	src, err := os.ReadFile("perclient.go")
+	if err != nil {
+		t.Fatalf("read perclient.go source: %v", err)
+	}
+	fnStart := bytes.Index(src, []byte("func (s *Server) teardownPCLocked"))
+	if fnStart < 0 {
+		t.Fatal("teardownPCLocked 函数声明未找到——region 锚点漂移")
+	}
+	rest := src[fnStart:]
+	fnEnd := bytes.Index(rest, []byte("func (s *Server) reapOrphanSession"))
+	if fnEnd < 0 {
+		t.Fatal("reapOrphanSession 函数声明未找到——region 边界锚点漂移")
+	}
+	region := string(rest[:fnEnd])
+	selIdx := strings.Index(region, "case <-pc.waitDone:")
+	sigIdx := strings.Index(region, "pc.sess.SignalGroup(s.stopSignal)")
+	if selIdx < 0 || sigIdx < 0 {
+		t.Fatalf("teardownPCLocked 缺栅栏锚点（select@%d SignalGroup@%d）——WR-02 waitDone 非阻塞 select 守卫缺失", selIdx, sigIdx)
+	}
+	if selIdx > sigIdx {
+		t.Fatalf("waitDone select 守卫（@%d）不在 SignalGroup（@%d）之前——WR-02 栅栏形态漂移（守卫必须先于信号分支）", selIdx, sigIdx)
+	}
+
+	// —— 半边一：白盒构造（行为面）——
+	_, _, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
+		return pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+	}, nil)
+
+	// 真实会话（慢半段 Drain/Close 对真实 master fd 收口）；测试侧唯一 Wait
+	// 调用方（本会话无 watcher——白盒注入即无 goroutine 群）。
+	pcSess, err := pty.StartWithSize([]string{"sh"}, pty.StartOptions{Uid: -1, Gid: -1}, 80, 24)
+	if err != nil {
+		t.Fatalf("pty.StartWithSize: %v", err)
+	}
+	t.Cleanup(func() {
+		if pcSess.Cmd != nil && pcSess.Cmd.Process != nil {
+			_ = pcSess.Cmd.Process.Kill()
+		}
+		_ = pcSess.Close()
+	})
+
+	done := srv.TeardownReapedFenceForTest(pcSess)
+	select {
+	case <-done:
+		// 收口完整：栅栏路径（跳过信号面）下 Drain/Close/waitDone/delete/
+		// teardownDone 全链不阻塞不 panic。
+	case <-time.After(3 * time.Second):
+		t.Fatal("teardown 未在护栏内收口——WR-02 栅栏路径阻塞或 panic")
+	}
+
+	// 本会话唯一 Wait 调用方（防僵尸；master 已被慢半段 Close——sh 收
+	// SIGHUP 死亡，Wait 即收割）。
+	_ = pcSess.Wait()
+}
+
+// ====== 13-06 增量：SEC-09 WESH_REMOTE_USER 传递链收口（测名仅出现于 func
+// 声明行——验收 grep 行计数闸，同 11-03 Task 2 纪律）======
+
+// dialHelloHeader 是 dialHello 的携 HTTP 头变体（13-06 SEC-09 断言通道）：
+// 反代部署形态下 X-Remote-User 头经 Upgrade 请求到达 Attach handler——
+// websocket.Dial HTTPHeader 注入（proxy_e2e_test.go dialBadTicket 同款；
+// dialHello 零参数面不碰，本函数独立）。headerKey 空串 = 不携头形态。
+func dialHelloHeader(t *testing.T, ctx context.Context, wsURL string, headerKey, headerVal string) (*websocket.Conn, string) {
+	t.Helper()
+	hdr := http.Header{}
+	if headerKey != "" {
+		hdr.Set(headerKey, headerVal)
+	}
+	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}, HTTPHeader: hdr})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	payload, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatalf("marshal Hello: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, payload...)); err != nil {
+		t.Fatalf("write Hello: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read Welcome: %v", err)
+	}
+	if len(data) == 0 || data[0] != proto.Welcome {
+		t.Fatalf("first frame = %v, want Welcome ('W')", data)
+	}
+	var wp proto.WelcomePayload
+	if err := json.Unmarshal(data[1:], &wp); err != nil {
+		t.Fatalf("decode Welcome: %v", err)
+	}
+	return c, wp.Mode
+}
+
+// TestPerClientRemoteUserEnv（13-06 SEC-09 传递链收口）：per-client +
+// AuthHeader 配置（trust 开）下，Attach 携 X-Remote-User 头 → spawnFn 捕获
+// remoteUser == 头值 sanitize 产物——提取点 sanitizeRemoteUser（proxy.go）
+// 清洗在到达 spawn 前完成（C1 控制字符头值 U+0085——Go http 客户端合法可发、
+// C0/DEL 客户端侧即被拒 httpguts.ValidHeaderFieldValue，07-03 前例同款）捕获
+// 后已剥离；头缺席 → 捕获空串（空串不出键链路由 pty 包 TestEnvWhitelist
+// 承载）；trust 关闭（AuthHeader 未配置）→ 头被忽略捕获恒空串（D-20 单一
+// 信任闸：头只在 trust 开启时被采信，伪造头不得进 env 面）。传递链断言锚点
+// = spawnFn 第三参（upgradePerClient :208 s.spawnFunc(h.Cols, h.Rows,
+// remoteUser)——Attach 提取链 :953 sanitize 产物直传，零新管道）。
+// 共享 startOpts 串台防线（T-13-21）由 main.go 闭包局部复制形态承载（Go 级
+// 不可达生产装配面）；子进程 env 进程级回读断言由 13-07 phase13.mjs S6 承接。
+func TestPerClientRemoteUserEnv(t *testing.T) {
+	// 服务端 A：AuthHeader 配置（trust 开）——三形态：干净头值 / C1 控制字符
+	// 头值 / 头缺席。每 dial 恰一次 spawn，userCh 缓冲 3 恰收三次。
+	userCh := make(chan string, 3)
+	_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, remoteUser string) (*pty.Session, error) {
+		userCh <- remoteUser
+		return pty.StartWithSize([]string{"/bin/sh"}, pty.StartOptions{Uid: -1, Gid: -1, RemoteUser: remoteUser}, cols, rows)
+	}, func(o *server.Options) { o.AuthHeader = "X-Remote-User" })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	recvUser := func(label string) string {
+		t.Helper()
+		select {
+		case u := <-userCh:
+			return u
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: 5s 护栏内未见 spawn（userCh 无值——attach 未到达 spawn 点）", label)
+			return ""
+		}
+	}
+
+	// 形态一：干净头值原样到达（sanitize 幂等）。
+	cA1, _ := dialHelloHeader(t, ctx, wsURL, "X-Remote-User", "alice")
+	defer cA1.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("形态一 alice"); got != "alice" {
+		t.Fatalf("干净头值捕获 = %q, want %q（头值应原样到达 spawnFn）", got, "alice")
+	}
+	// 形态二：C1 控制字符头值（U+0085 NEL）——捕获值已剥离（提取点清洗证据）。
+	cA2, _ := dialHelloHeader(t, ctx, wsURL, "X-Remote-User", "ad\u0085min")
+	defer cA2.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("形态二 C1 剥离"); got != "admin" {
+		t.Fatalf("C1 头值捕获 = %q, want %q（sanitizeRemoteUser 剥离 U+0085 后产物）", got, "admin")
+	}
+	// 形态三：头缺席 → 空串（remote_user 提取缺席即空串——下游空串不出键）。
+	cA3, _ := dialHelloHeader(t, ctx, wsURL, "", "")
+	defer cA3.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("形态三 无头空串"); got != "" {
+		t.Fatalf("无头捕获 = %q, want 空串（头缺席 → remoteUser 空串到达 spawnFn）", got)
+	}
+
+	// 服务端 B：AuthHeader 未配置（trust 关）——携 X-Remote-User 头也被忽略，
+	// 捕获恒空串（D-20：头值只在 trust 开启时被采信，伪造头不得进 env 面）。
+	_, wsURLB, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, remoteUser string) (*pty.Session, error) {
+		userCh <- remoteUser
+		return pty.StartWithSize([]string{"/bin/sh"}, pty.StartOptions{Uid: -1, Gid: -1, RemoteUser: remoteUser}, cols, rows)
+	}, nil)
+	cB, _ := dialHelloHeader(t, ctx, wsURLB, "X-Remote-User", "alice")
+	defer cB.Close(websocket.StatusNormalClosure, "")
+	if got := recvUser("trust 关闭头忽略"); got != "" {
+		t.Fatalf("trust 关闭捕获 = %q, want 空串（未配置 --auth-header 时头被忽略——remoteUser 恒空串）", got)
+	}
 }

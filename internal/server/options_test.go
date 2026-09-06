@@ -15,7 +15,7 @@ import (
 )
 
 func TestValidateOptions(t *testing.T) {
-	spawnFunc := func(cols, rows int) (*pty.Session, error) { return nil, nil }
+	spawnFunc := func(cols, rows int, _ string) (*pty.Session, error) { return nil, nil }
 	tests := []struct {
 		name       string
 		opts       Options

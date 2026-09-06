@@ -81,9 +81,10 @@ type config struct {
 	uid  int    // --uid 降权目标 uid（默认 -1 = 不降权；与 --gid 成对强制，validateStartup 消费；flag 注册与校验见 07-04 Task 3）
 	gid  int    // --gid 降权目标 gid（同上）
 	// D-22 stop-signal 序列（one-way 公开契约，P2 D-15 同纪律）：
-	stopSignal    string         // --stop-signal 枚举名 HUP|TERM|INT|KILL（默认 HUP 现状语义；parse 期经 pty.StopSignalByName 枚举校验）
-	stopTimeout   time.Duration  // --stop-timeout stop-signal 后补发 SIGKILL 的宽限（默认 0 = 不补 KILL 纯单信号现状；负值 parse 期拒绝）
-	stopSignalSig syscall.Signal // --stop-signal 的 parse 期名→信号解析产物（StopSignalByName 命中；Options.StopSignal 接线源）
+	stopSignal     string         // --stop-signal 枚举名 HUP|TERM|INT|KILL（默认 HUP 现状语义；parse 期经 pty.StopSignalByName 枚举校验）
+	stopTimeout    time.Duration  // --stop-timeout stop-signal 后补发 SIGKILL 的宽限（默认 0 = 不补 KILL 纯单信号现状；负值 parse 期拒绝）
+	stopTimeoutSet bool           // --stop-timeout 是否被显式设置（13-01 D-02：区分未设置 vs 显式 0，CLI fs.Visit/TOML fc.StopTimeout 双源置位，07-06 合并收尾先例同形态——per-client 双默认值落定与 validateStartup 泄漏 warn 均锚定显式位而非终值）
+	stopSignalSig  syscall.Signal // --stop-signal 的 parse 期名→信号解析产物（StopSignalByName 命中；Options.StopSignal 接线源）
 	// Phase 7 自动打开浏览器（D-26，one-way 公开契约，P2 D-15 同纪律）：
 	open bool // --open 启动后以系统启动器打开分享链接（--writable 开 rw 链接否则 ro 链接，含 token 免交互；headless 跳过不阻断，--socket×--open 组合矛盾归 validateStartup）
 	// Phase 9 自定义首页（09-04 OPS-03，D-07/D-08 one-way 公开契约，P2 D-15 同纪律）：
@@ -564,15 +565,24 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		if f.Name == "socket-owner" {
 			cfg.socketOwnerSet = true
 		}
+		// 13-01 D-02：--stop-timeout 显式设置位（区分「未设置」vs「显式 0」——
+		// per-client 双默认值落定（D-01）与 validateStartup 泄漏风险 warn 均锚定
+		// 显式位而非终值；任意显式值含 0 皆置位，write-policy 等七先例同形态）。
+		if f.Name == "stop-timeout" {
+			cfg.stopTimeoutSet = true
+		}
 	})
 	// D-08/D-09 + write-policy 配置来源显式位（07-06 合并收尾第一档）：配置键
 	// 存在即「已给定」——fc.Port/fc.Bind/fc.SocketMode/fc.SocketOwner/
-	// fc.WritePolicy/fc.SessionMode 非 nil 即置对应显式位，07-02 落地的
+	// fc.WritePolicy/fc.SessionMode/fc.StopTimeout 非 nil 即置对应显式位，
+	// 07-02 落地的
 	// 互斥/单给校验矩阵与
 	// write-policy×writable 组合校验对配置驱动与 CLI 驱动同档生效（不置位
 	// 则配置同时写 socket+port 或单写 socket-mode 会静默绕过 D-08/D-09
 	// fail-fast；write-policy 扩展同款模式；session-mode 置位为 D-02 双源
-	// 采集位，消费归 10-02）。
+	// 采集位，消费归 10-02；stop-timeout 置位为 13-01 D-02 双源采集位——
+	// TOML 显式 stop-timeout = "0s" 与 CLI --stop-timeout=0 同档置位，
+	// 消费归 run() 双默认值落定与 validateStartup 泄漏 warn）。
 	if fc != nil {
 		if fc.Port != nil {
 			cfg.portSet = true
@@ -591,6 +601,9 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 		}
 		if fc.SessionMode != nil {
 			cfg.sessionModeSet = true
+		}
+		if fc.StopTimeout != nil {
+			cfg.stopTimeoutSet = true
 		}
 	}
 	// 配置内部矛盾检测（07-review WR-02，D-06 严格模式哲学）：fc.Once 为真时
@@ -1005,6 +1018,18 @@ func validateStartup(cfg config) (warn string, err error) {
 	if cfg.writePolicySet && cfg.sessionMode == server.SessionModePerClient {
 		modeWarns = append(modeWarns, "wesh: warning: --write-policy has no effect with --session-mode=per-client; owner/all arbitration and succession are not assembled in per-client mode (ro/rw permission levels still apply per ticket)")
 	}
+	// 13-01 D-02 泄漏风险警告（放行但 stderr 醒目明示——「不静默改写用户输入」
+	// 纪律的另一半：显式 --stop-timeout=0（CLI/TOML 双源经显式位机制同档置位）
+	// × per-client → 用户显式意图受尊重（不被静默改写为 5s），但 SIGHUP 免疫
+	// 进程（nohup/trap '' HUP）将在客户端断开后泄漏存活（Phase 11 post-merge
+	// 实证泄漏窗真实存在），叠加断开重连 churn 可绕开 maxClients 使驻留无界。
+	// 锚定 stopTimeoutSet 显式位而非终值——本分支执行点先于 run() 的 per-client
+	// 双默认值落定（D-01 覆写只动 !stopTimeoutSet 态），显式位是「未设置」vs
+	// 「显式 0」的唯一可靠判别；shared × 显式 0 不触发（泄漏面是 per-client
+	// 断开即杀语义独有）。文案定值无插值（:985 红线）。
+	if cfg.stopTimeoutSet && cfg.sessionMode == server.SessionModePerClient && cfg.stopTimeout == 0 {
+		modeWarns = append(modeWarns, "wesh: warning: --stop-timeout=0 with --session-mode=per-client disables the SIGKILL backstop; SIGHUP-immune child processes (nohup, trap '' HUP) will keep running after the client disconnects")
+	}
 	// mergeWarn 把累积 modeWarns 拼到各透出点：sec 为既有安全警告原文
 	//（在前，显著性优先）；sec 为空（socket/loopback/最强形态早退）时透出
 	// 累积 warn；两者皆空返回 ""（零漂移——strings.Join(nil) == ""）。
@@ -1262,6 +1287,27 @@ func loadCustomIndex(path string, max int) ([]byte, error) {
 	return data, nil
 }
 
+// resolveStopTimeout 落定 stop-timeout 终值（13-01 D-01 per-client 双默认值，
+// one-way 公开契约——13-01 Task 1 确认门用户派发 option-a 落定；run() 上方的
+// 纯 helper——loadCustomIndex 同位纪律，值传入值返回零副作用使三态行为可直调
+// 锁定）：per-client 且 --stop-timeout 双源均未显式设置（stopTimeoutSet 零值）
+// → 覆写为 5s，HUP 免疫泄漏防线默认开启（Phase 11 post-merge 实证：bash 4.4
+// 交互模式在「提示符 pselect + 竞态输入行待读」窗口内可无声吸收 SIGHUP——
+// per-client 的产品语义是 ttyd 断开即杀，默认 0 = 泄漏防线默认关闭，默认值的
+// 产品前提翻转了，来源必须按模式分岔）。5s 取值 = PITFALLS P8 推荐值：正常
+// 程序收 HUP 后的清理窗口（shell 写 history 等）足够，泄漏进程存活上界有界。
+// shared 字面 0 逐字不动（parseArgs stopTimeoutDefault 字面 0——「断开不退出、
+// 子进程继续运行」是 v1.0 产品承诺的组成部分，零回归红线）。显式设置（含
+// 显式 0）不覆写——尊重用户意图（「不静默改写用户输入」纪律），per-client ×
+// 显式 0 的泄漏风险由 validateStartup warn 明示（该 warn 判定点先于本覆写且
+// 锚定显式位，两机制互不干扰）。
+func resolveStopTimeout(cfg config) config {
+	if cfg.sessionMode == server.SessionModePerClient && !cfg.stopTimeoutSet {
+		cfg.stopTimeout = 5 * time.Second
+	}
+	return cfg
+}
+
 func run(args []string) int {
 	cfg, argv, err := parseArgs(args)
 	if err != nil {
@@ -1324,11 +1370,19 @@ func run(args []string) int {
 	// pty.Start 创建 sess」）随本落地失效——Phase 11 已落地 sess=nil +
 	// attach 期 spawn：New 体 sess.Cmd.Process.Pid 取引用冲突由 New 尾部
 	// 模式分岔消化（per-client 分支不 emit session_start，D-04 窗口期）。
+	// 13-06（SEC-09）第三参 remoteUser：Attach 提取的 sanitize 后反代用户名
+	// → 闭包内 startOpts 局部复制后赋 StartOptions.RemoteUser（pty 包
+	// whitelistEnv 出键 WESH_REMOTE_USER，空串不出键）。防串台论证
+	// （T-13-21）：startOpts 为 run() 共享变量（shared 分支 pty.Start 亦
+	// 消费），每客户端 remoteUser 不同——直接改共享字段即多客户端环境串台
+	//（A 的用户名落进 B 的子进程 env），局部复制后赋值使本次调用快照隔离。
 	startOpts := pty.StartOptions{Dir: cfg.cwd, Term: cfg.term, Uid: cfg.uid, Gid: cfg.gid}
-	var spawnFunc func(cols, rows int) (*pty.Session, error)
+	var spawnFunc func(cols, rows int, remoteUser string) (*pty.Session, error)
 	if cfg.sessionMode == server.SessionModePerClient {
-		spawnFunc = func(cols, rows int) (*pty.Session, error) {
-			return pty.StartWithSize(argv, startOpts, cols, rows)
+		spawnFunc = func(cols, rows int, remoteUser string) (*pty.Session, error) {
+			opts := startOpts
+			opts.RemoteUser = remoteUser
+			return pty.StartWithSize(argv, opts, cols, rows)
 		}
 	}
 	// 10-01 PC-01：装配契约 fail-fast——ValidateOptions 前移至资源获取之前
@@ -1386,6 +1440,12 @@ func run(args []string) int {
 	// 启动打印，server 只存 SHA-256 预哈希（Options 注释）。
 	shareRO := server.GenerateShareToken()
 	shareRW := server.GenerateShareToken()
+	// 13-01 D-01：per-client 双默认值终值落定（resolveStopTimeout 单点——插点
+	// 在 Options 装配之前：sessionMode 与 stopTimeoutSet 在 parseArgs 出口即
+	// 已完全确定，覆写后终值单点进 Options.StopTimeout；validateStartup 的
+	// 泄漏 warn 判定点先于本覆写且锚定显式位，两机制互不干扰。论证注释见
+	// resolveStopTimeout 函数头）。
+	cfg = resolveStopTimeout(cfg)
 	// D-12/D-14 接线：ExitWhenEmpty 两键直传解析产物（--once 展开后同通道——
 	// 服务端无 --once 概念，SESS-01 = maxClients=1 + ExitWhenEmpty grace 0 的
 	// 组合语义，06-02 空触发机制消费）。

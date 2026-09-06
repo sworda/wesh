@@ -2,37 +2,37 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
-current_phase: 12
-current_phase_name: per-client
-status: "Phase 12 shipped — PR #16"
-stopped_at: Completed 12-per-client 12-05-PLAN.md（Phase 12 收口：五需求勾选 + WR-01 闭合登记——phase 5/5 ready for verification）
-last_updated: "2026-09-05T05:57:03.849Z"
-last_activity: 2026-09-05
+current_phase: 14
+current_phase_name: 双模式验证矩阵、标定与 herdr UAT
+status: "Phase 13 shipped — PR #17"
+stopped_at: Phase 13 complete — UAT 11/11 全过（13-UAT.md），ready to plan Phase 14
+last_updated: "2026-09-06T03:43:45.008Z"
+last_activity: 2026-09-06
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 17
-  completed_plans: 17
-last_activity_desc: Phase 11 gap closure complete
+  total_phases: 4
+  completed_phases: 4
+  total_plans: 25
+  completed_plans: 25
+last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-04)
+See: .planning/PROJECT.md (updated 2026-09-05)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 12 — per-client
+**Current focus:** Phase 14 — 双模式验证矩阵、标定与 herdr UAT
 
 ## Current Position
 
-Phase: 12 (per-client) — EXECUTING
-Plan: 5 of 5
-Status: Phase 12 shipped — PR #16
-Last activity: 2026-09-05
+Phase: 14 — 双模式验证矩阵、标定与 herdr UAT
+Plan: Not started
+Status: Phase 13 shipped — PR #17
+Last activity: 2026-09-06
 
-Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [████████████████████] 25/25 plans（v1.1 已执行面 10-13 全收口；Phase 14 待规划；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
 
 ## Performance Metrics
 
@@ -74,6 +74,14 @@ Progress: [██████████] 100%（v1.1；v1.0 已 9/9 阶段 70/
 | Phase 12 P03 | 42min | 2 tasks | 5 files |
 | Phase 12 P04 | 22min | 2 tasks | 1 files |
 | Phase 12-per-client P05 | 22min | 2 tasks | 2 files |
+| Phase 13 P01 | 30min | 3 tasks | 5 files |
+| Phase 13 P02 | 50min | 2 tasks | 6 files |
+| Phase 13 P03 | 50min | 2 tasks | 7 files |
+| Phase 13 P04 | 13min | 2 tasks | 2 files |
+| Phase 13 P05 | 19min | 2 tasks | 6 files |
+| Phase 13 P06 | 23min | 2 tasks | 11 files |
+| Phase 13 P07 | 27min | 2 tasks | 2 files |
+| Phase 13 P08 | 37min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -123,6 +131,27 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 12-05] Phase 12 收口闸六段式全绿：静态面（gofmt/vet 零输出）+ 全量 -race 5 包 1m21s（新测 12/12 逐名）+ darwin 双编译闸 + dist byte-identical + UAT 矩阵 16 轮（既有 10 协议脚本默认 shared 零修改与基线逐脚本一致 + 3 jsdom + phase12 两轮 20/20 + phase12-dom 14/14）+ diff 白名单审查（放宽形态零命中/红线文件零 diff/零新依赖 0 行）；PC-05/06/07/10/11 五需求勾选收口（三证据链映射表）
 - [Phase ?]: [Phase 12-05] WR-01（Phase 11 REVIEW 遗留）闭合回指登记（D-04「dwell 涵盖不复刻」形态）：dwell 10s 从停读起点武装结构性涵盖 500ms attach 宽限（×20 余量）；阻塞持帧即暂存（帧在闭包栈上 ≡ creditPending 语义等价）——宽限门与 creditPending/afterDrain 重投均不复刻；若瞬态满箱误踢案例实证出现则回写重开（CONTEXT deferred 口径）；登记项 STATE.md 规划期 :99 现位 :103（12-01..04 决策追加行移，内容逐字核对）
 - [Phase ?]: [Phase 12-05] diff 审查白名单补充项①：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——12-05 plan 白名单枚举未列属 plan 文本枚举缺口而非回归，三轴裁决（plan 授权/append-only/零断言）如实登记（WINDOWS #33）不判收口失败；phase 基点 = e8b39c0（86433a6^ Phase 12 首提交父提交，11-06 先例同构）
+- [Phase ?]: [Phase 13-01] D-01 one-way 门 option-a 用户派发确认落定：per-client --stop-timeout 未显式设置默认 5s（HUP 免疫泄漏防线默认开启）+ 显式 0 经 stopTimeoutSet 显式位尊重并 warn 泄漏风险；shared 字面 0 逐字不动（12-01 D-08 one-way 门先例同形态）
+- [Phase ?]: [Phase 13-01] Task 3 Rule 3 可测性提取：run() 内联双默认值覆写提取为纯函数 resolveStopTimeout（loadCustomIndex 同位纪律）——plan「终值落定直调」的直调点；TestValidateStartupWarnMerge 加第四枚负例（per-client 未设无 warn，Rule 2 判别力——锚定显式位而非终值的过宽实现必翻车）
+- [Phase ?]: [Phase 13-02] 双桶判序 per-IP 先/全局后（短路）：单 IP churn 过量尝试在 per-IP 桶即拒（AllowN 失败零消耗）不耗全局预算——反代后合法多用户共享全局配额不被单一 churning IP 占干（plan/RESEARCH 蓝本均未定序，实现 latitude 裁决）
+- [Phase ?]: [Phase 13-02] Rule 3：TestPerClientTeardownRaceOnce mutate 放宽 per-IP 桶（10 轮同 IP 连续 attach 超默认 burst 4，plan 对既有测试 attach 密度枚举缺口；测试对象 teardown 竞态非 churn 防线，断言行零改动）
+- [Phase ?]: [Phase 13-02] 惰性过期判别面：perIPRate=1/s burst=1200 > 15min TTL 补给上限 900——正补给使小 burst 的 allow-结果无判别力（重置与补给同满额），三相位精确计数 1200/120/1200 双向判别（无重置 960 翻车/过早重置相位二 1200 翻车）
+- [Phase ?]: [Phase 13-02] 事件 schema 键集白名单含日志封套（time/level/msg）+ 四段 schema——parseEvents 解析整行 JSON，纯四段白名单必翻车（Task 2 内自愈的 Rule 1 测试 bug）
+- [Phase ?]: [Phase 13-02] PC-08 勾选留 phase 末收口 plan（11-01/12-01/13-01 先例：ID 跨 plan 共享——机制本体已落地，13-03 场景面/13-07 压测面证据未齐）
+- [Phase ?]: [Phase 13-02] GOROOT gofmt（go1.26.3）存量命中两处（cmd/wesh/main_test.go 13-01 遗留 + perclient_test.go:1535 Phase 12 遗留，均为 //（ CJK 标点接续行）登记 deferred-items.md——范围外不修，13-08 收口闸应知悉
+- [Phase ?]: [Phase 13-03] session_end emit 位置取 close(waitDone) 前（plan「hubMu 解锁后」的 Rule 1 偏差）：与 shared lifecycle 母本同位 + 建立 emit→close(waitDone)→delete+Broadcast→exitf 的 happens-before 链——plan 位置与慢半段 Broadcast 无同步边，调度停摆下 exitf(os.Exit) 可先于事件落流
+- [Phase ?]: [Phase 13-03] Rule 1 关键补齐：upgradePerClient registerLocked 后补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷）——GraceCancel 测试首跑实测暴露，单独 fix 提交
+- [Phase ?]: [Phase 13-03] WR-02 栅栏同构覆盖补 KILL 回调（planner 裁定「Pitfall 2 语义对一切 kill(-pgid) 同构适用」）；子先死断言值 42（判别力收紧）；PC-09/OPS-12 勾选留 phase 末（13-07 phase13.mjs S3 进程级 255 断言未齐）
+- [Phase ?]: [Phase 13-04] Shutdown 侧 D-state 兜底 terminate 落地（Rule 2——T-13-13 mitigation 为 threat register 硬要求而 plan behavior 四锚点未列 terminate 调用）：drained 形态终结仍归 pcSupervisor 零漂移，仅 join 到期未清零分支 Shutdown 直调 terminate（termOnce 交汇恰好一次，退出码同 last-reaped-code 规则）；形态四测试（stopTimeout=0+免疫=D-state 代理）锁定 exitf(0)+存活探针双观测
+- [Phase ?]: [Phase 13-04] 快照信号循环加 WR-02 waitDone 栅栏（研究明示 Discretion——按 13-03 planner 裁定「Pitfall 2 语义对一切 kill(-pgid) 同构适用」选栅栏形态）；join 实现形态选 hubCond.Wait + AfterFunc 兜底 Broadcast（零新同步件）；join 上界余量定值 shutdownJoinMargin=2s（研究 A1 保守形态）；测试夹具复用 startPerClientServerWithSpawn（11-03 已参数化，零新装配）；PC-09/OPS-12 勾选留 phase 末（先例延续）
+- [Phase ?]: [Phase 13-05] TestSpawnEventsSchema 零成功 spawn 构造（per-IP burst=1 + 恒败注入：dial ① spawn_failed + dial ② spawn_throttled 一窗捕获）——零会话零 watcher 使迟到 emit 面结构性不存在（13-03 跨测试迟写教训前置规避）；wire 定值文案逐 dial 绑定 + 注入敏感值三形态（err.Error()/路径/errno）零出现负断言
+- [Phase ?]: [Phase 13-05] ptyKills 恰按 plan 枚举两路径（teardown + 孤儿回收 AfterFunc），13-04 Shutdown 路径补 KILL 不在计数面（plan 白名单明示两路径；series HELP 文案已如实限定 teardown and orphan reaping）——运维面若需 Shutdown KILL 计数属 series 语义扩展，13-07/13-08 复核知悉项
+- [Phase ?]: [Phase 13-06] Task 1/2 TDD 按先例单 feat 提交收口（RED=编译红任务内观察即转 GREEN）；darwin 双编译闸前移抓出 reap_darwin_test.go whitelistEnv 两参遗漏（build-tag 文件 Linux 编译面不含，独立 fix 提交）——签名扩散类改动 darwin 闸应随任务即跑
+- [Phase ?]: [Phase 13-06] SEC-09 WESH_REMOTE_USER 落地：whitelistEnv 第三参空串不出键（键名白名单固定代码常量由 pty 包单侧定义）+ SpawnFunc 三参签名全链 + main.go 闭包 startOpts 局部复制防串台（T-13-21）；startPerClientServer 默认 spawnFn 升级生产镜像完整形态（注释契约真值优先）；签名扩散波及 shutdown/metrics/events 三测试文件（plan files_modified 枚举缺口，WINDOWS #36）；SEC-09 勾选留 phase 末（13-07 S6 进程级 env 回读未齐）
+- [Phase ?]: [Phase 13-07] phase13.mjs 六场景两轮 29/29（phase12 同构第三代 + dialAttach 双形态 dial 合流）；S2 KILL 兜底默认 5s 三面判别（~2s 存活 + ESRCH + elapsed≥4s 下界，实测 5.0s）；S1 事件/计数器/拒绝数三方精确相等 + XFF 换键双态（事件 remote==XFF 链首）；S6c printenv 缺席断言以 echo 标记程序序锚定
+- [Phase ?]: [Phase 13-07] TestChurn churn 负载格：10rps×30s（300 次）生产默认桶参数零覆写——attached=33/rejected=267/throttled=267、gor 8→8/fd 11→11/mem +110KB 精确回落基线；断言全部基线差值形态（gor/mem/fd 双采样 + 回收轮询 + 容差标定注释——Pitfall 7）；spawn_total==attached 程序序精确对照；PC-08/09/SEC-09/OPS-12 勾选留 13-08（Task 2 承载）
+- [Phase ?]: [Phase 13-08] 收口闸六段式全绿（零回归双证据 + phase13 两轮 29/29 + churn 格 + diff 白名单 23 文件零外改）；phase 基点 = e0ae66b^（首提交父提交，12-05 先例同构）；PC-08/09/SEC-09/OPS-12 四需求勾选收口（v1.1 10/15）
+- [Phase ?]: [Phase 13-08] WR-02 闭合回指：waitDone 非阻塞 select 结构性栅栏落地且同构覆盖三处 kill(-pgid) 面（teardown 快半段/补 KILL 回调/Shutdown 快照循环）——结构性消除非风险接受；D-10 文档段落地（README 保活先杀时序 + CONFIGURATION ping-interval 小节）；gofmt 三处 deferred 存量与 README「per-client 装配中」失实残留收口期归一
 
 ### Pending Todos
 
@@ -144,6 +173,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-04T15:24:04.860Z
-Stopped at: Completed 12-per-client 12-05-PLAN.md（Phase 12 收口：五需求勾选 + WR-01 闭合登记——phase 5/5 ready for verification）
+Last session: 2026-09-06T02:35:00Z
+Stopped at: Phase 13 complete — UAT 11/11 全过（13-UAT.md aaa6126），ready to plan Phase 14
 Resume file: None

@@ -4,7 +4,8 @@ package server_test
 // text 0.0.4 exposition / D-02·D-06 零身份 label 红线 / D-04 收发字节双指标 /
 // D-05 会话口径+连接三件套 / D-08 认证闸跟随 / D-09 根路径固定）：
 //   - TestMetricsExposition：Content-Type 逐字、HELP/TYPE/样本三行组序、末行
-//     \n 收尾、17 series 在场与契约序、基线值（connected 0→1 / session_active==1 /
+//     \n 收尾、17 series 在场与契约序（13-05 扩展后 21 series——镜像清单见
+//     metricsSeries21）、基线值（connected 0→1 / session_active==1 /
 //     goroutines>0 / mem_alloc>0 / build_info{version="dev"} 1）；
 //   - TestMetricsAuth：凭据两态（无/错凭据 401 与 / 同链同文 → 正确凭据 200
 //     同形态）、无认证直通、bp=/wesh 下 /metrics 200 与 /wesh/metrics 精确码、
@@ -14,6 +15,9 @@ package server_test
 //     经 exposition build_info 行逐字断言。
 //   - TestMetricsValues / TestMetricsSnapshotRace：Task 2 数值正确性与 -race
 //     快照竞态压力。
+//   - TestMetricsPerClient（13-05，OPS-12 D-07/D-08）：四计数器 series 双模式
+//    （shared 恒 0 不摘 / per-client 出数）+ session_active 同名 series 模式
+//     分支 + HELP 文案双模式断言。
 //
 // http 客户端用 net/http 直发（health_test.go httpBaseOf/getStatus 同款形态）。
 
@@ -32,12 +36,16 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/sworda/wesh/internal/proto"
+	"github.com/sworda/wesh/internal/pty"
 	"github.com/sworda/wesh/internal/server"
 )
 
-// metricsSeries17 为 17 条 series 的契约清单（must_haves truths 序逐字——
-// series 命名/类型/组织序是采集契约，D-01 costly 级暴露面一次性锁死）。
-var metricsSeries17 = []struct{ name, typ string }{
+// metricsSeries21 为 21 条 series 的契约清单（must_haves truths 序逐字——
+// series 命名/类型/组织序是采集契约，D-01 costly 级暴露面一次性锁死；13-05
+// （OPS-12 D-08）一次性扩展 17→21：既有 17 条逐字不动 + 四枚 spawn 计数器
+// 尾部追加——Phase 11 D-04 既定窗口兑现；四 series 命名/语义一经发布即被
+// 采集方（Prometheus 规则/看板）依赖，改名需采集侧迁移）。
+var metricsSeries21 = []struct{ name, typ string }{
 	{"wesh_clients_connected", "gauge"},
 	{"wesh_clients_total", "counter"},
 	{"wesh_clients_kicked_total", "counter"},
@@ -55,6 +63,10 @@ var metricsSeries17 = []struct{ name, typ string }{
 	{"wesh_goroutines", "gauge"},
 	{"wesh_mem_alloc_bytes", "gauge"},
 	{"wesh_build_info", "gauge"},
+	{"wesh_pty_spawn_total", "counter"},
+	{"wesh_pty_spawn_failures_total", "counter"},
+	{"wesh_pty_kills_total", "counter"},
+	{"wesh_pty_spawn_throttled_total", "counter"},
 }
 
 // getMetrics GET 指定 URL，断言 200 + Content-Type 逐字
@@ -103,7 +115,7 @@ func reqMetrics(t *testing.T, url, user, pass string) (status int, allow, body s
 }
 
 // assertExpositionShape 锁 exposition 结构形态：末行 \n 收尾（规范硬性要求）、
-// 恰 17×3 行、每 series 按 # HELP/# TYPE/样本三行组序且 TYPE 行逐字
+// 恰 21×3 行、每 series 按 # HELP/# TYPE/样本三行组序且 TYPE 行逐字
 // （「All lines for a given metric must be provided as one single group, with the
 // optional HELP and TYPE lines first」规范条款的分组形态锁）。
 func assertExpositionShape(t *testing.T, body string) {
@@ -112,10 +124,10 @@ func assertExpositionShape(t *testing.T, body string) {
 		t.Fatalf("exposition 末行未以 \\n 收尾（规范硬性要求）: 尾部 %q", body[len(body)-8:])
 	}
 	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
-	if len(lines) != 3*len(metricsSeries17) {
-		t.Fatalf("exposition 行数 = %d, want %d（17 series × HELP/TYPE/样本三行组）", len(lines), 3*len(metricsSeries17))
+	if len(lines) != 3*len(metricsSeries21) {
+		t.Fatalf("exposition 行数 = %d, want %d（%d series × HELP/TYPE/样本三行组）", len(lines), 3*len(metricsSeries21), len(metricsSeries21))
 	}
-	for i, sr := range metricsSeries17 {
+	for i, sr := range metricsSeries21 {
 		help, typ, sample := lines[3*i], lines[3*i+1], lines[3*i+2]
 		if !strings.HasPrefix(help, "# HELP "+sr.name+" ") {
 			t.Errorf("series #%d HELP 行形态错: %q（want 前缀 %q）", i, help, "# HELP "+sr.name+" ")
@@ -539,6 +551,90 @@ func TestMetricsValues(t *testing.T) {
 		}
 		if v, _ := metricSample(t, body, "wesh_auth_throttled_total"); v != 1 {
 			t.Errorf("wesh_auth_throttled_total = %d, want 1（429 短路不追加）", v)
+		}
+	})
+}
+
+// TestMetricsPerClient（13-05，OPS-12 D-07/D-08）：per-client 观测面双模式——
+// 四计数器 series（shared 恒 0 且 series 保留不摘——credit_gate 恒 0 先例；
+// per-client 出数）与 session_active 同名 series 模式分支（shared 探活 0/1
+// 现状逐字 / per-client 活跃会话计数 len(pcSessions)）+ HELP 文案按模式生成
+// （D-07：同名 series 语义随部署模式，否决另起 series 名——清单膨胀且 shared
+// 侧恒 0 徒增噪音）。
+//
+// session_active 取值判别面：attach 两端时 gauge==2 与 spawn_total==2 等值
+// （等值瞬态无判别力）——断开一端后 gauge 收敛 1 而 spawn_total 恒 2
+// （counter 只增不减），活跃计数与 spawn 累计两语义就此分叉；把
+// session_active 误实现为 spawn 计数的形态翻车于收敛后取值。
+func TestMetricsPerClient(t *testing.T) {
+	// shared 形态：四新计数器恒 0 且 series 在场（17→21 镜像经
+	// assertExpositionShape 承载）+ session_active HELP 探活文案逐字（现状）。
+	t.Run("shared_zeros", func(t *testing.T) {
+		_, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+		body := getMetrics(t, httpBaseOf(wsURL)+"/metrics")
+		assertExpositionShape(t, body)
+		for _, name := range []string{
+			"wesh_pty_spawn_total", "wesh_pty_spawn_failures_total",
+			"wesh_pty_kills_total", "wesh_pty_spawn_throttled_total",
+		} {
+			if v, ok := metricSample(t, body, name); !ok || v != 0 {
+				t.Errorf("%s = %d (present=%v), want 0 且 series 在场（shared 恒 0 不摘——credit_gate 恒 0 先例）", name, v, ok)
+			}
+		}
+		if !strings.Contains(body, "# HELP wesh_session_active Whether the PTY session is alive (1) or exited (0).\n") {
+			t.Errorf("shared session_active HELP 探活文案缺席或被改写（shared 语义逐字不动红线）")
+		}
+	})
+
+	// per-client 形态：attach 2 会话 → session_active==2（活跃会话计数）+
+	// spawn_total==2（递增点端到端出数）+ HELP 会话计数文案；断开一端 →
+	// gauge 收敛 1、spawn_total 恒 2。
+	t.Run("per_client_branch", func(t *testing.T) {
+		_, wsURL, _, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
+			return pty.StartWithSize([]string{"/bin/cat"}, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
+		}, nil)
+		base := httpBaseOf(wsURL)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		c1, _ := dialHello(t, ctx, wsURL, 80, 24)
+		defer c1.CloseNow()
+		c2, _ := dialHello(t, ctx, wsURL, 80, 24)
+
+		body := getMetrics(t, base+"/metrics")
+		assertExpositionShape(t, body)
+		if v, _ := metricSample(t, body, "wesh_session_active"); v != 2 {
+			t.Errorf("wesh_session_active = %d, want 2（per-client 活跃会话计数——len(pcSessions) 单趟快照）", v)
+		}
+		if !strings.Contains(body, "# HELP wesh_session_active Number of active per-client PTY sessions.\n") {
+			t.Errorf("per-client session_active HELP 会话计数文案缺席（D-07 HELP 按模式生成）")
+		}
+		if v, _ := metricSample(t, body, "wesh_pty_spawn_total"); v != 2 {
+			t.Errorf("wesh_pty_spawn_total = %d, want 2（spawn 递增点端到端出数）", v)
+		}
+		for _, name := range []string{"wesh_pty_spawn_failures_total", "wesh_pty_kills_total", "wesh_pty_spawn_throttled_total"} {
+			if v, _ := metricSample(t, body, name); v != 0 {
+				t.Errorf("%s = %d, want 0（本场景零失败/零 KILL 兜底/零节流）", name, v)
+			}
+		}
+
+		// 断开 c2 → detach→teardown→收割链收敛后 gauge 落 1（轮询替代固定
+		// sleep——Phase 9 flake 纪律）；spawn_total 恒 2 只增不减。
+		_ = c2.Close(websocket.StatusNormalClosure, "")
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			body = getMetrics(t, base+"/metrics")
+			v, _ := metricSample(t, body, "wesh_session_active")
+			if v == 1 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("断开一端后 wesh_session_active 未收敛 1（last=%d）——活跃计数语义（len(pcSessions)）", v)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if v, _ := metricSample(t, body, "wesh_pty_spawn_total"); v != 2 {
+			t.Errorf("收敛后 wesh_pty_spawn_total = %d, want 2（counter 只增不减——与 gauge 取值形态判别）", v)
 		}
 	})
 }
