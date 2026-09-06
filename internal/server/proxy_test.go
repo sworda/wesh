@@ -15,6 +15,11 @@ import (
 // 黑盒全链测试（logEvent remote_user 行/XFF 节流键/认证正交）在
 // proxy_e2e_test.go（server_test 包——startTrackedServerWith/captureStderr
 // 同步纪律要求，05-04 resize 两测试分文件先例：Go 单文件单 package 约束）。
+//
+// 14-06 判定登记（蓝本 PITFALLS :383 proxy* 行的白盒半侧）：三测为
+// sanitizeRemoteUser/proxyInfo 纯函数直测（零 server 装配可参数化——下方
+// startTrackedServerWith 串为注释提及非调用），保持单跑；e2e 黑盒半侧
+// （proxy_e2e_test.go 四测）本 plan 双跑承载。SUMMARY 收口核对清单 ④ 桶登记。
 
 // TestSanitizeRemoteUser（D-19）：逐 rune 剥离 ch<=0x1f、ch==0x7f、
 // 0x80<=ch<=0x9f；截断 128 rune；多字节 rune 不碎；控制字符不占截断预算；
