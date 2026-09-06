@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-09-06T14:40:33.264Z"
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-09-06T15:28:55.931Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 29
+  completed_plans: 30
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 5 of 12
+Plan: 6 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [████████░░] 78%
+Progress: [████████░░] 81%
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ Progress: [████████░░] 78%
 | Phase 14 P07 | 40min | 2 tasks | 1 files |
 | Phase 14 P08 | 23min | 2 tasks | 1 files |
 | Phase 14 P02 | 28min | 2 tasks | 2 files |
+| Phase 14 P03 | 25min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -168,6 +169,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-08] phase14.mjs 两轮 18/18（S1 driving 三通道：area 翻转链四步 + 流层 254B/55B<<97049B + wesh 层双 pid/双 Welcome/流几何 120vs40；S2 ro 汇聚：ticket 全链 + pane read 门控实证 + rw 对照）；PC-13 勾选留 14-09（pw 观感层承载，共享 ID 先例）
 - [Phase ?]: [Phase 14-08] maxCursorCol 流层几何特征通道：CUP/HVP/CHA 三形态正则扫描取列坐标最大值（spike 只标定 CUP，实现扩展）——移动端几何只能寻址 ≤cols 列的关系断言材料，禁绝对常量
 - [Phase ?]: [Phase 14-02] e2e/multi 双模式分叉表落地：断开/重连（CORE-05 反转面经 newSessTestServer spawned 访问器取 pid 锚点，argv 零漂移）、fanout 双标记串交叉断言、owner 四测 D-03 四段式未装配列（零 t.Skip）、MaxClients spawn-intent 经 wesh_pty_spawn_total 程序序对照——50 个 mode= 子测试 -race 逐名绿，shared 87 条期望文案逐字零漂移
+- [Phase ?]: [Phase 14-03] 三文件归一映射落定：TestShutdown1001 per-client 列=TwoGroups 归位（N=2 组，plan action 3 明示 shared 保持单组语义）、StopTimeout 列=JoinBounded 归位（stop-timeout KILL 兜底唯一同需求映射）；ResidualGroup/DeadlineExits 判 per-client-only 保持原样（pcSessions 残留/D-state 收口无 shared 对照面）；emptyexit/metrics 混入测全归位吸收
+- [Phase ?]: [Phase 14-03] TestExitWhenEmptyPromoteKickOnce per-client 列 D-03 四段式 + 尾部 Shutdown 收口（1min 悬挂宽限计时器在 per-client 无 lifecycle-exiting 免疫——不收口即 +1min 迟触发 exit_when_empty 事件污染后继捕获窗；Pattern 7 供后续长 grace per-client 测试沿用）
+- [Phase ?]: [Phase 14-03] series 镜像口径以 metrics.go 现状核定：双模式同持 21 series（shared 四 spawn 计数器恒 0 不摘），plan 文本「17 shared/21 per-client」与 13-05 落地不符——WINDOWS #42 登记（14-12 diff 白名单审查知悉）；TestMetricsValues 放大比分叉 shared ×2 / per-client 1:1（R-08）
 
 ### Pending Todos
 
@@ -189,6 +193,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T14:40:33.241Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-09-06T15:28:55.910Z
+Stopped at: Completed 14-03-PLAN.md
 Resume file: None
