@@ -5,11 +5,11 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: "Phase 13 shipped — PR #17"
-stopped_at: Phase 13 complete — UAT 11/11 全过（13-UAT.md），ready to plan Phase 14
-last_updated: "2026-09-06T03:43:45.008Z"
+stopped_at: Phase 14 context gathered
+last_updated: "2026-09-06T07:05:15.877Z"
 last_activity: 2026-09-06
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 4
   total_plans: 25
   completed_plans: 25
@@ -173,6 +173,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T02:35:00Z
-Stopped at: Phase 13 complete — UAT 11/11 全过（13-UAT.md aaa6126），ready to plan Phase 14
-Resume file: None
+Last session: 2026-09-06T07:05:15.859Z
+Stopped at: Phase 14 context gathered
+Resume file: .planning/phases/14-herdr-uat/14-CONTEXT.md
