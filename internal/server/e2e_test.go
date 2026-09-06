@@ -33,7 +33,7 @@ import (
 // 断开/重连两族真值两模式相反，是三维归类中语义最重的分叉本体）。装配经
 // newSessTestServer 小族 sess 形态（per-client 列 pid 观测面：spawned 追踪
 // 访问器直取 Cmd.Process.Pid 作进程组锚点——argv 两列同持 /bin/cat 零漂移；
-// shared 分支 startResizeServer 装配序列与原自装配同构）。
+// shared 分支装配序列（pty.Start+server.New，14-04 收编内联）与原自装配同构）。
 // 断言分叉表（mode → expected 显式表——PITFALLS :264 认可形态，shared 值字面在场）：
 //
 //	echo 双列同值：INPUT→OUTPUT 逐字节（行规程 ECHO 两模式同链）。

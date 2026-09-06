@@ -19,9 +19,8 @@ package server_test
 //	  emptyexit_test.go:322；不需要同步边的调用点忽略 waitHandlers 即可，
 //	  wg 惰性无害）。
 //	newSessTestServer 三值形（+sessions 访问器）—— PTY 读回面
-//	  （resize_arb_test.go:111,144,190,248 消费 ptySize/pollSize；统一
-//	  「给我会话集读 winsize」访问器；本 plan 期零消费方——编译期在场，
-//	  首个消费方 = 14-04 resize_arb 四子测试）。
+//	  （14-02 e2e 断开/重连 pid 锚点 + 14-04 resize_arb 四子测试消费
+//	  ptySize/pollSize/直取 pid；统一「给我会话集读 winsize」访问器）。
 //
 // 收编论证（D-01）：两族的不对称点 = shared 启动期 spawn（server.New 前直传
 // sess）vs per-client attach 期 spawn（server.New(nil)+SpawnFunc）——小族两
@@ -32,6 +31,8 @@ package server_test
 // 一律 t.Fatalf（fail-fast，绝不禁默落到任一分支）。
 
 import (
+	"net"
+	"net/http"
 	"testing"
 
 	"github.com/sworda/wesh/internal/pty"
@@ -120,10 +121,13 @@ func newHandleTestServer(t *testing.T, mode string, argv []string, mutate func(*
 }
 
 // newSessTestServer 三值形（+sessions 访问器）：PTY 读回面（ptySize/pollSize
-// 消费）的双模式统一访问器形态。shared = startResizeServer 直传 + 单例访问器
-// 包装（func() []*pty.Session { return []*pty.Session{sess} }）；per-client =
+// 消费）的双模式统一访问器形态。shared = 原 resize_arb_test.go 本地装配
+// helper 收编内联（14-04 D-01 散点消除——该 helper 原为 resize_arb 四子测试
+// 专用面，收编后函数删除、装配序列逐字保留于此）+ 单例访问器包装
+// （func() []*pty.Session { return []*pty.Session{sess} }）；per-client =
 // startPerClientServerWithSpawn 直传取 spawnedSessions（mu 保护拷贝返回）。
-// 本 plan 期零消费方（首个消费方 = 14-04 resize_arb 四子测试），编译期在场。
+// 运行期消费方 = 14-02 e2e 断开/重连 pid 锚点 + 14-04 resize_arb 四子测试
+// （shared 列 Getsize 读回 + per-client 列逐会话观测）。
 func newSessTestServer(t *testing.T, mode string, argv []string, mutate func(*server.Options)) (exitCh chan int, wsURL string, sessions func() []*pty.Session) {
 	t.Helper()
 	switch mode {
@@ -132,8 +136,23 @@ func newSessTestServer(t *testing.T, mode string, argv []string, mutate func(*se
 		if mutate != nil {
 			mutate(&opts)
 		}
-		exitCh, wsURL, sess := startResizeServer(t, argv, opts)
-		return exitCh, wsURL, func() []*pty.Session { return []*pty.Session{sess} }
+		// 收编内联体（原 resize_arb_test.go 本地 helper 逐字形态——14-04 删除
+		// 后本分支为唯一持有面）：零值等价形态（07-04 选项化适配：Uid/Gid -1 =
+		// 不降权，Dir/Term 空 = 现状）。
+		sess, err := pty.Start(argv, pty.StartOptions{Uid: -1, Gid: -1})
+		if err != nil {
+			t.Fatalf("pty.Start: %v", err)
+		}
+		exitCh = make(chan int, 1)
+		srv := server.New(sess, func(code int) { exitCh <- code }, opts)
+
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("net.Listen: %v", err)
+		}
+		t.Cleanup(func() { killServer(ln, sess) })
+		go http.Serve(ln, srv.Handler())
+		return exitCh, "ws://" + ln.Addr().String() + "/ws", func() []*pty.Session { return []*pty.Session{sess} }
 	case server.SessionModePerClient:
 		exitCh, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, defaultPCSpawnFn(argv), mutate)
 		return exitCh, wsURL, spawnedSessions
