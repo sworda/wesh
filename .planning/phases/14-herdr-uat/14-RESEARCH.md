@@ -157,23 +157,43 @@ const (
 
 t.Run 子测试名建议逐字用 D-01 形态：`t.Run("mode=shared", ...)` / `t.Run("mode=per-client", ...)`。
 
-**改造面实测盘点** [VERIFIED: 本会话 grep+wc 逐文件盘点]：server 包 32 个 _test.go / 153 个 Test 函数；全仓 42 个测试文件 / ~202 测试函数（cmd/wesh 22 + pty 21 + proto 6 + server 153）。`perclient_test.go`（36 测）为 Phase 11-13 per-client 新测归宿主文件，天然 per-client-only；两族装配函数调用分布（谁需要收编）：
+**改造面实测盘点** [VERIFIED: 修订期（checker 反馈后）grep+wc 逐文件重测——初版计数系统性误标，本表为准]：server 包 **33 个 _test.go / 155 个 Test 函数**（含 export_test.go 纯 helper 零测试）；全仓 **43 个测试文件 / 204 测试函数**（cmd/wesh 3 文件 22 + pty 5 文件 21 + proto 2 文件 6 + server 155）。`perclient_test.go`（36 测）为 Phase 11-13 per-client 新测归宿主文件，天然 per-client-only。
 
-| 文件 | tracked 族调用 | perclient 族调用 | 测试数 | 蓝本归属（PITFALLS :378-399） |
+**关键结构事实（初版未登记）**：① server 测试面存在**包墙**——12 个文件为 `package server` 白盒（clients/resize/sharetoken/auth/origin/throttle/tickets/exitmsg/options/proxy/tls/export），harness 小族（package server_test）对白盒文件结构性不可达；② 装配 helper 非「tracked 一族」而是四族+六种本地变体——普通二值族 startTestServerWith/startTestServer（e2e_test.go:140/:159）为主力，tracked 族（startTrackedServerWith :171 / startTrackedServerHandle :199）服务 stderr 捕获同步边，per-client 族（startPerClientServerWithSpawn :60 / startPerClientServer :114），本地变体六种（startShutdownServerWith shutdown_test.go:45 / startResizeServer resize_arb_test.go:37 / startEventsServerWith+startEventsShutdownServerWith events_test.go:81/:108 / startRawCatServer limits_test.go:45 / startShareServer sharetoken_test.go:35（白盒）/ startBasePathServer basepath_test.go:34）；③ per-client 族**无 handler 追踪变体**——stderr 捕获类测双跑需新增 tracked 姊妹形态（14-01 落地 startPerClientServerTrackedWithSpawn）。
+
+逐文件装配调用分布（修订期实测，调用点行号在册）：
+
+| 文件 | 包 | 测试数 | 装配调用实况 | 蓝本归属（PITFALLS :378-399）与处置 |
 |------|------|------|------|------|
-| e2e_test.go | 13 | 0 | 8 | 双模式断言分叉 |
-| multi_test.go | 18 | 0 | 11 | 双模式断言分叉 |
-| exit_test.go | 3 | 0 | 2 | 双模式断言分叉 |
-| emptyexit_test.go | 7 | 3 | 9 | 双模式断言分叉（Phase 13 已混入 per-client 测） |
-| shutdown_test.go | 4 | 5 | 6 | 双模式断言分叉（同已混入） |
-| metrics_test.go | 15 | 1 | 6 | 双模式断言分叉（同已混入） |
-| slowclient_test.go | 2 | 0 | 2 | 双模式断言分叉 |
-| health_test.go | 6 | 0 | 2 | 双模式断言分叉 |
-| resize_test.go | 0 | 0 | 3 | 双模式断言分叉（无装配族调用——自含装配，收编时个别看） |
-| resize_arb_test.go | 2 | 0 | 1 | **shared-only（D-03 显式断言未装配形态）** |
-| clients_test.go | 0 | 0 | 3 | shared-only 大部（owner 递补） |
-| stopseq_test.go | 3 | 0 | 2 | 双模式断言分叉 |
-| handshake/limits/keepalive/auth*/origin/throttle/tickets/sharetoken/tls/proxy*/basepath/customindex/log/exitmsg/events/options | — | — | — | mode-agnostic 同断言（蓝本表行） |
+| e2e_test.go | server_test | 8 | 7 普通（4 startTestServerWith + 3 startTestServer 兼容包装）；两 tracked 母本定义在同文件零调用点 | 双模式断言分叉（14-02） |
+| multi_test.go | server_test | 11 | 15 普通 + 1 tracked（:756 stderr 同步边） | 双模式断言分叉 + **owner 四测（:301/:373/:428/:497）D-03 列**（14-02；蓝本「owner 递补（clients_test 大部）」误记修正） |
+| exit_test.go | server_test | 2 | 2 普通（:67/:116） | 双模式断言分叉（14-01 tracer） |
+| stopseq_test.go | server_test | 2 | 2 普通（:79/:108） | 双模式断言分叉（14-01） |
+| health_test.go | server_test | 2 | 6 普通 + 1 本地 srv 变体（:251 startShutdownServerWith） | 双模式断言分叉（14-01；srv 面→newHandleTestServer） |
+| slowclient_test.go | server_test | 2 | 2 普通（:162/:253） | 双模式断言分叉（TestSlowConsumerKick）+ TestGlobalCredit 按蓝本 shared-only 行走 D-03 列（14-01） |
+| limits_test.go | server_test | 5 | 3 普通 + 1 tracked（:132 TestOversize1009 stderr 同步边）+ 1 本地 pre-listen stty 变体（:198 startRawCatServer） | mode-agnostic 同断言（14-01 迁入）；**TestReadLimitBoundary 结构性 shared-only 保持单跑**（pre-listen stty 与 per-client attach 期 spawn 不等价——D-02 偏差登记） |
+| emptyexit_test.go | server_test | 9 | 5 普通（:42/:69/:134/:180/:211）+ 1 tracked（:250）+ 1 trackedHandle（:322）+ 2 per-client（:415/:455 Phase 13 混入） | 双模式断言分叉·归一（14-03） |
+| shutdown_test.go | server_test | 6 | 2 本地 srv 变体（:107/:137 startShutdownServerWith）+ 4 per-client WithSpawn（:205/:265/:330/:387 混入） | 双模式断言分叉·归一（14-03；收编后删除本地 helper） |
+| metrics_test.go | server_test | 6 | 15 普通 + 1 per-client WithSpawn（:593 混入） | 双模式断言分叉·归一（14-03） |
+| handshake_test.go | server_test | 7 | 7 普通（4 + 3 兼容包装） | mode-agnostic 同断言（14-05） |
+| keepalive_test.go | server_test | 3 | 3 普通 | mode-agnostic 同断言（14-05） |
+| auth_e2e_test.go | server_test | 9 | 8 普通 + 1 tracked（:403 TestLogRedaction stderr 同步边） | mode-agnostic 同断言（14-05；:403→newTrackedTestServer） |
+| auth_test.go / origin_test.go / throttle_test.go / tickets_test.go | server（白盒） | 2/2/1/1 | 零装配纯函数 | 纯函数单跑判定登记（14-05） |
+| exitmsg_test.go / options_test.go | server（白盒） | 3/1 | 零装配纯函数 | 纯函数单跑（14-06 收口核对登记） |
+| proxy_test.go | server（白盒） | 3 | 零装配纯函数（:16 的 helper 串为注释提及非调用） | 纯函数单跑登记（14-06；蓝本 proxy* 行的白盒半侧） |
+| tls_test.go | server（白盒） | 2 | httptest/中间件直测，零 wesh server 装配 | 纯函数形态单跑登记（14-06；蓝本 tls 行偏差） |
+| sharetoken_test.go | server（白盒） | 1（4 子测试） | 4 本地白盒装配（:207/:276/:310/:356 startShareServer） | mode-agnostic 同断言——**包墙内白盒镜像双跑**（startShareServer 加 mode 参数，14-06） |
+| proxy_e2e_test.go | server_test | 4 | 5 tracked：:46/:218/:281 用 waitHandlers，:127/:179 丢弃 | mode-agnostic 同断言（14-06；按用途分流 tracked/普通形态） |
+| basepath_test.go | server_test | 3 | 2 普通 + 2 本地 bp 变体（:61/:190 startBasePathServer） | mode-agnostic 同断言（14-06；helper 加 mode 参数） |
+| customindex_test.go | server_test | 1 | 8 普通 + 1 本地 bp 变体（:214） | mode-agnostic 同断言（14-06） |
+| resize_arb_test.go | server_test | 1（4 子测试） | 4 本地 sess 变体（:111/:144/:190/:248 startResizeServer） | shared-only → D-03 显式断言未装配（14-04；→newSessTestServer，收编后删除本地 helper）；**蓝本 resize 行「单端 last-wins」wire 面的实测归属即本文件** |
+| resize_test.go | server（白盒） | 3 | 零装配——arbitrate() 纯函数直测 | 纯函数单跑登记（14-04；蓝本 resize 行归属偏差） |
+| clients_test.go | server（白盒） | 3 | 零装配——registry/writer 白盒直构造 | 纯函数单跑登记（14-04；蓝本「owner 递补（clients_test 大部）」误记——owner 四测实在 multi_test.go） |
+| events_test.go | server_test | 9 | 6 tracked + 6 本地事件变体（:81/:108 族）+ 4 per-client 族 | **保持单跑（D-02 偏差登记，14-06）**：per-client 事件 schema 面已由 Phase 13 同文件三测（TestPerClientSessionEnd/TestPerClientSessionStart/TestSpawnEventsSchema）承载——蓝本「扩展后锁定」的落地产物 |
+| log_test.go | server_test | 1 | 1 tracked（:69） | 保持单跑（D-02 偏差登记，14-06） |
+| perclient_test.go | server_test | 36 | per-client 族母本宿主（15 startPerClientServer + 21 startPerClientServerWithSpawn） | per-client-only 保持单模式（蓝本「新增 per-client-only」行） |
+| load_test.go | server_test（//go:build load） | 6 | 4 tracked（弃 waitHandlers）+ 1 per-client + churn 格 | load 面（14-07 扩展；双模式各至少一轮 = shared 格既有 + churn/pc 格，非同测双跑） |
+| export_test.go | server（白盒） | 0 | 纯 helper 导出桩 | 零测试桶（14-06 收口核对登记） |
 
 **CI 时长预算** [VERIFIED: 13-08-SUMMARY :29 登记值]：现全量 `-race` 5 包 1m37.2s；t.Run 双跑后多数测试体 ×2，**估算 3-4 min/leg**（darwin leg 更慢）[ASSUMED: 线性外推估算]。CI 结构零改动（ci.yml:17 单 step 保留 -v [VERIFIED: 本会话 Read ci.yml]）。
 
@@ -269,7 +289,7 @@ for _, c := range conns {
 
 ### Pattern 5: run-all.mjs 一键矩阵（D-04）
 
-**枚举源（13-08 收口闸实测基线 [VERIFIED: 13-08-SUMMARY :172-193 表，本会话 Read]）**——协议 11 + jsdom 4 + per-client 增量：
+**枚举源（13-08 收口闸实测基线 [VERIFIED: 13-08-SUMMARY :172-193 表，本会话 Read]）**——协议 12 + jsdom 4 = 16 项既有（13-08 登记的「15 脚本」为 phase13 加入前快照；下表含 phase13 即现行既基数）：
 
 | 脚本 | 基线 | 脚本 | 基线 |
 |------|------|------|------|
@@ -284,7 +304,7 @@ for _, c := range conns {
 
 - 每脚本 exit code 0/1 门禁语义逐脚本既有（phase13.mjs 尾：`process.exit(failedN === 0 && failed === 0 ? 0 : 1)` [VERIFIED: 本会话 Read]）——runner 只需串行 spawn + 聚合 exit code + 汇总表
 - 前置：`go build -o /tmp/wesh-uat/wesh ./cmd/wesh`（脚本默认二进制路径约定，phase13.mjs 头注释形态）
-- 辅助脚本（phase04-t1-width/phase07-b*/phase08-journal 等）不在收口矩阵——13-08 十五脚本口径即「零遗漏」的定义基准，runner 枚举以它为准
+- 辅助脚本（phase04-t1-width/phase07-b*/phase08-journal 等）不在收口矩阵——16 项既有脚本（+ phase14.mjs = 17 项矩阵）即「零遗漏」的定义基准，runner 枚举以它为准
 - 全矩阵时长量级 ~3.5min（13-08 十七轮实测 [VERIFIED: 13-08-SUMMARY :40 注记]）+ phase14.mjs 增量（herdr 场景含真实等待，预估 1-2min）[ASSUMED: 外推]
 
 ### System Architecture Diagram（phase14 验证拓扑）
@@ -294,7 +314,7 @@ flowchart LR
     subgraph Linux 开发机（headless）
         GO[go test -race ./...<br/>三维归类 t.Run 双跑<br/>CI 门（ubuntu+macOS leg）]
         LOAD[load_test.go //go:build load<br/>pc_flood N×洪水格 + pc_resident 驻留格<br/>手动跑]
-        RUNNER[run-all.mjs<br/>15 既有脚本 + phase14.mjs 一键矩阵]
+        RUNNER[run-all.mjs<br/>16 既有脚本 + phase14.mjs = 17 项一键矩阵]
         P14[phase14.mjs<br/>Node 原生 WS 双客户端]
         WESH[wesh --session-mode=per-client<br/>真实二进制 spawn]
         HAPI[herdr api snapshot / pane read<br/>HERDR_SOCKET_PATH 定向]
@@ -330,7 +350,7 @@ flowchart LR
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
 | herdr 断言的输出嗅探 | 自写 ANSI 渲染格式解析断言 herdr 面板状态 | `herdr api snapshot` layouts + `herdr pane read` | herdr 版本漂移改渲染格式即碎（D-06 否决输出嗅探的既定裁决；spike 实证 API 通道够用） |
-| UAT 结果聚合框架 | 引入 jest/mocha/tap 等跑 UAT | 逐脚本 exit code + runner 串行聚合 | 15 既有脚本全部自带 check()/exit code 门禁（docs/TESTING.md「无测试框架」既定形态） |
+| UAT 结果聚合框架 | 引入 jest/mocha/tap 等跑 UAT | 逐脚本 exit code + runner 串行聚合 | 16 既有脚本全部自带 check()/exit code 门禁（docs/TESTING.md「无测试框架」既定形态） |
 | 双模式执行的 env 重跑机械 | CI 加第二 step 或进程级 env 开关 | t.Run 子测试双跑（D-01） | env 全量重跑 CI 时长 ×2 且 mode-mapped 分叉仍逃不掉（D-01 否决记录） |
 | 子进程内存观测 | 引入 gopsutil 类依赖读 VmRSS | readProcState 读 /proc/<pid>/status（load_test.go:567 既有先例） | 零新依赖红线；churn 格 countFds 同文件先例 |
 | herdr 会话清理 | kill 进程树/pkill 模式匹配 | `herdr session stop <name>` | pgrep 误伤面（wesh argv 自匹配陷阱，§Pitfall 3）；session stop 是官方语义通道且 spike 实证可靠 |
@@ -398,19 +418,22 @@ flowchart LR
 
 ## Code Examples
 
-### newTestServer 收编骨架（建议形态，归 harness_test.go 或 export_test.go——Discretion 面）
+### newTestServer 小族收编骨架（修订后形态，归 harness_test.go——package server_test，export_test.go 为 package server 白盒导出桩不可达）
+
+> 修订期实证：单一二值签名无法承载在册特殊调用点（waitHandlers 同步边 = limits:132/auth_e2e:403/proxy_e2e:46,218,281/multi:756/emptyexit:250；waitHandlers+srv = emptyexit:322；srv 直调 = health:251/shutdown:107,137；sess 读回 = resize_arb:111,144,190,248），扩展为四形态小族 + per-client 族补 tracked 姊妹变体。
 
 ```go
-// 依据：两族母本签名 [VERIFIED: e2e_test.go:171 / perclient_test.go:60,114 本会话 Read]
+// 依据：两族母本签名 [VERIFIED: e2e_test.go:140/:171/:199 / perclient_test.go:60,114 本会话 Read]
 // 模式常量 [VERIFIED: clients.go:110-114]: server.SessionModeShared="shared" / SessionModePerClient="per-client"
+
+// ① 普通二值形——绝大多数调用点
 func newTestServer(t *testing.T, mode string, argv []string, mutate func(*server.Options)) (exitCh chan int, wsURL string) {
     t.Helper()
     switch mode {
     case server.SessionModeShared:
         opts := server.Options{Writable: true}
         if mutate != nil { mutate(&opts) }
-        exitCh, wsURL, _ = startTrackedServerWith(t, argv, opts) // waitHandlers 丢弃=薄包装零改动
-        return exitCh, wsURL
+        return startTestServerWith(t, argv, opts) // 普通族母本直传（零 waitHandlers 面）
     case server.SessionModePerClient:
         return startPerClientServer(t, argv, mutate) // 直传——Cleanup 追踪纪律保留
     default:
@@ -418,6 +441,21 @@ func newTestServer(t *testing.T, mode string, argv []string, mutate func(*server
         return nil, ""
     }
 }
+
+// ② tracked 三值形——stderr 捕获类测（restore() 前需 waitHandlers 同步边）
+func newTrackedTestServer(t *testing.T, mode string, argv []string, mutate func(*server.Options)) (exitCh chan int, wsURL string, waitHandlers func())
+// shared → startTrackedServerWith 直传；per-client → startPerClientServerTrackedWithSpawn
+// （14-01 新增姊妹变体，wg 包裹 handler 镜像 startTrackedServerWith :186-193）弃 srv/spawnedSessions
+
+// ③ handle 四值形——Shutdown 直调面与白盒 srv 面
+func newHandleTestServer(t *testing.T, mode string, argv []string, mutate func(*server.Options)) (exitCh chan int, wsURL string, waitHandlers func(), srv *server.Server)
+// shared → startTrackedServerHandle 直传；per-client → 姊妹变体弃 spawnedSessions
+// （不需要同步边的调用点忽略 waitHandlers——wg 惰性无害）
+
+// ④ sess 三值形——PTY 读回面
+func newSessTestServer(t *testing.T, mode string, argv []string, mutate func(*server.Options)) (exitCh chan int, wsURL string, sessions func() []*pty.Session)
+// shared → startResizeServer 直传 + 单例访问器包装；per-client → startPerClientServerWithSpawn
+// 取 spawnedSessions——统一「给我会话集读 winsize」访问器
 ```
 
 ### mode-mapped 断言分叉表形态（D-01/D-02）
@@ -516,19 +554,19 @@ ws.binaryType = 'arraybuffer'; // 必须——默认 'blob' 使 new Uint8Array(e
 | A6 | phase14.mjs 增量时长 1-2min（herder server 惰性启动 + 真实等待） | Pattern 5 | 低——只影响矩阵总时长预期 |
 | A7 | 既有 phaseNN.mjs 的 WS 读帧形态（for await vs onmessage）未逐行核读 | Pitfall 4 | 低——phase14.mjs 新写代码按 binaryType 纪律写即可；改造既有脚本不在本 phase 范围 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **herdr 版本漂移的断言行韧性边界**
+1. **herdr 版本漂移的断言行韧性边界** — RESOLVED: 关系断言（Pitfall 2）吸收 chrome 尺寸漂移 + phase14.mjs 启动打 `herdr --version` 进日志（诊断材料非断言）+ 失败先核版本纪律（D-09）——由 14-08 must_haves truth⑦ 消费落地（消费面在场，终验归 14-12 收口闸）
    - What we know: 断言基于 0.8.100 protocol 19 实测形态；D-09 已定「失败先核 `herdr --version`」处置纪律；本机 herdr 是源码构建 symlink（用户 rebuild 即漂移）
    - What's unclear: layouts[].area 字段名/紧凑布局阈值在哪个版本区间稳定（无多版本对照实测面）
    - Recommendation: 关系断言（Pitfall 2）天然吸收 chrome 尺寸漂移；UAT 文档写明版本钉定纪律（D-09 既定）；phase14.mjs 启动时先打 `herdr --version` 进日志（非断言，诊断材料）
 
-2. **perclient_test.go 36 测在三维归类中的归属处置**
+2. **perclient_test.go 36 测在三维归类中的归属处置** — RESOLVED: 默认不动裁决落地——per-client-only 测保持单模式（它们本身就是 per-client 断言本体，蓝本「新增 per-client-only」行未要求双跑），保持不动的事实登记进 SUMMARY 偏差段——由 14-03 must_haves truth⑤ 消费落地
    - What we know: 该文件全部测试天然 per-client-only（蓝本表「新增 per-client-only」行的落地产物）；D-03 只定义了 shared-only 测试的 per-client 分支形态（显式断言未装配）
    - What's unclear: 对称方向（per-client-only 测试是否要加 shared 分支断言「该面不存在」，如 spawn 失败 1011 在 shared 结构性不存在）CONTEXT 未显式定义
    - Recommendation: 默认不动（per-client-only 测试保持单模式——它们本身就是 per-client 的断言本体，蓝本「新增 per-client-only」行未要求双跑）；若 planner 判断需对称防线，按 D-03 同构形态在 shared 分支断言「不装配/不存在」（如 shared 下 spawn 失败=启动期暴露），**属 Discretion 面，落成时登记偏差**
 
-3. **run-all.mjs 是否纳入 phase14-pw.mjs**
+3. **run-all.mjs 是否纳入 phase14-pw.mjs** — RESOLVED: 不纳入——runner 汇总表注明 pw 层独立执行入口（`node web/uat/pw/phase14-pw.mjs`），收口闸人工两段式（Linux runner 全绿 + Windows pw 全绿）——由 14-10 must_haves truth④ 消费落地
    - What we know: pw 层永远 Windows 侧（D-04 双机拓扑硬约束），run-all 跑在 Linux
    - Recommendation: 不纳入——runner 汇总表注明 pw 层独立执行入口（`node web/uat/pw/phase14-pw.mjs`），收口闸人工两段式（Linux runner 全绿 + Windows pw 全绿）
 
@@ -581,7 +619,7 @@ ws.binaryType = 'arraybuffer'; // 必须——默认 'blob' 使 new Uint8Array(e
 - [ ] `web/uat/pw/phase14-pw.mjs` — Windows Playwright 双 tab 观感（PC-13 浏览器面）
 - [ ] `web/uat/run-all.mjs` — 一键矩阵 runner（D-04）
 - [ ] load_test.go per-client 双剖面格（TestLoadPerClientFloodMatrix / 驻留格——名称 Discretion）
-- [ ] `newTestServer` harness（harness_test.go 或 export_test.go——Discretion 面）+ 三维归类逐文件改造（最大工作量面，~40 文件，建议按归属类别分 wave：mode-agnostic → mode-mapped → mode-exclusive）
+- [ ] `newTestServer` 小族 harness（harness_test.go——package server_test；export_test.go 为 package server 白盒导出桩不可达）+ per-client tracked 姊妹变体（perclient_test.go）+ 三维归类逐文件改造（最大工作量面：server 包 33 测试文件全量归类——server_test 装配面经小族双跑 + 白盒/纯函数/事件面单跑判定登记，按归属类别分 wave：mode-agnostic → mode-mapped → mode-exclusive）
 - [ ] 框架安装：无（零新依赖）
 
 ## Security Domain

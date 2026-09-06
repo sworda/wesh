@@ -585,7 +585,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] 14-05-PLAN.md — mode-agnostic 协议守卫+认证批：handshake/limits/keepalive + auth*/origin/throttle/tickets 八文件同断言双跑（PC-13）
 - [ ] 14-06-PLAN.md — mode-agnostic 部署面批：sharetoken/tls/customindex/proxy*/basepath 六文件双跑 + 三维归类 32 文件收口核对（PC-13）
 - [ ] 14-09-PLAN.md — phase14-pw.mjs：Windows Playwright 双 tab 观感断言（边框列逐字不变）+ 人工执行确认门（D-07，PC-13）
-- [ ] 14-10-PLAN.md — run-all.mjs 一键矩阵 runner（D-04：15 既有脚本 + phase14.mjs 串行聚合 + 基线计数核对，PC-13）
+- [ ] 14-10-PLAN.md — run-all.mjs 一键矩阵 runner（D-04：16 既有脚本 + phase14.mjs 共 17 项串行聚合 + 基线计数核对，PC-13）
 - [ ] 14-11-PLAN.md — PC-12 文档三件套：README「会话模式」节 + 标定表回填 + ARCHITECTURE 双模式段与 GoTTY 误记修正 + CONFIGURATION max-clients 行（D-14/D-11）
 
 **Wave 3** *(blocked on Wave 2 completion)*
