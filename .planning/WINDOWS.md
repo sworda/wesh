@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 39
+open_count: 40
 waived_count: 0
 fixed_count: 3
-total_count: 42
-last_updated: 2026-09-06T15:26:29.105Z
+total_count: 43
+last_updated: 2026-09-06T15:51:10.809Z
 ---
 
 # Broken Windows Ledger
@@ -57,6 +57,7 @@ last_updated: 2026-09-06T15:26:29.105Z
 | 40 | 13 | deviation | cmd/wesh/main_test.go |  | 13-08 段① Rule 3：GOROOT gofmt 三处 deferred 存量归一（main_test.go:950 + perclient_test.go:1547 CJK 标点补空格 + :2018 双空行——must_haves 零输出要求 vs 13-02/13-03「范围外不修」辖域冲突，白名单内纯注释/空行修正，style 5310723，deferred-items 处置列回写） | open |  | 2026-09-05T19:51:33.948Z |  |
 | 41 | 13 | deviation | README.md |  | 13-08 Task 2 Rule 1：README:96/CONFIGURATION:57/:154「per-client 行为装配中，当前版本与 shared 等价」Phase 10 时代失实残留最小修正（Phase 11-13 行为已全部落地，与同段 stop-timeout per-client 语义自相矛盾——文档即被测物纪律；PC-12 完整模型段仍归 Phase 14） | open |  | 2026-09-05T19:51:34.103Z |  |
 | 42 | 14 | deviation | internal/server/metrics_test.go |  | 14-03 plan behavior「series 镜像 17 shared / 21 per-client」与 13-05 落地现状不符（metrics.go 双模式同持 21 series，shared 四 spawn 计数器恒 0 不摘——credit_gate 恒 0 先例）：按 plan action 2 以 metrics.go 现状核定两列期望值（assertExpositionShape 双模式同断言），口径偏差登记供 14-12 收口闸 diff 白名单审查知悉 | open |  | 2026-09-06T15:26:29.105Z |  |
+| 43 | 14 | deviation | internal/server/harness_test.go |  | 14-04 Rule 3 files_modified 枚举缺口：startResizeServer 删除验收闸（全仓零引用）要求 harness_test.go shared 分支内联 + e2e_test.go:36 注释同步——两文件不在 plan files_modified 清单（13-06 WINDOWS #36 同形态） | open |  | 2026-09-06T15:51:10.809Z |  |
 
 ````json
 [
@@ -562,6 +563,18 @@ last_updated: 2026-09-06T15:26:29.105Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T15:26:29.105Z",
+    "resolved_at": null
+  },
+  {
+    "id": 43,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "internal/server/harness_test.go",
+    "line": null,
+    "description": "14-04 Rule 3 files_modified 枚举缺口：startResizeServer 删除验收闸（全仓零引用）要求 harness_test.go shared 分支内联 + e2e_test.go:36 注释同步——两文件不在 plan files_modified 清单（13-06 WINDOWS #36 同形态）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T15:51:10.809Z",
     "resolved_at": null
   }
 ]

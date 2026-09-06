@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-03-PLAN.md
-last_updated: "2026-09-06T15:28:55.931Z"
+stopped_at: Completed 14-04-PLAN.md
+last_updated: "2026-09-06T15:51:40.217Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 30
+  completed_plans: 31
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 6 of 12
+Plan: 7 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [████████░░] 81%
+Progress: [████████░░] 84%
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ Progress: [████████░░] 81%
 | Phase 14 P08 | 23min | 2 tasks | 1 files |
 | Phase 14 P02 | 28min | 2 tasks | 2 files |
 | Phase 14 P03 | 25min | 3 tasks | 3 files |
+| Phase 14 P04 | 27min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -172,6 +173,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-03] 三文件归一映射落定：TestShutdown1001 per-client 列=TwoGroups 归位（N=2 组，plan action 3 明示 shared 保持单组语义）、StopTimeout 列=JoinBounded 归位（stop-timeout KILL 兜底唯一同需求映射）；ResidualGroup/DeadlineExits 判 per-client-only 保持原样（pcSessions 残留/D-state 收口无 shared 对照面）；emptyexit/metrics 混入测全归位吸收
 - [Phase ?]: [Phase 14-03] TestExitWhenEmptyPromoteKickOnce per-client 列 D-03 四段式 + 尾部 Shutdown 收口（1min 悬挂宽限计时器在 per-client 无 lifecycle-exiting 免疫——不收口即 +1min 迟触发 exit_when_empty 事件污染后继捕获窗；Pattern 7 供后续长 grace per-client 测试沿用）
 - [Phase ?]: [Phase 14-03] series 镜像口径以 metrics.go 现状核定：双模式同持 21 series（shared 四 spawn 计数器恒 0 不摘），plan 文本「17 shared/21 per-client」与 13-05 落地不符——WINDOWS #42 登记（14-12 diff 白名单审查知悉）；TestMetricsValues 放大比分叉 shared ×2 / per-client 1:1（R-08）
+- [Phase ?]: [Phase 14-04] resize_arb per-client 列三重可证伪面：双端各自 RESIZE（A→110x40/B→70x25）+ B 落定后 A 保持 110x40 负向余量断言（互不压缩为 Isolation 测外独有面）+ 双泵静默窗零 'W' 帧——比 TestGlobalCredit 单面形态更完整的三观测面（Pattern 8）
+- [Phase ?]: [Phase 14-04] startResizeServer 收编内联终态：装配体逐字内联至 newSessTestServer shared 分支（helper 名消失满足全仓零引用字面闸；e2e_test.go:36 注释同步）——14-02 startShutdownServerWith 后第二例专用 helper 收编闭环；Rule 3 枚举缺口（harness/e2e 不在 files_modified）WINDOWS 登记
+- [Phase ?]: [Phase 14-04] 蓝本三则归属偏差登记 CONTEXT 落地（D-02 偏差登记小节——14-06 续登 events/log 的既定通道）：owner 四测实在 multi_test.go:541/647/746/850（plan 行号 :301/373/428/497 为规划期陈旧值）/ resize wire 面实在 resize_arb_test.go / 计数不变量白盒面 clients_test:29 + wire 面 TestMaxClients503:1222；clients_test/resize_test 六测纯白盒单跑判定
 
 ### Pending Todos
 
@@ -193,6 +197,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T15:28:55.910Z
-Stopped at: Completed 14-03-PLAN.md
+Last session: 2026-09-06T15:51:40.194Z
+Stopped at: Completed 14-04-PLAN.md
 Resume file: None
