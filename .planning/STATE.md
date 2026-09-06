@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-07-PLAN.md
-last_updated: "2026-09-06T13:22:23.675Z"
+stopped_at: Completed 14-08-PLAN.md
+last_updated: "2026-09-06T13:49:38.544Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 27
+  completed_plans: 28
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 3 of 12
+Plan: 4 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [███████░░░] 73%
+Progress: [████████░░] 76%
 
 ## Performance Metrics
 
@@ -84,6 +84,7 @@ Progress: [███████░░░] 73%
 | Phase 13 P08 | 37min | 2 tasks | 11 files |
 | Phase 14 P01 | 43min | 2 tasks | 7 files |
 | Phase 14 P07 | 40min | 2 tasks | 1 files |
+| Phase 14 P08 | 23min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -161,6 +162,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-07] D-11 判定证真：32 会话实测（wesh 侧 Alloc 增量 2.2MB ≈ 24MiB 账面 9% / 子进程 VmRSS 合计 120MB < 160MB 账面 / fd 差值精确 4N / gor 5N+1）全部在可接受界线内——maxClients=32 默认值不动（零公开契约变更），one-way 确认门不触发；LOADDATA pc_flood/pc_resident 八行供 14-11 README 标定表回填
 - [Phase ?]: [Phase 14-07] Rule 1 夹具修正：loadDrain.note() 流尾采样帧级重置改跨帧滚动窗——tty ONLCR 行尾拆分使末帧载荷仅 \r\n（探针实证），帧级重置把帧边界误当流边界误判流截断（洪水格 sessions_16 复现率 4/6）；滚动窗保流截断判别力且内存恒 ≤128B，既有六负载格全套件回归绿
 - [Phase ?]: [Phase 14-07] 驻留格 fd 账面 4N 推导归类：master+pidfd+accepted 为服务端生产账面（ARCHITECTURE §10）+ dial socket 为 in-process harness 成本单独注释归类——实测差值精确 4N 逐项证实；gor 按生产账面 6N 收口（harness pinger 退场实测 5N+1）；PC-12 勾选留 14-11 文档承载（shared-ID 门先例）
+- [Phase ?]: [Phase 14-08] herdr UAT 就绪门 Rule 1 实测修正：「layouts 非空」不充分——server 启动期 area 先 {0,0,0,0} 再默认布局瞬态 {x>0,width≈默认宽-侧栏}（后者同样满足 isFullFor 谓词）且移动端过早 attach 使桌面 size 上报成 last-activity（compact-40 永不现 + S1d 假绿）；修正为桌面初始全量帧到达落定（OUTPUT>0 且 150ms 双采样相等）+ area 桌面全量几何双条件门——后续 herdr 断言类 UAT 沿用
+- [Phase ?]: [Phase 14-08] herdr 清理序列补 session delete：stop 后 session list 行保留 stopped 态（探针实证），delete 才清册+状态目录——「list 零残留」完整序列 = stop → delete → list 核验；session stop 以会话名为准（ambient HERDR_SOCKET_PATH 不干扰，执行 shell 位于 herdr pane 内的运行期再实证）
+- [Phase ?]: [Phase 14-08] phase14.mjs 两轮 18/18（S1 driving 三通道：area 翻转链四步 + 流层 254B/55B<<97049B + wesh 层双 pid/双 Welcome/流几何 120vs40；S2 ro 汇聚：ticket 全链 + pane read 门控实证 + rw 对照）；PC-13 勾选留 14-09（pw 观感层承载，共享 ID 先例）
+- [Phase ?]: [Phase 14-08] maxCursorCol 流层几何特征通道：CUP/HVP/CHA 三形态正则扫描取列坐标最大值（spike 只标定 CUP，实现扩展）——移动端几何只能寻址 ≤cols 列的关系断言材料，禁绝对常量
 
 ### Pending Todos
 
@@ -182,6 +187,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T13:22:23.653Z
-Stopped at: Completed 14-07-PLAN.md
+Last session: 2026-09-06T13:49:38.522Z
+Stopped at: Completed 14-08-PLAN.md
 Resume file: None
