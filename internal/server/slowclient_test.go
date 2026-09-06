@@ -4,6 +4,20 @@ package server_test
 // stall 客户端（建连后不 Read）outbox 写满 → 1013 slow_consumer 踢出且他人无卡顿；
 // 全体可写端 stall → 全局信用门闭合停读 PTY，一端恢复/死亡 → 门有界重开。
 //
+// 14-01 双模式分叉表改造（D-01/D-02/D-03，PITFALLS :390-391 行）：
+//   - TestSlowConsumerKick 双跑——断言两模式同形（stall 端 1013 + 正常端
+//     fan-out 持续前进），机制分叉：shared = R-08 分工表「剔除 stall 端后仍存
+//     在未 blocked 可写端 → 离群慢端立即踢」；per-client = 1:1 退化无全局信用门
+//     （每会话独立闭包，outbox 写满停读后 dwell 到期踢——R-08 1:1 退化形态）。
+//     per-client 列 SlowDwell=500ms 短值覆写使 1013 落在 assertKicked1013 断言
+//     窗内（默认 10s 恒在窗外）；dwell 语义本体由 perclient_test.go Phase 12
+//     三测承载（TestPerClientStallBlocksAndResumes/DwellKick/
+//     DwellNoKickWhileProgressing），本列只锁「无信用门 + 满即踢」分叉点。
+//   - TestGlobalCredit 按蓝本 :391 行走 shared-only：shared 列 = 信用门开闭
+//     全链（原断言逐字）；per-client 列 = D-03 显式断言未装配——一端停读期间
+//     对照端 PTY 输出持续到达（信用门机制在 per-client 不装配的可证伪防线：
+//     若全局信用门被误装配，停读端满箱将关门全局读路径，对照端输出停滞即翻车）。
+//
 // stall 夹具纪律（RESEARCH Validation 裁决 + 本机 /proc 实测）：dialHello 成功后
 // 不再调用 Read——TCP 接收缓冲填满 → 服务端 writer 阻塞 → outbox 涨满。loopback
 // 单连接最坏吸收量 ≈ wmem 4MiB + rmem 6MiB（net.ipv4.tcp_wmem/rmem 本机实测上限），
@@ -151,85 +165,116 @@ func assertExitSilent(t *testing.T, exitCh chan int, window time.Duration, what 
 // slow_consumer）；同实例第二客户端正常 Read——fan-out 持续前进无卡顿（累积字节
 // 单调增长），服务端 ReadLoop 未被拖死（R-08 分工表：剔除 stall 端后仍存在未
 // blocked 的可写端 → 离群慢端立即踢，绝不误伤正常消费端）。
+//
+// 14-01 双跑（文件头分叉表）：shared = 上述 R-08 分工表机制（原断言逐字）；
+// per-client = 1:1 退化（每客户端自有会话与洪水，stall 端满箱停读后 dwell 到期
+// 踢，正常端自有洪水不受扰）。
 func TestSlowConsumerKick(t *testing.T) {
-	// seq 1 5000000 ≈ 38.9MB 洪水（> 单连接最坏吸收 ~10MiB + 64KiB outbox，stall
-	// 必然传导到 outbox 写满；洪水量同时保证踢出断言后采样窗口内输出仍在推进）；
-	// OutboxBytes 覆写小值加速触发（HelloTimeout 测试覆写先例）；Writable 使两端
-	// 均 rw（ro/rw 分工由 TestGlobalCredit 覆盖）。
-	// 05-03 适配：显式 WritePolicy=all——stall 端被 1013 踢出 + 旁观端正常收流的
-	// 双 rw 语义前提（owner 默认策略下第二客户端降级 ro：全体可写端仅 stall 者
-	// 一端，按分工表置 creditBlocked 门闭合而非被踢，踢出与收流两断言皆不成立）。
-	exitCh, wsURL := startTestServerWith(t, []string{"seq", "1", "5000000"}, server.Options{
-		Writable:    true,
-		WritePolicy: "all",
-		OutboxBytes: 64 * 1024,
-	})
-	_ = exitCh // 本测试不断言子进程退出（洪水是否耗尽与踢出断言无关）
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	stall, _ := dialHello(t, ctx, wsURL, 80, 24)
-	normal, _ := dialHello(t, ctx, wsURL, 80, 24)
-	// writer 同类型连续段合并使积压后的单条 WS 消息可达 outbox 容量量级（本例
-	// 64KiB）——超过 Go 客户端库默认 32KiB 读上限会触发 1009 自动关闭（实测命中）。
-	// 生产前端为浏览器 WebSocket 无此上限；测试客户端显式放宽（S→C 方向无服务端
-	// 16KiB 档约束，16KiB 档仅约束 C→S）。
-	stall.SetReadLimit(4 * 1024 * 1024)
-	normal.SetReadLimit(4 * 1024 * 1024)
-
-	// 正常端读取 goroutine 自始运行（只计数不缓存——38.9MB 全量无断言需求）。
-	var normalBytes atomic.Int64
-	normalErr := make(chan error, 1)
-	go func() {
-		for {
-			_, data, err := normal.Read(context.Background())
-			if err != nil {
-				normalErr <- err
-				return
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			// seq 1 5000000 ≈ 38.9MB 洪水（> 单连接最坏吸收 ~10MiB + 64KiB outbox，stall
+			// 必然传导到 outbox 写满；洪水量同时保证踢出断言后采样窗口内输出仍在推进）；
+			// OutboxBytes 覆写小值加速触发（HelloTimeout 测试覆写先例）；Writable 使两端
+			// 均 rw（ro/rw 分工由 TestGlobalCredit 覆盖）。
+			// 05-03 适配：显式 WritePolicy=all——stall 端被 1013 踢出 + 旁观端正常收流的
+			// 双 rw 语义前提（owner 默认策略下第二客户端降级 ro：全体可写端仅 stall 者
+			// 一端，按分工表置 creditBlocked 门闭合而非被踢，踢出与收流两断言皆不成立）。
+			// per-client 列：WritePolicy 在 per-client 无仲裁面（每客户端自有会话恒 rw，
+			// upgradePerClient 单行门算 effMode 不查 write-policy）——保留同 mutate 使
+			// 分叉表两侧装配镜像，行为无差；SlowDwell=500ms 短值覆写（文件头分叉表注释）。
+			mutate := func(o *server.Options) {
+				o.WritePolicy = "all"
+				o.OutboxBytes = 64 * 1024
+				if mode == server.SessionModePerClient {
+					o.SlowDwell = 500 * time.Millisecond
+				}
 			}
-			if len(data) > 0 && data[0] == proto.Output {
-				normalBytes.Add(int64(len(data) - 1))
+			exitCh, wsURL := newTestServer(t, mode, []string{"seq", "1", "5000000"}, mutate)
+			_ = exitCh // 本测试不断言子进程退出（洪水是否耗尽与踢出断言无关）
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			stall, _ := dialHello(t, ctx, wsURL, 80, 24)
+			normal, _ := dialHello(t, ctx, wsURL, 80, 24)
+			// writer 同类型连续段合并使积压后的单条 WS 消息可达 outbox 容量量级（本例
+			// 64KiB）——超过 Go 客户端库默认 32KiB 读上限会触发 1009 自动关闭（实测命中）。
+			// 生产前端为浏览器 WebSocket 无此上限；测试客户端显式放宽（S→C 方向无服务端
+			// 16KiB 档约束，16KiB 档仅约束 C→S）。
+			stall.SetReadLimit(4 * 1024 * 1024)
+			normal.SetReadLimit(4 * 1024 * 1024)
+
+			// 正常端读取 goroutine 自始运行（只计数不缓存——38.9MB 全量无断言需求）。
+			var normalBytes atomic.Int64
+			normalErr := make(chan error, 1)
+			go func() {
+				for {
+					_, data, err := normal.Read(context.Background())
+					if err != nil {
+						normalErr <- err
+						return
+					}
+					if len(data) > 0 && data[0] == proto.Output {
+						normalBytes.Add(int64(len(data) - 1))
+					}
+				}
+			}()
+
+			// 等正常端累积超 12MiB：正常端与 stall 端收同一帧流（shared）/ 各自洪水
+			//（per-client），此时 stall 端管道（最坏 ~10MiB）必然已满、outbox 已写满
+			//（shared 立即踢 / per-client dwell 500ms 到期踢）。
+			deadline := time.Now().Add(15 * time.Second)
+			for normalBytes.Load() < 12*1024*1024 {
+				if time.Now().After(deadline) {
+					t.Fatalf("normal client received %d bytes in 15s, want >= 12MiB (flood not flowing)", normalBytes.Load())
+				}
+				time.Sleep(50 * time.Millisecond)
 			}
-		}
-	}()
 
-	// 等正常端累积超 12MiB：正常端与 stall 端收同一帧流，此时 stall 端管道
-	//（最坏 ~10MiB）必然已满、outbox 已写满、1013 踢出已触发。
-	deadline := time.Now().Add(15 * time.Second)
-	for normalBytes.Load() < 12*1024*1024 {
-		if time.Now().After(deadline) {
-			t.Fatalf("normal client received %d bytes in 15s, want >= 12MiB (flood not flowing)", normalBytes.Load())
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+			if mode == server.SessionModePerClient {
+				// per-client 列同步边（TestPerClientDwellKick 先例）：kick 的观测通道 =
+				// /healthz clients 计数（kick → removeLocked → 2→1；只读 HTTP 不打扰
+				// WS stall 面，轮询替代固定 sleep）。shared 列的 12MiB 等待在本模式下
+				// 不构成踢出同步——两客户端各持独立洪水，正常端字节进度与 stall 端
+				// 停读/dwell 计时结构性解耦；stall 端首次 Read 过早会续读重置 dwell
+				// 使会话以 1000 收尾（全量 -race 负载下实测命中一次，Rule 1 修复）。
+				kickDeadline := time.Now().Add(15 * time.Second)
+				for healthzClients(t, wsURL) != 1 {
+					if time.Now().After(kickDeadline) {
+						t.Fatalf("stall client 15s 内未被移除——dwell(500ms) 踢出未发生（per-client 满即踢分叉点）")
+					}
+					time.Sleep(15 * time.Millisecond)
+				}
+			}
 
-	// stall 端此刻首次 Read：消耗管道积存 OUTPUT 后必见 CloseError 1013
-	// slow_consumer（踢出判定只由它自己的 outbox 写满触发）。先取踢出证据再采样
-	// ——关闭帧写出带 5s 超时（close.go:168-183），须在其窗口内开始消化管道。
-	assertKicked1013(t, stall, 10*time.Second, "stall client")
+			// stall 端此刻首次 Read：消耗管道积存 OUTPUT 后必见 CloseError 1013
+			// slow_consumer（踢出判定只由它自己的 outbox 写满触发）。先取踢出证据再采样
+			// ——关闭帧写出带 5s 超时（close.go:168-183），须在其窗口内开始消化管道。
+			assertKicked1013(t, stall, 10*time.Second, "stall client")
 
-	// 踢出后正常端持续前进（MULTI-03 无卡顿准则）：总窗口净增长——ReadLoop 未被
-	// 拖死（stall 端的踢出/Close 全部异步，hub 临界区无阻塞）。洪水 38.9MB 远大于
-	// 此处已收 ~15MiB，采样窗口内输出必然仍在推进。2026-08-29 单核压测：grace 使
-	// 踢出时点落在 c2 满箱振荡期（outbox 满箱瞬态毫秒级自愈），单点 200ms 采样
-	// 对调度抖动过敏误报 stalled——改为总窗口（600ms）净增长判定，瞬态门闭被
-	// 平均掉，「真停滞」（ReadLoop 拖死 = 永不前进）仍是唯一失败形态。
-	prev := normalBytes.Load()
-	time.Sleep(600 * time.Millisecond)
-	if cur := normalBytes.Load(); cur <= prev {
-		t.Fatalf("normal client fan-out stalled at %d bytes after kick — ReadLoop dragged", cur)
+			// 踢出后正常端持续前进（MULTI-03 无卡顿准则）：总窗口净增长——ReadLoop 未被
+			// 拖死（stall 端的踢出/Close 全部异步，hub 临界区无阻塞）。洪水 38.9MB 远大于
+			// 此处已收 ~15MiB，采样窗口内输出必然仍在推进。2026-08-29 单核压测：grace 使
+			// 踢出时点落在 c2 满箱振荡期（outbox 满箱瞬态毫秒级自愈），单点 200ms 采样
+			// 对调度抖动过敏误报 stalled——改为总窗口（600ms）净增长判定，瞬态门闭被
+			// 平均掉，「真停滞」（ReadLoop 拖死 = 永不前进）仍是唯一失败形态。
+			prev := normalBytes.Load()
+			time.Sleep(600 * time.Millisecond)
+			if cur := normalBytes.Load(); cur <= prev {
+				t.Fatalf("normal client fan-out stalled at %d bytes after kick — ReadLoop dragged", cur)
+			}
+			// 正常端在断言窗口内不应收到任何错误（连接存活）；子进程耗尽洪水后的 1000
+			// 广播属正常终结，容忍。
+			select {
+			case err := <-normalErr:
+				var ce websocket.CloseError
+				if !errors.As(err, &ce) || ce.Code != websocket.StatusNormalClosure {
+					t.Fatalf("normal client errored during fan-out: %v", err)
+				}
+			default:
+			}
+			stall.CloseNow()
+			normal.CloseNow()
+		})
 	}
-	// 正常端在断言窗口内不应收到任何错误（连接存活）；子进程耗尽洪水后的 1000
-	// 广播属正常终结，容忍。
-	select {
-	case err := <-normalErr:
-		var ce websocket.CloseError
-		if !errors.As(err, &ce) || ce.Code != websocket.StatusNormalClosure {
-			t.Fatalf("normal client errored during fan-out: %v", err)
-		}
-	default:
-	}
-	stall.CloseNow()
-	normal.CloseNow()
 }
 
 // TestGlobalCredit（VALIDATION 05-01-06，RES-04）：--writable 会话两 rw 客户端
@@ -240,131 +285,194 @@ func TestSlowConsumerKick(t *testing.T) {
 // 角色确定性构造：c1 先 attach 且领先 1s——先 attach 者管道先满，分工表下剔除
 // 后仍存在未 blocked 可写端（c2）→ c1 被 1013 踢出；c2 随后独自写满 → 全体可写
 // 端均满 → 不踢，持信用闭门。c1 = 被踢者、c2 = 信用持有者，两子场景共用此前提。
+//
+// 14-01 双模式分叉表改造（蓝本 :391 行本测归 shared-only，D-03 形态）：shared
+// 列 = 上述信用门开闭全链（原断言逐字搬入）；per-client 列 = 显式断言未装配
+// ——一端停读期间对照端 PTY 输出持续到达（可证伪防线：全局信用门若被误装配，
+// 停读端满箱将关门全局读路径，对照端输出停滞即翻车；per-client 会话间结构性
+// 零耦合）。dwell/停读续读细节由 perclient_test.go Phase 12 三测承载，本列
+// 不重复造同义断言。
 func TestGlobalCredit(t *testing.T) {
-	// 洪水量论证（Linux 30.9MB / darwin 6.9MB 平台分支，见 seqFlood 注释）：
-	// > 双 stalled 连接最坏吸收 + 2×64KiB outbox + 64KiB PTY 内核缓冲——门闭合
-	// 时子进程必然仍有未竟输出（写阻塞）。
-	floodArgv, floodLast := seqFlood()
-	setup := func(t *testing.T) (exitCh chan int, c1, c2 *websocket.Conn) {
-		t.Helper()
-		// 05-03 适配：显式 WritePolicy=all——两 rw 全部 stall 的语义前提（05-02
-		// Task 3 已登记本适配点；owner 默认策略下第二客户端降级 ro，满即被踢，
-		// 信用门永不闭合）。
-		e, wsURL := startTestServerWith(t, floodArgv, server.Options{
-			Writable:    true,
-			WritePolicy: "all",
-			OutboxBytes: 64 * 1024,
-		})
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		c1, _ = dialHello(t, ctx, wsURL, 80, 24)
-		// 1s 领先窗：c1 管道先满（solo 期间独自持信用），角色确定性前提。
-		time.Sleep(1 * time.Second)
-		c2, _ = dialHello(t, ctx, wsURL, 80, 24)
-		// 放宽读上限：writer 合并段使积压后的单条 WS 消息可达 64KiB（outbox cap），
-		// 超过 Go 客户端库默认 32KiB 上限会被 1009 自动关闭（实测命中；浏览器前端
-		// 无此上限）。c1 消化管道取证 1013、c2 收齐全流取证字节精确，均需此放宽。
-		c1.SetReadLimit(4 * 1024 * 1024)
-		c2.SetReadLimit(4 * 1024 * 1024)
-		// 两端均 stall（不 Read）。固定等待给足传导余量：c2 attach → 门重开一拍
-		// → c1 outbox 仍满被踢；c2 管道+outbox 写满 → 持信用闭门。
-		time.Sleep(3 * time.Second)
-		return e, c1, c2
-	}
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			// per-client 列（D-03 显式断言未装配）。
+			if mode == server.SessionModePerClient {
+				// 洪水量论证同 shared 列（每客户端各自洪水，单连接吸收论证逐端适用）。
+				floodArgv, _ := seqFlood()
+				_, wsURL := newTestServer(t, mode, floodArgv, func(o *server.Options) {
+					o.WritePolicy = "all" // shared 列同 mutate 镜像（per-client 无仲裁面，行为无差）
+					o.OutboxBytes = 64 * 1024
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				c1, _ := dialHello(t, ctx, wsURL, 80, 24) // 停读端（建连后不 Read——自有会话）
+				c2, _ := dialHello(t, ctx, wsURL, 80, 24) // 对照端（持续 Read——自有会话）
+				c1.SetReadLimit(4 * 1024 * 1024)          // writer 合并段可达 outbox cap（文件头纪律）
+				c2.SetReadLimit(4 * 1024 * 1024)
 
-	t.Run("恢复Read开门_字节精确", func(t *testing.T) {
-		exitCh, c1, c2 := setup(t)
-		// 分工表证据：先满的 c1 被 1013 踢出（c2 彼时未 blocked）。
-		assertKicked1013(t, c1, 10*time.Second, "c1 (first-to-fill)")
-		// 门闭合黑盒证据：子进程输出推进停滞——exitCh 500ms 静默。
-		assertExitSilent(t, exitCh, 500*time.Millisecond, "gate-closed window")
-
-		// 一端恢复 Read：c2 writer drain 至半水位 → afterDrain 清位 + Broadcast
-		// → 门开 → ReadLoop 续读 → 子进程完成 → lifecycle 广播 1000。
-		res := readUntilError(c2)
-		select {
-		case r := <-res:
-			var ce websocket.CloseError
-			if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
-				t.Fatalf("c2 read terminated with %v, want CloseError 1000 (child exit broadcast)", r.err)
-			}
-			// 门转换字节精确断言（review #1 行为证据）：c2 收齐的 seq 字段序列
-			// 单调递增、连续 +1、无重复、无乱序窗口——门持块期间 chunk 停留
-			// ReadLoop 缓冲无覆写（别名安全的端到端实证），门开后与门前部分
-			// 衔接连续。strings.Fields 切分免疫 ONLCR（既定纪律）。
-			fields := strings.Fields(string(r.acc))
-			if len(fields) == 0 {
-				t.Fatal("c2 received no OUTPUT payload after resume")
-			}
-			// 连续性断言起点。c2 在洪水中段接合（1s 领先窗后 attach，前沿 ~50 万行），
-			// 其首个 OUTPUT 载荷是 ReadLoop 的 32KiB 读块：seq 行写原子使 PTY 主缓冲
-			// 只含整行，非积压时读块恒行对齐；但 CPU 竞争（全量并行门禁）致 ReadLoop
-			// goroutine 调度延迟、积压 ≥32KiB 时读块在行中切断（8 路并发实测 3/24
-			// 命中，门禁 ~1/11）——此时 fields[0] 恰为前一行（fields[1]-1）的行尾严格
-			// 后缀，字节流本身连续无损，属接合点切面而非门转换损坏（产品无行语义，
-			// 接合对齐非产品保证）。严格后缀判别成立则从 fields[1] 起续链；判别不成立
-			// （真丢帧洞：完整行 K 跳到非 +1 的 M；拼接损坏：Atoi 失败）维持原 fatal，
-			// 断言强度零损失。
-			start := 0
-			if len(fields) >= 2 {
-				if first, err1 := strconv.Atoi(fields[0]); err1 == nil {
-					if second, err2 := strconv.Atoi(fields[1]); err2 == nil && second != first+1 {
-						if tail := strconv.Itoa(second - 1); len(fields[0]) < len(tail) && strings.HasSuffix(tail, fields[0]) {
-							start = 1 // 行中切面接合产物：从第二字段起断言
-							t.Logf("join-point mid-line cut tolerated: %q is line-tail of %s, continuity asserted from %d", fields[0], tail, second)
+				// 对照端读取 goroutine 自始运行（只计数——TestSlowConsumerKick 先例）。
+				var c2Bytes atomic.Int64
+				go func() {
+					for {
+						_, data, err := c2.Read(context.Background())
+						if err != nil {
+							return
+						}
+						if len(data) > 0 && data[0] == proto.Output {
+							c2Bytes.Add(int64(len(data) - 1))
 						}
 					}
-				}
-			}
-			prev := 0
-			for i := start; i < len(fields); i++ {
-				n, err := strconv.Atoi(fields[i])
-				if err != nil {
-					t.Fatalf("field %d = %q not a seq number: %v", i, fields[i], err)
-				}
-				if i > start && n != prev+1 {
-					t.Fatalf("seq discontinuity at field %d: %d -> %d (gate transition corrupted stream)", i, prev, n)
-				}
-				prev = n
-			}
-			if prev != floodLast {
-				// darwin 放宽（macOS CI flake 实测）：lifecycle 广播 close frame 走
-				// c.conn.Close(1000) 绕过 outbox 直写 wire（server.go:1114，EXIT 帧
-				// 避免被 writer 超车设计）；门重开后 c2 outbox 残余（≤64KiB 测试
-				// 覆写）随 close frame 先到 wire 被丢弃，末位短 ~0.6%（993782/999999
-				// 实测）。连续性断言（上方 for 循环）才是字节精确的核心证据，末位
-				// 在 darwin 接受 ≥95% 阈值作为等价判定。Linux 大 TCP buffer 下
-				// c2 drain 远快于 close 到达，维持严格等值断言。
-				if runtime.GOOS == "darwin" {
-					if prev < floodLast*95/100 {
-						t.Fatalf("c2 final seq field = %d, want >= %d (95%% of %d, darwin outbox-close race tolerance)", prev, floodLast*95/100, floodLast)
+				}()
+
+				// 等对照端累积超 12MiB：此刻 c1 端管道（最坏 ~10MiB）+ outbox（64KiB）
+				// 必然已满——c1 停读已完全传导（自有洪水同量论证）。
+				deadline := time.Now().Add(15 * time.Second)
+				for c2Bytes.Load() < 12*1024*1024 {
+					if time.Now().After(deadline) {
+						t.Fatalf("对照端 received %d bytes in 15s, want >= 12MiB（洪水未流动）", c2Bytes.Load())
 					}
-					t.Logf("darwin tolerance: c2 final seq field = %d (< %d by %.2f%%, outbox-close race)", prev, floodLast, float64(floodLast-prev)*100/float64(floodLast))
-				} else {
-					t.Fatalf("c2 final seq field = %d, want %d (full flood received after gate reopen)", prev, floodLast)
+					time.Sleep(50 * time.Millisecond)
 				}
+
+				// 可证伪断言（D-03）：c1 持续停读满箱期间，对照端 c2 的 PTY 输出继续
+				// 推进（600ms 总窗口净增长——TestSlowConsumerKick 同款形态；全局信用门
+				// 若被误装配，c1 满箱关门使 c2 输出停滞即 FAIL——「未装配」的行为锁）。
+				prev := c2Bytes.Load()
+				time.Sleep(600 * time.Millisecond)
+				if cur := c2Bytes.Load(); cur <= prev {
+					t.Fatalf("对照端输出停滞 at %d bytes while c1 stalled — 全局信用门被误装配（per-client 不装配红线，D-03）", cur)
+				}
+				c1.CloseNow()
+				c2.CloseNow()
+				return
 			}
-		case <-time.After(15 * time.Second):
-			t.Fatal("c2 stream did not complete within 15s — gate failed to reopen (deadlock)")
-		}
-		waitExit(t, exitCh, 0)
-		c1.CloseNow()
-		c2.CloseNow()
-	})
 
-	// CloseNow 有界开门子场景（review #2「dead owner during gate closure」）：
-	// 门闭合期间唯一持信用的可写端死亡 → detach → 注册表移除 → Broadcast 重估
-	// → 门在 5s 轮询窗口内有界重开（P5-7 验证序列逐字 + 有界时限断言）。
-	t.Run("CloseNow有界开门", func(t *testing.T) {
-		exitCh, c1, c2 := setup(t)
-		assertKicked1013(t, c1, 10*time.Second, "c1 (first-to-fill)")
-		// 门闭合黑盒证据：c2 持信用停读，子进程写阻塞不退出。
-		assertExitSilent(t, exitCh, 500*time.Millisecond, "gate-closed window")
+			// shared 列（v1.0 期望值逐字搬入）。
+			// 洪水量论证（Linux 30.9MB / darwin 6.9MB 平台分支，见 seqFlood 注释）：
+			// > 双 stalled 连接最坏吸收 + 2×64KiB outbox + 64KiB PTY 内核缓冲——门闭合
+			// 时子进程必然仍有未竟输出（写阻塞）。
+			floodArgv, floodLast := seqFlood()
+			setup := func(t *testing.T) (exitCh chan int, c1, c2 *websocket.Conn) {
+				t.Helper()
+				// 05-03 适配：显式 WritePolicy=all——两 rw 全部 stall 的语义前提（05-02
+				// Task 3 已登记本适配点；owner 默认策略下第二客户端降级 ro，满即被踢，
+				// 信用门永不闭合）。
+				e, wsURL := newTestServer(t, mode, floodArgv, func(o *server.Options) {
+					o.WritePolicy = "all"
+					o.OutboxBytes = 64 * 1024
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				c1, _ = dialHello(t, ctx, wsURL, 80, 24)
+				// 1s 领先窗：c1 管道先满（solo 期间独自持信用），角色确定性前提。
+				time.Sleep(1 * time.Second)
+				c2, _ = dialHello(t, ctx, wsURL, 80, 24)
+				// 放宽读上限：writer 合并段使积压后的单条 WS 消息可达 64KiB（outbox cap），
+				// 超过 Go 客户端库默认 32KiB 上限会被 1009 自动关闭（实测命中；浏览器前端
+				// 无此上限）。c1 消化管道取证 1013、c2 收齐全流取证字节精确，均需此放宽。
+				c1.SetReadLimit(4 * 1024 * 1024)
+				c2.SetReadLimit(4 * 1024 * 1024)
+				// 两端均 stall（不 Read）。固定等待给足传导余量：c2 attach → 门重开一拍
+				// → c1 outbox 仍满被踢；c2 管道+outbox 写满 → 持信用闭门。
+				time.Sleep(3 * time.Second)
+				return e, c1, c2
+			}
 
-		// 持信用端死亡（dead owner）→ detach 统一 Broadcast → 注册表空 → 门开
-		// → ReadLoop 续 drain → 子进程完成退出——5s 有界开门断言。
-		c2.CloseNow()
-		waitExit(t, exitCh, 0)
-		c1.CloseNow()
-	})
+			t.Run("恢复Read开门_字节精确", func(t *testing.T) {
+				exitCh, c1, c2 := setup(t)
+				// 分工表证据：先满的 c1 被 1013 踢出（c2 彼时未 blocked）。
+				assertKicked1013(t, c1, 10*time.Second, "c1 (first-to-fill)")
+				// 门闭合黑盒证据：子进程输出推进停滞——exitCh 500ms 静默。
+				assertExitSilent(t, exitCh, 500*time.Millisecond, "gate-closed window")
+
+				// 一端恢复 Read：c2 writer drain 至半水位 → afterDrain 清位 + Broadcast
+				// → 门开 → ReadLoop 续读 → 子进程完成 → lifecycle 广播 1000。
+				res := readUntilError(c2)
+				select {
+				case r := <-res:
+					var ce websocket.CloseError
+					if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
+						t.Fatalf("c2 read terminated with %v, want CloseError 1000 (child exit broadcast)", r.err)
+					}
+					// 门转换字节精确断言（review #1 行为证据）：c2 收齐的 seq 字段序列
+					// 单调递增、连续 +1、无重复、无乱序窗口——门持块期间 chunk 停留
+					// ReadLoop 缓冲无覆写（别名安全的端到端实证），门开后与门前部分
+					// 衔接连续。strings.Fields 切分免疫 ONLCR（既定纪律）。
+					fields := strings.Fields(string(r.acc))
+					if len(fields) == 0 {
+						t.Fatal("c2 received no OUTPUT payload after resume")
+					}
+					// 连续性断言起点。c2 在洪水中段接合（1s 领先窗后 attach，前沿 ~50 万行），
+					// 其首个 OUTPUT 载荷是 ReadLoop 的 32KiB 读块：seq 行写原子使 PTY 主缓冲
+					// 只含整行，非积压时读块恒行对齐；但 CPU 竞争（全量并行门禁）致 ReadLoop
+					// goroutine 调度延迟、积压 ≥32KiB 时读块在行中切断（8 路并发实测 3/24
+					// 命中，门禁 ~1/11）——此时 fields[0] 恰为前一行（fields[1]-1）的行尾严格
+					// 后缀，字节流本身连续无损，属接合点切面而非门转换损坏（产品无行语义，
+					// 接合对齐非产品保证）。严格后缀判别成立则从 fields[1] 起续链；判别不成立
+					// （真丢帧洞：完整行 K 跳到非 +1 的 M；拼接损坏：Atoi 失败）维持原 fatal，
+					// 断言强度零损失。
+					start := 0
+					if len(fields) >= 2 {
+						if first, err1 := strconv.Atoi(fields[0]); err1 == nil {
+							if second, err2 := strconv.Atoi(fields[1]); err2 == nil && second != first+1 {
+								if tail := strconv.Itoa(second - 1); len(fields[0]) < len(tail) && strings.HasSuffix(tail, fields[0]) {
+									start = 1 // 行中切面接合产物：从第二字段起断言
+									t.Logf("join-point mid-line cut tolerated: %q is line-tail of %s, continuity asserted from %d", fields[0], tail, second)
+								}
+							}
+						}
+					}
+					prev := 0
+					for i := start; i < len(fields); i++ {
+						n, err := strconv.Atoi(fields[i])
+						if err != nil {
+							t.Fatalf("field %d = %q not a seq number: %v", i, fields[i], err)
+						}
+						if i > start && n != prev+1 {
+							t.Fatalf("seq discontinuity at field %d: %d -> %d (gate transition corrupted stream)", i, prev, n)
+						}
+						prev = n
+					}
+					if prev != floodLast {
+						// darwin 放宽（macOS CI flake 实测）：lifecycle 广播 close frame 走
+						// c.conn.Close(1000) 绕过 outbox 直写 wire（server.go:1114，EXIT 帧
+						// 避免被 writer 超车设计）；门重开后 c2 outbox 残余（≤64KiB 测试
+						// 覆写）随 close frame 先到 wire 被丢弃，末位短 ~0.6%（993782/999999
+						// 实测）。连续性断言（上方 for 循环）才是字节精确的核心证据，末位
+						// 在 darwin 接受 ≥95% 阈值作为等价判定。Linux 大 TCP buffer 下
+						// c2 drain 远快于 close 到达，维持严格等值断言。
+						if runtime.GOOS == "darwin" {
+							if prev < floodLast*95/100 {
+								t.Fatalf("c2 final seq field = %d, want >= %d (95%% of %d, darwin outbox-close race tolerance)", prev, floodLast*95/100, floodLast)
+							}
+							t.Logf("darwin tolerance: c2 final seq field = %d (< %d by %.2f%%, outbox-close race)", prev, floodLast, float64(floodLast-prev)*100/float64(floodLast))
+						} else {
+							t.Fatalf("c2 final seq field = %d, want %d (full flood received after gate reopen)", prev, floodLast)
+						}
+					}
+				case <-time.After(15 * time.Second):
+					t.Fatal("c2 stream did not complete within 15s — gate failed to reopen (deadlock)")
+				}
+				waitExit(t, exitCh, 0)
+				c1.CloseNow()
+				c2.CloseNow()
+			})
+
+			// CloseNow 有界开门子场景（review #2「dead owner during gate closure」）：
+			// 门闭合期间唯一持信用的可写端死亡 → detach → 注册表移除 → Broadcast 重估
+			// → 门在 5s 轮询窗口内有界重开（P5-7 验证序列逐字 + 有界时限断言）。
+			t.Run("CloseNow有界开门", func(t *testing.T) {
+				exitCh, c1, c2 := setup(t)
+				assertKicked1013(t, c1, 10*time.Second, "c1 (first-to-fill)")
+				// 门闭合黑盒证据：c2 持信用停读，子进程写阻塞不退出。
+				assertExitSilent(t, exitCh, 500*time.Millisecond, "gate-closed window")
+
+				// 持信用端死亡（dead owner）→ detach 统一 Broadcast → 注册表空 → 门开
+				// → ReadLoop 续 drain → 子进程完成退出——5s 有界开门断言。
+				c2.CloseNow()
+				waitExit(t, exitCh, 0)
+				c1.CloseNow()
+			})
+		})
+	}
 }
