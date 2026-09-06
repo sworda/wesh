@@ -64,15 +64,29 @@ type loadDrain struct {
 }
 
 // note 记账一条 OUTPUT 载荷（帧类型字节不计入字节数——与 wesh_pty_output_bytes_total
-// 口径对齐）。
+// 口径对齐）。tail 为【跨帧滚动的流尾采样窗】（恒 ≤loadTailKeep 有界——内存画像
+// 与帧级形态一致）：负载纪律：32 端全量缓存超测试进程内存预算，一致性采样靠
+// 字节数 + 末位字段。
+//
+// 14-07 Rule 1 修正（帧级重置 → 跨帧滚动）：末帧载荷可能仅是 tty ONLCR 行尾
+// 拆分片段（实证：per-client 16/32 会话并发 ReadLoop 竞争下，末行 "4000000\n"
+// 的 "\r\n" 膨胀可单独成帧——探针实测 lastTail="\r\n"、prevTail="…4000000"，
+// 字节跨端相等 + 1000 关闭均正常，纯 wire 帧拆分）；帧级 tail 重置把帧边界误当
+// 流边界，末位字段断言误判流截断。滚动窗保持对流截断的判别力（截断使窗内
+// 末位字段早于洪水末位）且内存恒 ≤loadTailKeep（append 前先裁 keep——backing
+// 稳定在 2×loadTailKeep 量级，TestLoadMemoryBound 的 GC 回基线断言不受累）。
 func (r *loadDrain) note(data []byte) {
 	r.bytes += int64(len(data) - 1)
 	r.frames++
 	payload := data[1:]
-	if len(payload) > loadTailKeep {
-		payload = payload[len(payload)-loadTailKeep:]
+	if len(payload) >= loadTailKeep {
+		r.tail = append(r.tail[:0], payload[len(payload)-loadTailKeep:]...)
+		return
 	}
-	r.tail = append(r.tail[:0], payload...)
+	if keep := loadTailKeep - len(payload); len(r.tail) > keep {
+		r.tail = r.tail[len(r.tail)-keep:]
+	}
+	r.tail = append(r.tail, payload...)
 }
 
 // drainClient 持续读 conn 至终结（只计数不缓存）。Read 永不带 deadline ctx
@@ -832,4 +846,118 @@ func TestChurnPerClientSpawnThrottle(t *testing.T) {
 	}
 	t.Logf("LOADDATA cell=churn attempts=%d rate=10rps attached=%d rejected=%d throttled=%d gor_base=%d gor_end=%d gor_peak=%d mem_base=%d mem_end=%d mem_peak=%d fd_base=%d fd_end=%d dur_ms=%d",
 		attempts, attached, rejected, throttled, baseGor, endGor, peaks["wesh_goroutines"], baseMem, endMem, peaks["wesh_mem_alloc_bytes"], baseFDs, endFDs, dur.Milliseconds())
+}
+
+// ====== per-client 负载矩阵双剖面（14-07 D-10/D-12，SC4 标定数据源） ======
+
+// TestLoadPerClientFloodMatrix（D-10 洪水剖面）：per-client N ∈ {1,4,16,32} 会话
+// 各自独立 seq 洪水（gatedFloodArgv 触发式先例复用；churn 格 :726 同款装配）。
+// 【与 shared 扇出格（TestLoadFanoutMatrix :331 conns[0] 单端触发）的关键差异】
+// per-client 每会话独立 stdin——每客户端独立 bash read x 各等各的触发，必须
+// 【每客户端各发一次】触发 INPUT（RESEARCH §Pattern 4），单端触发只放行一份
+// 洪水、其余会话静默悬置到 240s 护栏翻车。
+//
+// 断言面：每端收流完整（字节数跨端相等 + 流尾末位字段 == loadFloodLast()）+
+// wesh_pty_spawn_total == N（程序序精确对照——churn 格 :813 先例：Welcome 观测
+// 与计数递增同在注册段程序序）+ kicks == 0（活跃读面零误踢）+ 峰值采样入
+// LOADDATA cell=pc_flood 行（sessions/spawn_total 扩展字段——README 标定表与
+// maxClients 建议值的数据源，14-11 承载回填）。
+//
+// awaitDrain 240s/端护栏沿用（A2）：N=32 总量 32×33.8MB ≈ 1.08GB loopback，
+// 与 shared clients_32 扇出格同总量（且扇出格另付 fan-out 放大开销）；per-client
+// 每会话独立 ReadLoop/outbox 无共享扇出锁竞争（ARCHITECTURE §10 第二瓶颈论），
+// 护栏不收紧——证伪时按先例上调并注释论证。
+func TestLoadPerClientFloodMatrix(t *testing.T) {
+	last := loadFloodLast()
+	for _, n := range []int{1, 4, 16, 32} {
+		n := n
+		t.Run(fmt.Sprintf("sessions_%d", n), func(t *testing.T) {
+			// spawn 节流桶放宽（Rule 3——13-02 TestPerClientTeardownRaceOnce
+			// perclient_test.go:1296-1306 先例同形态）：本格 N∈{1,4,16,32} 同 IP
+			//（loopback 测试拓扑结构性单 IP）快速连发 attach 超生产默认桶（per-IP
+			// 1/s burst 4 / 全局 8/s burst 16——首跑实测第 5/17 个起 spawn_throttled
+			// 1011 拒绝）；本格对象是负载吞吐与资源面非 churn 防线（节流行为由
+			// TestChurnPerClientSpawnThrottle 生产默认桶参数专测），放宽隔离两
+			// 测试面。真实部署 32 端来自各异 IP，per-IP 桶按 IP 分立；全局桶
+			// 8/s 对「32 端同时入场」也限流——那是准入节流语义非资源上限，不属
+			// 本格断言面。
+			_, wsURL := startPerClientServer(t, gatedFloodArgv(last), func(o *server.Options) {
+				o.SpawnPerIPRate = 100
+				o.SpawnPerIPBurst = 100
+				o.SpawnGlobalRate = 100
+				o.SpawnGlobalBurst = 100
+			})
+			base := httpBaseOf(wsURL)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			conns := make([]*websocket.Conn, 0, n)
+			drains := make([]<-chan loadDrain, 0, n)
+			for i := 0; i < n; i++ {
+				c := dialLoadClient(t, ctx, wsURL)
+				conns = append(conns, c)
+				drains = append(drains, drainClient(c))
+			}
+			t.Cleanup(func() {
+				for _, c := range conns {
+					c.CloseNow()
+				}
+			})
+
+			runtime.GC()
+			time.Sleep(100 * time.Millisecond)
+			allocBase := readAlloc()
+			smp := startLoadSamplers(base + "/metrics")
+
+			// 触发洪水：每客户端各发一次 INPUT——per-client 每会话独立 stdin，
+			// 各 bash read x 独立放行（见函数头注释差异点论证）。
+			start := time.Now()
+			for _, c := range conns {
+				if err := c.Write(ctx, websocket.MessageBinary, []byte{proto.Input, 'x', '\n'}); err != nil {
+					t.Fatalf("write 触发 INPUT: %v", err)
+				}
+			}
+			results := make([]loadDrain, n)
+			for i := range drains {
+				results[i] = awaitDrain(t, drains[i], 240*time.Second, fmt.Sprintf("client %d", i))
+			}
+			dur := time.Since(start)
+			allocPeak, outboxMax := smp.stop()
+
+			for i, r := range results {
+				assertClosed1000(t, r, fmt.Sprintf("client %d", i))
+			}
+			// 每端收流完整：字节数跨端相等（各会话独立同构洪水）+ 末位字段到洪水末尾。
+			for i := 1; i < n; i++ {
+				if results[i].bytes != results[0].bytes {
+					t.Fatalf("client %d 收流 = %d 字节, want == client 0 的 %d（每会话独立洪水全端一致）", i, results[i].bytes, results[0].bytes)
+				}
+			}
+			wantTail := strconv.Itoa(last)
+			for i, r := range results {
+				fields := strings.Fields(string(r.tail))
+				if len(fields) == 0 || fields[len(fields)-1] != wantTail {
+					t.Fatalf("client %d 流尾末位字段 = %v, want %d（收流完整到洪水末尾）", i, fields, last)
+				}
+			}
+
+			body := getMetrics(t, base+"/metrics")
+			kicks, _ := metricSample(t, body, "wesh_clients_kicked_total")
+			spawnTotal, ok := metricSample(t, body, "wesh_pty_spawn_total")
+			if !ok {
+				t.Fatalf("wesh_pty_spawn_total series 缺席")
+			}
+			memAlloc, _ := metricSample(t, body, "wesh_mem_alloc_bytes")
+			if kicks != 0 {
+				t.Fatalf("wesh_clients_kicked_total = %d, want 精确 0（活跃读面零误踢）", kicks)
+			}
+			if spawnTotal != int64(n) {
+				t.Fatalf("wesh_pty_spawn_total = %d, want == %d（程序序精确对照——每客户端恰好一次 spawn）", spawnTotal, n)
+			}
+			// gate_transitions 不采：per-client 不装配信用门（D-03——12-05
+			// TestGlobalCredit per-client 列显式断言未装配），恒 0 series 入行徒增噪音。
+			t.Logf("LOADDATA cell=pc_flood sessions=%d spawn_total=%d profile=seq_flood(last=%d) slowlink=none kicks=%d outbox_max=%d alloc_peak=%d alloc_base=%d mem_alloc_end=%d bytes_per_session=%d dur_ms=%d",
+				n, spawnTotal, last, kicks, outboxMax, allocPeak, allocBase, memAlloc, results[0].bytes, dur.Milliseconds())
+		})
+	}
 }
