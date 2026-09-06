@@ -105,6 +105,70 @@ func startPerClientServerWithSpawn(t *testing.T, spawnFn func(cols, rows int, re
 	return exitCh, "ws://" + ln.Addr().String() + "/ws", srv, spawnedSessions
 }
 
+// startPerClientServerTrackedWithSpawn 是 startPerClientServerWithSpawn 的
+// handler 追踪姊妹变体（14-01 新增，同步边纪律镜像 startTrackedServerWith
+// 注释 e2e_test.go:164-170）：装配序列、spawned 追踪收口与返回语义与母本
+// 逐字同构，唯一差异 = http.Serve 的 handler 经 sync.WaitGroup 包裹
+// （wg.Add(1)/defer wg.Done() 镜像 startTrackedServerWith :186-193 形态）并
+// 返回 wg.Wait——per-client 族补齐 handler 追踪（stderr 捕获类测双跑的结构
+// 前提：restore() 前需与 handler 内 logEvent 读 os.Stderr 建立 WaitGroup
+// happens-before 同步边，多客户端推论后 waitExit 通道同步边消亡的 race
+// detector 认可替代形态）。消费方 = 14-01 harness 小族 newTrackedTestServer/
+// newHandleTestServer 的 per-client 分支直传。
+func startPerClientServerTrackedWithSpawn(t *testing.T, spawnFn func(cols, rows int, remoteUser string) (*pty.Session, error), mutate func(*server.Options)) (exitCh chan int, wsURL string, srv *server.Server, spawnedSessions func() []*pty.Session, waitHandlers func()) {
+	t.Helper()
+	var mu sync.Mutex
+	var spawned []*pty.Session
+	exitCh = make(chan int, 1)
+	opts := server.Options{
+		SessionMode: server.SessionModePerClient,
+		SpawnFunc: func(cols, rows int, remoteUser string) (*pty.Session, error) {
+			sess, err := spawnFn(cols, rows, remoteUser)
+			if err != nil {
+				return nil, err
+			}
+			mu.Lock()
+			spawned = append(spawned, sess)
+			mu.Unlock()
+			return sess, nil
+		},
+		Writable: true,
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	srv = server.New(nil, func(code int) { exitCh <- code }, opts)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, sess := range spawned {
+			if sess.Cmd != nil && sess.Cmd.Process != nil {
+				_ = sess.Cmd.Process.Kill()
+			}
+			_ = sess.Close()
+		}
+	})
+	var wg sync.WaitGroup
+	h := srv.Handler()
+	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wg.Add(1)
+		defer wg.Done()
+		h.ServeHTTP(w, r)
+	}))
+	spawnedSessions = func() []*pty.Session {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]*pty.Session(nil), spawned...)
+	}
+	return exitCh, "ws://" + ln.Addr().String() + "/ws", srv, spawnedSessions, wg.Wait
+}
+
 // startPerClientServer 是 startPerClientServerWithSpawn 的薄包装（11-01 五测
 // 调用点签名保持，断言零改动）：默认 spawnFn = pty.StartWithSize 直通闭包捕获
 // argv——即 cmd/wesh/main.go run() 生产闭包的镜像形态（Options.SpawnFunc
