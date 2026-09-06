@@ -1791,14 +1791,22 @@ func (s *Server) Shutdown() {
 		// 超时等待形态；Wait 期间 hubMu 已释放，兜底回调可取锁无死锁面）；
 		// 到期无论收割完毕与否无条件继续——无界等待全部 Wait 返回即把关停
 		// 控制权让给最坏子进程（D-state 不可杀进程拖死关停，P10 红线）。
+		//
+		// deadline 先于 AfterFunc 安排计算（13-07 CI flake 收口）：原形态
+		// 「先安排 wake、后取 deadline」两时刻相差 Δ——wake 的 Broadcast 可
+		// 在 deadline 前几微秒到达，被唤醒方重估 Before(deadline)=true 重进
+		// Wait，而本形态下 wake 是唯一兜底唤醒源（D-state 残余静止收割链
+		// 不再 Broadcast）→ 永久卡死（macos 实测 Shutdown 长眠 8m+ 至
+		// 10m 超时）。deadline 提前计算后 Broadcast 到达时刻 ≥ deadline，
+		// 重估必为 false、必出循环。
 		bound := s.stopTimeout + shutdownJoinMargin
+		deadline := time.Now().Add(bound)
 		wake := time.AfterFunc(bound, func() {
 			s.hubMu.Lock()
 			s.hubCond.Broadcast()
 			s.hubMu.Unlock()
 		})
 		defer wake.Stop()
-		deadline := time.Now().Add(bound)
 		s.hubMu.Lock()
 		for len(s.pcSessions) > 0 && time.Now().Before(deadline) {
 			s.hubCond.Wait()

@@ -171,17 +171,21 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	// 序列与 rejectCapacity 同码同串不同事件名（D-04 wire 聚合、日志细分
 	// 第三次应用：Error{server_error, capacityMessage} 定值文案——三拒绝
 	// wire 不可区分是有意为之 → spawn_throttled 单行审计 → Close(1011,
-	// server_error) → ptySpawnThrottled 计数递增）。1011 不在前端
+	// server_error)；ptySpawnThrottled 计数递增先于首帧写出）。1011 不在前端
 	// shouldReconnect 触发集（main.ts:1023 仅 1006，reconnect.test.ts 对
 	// 1011 false）——节流拒绝不触发自动重连，无重连放大 fork 循环
 	//（T-13-06；1008 亦禁用——认证/版本策略受众不混入容量/节流策略）。
 	// 拒绝路径零注册零登记零残留——半开名额已在升档分岔前 release() 既有
 	// 结构性保证（下方容量闸注释同款论证）。
 	if !s.spawnThrottle.allow(throttleIP, time.Now()) {
+		// 计数递增先于一切对外可见响应（13-07 CI flake 收口）：c.Write/
+		// c.Close 返回 ≠ 客户端已观测完整拒绝序列，但一旦 close 帧被
+		// 客户端收到，测试/观测方即可能读取计数器——递增必须先于帧写
+		// 出，建立「拒绝可观测 ⟹ 计数已递增」的单向序。
+		s.mc.ptySpawnThrottled.Add(1)
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, capacityMessage))
 		logEvent(remote, websocket.StatusInternalError, "spawn_throttled", remoteUser)
 		_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
-		s.mc.ptySpawnThrottled.Add(1)
 		return nil
 	}
 	// D-02 pre-spawn 容量再闸（11-03）：hubMu 短临界区只读 len(pcSessions)
@@ -487,15 +491,17 @@ func (s *Server) armSlowDwellLocked(cl *client, pc *pcSession) *time.Timer {
 // 死亡 ExitCode()=-1 语义免费）→ session_end 事件 emit（13-03，D-09 前半——
 // 位置与 shared lifecycle 母本同位：退出码提取后、一切收口活动前；hubMu
 // 之外（hubMu 内 I/O 禁忌——emitEvent 写 stderr 经动态 writer 锁，锁序不
-// 混入 hubMu），且先于 close(waitDone)——emit → close(waitDone) → 慢半段
-// <-waitDone → delete+Broadcast 的程序序链保证事件先于 pcSupervisor 终结
-// 路径（exitf 生产语义 = os.Exit，事件必须在其前落流）且先于 EXIT 组帧
-// 直写）→ close(waitDone)（teardown 慢半段的收割同步边）→ hubMu 内置
-// exitCode+reaped+last-reaped 记录（13-03：pcLastExitCode/pcHasExitCode
+// 混入 hubMu），先于一切收口活动——事件先于 pcSupervisor 终结路径（exitf
+// 生产语义 = os.Exit，事件必须在其前落流）且先于 EXIT 组帧直写）→ hubMu
+// 内置 exitCode+reaped+last-reaped 记录（13-03：pcLastExitCode/pcHasExitCode
 // 置位——pcSupervisor 消费数据源，退出码两时序逐位对齐 shared：子先死 →
 // exitf(子码)；客户端先断 → HUP → -1 → exitf(-1) → 进程级 255）并触发
 // teardown（同锁持有内——若断开路径已先触发则 Once 去重无操作；若本路径
-// 先触发，reaped 已在同临界区置位，快半段栅栏成立）→ 等 teardownDone
+// 先触发，reaped 已在同临界区置位，快半段栅栏成立）→ 放锁后 close(waitDone)
+// （teardown 慢半段的收割同步边；13-07 后置于状态写入——「exitCode 记录 →
+// 慢半段 <-waitDone → delete+Broadcast → pcSupervisor/Shutdown join 读取」
+// 成 happens-before 链，终结读取方不再可能与状态写入竞态读空）→ 等
+// teardownDone
 // 落定（Drain/Close/注册表移除完成后再发 EXIT——终结输出先经 outbox
 // 送达的时序与 lifecycle 同序）→ close(inputDone)（inputWriter 收口，
 // shared close(s.inputDone) 同构）→ EXIT 私有化直写（S1 直写纪律逐字
@@ -529,7 +535,6 @@ func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 		}
 	}
 	emitEvent(endAttrs...)
-	close(pc.waitDone)
 	s.hubMu.Lock()
 	pc.exitCode = code
 	pc.reaped = true
@@ -540,6 +545,15 @@ func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 	s.pcHasExitCode = true
 	s.teardownPCLocked(pc)
 	s.hubMu.Unlock()
+	// close(waitDone) 在 hubMu 状态写入之后（13-07 CI flake 收口）：慢半段
+	// <-waitDone 放行 → hubMu delete+Broadcast 唤醒 pcSupervisor/Shutdown
+	// join 读取 pcHasExitCode——close 先于写入时三者可读到未更新值（exitf(0)
+	// 竞态）；close 后移使「exitCode 记录 → delete+Broadcast → 终结读取」
+	// 成 happens-before 链。waitDone 关闭语义不变（Wait 已返回）——WR-02
+	// 栅栏读它仍只作「已收割」判据，且生产序列中「waitDone 关 + reaped 未
+	// 置位」微窗口随之消失（栅栏仅剩手工构造态，export_test 预关闭形态
+	// 继续覆盖健壮性）。
+	close(pc.waitDone)
 	<-pc.teardownDone
 	close(pc.inputDone)
 	exitFrame := proto.ExitFrame(code, exitMessage(err, code))
