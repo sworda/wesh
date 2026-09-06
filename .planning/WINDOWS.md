@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 40
+open_count: 42
 waived_count: 0
 fixed_count: 3
-total_count: 43
-last_updated: 2026-09-06T15:51:10.809Z
+total_count: 45
+last_updated: 2026-09-06T16:19:37.260Z
 ---
 
 # Broken Windows Ledger
@@ -58,6 +58,8 @@ last_updated: 2026-09-06T15:51:10.809Z
 | 41 | 13 | deviation | README.md |  | 13-08 Task 2 Rule 1：README:96/CONFIGURATION:57/:154「per-client 行为装配中，当前版本与 shared 等价」Phase 10 时代失实残留最小修正（Phase 11-13 行为已全部落地，与同段 stop-timeout per-client 语义自相矛盾——文档即被测物纪律；PC-12 完整模型段仍归 Phase 14） | open |  | 2026-09-05T19:51:34.103Z |  |
 | 42 | 14 | deviation | internal/server/metrics_test.go |  | 14-03 plan behavior「series 镜像 17 shared / 21 per-client」与 13-05 落地现状不符（metrics.go 双模式同持 21 series，shared 四 spawn 计数器恒 0 不摘——credit_gate 恒 0 先例）：按 plan action 2 以 metrics.go 现状核定两列期望值（assertExpositionShape 双模式同断言），口径偏差登记供 14-12 收口闸 diff 白名单审查知悉 | open |  | 2026-09-06T15:26:29.105Z |  |
 | 43 | 14 | deviation | internal/server/harness_test.go |  | 14-04 Rule 3 files_modified 枚举缺口：startResizeServer 删除验收闸（全仓零引用）要求 harness_test.go shared 分支内联 + e2e_test.go:36 注释同步——两文件不在 plan files_modified 清单（13-06 WINDOWS #36 同形态） | open |  | 2026-09-06T15:51:10.809Z |  |
+| 44 | 14 | deviation | internal/server/handshake_test.go | 358 | TestReadOnlyAllowsResize 断言分叉面：plan truth 断言 10 测全部同断言双跑零期望改写，代码现实 ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通，server.go:1264-1287）——按 14-01 分叉表形态落地，shared 列逐字 + per-client 列断言直通真值 50/120 | open |  | 2026-09-06T16:19:37.109Z |  |
+| 45 | 14 | deviation | internal/server/e2e_test.go |  | Rule 3 枚举缺口：startTestServer 兼容包装随 handshake 改造全仓零引用，按 14-02/14-04 收编闭环先例删除（-6 行）；e2e_test.go 不在 plan files_modified 白名单 | open |  | 2026-09-06T16:19:37.260Z |  |
 
 ````json
 [
@@ -575,6 +577,30 @@ last_updated: 2026-09-06T15:51:10.809Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T15:51:10.809Z",
+    "resolved_at": null
+  },
+  {
+    "id": 44,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "internal/server/handshake_test.go",
+    "line": 358,
+    "description": "TestReadOnlyAllowsResize 断言分叉面：plan truth 断言 10 测全部同断言双跑零期望改写，代码现实 ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通，server.go:1264-1287）——按 14-01 分叉表形态落地，shared 列逐字 + per-client 列断言直通真值 50/120",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:19:37.109Z",
+    "resolved_at": null
+  },
+  {
+    "id": 45,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "internal/server/e2e_test.go",
+    "line": null,
+    "description": "Rule 3 枚举缺口：startTestServer 兼容包装随 handshake 改造全仓零引用，按 14-02/14-04 收编闭环先例删除（-6 行）；e2e_test.go 不在 plan files_modified 白名单",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:19:37.260Z",
     "resolved_at": null
   }
 ]

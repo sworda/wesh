@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-04-PLAN.md
-last_updated: "2026-09-06T15:52:42.820Z"
+stopped_at: Completed 14-05-PLAN.md
+last_updated: "2026-09-06T16:22:22.384Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 31
+  completed_plans: 32
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 7 of 12
+Plan: 8 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [████████░░] 84%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -88,6 +88,7 @@ Progress: [████████░░] 84%
 | Phase 14 P02 | 28min | 2 tasks | 2 files |
 | Phase 14 P03 | 25min | 3 tasks | 3 files |
 | Phase 14 P04 | 21min | 2 tasks | 4 files |
+| Phase 14 P05 | 25min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -176,6 +177,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-04] resize_arb per-client 列三重可证伪面：双端各自 RESIZE（A→110x40/B→70x25）+ B 落定后 A 保持 110x40 负向余量断言（互不压缩为 Isolation 测外独有面）+ 双泵静默窗零 'W' 帧——比 TestGlobalCredit 单面形态更完整的三观测面（Pattern 8）
 - [Phase ?]: [Phase 14-04] startResizeServer 收编内联终态：装配体逐字内联至 newSessTestServer shared 分支（helper 名消失满足全仓零引用字面闸；e2e_test.go:36 注释同步）——14-02 startShutdownServerWith 后第二例专用 helper 收编闭环；Rule 3 枚举缺口（harness/e2e 不在 files_modified）WINDOWS 登记
 - [Phase ?]: [Phase 14-04] 蓝本三则归属偏差登记 CONTEXT 落地（D-02 偏差登记小节——14-06 续登 events/log 的既定通道）：owner 四测实在 multi_test.go:541/647/746/850（plan 行号 :301/373/428/497 为规划期陈旧值）/ resize wire 面实在 resize_arb_test.go / 计数不变量白盒面 clients_test:29 + wire 面 TestMaxClients503:1222；clients_test/resize_test 六测纯白盒单跑判定
+- [Phase ?]: [Phase 14-05] TestReadOnlyAllowsResize 为 handshake 行唯一分叉面：ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通）——按 14-01 断言分叉表落地（shared 逐字 + per-client 断言直通真值 50/120），exitf 面同 TestExitFrameSignal 分叉；WINDOWS #44
+- [Phase ?]: [Phase 14-05] 零值/Writable:false Options 经 mutate 显式回写（Pattern 9）：小族基线 Writable:true 下 TestNoAuthMode/TestReadOnly* 覆写回 false 保期望值零改写；TestPingDisabled 显式 PingInterval=0 锁定禁用语义防基线漂移
+- [Phase ?]: [Phase 14-05] auth/origin/throttle/tickets 四文件 6 测纯函数白盒形态判定保持单跑（无装配可参数化，非覆盖缺口）；auth_e2e :403 收编 newTrackedTestServer（tracked 形态第二消费方）；startTestServer 零引用收编删除（14-02/04 闭环第三例，WINDOWS #45）
 
 ### Pending Todos
 
@@ -197,6 +201,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T15:51:40.194Z
-Stopped at: Completed 14-04-PLAN.md
+Last session: 2026-09-06T16:22:22.363Z
+Stopped at: Completed 14-05-PLAN.md
 Resume file: None
