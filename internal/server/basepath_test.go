@@ -27,14 +27,22 @@ import (
 	"github.com/sworda/wesh/internal/server"
 )
 
-// startBasePathServer 装配 BasePath="/wesh" 的测试实例（e2e_test.go
-// startTestServerWith 既有 helper 复用，无认证 + --writable 形态——bp 装配语义
-// 与认证模式正交，凭据矩阵由 sharetoken_test 既有覆盖不重复），返回 http base
-// URL 与 bp 前缀 ws URL。
-func startBasePathServer(t *testing.T, opts server.Options) (httpBase, bpWSURL string) {
+// startBasePathServer 装配 BasePath="/wesh" 的测试实例（无认证 + --writable
+// 形态——bp 装配语义与认证模式正交，凭据矩阵由 sharetoken_test 既有覆盖不
+// 重复），返回 http base URL 与 bp 前缀 ws URL。
+//
+// 14-06 双跑改造：加 mode 参数直传 newTestServer 小族（e2e 面与 customindex
+// :214 调用点共用——蓝本 basepath 行 mode-agnostic 同断言双跑）；本地 URL
+// 映射 wrapper 保留。mutate 先于 BasePath 覆写执行——调用方不可覆写装配
+// 语义本体（原 helper 对 opts.BasePath 的强制覆写形态等价）。
+func startBasePathServer(t *testing.T, mode string, mutate func(*server.Options)) (httpBase, bpWSURL string) {
 	t.Helper()
-	opts.BasePath = "/wesh"
-	_, wsURL := startTestServerWith(t, []string{"/bin/cat"}, opts)
+	_, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+		if mutate != nil {
+			mutate(o)
+		}
+		o.BasePath = "/wesh"
+	})
 	host := strings.TrimSuffix(strings.TrimPrefix(wsURL, "ws://"), "/ws")
 	return "http://" + host, "ws://" + host + "/wesh/ws"
 }
@@ -58,10 +66,12 @@ func readBodyStr(t *testing.T, resp *http.Response) string {
 func TestBasePathRoutes(t *testing.T) {
 	roTok := server.GenerateShareToken()
 	rwTok := server.GenerateShareToken()
-	httpBase, _ := startBasePathServer(t, server.Options{
-		Writable:     true,
-		ShareTokenRO: roTok,
-		ShareTokenRW: rwTok,
+	// 14-06 Task 1 过渡态：helper 已 mode 参数化（customindex :214 编译依赖随
+	// 本 plan 前批一并落地），本测与 TestBasePathWS 的 mode 循环包裹归 Task 2
+	// 后批——暂传字面 shared（与改造前行为逐字等价）。
+	httpBase, _ := startBasePathServer(t, server.SessionModeShared, func(o *server.Options) {
+		o.ShareTokenRO = roTok
+		o.ShareTokenRW = rwTok
 	})
 	// 307 断言不跟随重定向（sharetoken_test.go 同款 client 形态）。
 	noFollow := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
@@ -187,10 +197,10 @@ func TestBasePathRoutes(t *testing.T) {
 // TestBasePathWS 锁定 bp 形态 WS 升级全链（must_have truth 第一行后半）：
 // 拨 /wesh/ws 完成 wesh.v1 子协议握手 + Hello → 收到 Welcome（dialHello 同款路径）。
 func TestBasePathWS(t *testing.T) {
-	_, bpWSURL := startBasePathServer(t, server.Options{
-		Writable:     true,
-		ShareTokenRO: server.GenerateShareToken(),
-		ShareTokenRW: server.GenerateShareToken(),
+	// 过渡态字面 shared（TestBasePathRoutes 注释同款——Task 2 包 mode 循环）。
+	_, bpWSURL := startBasePathServer(t, server.SessionModeShared, func(o *server.Options) {
+		o.ShareTokenRO = server.GenerateShareToken()
+		o.ShareTokenRW = server.GenerateShareToken()
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
