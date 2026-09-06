@@ -422,8 +422,135 @@ async function s1HerdrDriving() {
     !sessionListHas(SESSION1), `残留=${sessionListHas(SESSION1)}`);
 }
 
-// 场景串行收口（phase13.mjs:748-769 形态；S2 ro 汇聚场景挂接点——Task 2）
-const scenarios = [s1HerdrDriving];
+// ---------- S2：ro 汇聚（D-08②/Pitfall 8 防假绿——FEATURES 裁决 7 文档叙事防说谎防线） ----------
+// 独立实例（同 S1 argv 形态，新 SESSION 后缀）：rw 桌面端 + ro 移动端各自持
+// 独立 herdr client（分享链接 = 按权限级别的独立进程入场券），经 herdr
+// server 汇聚同一会话。ro 门控观测走 herdr pane read（server 侧 pane 可见
+// 内容——比流嗅探稳定，D-06 同款理由）；ticket 全链唯一通道 = POST
+// /api/attach 携 share token 换 ticket → Hello JSON 携 ticket 键（WS query
+// 参数无效且不报错——Pitfall 8，Welcome.mode 自检是防假绿唯一防线）。
+async function s2RoConvergence() {
+  console.log('S2: ro 汇聚（rw 桌面端 + ro 移动端经 herdr 汇聚同会话——ticket 全链 + pane read 输入门控实证）');
+  const RO_MARK = 'UAT_P14_RO_7kq2';
+  const RW_MARK = 'UAT_P14_RW_3m9v';
+  sensitiveMarkers.push(RO_MARK, RW_MARK); // 标记串同类红线管理（不进 detail）
+  const inst = await startWesh(['--writable', '--session-mode=per-client', '--', HERDR, '--session', SESSION2]);
+  let rw = null, ro = null;
+  try {
+    // ① rw 桌面端 ticket 全链（phase05.mjs:286-298 形态）：POST /api/attach 携
+    //    rw share token → 一次性 ticket → Hello JSON 携 ticket 键 attach →
+    //    Welcome.mode=='rw' 自检落 check
+    const respRW = await fetch(`http://127.0.0.1:${inst.port}/api/attach`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: tokenFromUrl(inst.shareRW) }),
+    });
+    const bodyRW = respRW.status === 200 ? await respRW.json() : {};
+    const ticketRW = typeof bodyRW.ticket === 'string' && bodyRW.ticket.length > 0 ? bodyRW.ticket : null;
+    if (ticketRW !== null) sensitiveTokens.push(ticketRW);
+    rw = ticketRW !== null ? await dialHello(inst.port, { cols: 120, rows: 40, ticket: ticketRW }) : null;
+    const rwMode = rw !== null ? welcomeOf(rw.frames)?.mode : null;
+    check('S2a', 'rw ticket 全链：POST /api/attach 携 rw share token → 200 出 ticket → Hello 携 ticket 键 attach → Welcome.mode=="rw"（自检落 check）',
+      rw !== null && rwMode === 'rw',
+      `status=${respRW.status} ticket非空=${ticketRW !== null} mode=${rwMode ?? '（未 attach）'}`);
+    if (rw === null) {
+      check('S2b', 'ro ticket 全链 + Welcome.mode=="ro" 自检', false, '前提失败：rw 端未 attach');
+      return;
+    }
+
+    // ② ro 移动端 ticket 全链 + Welcome.mode=='ro' 自检（Pitfall 8 防假绿核心：
+    //    ticket 误塞 WS query 参数不报错但 attach 成 rw——mode 自检是唯一防线）
+    const respRO = await fetch(`http://127.0.0.1:${inst.port}/api/attach`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: tokenFromUrl(inst.shareRO) }),
+    });
+    const bodyRO = respRO.status === 200 ? await respRO.json() : {};
+    const ticketRO = typeof bodyRO.ticket === 'string' && bodyRO.ticket.length > 0 ? bodyRO.ticket : null;
+    if (ticketRO !== null) sensitiveTokens.push(ticketRO);
+    ro = ticketRO !== null ? await dialHello(inst.port, { cols: 40, rows: 12, ticket: ticketRO }) : null;
+    const roMode = ro !== null ? welcomeOf(ro.frames)?.mode : null;
+    check('S2b', 'ro ticket 全链：POST /api/attach 携 ro share token → 200 出 ticket → Hello 携 ticket 键 attach → Welcome.mode=="ro"（自检落 check——Pitfall 8：通道误用必现 mode 不符即 FAIL）',
+      ro !== null && roMode === 'ro',
+      `status=${respRO.status} ticket非空=${ticketRO !== null} mode=${roMode ?? '（未 attach）'}`);
+    if (ro === null) return;
+
+    // ③ 就绪门：双端初始帧到达落定（OUTPUT 字节 >0 且 150ms 双采样相等——
+    //    双 herdr client 连接完成，foreground 翻转与 pane reflow 均已发生并
+    //    吸收进 settle）+ focused_pane_id 动态发现（不硬编码 w1:p1——蓝本外
+    //    形态不静默跟改）
+    let paneId = null;
+    let rw0 = 0, ro0 = 0;
+    const ready = await pollUntil(() => {
+      const nowRw = outputBytes(rw.frames);
+      const rwSettled = nowRw > 0 && nowRw === rw0;
+      rw0 = nowRw;
+      const nowRo = outputBytes(ro.frames);
+      const roSettled = nowRo > 0 && nowRo === ro0;
+      ro0 = nowRo;
+      if (!rwSettled || !roSettled) return false;
+      paneId = focusedPaneOf(herdrSnap(SOCK2));
+      return paneId !== null;
+    }, 20000, 150);
+    check('S2c', '就绪门：双端初始帧到达落定且 focused_pane_id 可发现（rw/ro 双 herdr client 经 server 汇聚同会话）',
+      ready && paneId !== null, `就绪=${ready} pane发现=${paneId !== null}`);
+    if (paneId === null) return;
+
+    // ④ pane 基线：ro 输入前 pane 可见内容（server 侧结构化观测通道）
+    const before = paneRead(SOCK2, paneId);
+
+    // ⑤ ro 端 INPUT（echo RO_MARK 键序列——最简形态，Pitfall 6 fish 兼容）→
+    //    护栏窗（若 ro INPUT 未被门控，echo 往返 ~50ms 量级早已反映进 pane；
+    //    1500ms 为 30× 余量的缺席断言窗，非精确时点断言）→ pane 逐字不变 +
+    //    标记缺席（wesh 服务端丢弃 ro INPUT 的实证——FEATURES 裁决 7 防说谎）
+    sendInput(ro.ws, `echo ${RO_MARK}\r`);
+    await sleep(1500);
+    const afterRO = paneRead(SOCK2, paneId);
+    check('S2d', 'ro 门控实证：ro 端 INPUT 后 pane 可见内容与输入前逐字一致且 RO 标记串缺席（wesh 服务端丢弃 ro INPUT——D-08②）',
+      before === afterRO && !afterRO.includes(RO_MARK),
+      `逐字一致=${before === afterRO} 标记缺席=${!afterRO.includes(RO_MARK)}`);
+
+    // ⑥ rw 对照端 INPUT（echo RW_MARK）→ pane read 含标记（对照面——pane
+    //    观测通道本身工作的证据；轮询等待 echo 往返）
+    sendInput(rw.ws, `echo ${RW_MARK}\r`);
+    const rwVisible = await pollUntil(() => {
+      try { return paneRead(SOCK2, paneId).includes(RW_MARK); } catch { return false; }
+    }, 10000);
+    check('S2e', 'rw 对照：rw 端 INPUT 后 pane 可见内容含 RW 标记串（pane 观测通道本身工作——对照面）',
+      rwVisible, `标记到达=${rwVisible}`);
+
+    // ⑦ 终态复合断言：rw 标记在场 + ro 标记仍缺席（门控非瞬时——全程零泄漏）
+    let finalRead = '';
+    try { finalRead = paneRead(SOCK2, paneId); } catch { /* 观测通道失败由 S2e 承载 */ }
+    check('S2f', '终态：pane 含 RW 标记串且 RO 标记串全程缺席（门控与对照双面同读成立）',
+      finalRead.includes(RW_MARK) && !finalRead.includes(RO_MARK),
+      `RW在场=${finalRead.includes(RW_MARK)} RO缺席=${!finalRead.includes(RO_MARK)}`);
+  } finally {
+    // 清理序列（同 S1）：关 WS ×2 → wesh SIGTERM → herdr session stop/delete
+    await closeWs(rw);
+    await closeWs(ro);
+    await stopWesh(inst);
+    herdrSessionCleanup(SESSION2);
+  }
+  // 清理核验（finally 完成后落 check——失败可见而非静默）
+  check('S2g', '清理收口：herdr session list 无本会话残留行（S2 会话零残留——T-14-17）',
+    !sessionListHas(SESSION2), `残留=${sessionListHas(SESSION2)}`);
+}
+
+// 输出自净断言（phase13.mjs:740-746 同构 + 标记串扩展——红线由注释纪律升级为
+// 运行时自证）：遍历全部已发 detail，断言不含任一 share token/ticket 值（含
+// '/s/' 链接形态串）、任一会话 pid 数值与任一标记串值；命中即 FAIL（防未来
+// 回归静默破线）。命中时不回显冒犯内容（只打布尔/计数——红线自保）。
+function assertOutputClean() {
+  const leaked = emittedDetails.some((d) =>
+    d.includes('/s/') || sensitiveTokens.some((t) => t !== null && d.includes(t))
+    || sensitivePids.some((p) => d !== '' && d.includes(String(p)))
+    || sensitiveMarkers.some((m) => d.includes(m)));
+  check('SEC', "输出自净：全部 detail 零 token 值零 pid 数值零标记串零 '/s/' 链接形态串（红线运行时自证）",
+    !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
+}
+
+// 场景串行收口（phase13.mjs:748-769 形态——场景间 300ms + 异常纳入
+// emittedDetails + skipped 不阻塞退出码；与头注释两场景清单逐一对账）
+const scenarios = [s1HerdrDriving, s2RoConvergence];
 let failed = 0;
 for (const s of scenarios) {
   try {
@@ -437,6 +564,7 @@ for (const s of scenarios) {
   }
   await sleep(300);
 }
+assertOutputClean();
 const skipped = results.filter((r) => r.ok === null).length;
 const passedN = results.filter((r) => r.ok === true).length;
 const failedN = results.filter((r) => r.ok === false).length;
