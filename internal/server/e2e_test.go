@@ -220,12 +220,6 @@ func startTestServerWith(t *testing.T, argv []string, opts server.Options) (exit
 	return exitCh, "ws://" + ln.Addr().String() + "/ws"
 }
 
-// startTestServer 兼容包装：Writable:true 装配，保持既有五个 Dial 测试的 echo 语义。
-func startTestServer(t *testing.T, argv []string) (exitCh chan int, wsURL string) {
-	t.Helper()
-	return startTestServerWith(t, argv, server.Options{Writable: true})
-}
-
 // startTrackedServerWith 是 startTestServerWith 的 handler 追踪变体：返回的
 // waitHandlers 阻塞至全部在途 HTTP handler（含 /ws 的 Attach goroutine）返回。
 // stderr 捕获类测试在 restore() 前调用——logEvent 读 os.Stderr 必然先于其 handler
