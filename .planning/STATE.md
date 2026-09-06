@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-08-PLAN.md
-last_updated: "2026-09-06T13:49:38.544Z"
+stopped_at: Completed 14-02-PLAN.md
+last_updated: "2026-09-06T14:40:33.264Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 28
+  completed_plans: 29
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 4 of 12
+Plan: 5 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [████████░░] 76%
+Progress: [████████░░] 78%
 
 ## Performance Metrics
 
@@ -85,6 +85,7 @@ Progress: [████████░░] 76%
 | Phase 14 P01 | 43min | 2 tasks | 7 files |
 | Phase 14 P07 | 40min | 2 tasks | 1 files |
 | Phase 14 P08 | 23min | 2 tasks | 1 files |
+| Phase 14 P02 | 28min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -166,6 +167,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-08] herdr 清理序列补 session delete：stop 后 session list 行保留 stopped 态（探针实证），delete 才清册+状态目录——「list 零残留」完整序列 = stop → delete → list 核验；session stop 以会话名为准（ambient HERDR_SOCKET_PATH 不干扰，执行 shell 位于 herdr pane 内的运行期再实证）
 - [Phase ?]: [Phase 14-08] phase14.mjs 两轮 18/18（S1 driving 三通道：area 翻转链四步 + 流层 254B/55B<<97049B + wesh 层双 pid/双 Welcome/流几何 120vs40；S2 ro 汇聚：ticket 全链 + pane read 门控实证 + rw 对照）；PC-13 勾选留 14-09（pw 观感层承载，共享 ID 先例）
 - [Phase ?]: [Phase 14-08] maxCursorCol 流层几何特征通道：CUP/HVP/CHA 三形态正则扫描取列坐标最大值（spike 只标定 CUP，实现扩展）——移动端几何只能寻址 ≤cols 列的关系断言材料，禁绝对常量
+- [Phase ?]: [Phase 14-02] e2e/multi 双模式分叉表落地：断开/重连（CORE-05 反转面经 newSessTestServer spawned 访问器取 pid 锚点，argv 零漂移）、fanout 双标记串交叉断言、owner 四测 D-03 四段式未装配列（零 t.Skip）、MaxClients spawn-intent 经 wesh_pty_spawn_total 程序序对照——50 个 mode= 子测试 -race 逐名绿，shared 87 条期望文案逐字零漂移
 
 ### Pending Todos
 
@@ -187,6 +189,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T13:49:38.522Z
-Stopped at: Completed 14-08-PLAN.md
+Last session: 2026-09-06T14:40:33.241Z
+Stopped at: Completed 14-02-PLAN.md
 Resume file: None
