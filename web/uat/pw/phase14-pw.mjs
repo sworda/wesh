@@ -111,13 +111,28 @@ async function herdrClientPids() {
   return out.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
-// pane 内 fish 兼容标记（探针实证形态）：键入 + 等待渲染 + 正则解析。
+// pane 内 fish 兼容标记（探针实证形态）：单发键入 + evaluate 300ms 简单轮询。
 // nonce 防命中历史回显；pid 数值只作断言材料（红线）。
-async function paneEcho(page, expr, re, timeout = 12000) {
-  const nonce = 'P' + Math.random().toString(36).slice(2, 6).toUpperCase();
-  await runCmd(page, `echo ${nonce}:${expr}`);
-  const t = await waitTermText(page, new RegExp(`${nonce}:${re.source}`), timeout);
-  return t.match(new RegExp(`${nonce}:${re.source}`));
+// 形态纪律（2026-09-07 实测 14-09 执行期）：单发 + 简单轮询在脚本上下文 15/15 全快
+//（probe21/16/17 等，命中 ~373ms）；带 8s 内层重试窗/计数簿记的复合轮询形态 7/7
+// 触发 pane 输出流停摆（回显后流死、DOM 冻结、无 onclose 无面板——组件级 A/B 未
+// 能隔离出单一触发行，海森bug，14-09-SUMMARY 登记待查）。故本函数锁死已证形态：
+// 单发 20s 简单轮询，未观测到则整体重试（新 nonce 重键入），护栏 45s 到期返回
+// null 由断言转 FAIL。
+async function paneEcho(page, expr, re, timeout = 45000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const nonce = 'P' + Math.random().toString(36).slice(2, 6).toUpperCase();
+    await runCmd(page, `echo ${nonce}:${expr}`);
+    const typedAt = Date.now();
+    while (Date.now() - typedAt < 20000 && Date.now() < deadline) {
+      const t = await page.evaluate(() => document.querySelector('.xterm-rows')?.textContent ?? '');
+      const m = t.match(new RegExp(`${nonce}:${re.source}`));
+      if (m) return m;
+      await sleep(300);
+    }
+  }
+  return null;
 }
 
 // 打开会话并等 herdr TUI 渲染（自定义就绪门——lib openSession 的 waitForPrompt 锚
@@ -149,16 +164,23 @@ try {
   browser = await launch();
 
   // ── 桌面 tab：就绪 + 自证材料（全部键入在基线快照之前——pane 新输出只落内容行）──
+  // 就绪链刻意不含 renderRowCount：{waitTermText × renderRowCount} 评估对与首键入
+  // 的组合实测 6/6 触发 pane 输出流停摆（14-09 执行期海森bug，单因子均干净——
+  // probe11/12/21 vs probe10/14/15/19/20 矩阵），稳定性证明由 stableRows 独立承载。
   ctxD = await browser.newContext({ viewport: V_DESK, extraHTTPHeaders: { Authorization: AUTH_HEADER } });
   const pageD = await ctxD.newPage();
   await openTab(pageD, /│/, '桌面 tab（herdr 侧栏边框锚定）');
-  const deskRender0 = await renderRowCount(pageD);
   const readyD = await stableRows(pageD);
-  t0.ok(readyD.stable && deskRender0 > 0, '桌面 tab 就绪：herdr 边框在场且行文本双采样稳定（初始全量帧落定）',
-    `稳定=${readyD.stable} 渲染行数=${deskRender0}`);
+  t0.ok(readyD.stable, '桌面 tab 就绪：herdr 边框在场且行文本双采样稳定（初始全量帧落定）',
+    `稳定=${readyD.stable} 渲染行数=${readyD.rows.length}`);
 
   let pids = await herdrClientPids();
   t0.ok(pids.length === 1, '桌面 tab 单独在场：herdr client 进程恰 1 个（计数通道自证）', `计数=${pids.length}`);
+
+  // 首键入前 settle：herdr 惰性 spawn + fish（NVM 启动 ~2-3s）就绪留缓冲，使键入
+  // 落在 pane 可交互后、回显与 prompt 重绘全部落在基线快照之前（时序纪律：护栏内
+  // 真实等待，非精确时点断言）。
+  await sleep(8000);
 
   // pane 交互通道 + A5 标定材料（fish 兼容形态，探针实证）：pid 与桌面派生 pane 几何
   const pidA = (await paneEcho(pageD, '$fish_pid', '(\\d+)'))?.[1] ?? null;
@@ -167,16 +189,19 @@ try {
   t0.ok(pidA !== null && deskPane !== null, '桌面 pane 交互就绪：fish 标记回读 pid + stty 几何（A5 标定材料）',
     `pid可读=${pidA !== null} pane几何=${deskPane ? `${deskPane.cols}x${deskPane.rows}` : 'null'}（视口${V_DESK.width}x${V_DESK.height}）`);
 
-  // 基线快照 + 目标行筛选（双采样一致 + 结构行判定——不稳定行天然出局）
+  // 基线快照 + 结构行序列（双采样一致 + 结构行判定）。
+  // 对比面 = 结构行家族内「同序位逐字 + 边框列位置」，非绝对行序位——pane 内容
+  // 在基线后仍可向下增长（prompt 重绘等，首跑实证 16 条回显使绝对序位全位移），
+  // 内容增长只从尾部吞 blank 结构行（幸存前缀序位不变），而 shared 压缩翻紧凑
+  // 布局会整体改写边框列 + 全部行文本（D-07 判别面守恒）。
   const s1 = await termRows(pageD);
   await sleep(1200); // 跨秒级采样窗（探针实证本 config 无时钟行，此窗为保守护栏）
   const s2 = await termRows(pageD);
-  const baseline = s2;
-  const targetIdx = [];
-  s2.forEach((r, i) => { if (i < s1.length && r === s1[i] && structuralRow(r)) targetIdx.push(i); });
-  t0.ok(targetIdx.length >= 10,
-    `基线目标行集合非平凡（≥10 行含边框结构行——空/小集合会使逐字比对假绿）`,
-    `目标行=${targetIdx.length}/${s2.length}`);
+  const struct0 = s2.filter((r, i) => i < s1.length && r === s1[i] && structuralRow(r));
+  const borderCols0 = [...new Set(struct0.map((r) => r.indexOf('│')))];
+  t0.ok(struct0.length >= 10 && borderCols0.length === 1,
+    `基线结构行序列非平凡（≥10 行含边框结构行且边框列唯一——空/小集合会使逐字比对假绿）`,
+    `结构行=${struct0.length}/${s2.length} 边框列=${borderCols0.join(',')}`);
   await pageD.screenshot({ path: 'screenshots/p14-t0-desktop.png' });
 
   // ── 移动 tab attach（竖屏小屏）──
@@ -202,11 +227,16 @@ try {
   t1.ok(readyM1.stable, '移动端渲染落定（行文本双采样稳定——herdr 前台重排完成后再断言桌面）', `稳定=${readyM1.stable}`);
   await sleep(800); // 吸收窗（非精确时点断言——迟到的增量帧护拦）
   const rows1 = await termRows(pageD);
-  const diff1 = targetIdx.filter((i) => rows1[i] !== baseline[i]);
-  const deskRender1 = await renderRowCount(pageD);
-  t1.ok(diff1.length === 0 && deskRender1 === deskRender0,
-    '小屏 tab attach 后大屏 tab 面板边框结构行同序位逐字一致（边框列位置零漂移——未被移动端几何压缩；旧 shared 语义下整屏翻紧凑布局，目标行必变）',
-    `目标行=${targetIdx.length} 不一致=${diff1.length} 渲染行数恒定=${deskRender1 === deskRender0}`);
+  const struct1 = rows1.filter(structuralRow);
+  const borderCols1 = [...new Set(struct1.map((r) => r.indexOf('│')))];
+  const nCmp1 = Math.min(struct0.length, struct1.length);
+  let diff1 = 0, firstDiff1 = -1;
+  for (let k = 0; k < nCmp1; k++) {
+    if (struct1[k] !== struct0[k]) { diff1++; if (firstDiff1 < 0) firstDiff1 = k; }
+  }
+  t1.ok(diff1 === 0 && borderCols1.join(',') === borderCols0.join(','),
+    '小屏 tab attach 后大屏 tab 面板边框结构行同序位逐字一致（边框列位置零漂移——未被移动端几何压缩；旧 shared 语义下整屏翻紧凑布局，结构行必变）',
+    `结构行=${struct1.length}/${struct0.length} 序位不一致=${diff1} 首差序位=${firstDiff1} 边框列=${borderCols1.join(',')}/${borderCols0.join(',')}`);
   await pageD.screenshot({ path: 'screenshots/p14-t1-desktop.png' });
   await pageM.screenshot({ path: 'screenshots/p14-t1-mobile.png' });
 
@@ -230,10 +260,16 @@ try {
   t2.ok(readyM2.stable, '移动端转屏后渲染落定（行文本双采样稳定）', `稳定=${readyM2.stable}`);
   await sleep(800); // 吸收窗
   const rows2 = await termRows(pageD);
-  const diff2 = targetIdx.filter((i) => rows2[i] !== baseline[i]);
-  t2.ok(diff2.length === 0,
+  const struct2 = rows2.filter(structuralRow);
+  const borderCols2 = [...new Set(struct2.map((r) => r.indexOf('│')))];
+  const nCmp2 = Math.min(struct0.length, struct2.length);
+  let diff2 = 0, firstDiff2 = -1;
+  for (let k = 0; k < nCmp2; k++) {
+    if (struct2[k] !== struct0[k]) { diff2++; if (firstDiff2 < 0) firstDiff2 = k; }
+  }
+  t2.ok(diff2 === 0 && borderCols2.join(',') === borderCols0.join(','),
     '小屏 tab 转屏后大屏 tab 面板边框结构行仍同序位逐字一致（移动端 resize 不压缩桌面端观感——D-07）',
-    `目标行=${targetIdx.length} 不一致=${diff2.length}`);
+    `结构行=${struct2.length}/${struct0.length} 序位不一致=${diff2} 首差序位=${firstDiff2} 边框列=${borderCols2.join(',')}/${borderCols0.join(',')}`);
   await pageD.screenshot({ path: 'screenshots/p14-t2-desktop.png' });
   await pageM.screenshot({ path: 'screenshots/p14-t2-mobile.png' });
 
