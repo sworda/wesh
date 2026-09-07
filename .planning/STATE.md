@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-09-PLAN.md（PC-13 浏览器面收口：Windows 两轮 4/4 + 海森bug 驱动端架构裁决 + minrepro 双件套）
-last_updated: "2026-09-07T13:55:31.187Z"
+stopped_at: Completed 14-10-PLAN.md（run-all.mjs 17 项矩阵 runner：全矩阵首跑 17/17 全绿 213.4s + 基线计数完全一致 + SC2 证据成型）
+last_updated: "2026-09-07T14:16:57.343Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 34
+  completed_plans: 35
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 10 of 12
+Plan: 11 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [█████████░] 92%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
@@ -91,6 +91,7 @@ Progress: [█████████░] 92%
 | Phase 14 P05 | 25min | 2 tasks | 8 files |
 | Phase 14 P06 | 28min | 2 tasks | 8 files |
 | Phase 14 P09 | 19h50min | 2 tasks | 6 files |
+| Phase 14 P10 | 16min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -189,6 +190,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-09] 结构行幸存前缀判别面：目标行 = 含 │ 且边框右侧空白的结构行（pane 内容行排除——前台 reflow 属 herdr 正确行为）；pane 内容向下增长只从尾部吞 blank 行使幸存前缀序位不变，shared 压缩会整体改写边框列——herdr 类 TUI 布局稳定性断言的判别面形态
 - [Phase ?]: [Phase 14-09] minrepro 双件套交付（Track2 偏差副产）：minrepro-p14.mjs（Linux loopback）+ minrepro-win.mjs（Windows 过转发器）——两形态均未复现停摆本身即服务端无罪的反向证据，供 herdr 上游定位浏览器输入链停摆
 - [Phase ?]: [Phase 14-09] PC-13 勾选收口（14-08 既定裁决兑现：协议层 18/18 + 浏览器面 Windows 两轮 4/4 + 截图六帧人工复核——共享 ID 先例 11-01/12-01/13-01）
+- [Phase ?]: [Phase 14-10] run-all.mjs 17 项矩阵 runner 落地（D-04 形式化）：串行 spawn 聚合 + 10min 超时护栏（detached 进程组 SIGTERM→2s→SIGKILL）+ argv[3:] 过滤子集（未知名 exit 2 防静默跑空 + 脚本名误传二进制位守卫）+ pw 独立入口注记；全矩阵首跑 17/17 全绿 213.4s，逐脚本计数与 13-08 基线完全一致（phase14 实测 5.6s 远快于 A6 预估 1-2min）——SC2 三脚本重跑证据成型，14-12 收口闸单命令复用载具就位
+- [Phase ?]: [Phase 14-10] Rule 3 清障：残留核验命中的 2 wesh 进程 + 2 herdr 会话经 ps 起始时间实证为 14-09 minrepro/pw 诊断陈旧残留（早于本次矩阵运行 2.5h+，非本次泄漏——矩阵自身 phase14 S1j/S2g 零残留 PASS），SIGTERM + session stop/delete 清障后 default 外零残留——14-12 收口闸从清洁基线起跑
 
 ### Pending Todos
 
@@ -211,6 +214,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-07T13:55:31.166Z
-Stopped at: Completed 14-09-PLAN.md（PC-13 浏览器面收口：Windows 两轮 4/4 + 海森bug 驱动端架构裁决 + minrepro 双件套）
+Last session: 2026-09-07T14:16:57.321Z
+Stopped at: Completed 14-10-PLAN.md（run-all.mjs 17 项矩阵 runner：全矩阵首跑 17/17 全绿 213.4s + 基线计数完全一致 + SC2 证据成型）
 Resume file: None
