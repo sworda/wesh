@@ -152,7 +152,7 @@ wesh 采取「显式哲学」：绝大多数键可选且有默认值，以下情
 | `writable` | `false` | 只读会话 |
 | `write-policy` | `owner` | 首写者独占 + 按序递补 |
 | `session-mode` | `shared` | `per-client` 下每 WS 客户端独立 PTY 进程（断开即终结，重连=全新进程） |
-| `max-clients` | `32` | 满员 503 |
+| `max-clients` | `32` | 满员 503；`per-client` 下兼任并发进程上限——握手 503 闸之外 spawn 前再复检计数，并发子进程数恒 ≤ max-clients（含断开待收割的 linger 会话） |
 | `ping-interval` | `5s` | `0` = 禁用保活 |
 | `osc52` | `false` | 剪贴板写默认关 |
 | `socket-mode` | `0660` | listen 后显式 Chmod 达成，不随 umask 漂移 |
