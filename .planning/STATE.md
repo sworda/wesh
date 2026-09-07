@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-10-PLAN.md（run-all.mjs 17 项矩阵 runner：全矩阵首跑 17/17 全绿 213.4s + 基线计数完全一致 + SC2 证据成型）
-last_updated: "2026-09-07T14:16:57.343Z"
+stopped_at: Completed 14-11-PLAN.md（PC-12 文档三件套：README 会话模式节+标定表回填 / ARCHITECTURE 双模式段+GoTTY 误记修正 / CONFIGURATION max-clients 语义行）
+last_updated: "2026-09-07T14:45:20.027Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 35
+  completed_plans: 36
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 11 of 12
+Plan: 12 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [██████████] 95%
+Progress: [██████████] 97%
 
 ## Performance Metrics
 
@@ -92,6 +92,7 @@ Progress: [██████████] 95%
 | Phase 14 P06 | 28min | 2 tasks | 8 files |
 | Phase 14 P09 | 19h50min | 2 tasks | 6 files |
 | Phase 14 P10 | 16min | 2 tasks | 1 files |
+| Phase 14 P11 | 15min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -192,6 +193,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-09] PC-13 勾选收口（14-08 既定裁决兑现：协议层 18/18 + 浏览器面 Windows 两轮 4/4 + 截图六帧人工复核——共享 ID 先例 11-01/12-01/13-01）
 - [Phase ?]: [Phase 14-10] run-all.mjs 17 项矩阵 runner 落地（D-04 形式化）：串行 spawn 聚合 + 10min 超时护栏（detached 进程组 SIGTERM→2s→SIGKILL）+ argv[3:] 过滤子集（未知名 exit 2 防静默跑空 + 脚本名误传二进制位守卫）+ pw 独立入口注记；全矩阵首跑 17/17 全绿 213.4s，逐脚本计数与 13-08 基线完全一致（phase14 实测 5.6s 远快于 A6 预估 1-2min）——SC2 三脚本重跑证据成型，14-12 收口闸单命令复用载具就位
 - [Phase ?]: [Phase 14-10] Rule 3 清障：残留核验命中的 2 wesh 进程 + 2 herdr 会话经 ps 起始时间实证为 14-09 minrepro/pw 诊断陈旧残留（早于本次矩阵运行 2.5h+，非本次泄漏——矩阵自身 phase14 S1j/S2g 零残留 PASS），SIGTERM + session stop/delete 清障后 default 外零残留——14-12 收口闸从清洁基线起跑
+- [Phase ?]: [Phase 14-11] PC-12 三件套落地：README「会话模式」节同位扩展（:96 段字节级不动纯插入——shared 表述零削弱以 diff 纯新增自证）+ ARCHITECTURE 七分支点/goroutine 拓扑 mermaid 段 + :7 GoTTY 误记修正（实为 per-connection spawn）+ CONFIGURATION max-clients 兼任进程上限行；herdr 配方取 phase14.mjs argv 逐字形态（--writable 在前——T-14-23 实证优先于 plan 文本 flag 序）；PC-12 勾选留 14-12（共享 ID 门）
+- [Phase ?]: [Phase 14-11] D-11 建议值表三档分档：默认 32「实测可承载，保持不变」明示 / 低配 VPS·内存受限 8 / 个人多端 4——依据列全部锚定 14-07 LOADDATA 实测值（每会话 bash ~3.7MiB + wesh 侧 ~61KiB），标注资源画像分档非硬性门槛；标定表 30 项程序化数据核对全过（N=16 取整 959→960KiB 自审修正）
 
 ### Pending Todos
 
@@ -214,6 +217,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-07T14:16:57.321Z
-Stopped at: Completed 14-10-PLAN.md（run-all.mjs 17 项矩阵 runner：全矩阵首跑 17/17 全绿 213.4s + 基线计数完全一致 + SC2 证据成型）
+Last session: 2026-09-07T14:45:20.004Z
+Stopped at: Completed 14-11-PLAN.md（PC-12 文档三件套：README 会话模式节+标定表回填 / ARCHITECTURE 双模式段+GoTTY 误记修正 / CONFIGURATION max-clients 语义行）
 Resume file: None

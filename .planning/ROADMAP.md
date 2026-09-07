@@ -570,7 +570,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 并发进程负载矩阵（1/4/16/32 会话）实测内存/fd/goroutine/吞吐有界，数据回填 maxClients 默认建议值与 README 资源义务段
   5. README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 经多路复用汇聚）；v1.0「GoTTY 式共享进程模型」误记已修正（GoTTY 实为 per-connection spawn，源码已核实）
 
-**Plans**: 10/12 plans executed
+**Plans**: 11/12 plans executed
 **Wave 1**
 
 - [x] 14-01-PLAN.md — 三维归类 tracer：newTestServer 单一装配点（D-01）+ exit/stopseq/health/slowclient 小型 mode-mapped 批双模式改造（PC-13）
@@ -586,7 +586,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] 14-06-PLAN.md — mode-agnostic 部署面批：sharetoken/tls/customindex/proxy*/basepath 六文件双跑 + 三维归类 32 文件收口核对（PC-13）
 - [x] 14-09-PLAN.md — phase14-pw.mjs：Windows Playwright 双 tab 观感断言（边框列逐字不变）+ 人工执行确认门（D-07，PC-13）
 - [x] 14-10-PLAN.md — run-all.mjs 一键矩阵 runner（D-04：16 既有脚本 + phase14.mjs 共 17 项串行聚合 + 基线计数核对，PC-13）
-- [ ] 14-11-PLAN.md — PC-12 文档三件套：README「会话模式」节 + 标定表回填 + ARCHITECTURE 双模式段与 GoTTY 误记修正 + CONFIGURATION max-clients 行（D-14/D-11）
+- [x] 14-11-PLAN.md — PC-12 文档三件套：README「会话模式」节 + 标定表回填 + ARCHITECTURE 双模式段与 GoTTY 误记修正 + CONFIGURATION max-clients 行（D-14/D-11）
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -614,4 +614,4 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
 | 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete    | 2026-09-05 |
-| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 10/12 | In Progress|  |
+| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 11/12 | In Progress|  |
