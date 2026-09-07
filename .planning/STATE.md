@@ -5,15 +5,15 @@ milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
 status: executing
-stopped_at: Completed 14-06-PLAN.md
-last_updated: "2026-09-06T17:03:35.882Z"
+stopped_at: Completed 14-09-PLAN.md（PC-13 浏览器面收口：Windows 两轮 4/4 + 海森bug 驱动端架构裁决 + minrepro 双件套）
+last_updated: "2026-09-07T13:55:31.187Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 37
-  completed_plans: 33
+  completed_plans: 34
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 ## Current Position
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 9 of 12
+Plan: 10 of 12
 Status: Ready to execute
 Last activity: 2026-09-06 — Phase 14 execution started
 
-Progress: [█████████░] 89%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -90,6 +90,7 @@ Progress: [█████████░] 89%
 | Phase 14 P04 | 21min | 2 tasks | 4 files |
 | Phase 14 P05 | 25min | 2 tasks | 8 files |
 | Phase 14 P06 | 28min | 2 tasks | 8 files |
+| Phase 14 P09 | 19h50min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -184,6 +185,10 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-06] sharetoken 白盒镜像双分支落地：package server 白盒文件经本地 startShareServer(t,mode) 镜像小族两分支（per-client = New(nil)+SpawnFunc 生产闭包镜像+spawned Kill+Close Cleanup）——包墙结构性不可达 server_test 小族的 D-01 同构形态；部署面 9 测双跑收口（sharetoken 2+customindex 8+proxy_e2e 4+basepath 3，proxy_e2e 5 调用点按 waitHandlers 用途分流）
 - [Phase ?]: [Phase 14-06] 三维归类收口核对：server 包实测 34 文件（plan 33+harness_test.go 小族本体零测桶）= ① 18 文件 81 测双跑（-v mode= 子测 216 PASS）+② perclient 36 测单模式+③ load 8 测+④ 纯白盒/纯函数 10 文件+⑤ events 9/log 1 单跑（D-02 续登第 4/5 则）+⑥ export 零测桶；蓝本 :378-399 十七行全命中或偏差登记，零静默漏网——SC1 单 step 双模式 CI 门形态达成（ci.yml 零 diff）
 - [Phase ?]: [Phase 14-06] TestMaxClients503/mode=per-client 隔离复跑 flake 判 14-02 遗留（基线 9af7ce1 worktree 复现 3/3，pcSessions linger 窗口竞态，轮询仅覆盖 HTTP 503 形态）——与本 plan 无关（全量 -race 两轮全绿），deferred-items.md 登记三修复方向，14-12 知悉
+- [Phase ?]: [Phase 14-09] pw 层海森bug 架构裁决（Rule 3 实证驱动，承重）：浏览器 tab 首键入后输出流非确定性死亡为载具级（10 轮实跑 + 23 探针 + minrepro 双形态均不复现——herdr/wesh 服务端无罪）；键入通道改 Windows Node 裸 WS 驱动端（ticket 认证），浏览器双 tab 退化为纯被动渲染观测面，D-07 断言面不变（桌面 tab 渲染观测 + 结构行对齐比较）
+- [Phase ?]: [Phase 14-09] 结构行幸存前缀判别面：目标行 = 含 │ 且边框右侧空白的结构行（pane 内容行排除——前台 reflow 属 herdr 正确行为）；pane 内容向下增长只从尾部吞 blank 行使幸存前缀序位不变，shared 压缩会整体改写边框列——herdr 类 TUI 布局稳定性断言的判别面形态
+- [Phase ?]: [Phase 14-09] minrepro 双件套交付（Track2 偏差副产）：minrepro-p14.mjs（Linux loopback）+ minrepro-win.mjs（Windows 过转发器）——两形态均未复现停摆本身即服务端无罪的反向证据，供 herdr 上游定位浏览器输入链停摆
+- [Phase ?]: [Phase 14-09] PC-13 勾选收口（14-08 既定裁决兑现：协议层 18/18 + 浏览器面 Windows 两轮 4/4 + 截图六帧人工复核——共享 ID 先例 11-01/12-01/13-01）
 
 ### Pending Todos
 
@@ -206,6 +211,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T17:03:35.859Z
-Stopped at: Completed 14-06-PLAN.md
+Last session: 2026-09-07T13:55:31.166Z
+Stopped at: Completed 14-09-PLAN.md（PC-13 浏览器面收口：Windows 两轮 4/4 + 海森bug 驱动端架构裁决 + minrepro 双件套）
 Resume file: None

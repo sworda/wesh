@@ -89,7 +89,7 @@
 - [x] **PC-10**: per-client 慢客户端保护：每客户端有界 outbox 写满 1013 踢出（无全局信用门；自然反压为停读该 PTY→内核缓冲满→子进程写阻塞）
 - [x] **PC-11**: per-PTY 停读/续读背压（ttyd pty_pause/resume parity）：慢客户端先停读其 PTY 而非立即踢出，恢复后自动续读；持续过载仍按 PC-10 踢出
 - [ ] **PC-12**: 模式语义文档：README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 时经多路复用汇聚）；修正 v1.0「GoTTY 式共享进程模型」误记（GoTTY 实为 per-connection spawn，源码已核实）
-- [ ] **PC-13**: herdr/tmux 等多路复用应用场景下多客户端互不干扰：移动端 attach 不再压缩其他客户端面板尺寸（herdr is_foreground + per-client area 仲裁恢复生效）；协议层 UAT 断言进程独立/尺寸互不干扰 + Windows Playwright 全链观感断言
+- [x] **PC-13**: herdr/tmux 等多路复用应用场景下多客户端互不干扰：移动端 attach 不再压缩其他客户端面板尺寸（herdr is_foreground + per-client area 仲裁恢复生效）；协议层 UAT 断言进程独立/尺寸互不干扰 + Windows Playwright 全链观感断言
 
 ### 安全（SEC 续）
 
@@ -200,7 +200,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PC-10 | Phase 12 | Complete |
 | PC-11 | Phase 12 | Complete |
 | PC-12 | Phase 14 | Pending |
-| PC-13 | Phase 14 | Pending |
+| PC-13 | Phase 14 | Complete |
 | SEC-09 | Phase 13 | Complete |
 | OPS-12 | Phase 13 | Complete |
 
