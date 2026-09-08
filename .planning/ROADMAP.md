@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: per-client 生命周期主干** - attach spawn / 断开即杀进程组 / EXIT 私有化 / teardown 恰好一次 (completed 2026-09-04)
 - [x] **Phase 12: per-client 交互与背压语义** - resize 直通 / ro 门控 / 重连 reset / 停读续读 / 1013 踢出 (completed 2026-09-04)
 - [x] **Phase 13: 资源防线与终结语义** - maxClients 进程硬顶 / spawn 双令牌桶 / KILL 兜底 / 关停 N 进程组 / 第二终结源 / 退出码对齐 / metrics 审计 per-client 粒度 / WESH_REMOTE_USER (completed 2026-09-05)
-- [ ] **Phase 14: 双模式验证矩阵、标定与 herdr UAT** - 双模式 -race 门 / 协议层 + Playwright UAT / 负载矩阵回填 / 模式文档
+- [x] **Phase 14: 双模式验证矩阵、标定与 herdr UAT** - 双模式 -race 门 / 协议层 + Playwright UAT / 负载矩阵回填 / 模式文档 (completed 2026-09-08)
 
 ## Phase Details
 
@@ -618,4 +618,4 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
 | 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete    | 2026-09-05 |
-| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 13/13 | In Progress|  |
+| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 13/13 | Complete    | 2026-09-08 |
