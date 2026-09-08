@@ -1,19 +1,19 @@
 ---
 status: testing
 phase: 14-herdr-uat
-source: [14-01-SUMMARY.md, 14-02-SUMMARY.md, 14-03-SUMMARY.md, 14-04-SUMMARY.md, 14-05-SUMMARY.md, 14-06-SUMMARY.md, 14-07-SUMMARY.md, 14-08-SUMMARY.md]
+source: [14-VERIFICATION.md]
 started: 2026-09-07T01:31:45Z
-updated: 2026-09-07T01:52:00Z
+updated: 2026-09-08T01:00:00Z
 ---
 
 ## Current Test
 <!-- OVERWRITE each test - shows where we are -->
 
-number: 30
-name: 冷启动全仓 -race 回归（五包）
+number: 34
+name: mermaid 渲染目检（docs/ARCHITECTURE.md 双模式拓扑图）
 expected: |
-  time go test -race -count=1 ./... 从干净状态执行，五个包（cmd/wesh、internal/proto、internal/pty、internal/server、internal/web）全部 ok，零 FAIL。internal/server 包预计 ~150-160s（Phase 14 双模式矩阵改造后的既定基线）。已知登记项：TestMaxClients503 隔离 -run 复跑形态的时序 flake 不影响全量形态（deferred-items.md 已登记，全量 -race 门不受影响）。
-awaiting: 用户确认自动执行结果摘要
+  在 GitHub（或任意 mermaid 渲染器）打开 docs/ARCHITECTURE.md，确认「双模式架构」节两个 goroutine 拓扑图正常渲染：shared/per-client subgraph 成形、节点与边箭头完整、无渲染错误占位。14-11 D3 显式递延项（Linux 侧禁浏览器）；结构化校验已过（14-11 SUMMARY），风险低。
+awaiting: user response
 
 ## Tests
 
@@ -219,12 +219,18 @@ result: pass
 source: automated-re-run
 evidence: "2026-09-07T01:35Z 实测：18/18 协议断言通过，exit 0；herdr 0.8.100；关键数据与 14-08 SUMMARY 记录逐项一致（增量 254B/55B、全量 97049B、maxCol 120/40/74、双 session_start 双 pid）；S1j/S2g 会话零残留 + SEC 输出自净零命中"
 
+### 34. mermaid 渲染目检（14-11 D3 递延项 / 14-VERIFICATION human_verification）
+expected: GitHub 或 mermaid 渲染器打开 docs/ARCHITECTURE.md，双模式架构节两个 goroutine 拓扑图正常渲染（subgraph 成形、边箭头完整、无错误占位）
+result: [pending]
+source: human
+evidence: "14-11 SUMMARY：mermaid 结构化校验通过，渲染目检因 Linux 侧禁浏览器显式递延至验证阶段；14-VERIFICATION.md 列为唯一 human_verification 项"
+
 ## Summary
 
-total: 33
+total: 34
 passed: 33
 issues: 0
-pending: 0
+pending: 1
 skipped: 0
 
 ## Gaps
