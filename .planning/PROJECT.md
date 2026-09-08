@@ -175,4 +175,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-08 — Phase 14（双模式验证矩阵、标定与 herdr UAT）完成：v1.1 全部 15/15 需求闭合（PC-12/PC-13 勾选，14-12 收口闸六段式全绿——零回归双证据 + diff 白名单终审零外改动 + 零新依赖/ci.yml 零改动/dist byte-identical 三红线终态）；此前 v1.0 于 2026-08-31 全量收口（44/44，v1.0.0 已发布上架）*
+*Last updated: 2026-09-08 — Phase 14（双模式验证矩阵、标定与 herdr UAT）完成：v1.1 全部 15/15 需求闭合（PC-12/PC-13 勾选，14-12 收口闸六段式全绿——零回归双证据 + diff 白名单终审零外改动 + 零新依赖/ci.yml 零改动/dist byte-identical 三红线终态）；UAT gap G-14-34（ARCHITECTURE.md 组件图 mermaid 词法错误渲染失败）经 14-13 gap closure 闭合——scripts/check-mermaid.mjs 常驻词法校验载具（负对照判别力自证）+ 组件图 4 subgraph/12 边标签修复（人工目检 approved，UAT 34/34）；此前 v1.0 于 2026-08-31 全量收口（44/44，v1.0.0 已发布上架）*
