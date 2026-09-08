@@ -103,6 +103,6 @@ internal/server 的多模式测试执行三维归类机械（测试体系分层�
 3. **提交前自查**：`$(go env GOROOT)/bin/gofmt -l ./cmd ./internal ./web` 零输出（用 GOROOT 版，见「代码风格」）、`go vet` 零告警、`tsc` 严格模式零错误、改过 `web/src/` 后已重新执行 `pnpm -C web build`。
 4. 提交应尽量原子化（一提交一主题），scope 用包名或主题域（如 `fix(09): ...`、`test(server): ...` 的现行粒度）。
 
-发布流程（`scripts/release.sh` 单脚本整合：校验 → 测试 → 构建 → fuzz → 负载矩阵 → tag push，tag push 后 goreleaser 接管四平台产物）属维护者操作，贡献者无需介入；细节见 [README.md](../README.md) 与脚本头部注释。版本号注入点为 `cmd/wesh/main.go` 的 `var version = "dev"`——仅 goreleaser 发布构建经 `-X main.version` 注入 tag 版本（`--version` 可核对），本地 `go build` 产物恒显示 `dev`。
+发布流程（`scripts/release.sh` 单脚本整合：校验 → 测试 → 构建 → fuzz → 负载矩阵 → tag push，tag push 后 goreleaser 接管四平台产物）属维护者操作，贡献者无需介入；细节见 [README.md](../README.md) 与脚本头部注释。版本三元组注入点为 `cmd/wesh/main.go` 的 `var version/commit/builtAt`——goreleaser 发布构建经 `-X` 注入 tag 版本、完整 commit hash 与 commit 时间戳（Unix 秒，`--version` 按运行机时区显示；时间戳与 goreleaser `mod_timestamp` 同源，保可复现构建）；本地 `go build` 版本号恒显示 `dev`，commit/时间由 Go 工具链内嵌的 VCS 构建信息自动回填（仓库外构建显示 `none`/`unknown`）。
 
 协作规范总览见 [CONTRIBUTING.md](../CONTRIBUTING.md)。

@@ -92,7 +92,7 @@ command = ["bash", "-l"]             # exec 数组；CLI `--` 后 argv 非空则
 | `--no-auth` | `false` | 逃生门：允许无凭据监听非 loopback 地址（显式声明「我知道我在裸奔」） |
 | `--insecure-http` | `false` | 逃生门：允许非 loopback 明文 HTTP 携带凭据（典型场景：TLS 终止型反代之后） |
 | `--config` | — | 指定 TOML 配置文件路径（见本文各节；支持 `--config=<path>` 与 `--config <path>` 两形态） |
-| `--version` | — | 打印版本并退出（版本由发布构建注入，开发构建为 `dev`） |
+| `--version` | — | 打印版本并退出：`wesh <版本> (commit <hash>, built <时间>)`——发布构建经 ldflags 注入三元组（时间为本机时区 RFC3339），本地构建版本号为 `dev`、commit/时间自 buildinfo VCS 信息回填 |
 | `--help` | — | 打印用法 |
 
 ### 严格模式与加载语义
