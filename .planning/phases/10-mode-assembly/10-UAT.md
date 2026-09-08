@@ -3,7 +3,7 @@ status: complete
 phase: 10-mode-assembly
 source: [10-01-SUMMARY.md, 10-02-SUMMARY.md, 10-03-SUMMARY.md, 10-04-SUMMARY.md, 10-05-SUMMARY.md]
 started: 2026-09-03T09:37:46Z
-updated: 2026-09-03T09:56:00Z
+updated: 2026-09-08T09:52:00Z
 ---
 
 ## Current Test
@@ -143,10 +143,16 @@ expected: 21 项交付物全部由通过的自动化测试确定性覆盖（clas
 result: pass
 note: 用户授权全量自动化复验代替人工确认（「能自动化测试的你就自动化测试」）——2026-09-03 Linux 侧独立复跑全部通过：静态三闸（build 0.769s / vet 干净 / GOROOT gofmt 零输出）、全量 -race 五包 ok（58.6s）、冒烟矩阵 12/12（banana CLI/TOML 双源同文案 rc=2、三形态 listening on、write-policy×per-client warn 双 flag 名、WR-01 六形态、warn 合并不遮蔽）、八 UAT 协议脚本 exit 全 0 且 PASS 计数对齐基线（12/18/10/28/23/34/21/18）、文档口径（CONFIGURATION session-mode×5 + 共 30 键/全部 30 个配置键 + 装配中×2、README×1、--help 一致）。唯一环境适配：本机默认 bind 解析非 loopback 被安全闸拒绝，listening on 腿显式 --bind 127.0.0.1（产品行为正确——安全闸生效本身即为证据）。
 
+### 23. Stale 复验——基点 72da76c 全量自动化复跑（v1.1 milestone 5/5 收尾后）
+expected: 因 10-04-SUMMARY 提交晚于 VERIFICATION 报告被判 stale，在当前 HEAD（含 Phase 11-14 全部演进）上全套自动化闸复跑全绿，verification 转 fresh
+result: pass
+source: automated
+note: 2026-09-08 复验（沿用自动化授权）：静态三闸（build 0.627s / vet 干净 / GOROOT gofmt 零输出）；全量 -race 五包 ok（server 165.6s）；冒烟矩阵 25 项检查（banana CLI/TOML 双源 rc=2 同文案逐字、三形态 listening on、warn 双 flag 名、WR-01 六形态全中）+ WR-01 连接期独立证据（Node WS 客户端：WELCOME 握手 + run.sh 输出经 OUTPUT 帧到达 + session_start）；八协议 UAT 脚本 exit 全 0 且 PASS 计数对齐基线 12/18/10/28/23/34/21/18。语义演进注记（非回归）：per-client 启动期 session_start 缺席为 11-01 既定惰性 spawn（SpawnFunc attach 期生效，server.go:336-347），连接期证据补齐 PASS。详见 10-VERIFICATION.md「Stale Re-verification (2026-09-08)」节。
+
 ## Summary
 
-total: 22
-passed: 22
+total: 23
+passed: 23
 issues: 0
 pending: 0
 skipped: 0
