@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
-current_phase: 14
-status: "Phase 14 shipped — PR #18"
-stopped_at: "Phase 14 verify-work 全收口（UAT 34/34 + SECURITY threats_open: 0 + verification passed）——v1.1 milestone 5/5 phases，ready for complete-milestone"
-last_updated: "2026-09-08T07:26:15.552Z"
+status: Awaiting next milestone
+stopped_at: "Phase 14 全收口（verify-work：UAT 34/34 + gap G-14-34 对账 resolved + SECURITY.md threats_open: 0 + verification passed + 转场完成）——v1.1 milestone 5/5 phases ready for /gsd-complete-milestone v1.1"
+last_updated: "2026-09-08T11:14:36.010Z"
 last_activity: 2026-09-08
+last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 5
   completed_phases: 5
   total_plans: 38
   completed_plans: 38
+current_phase: 14
 current_phase_name: herdr-uat
-last_activity_desc: Phase 14 execution started
 ---
 
 # Project State
@@ -27,12 +27,10 @@ See: .planning/PROJECT.md (updated 2026-09-08)
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
-Status: Phase 14 shipped — PR #18
-Last activity: 2026-09-08
-
-Progress: [██████████] 100%
+Phase: Milestone v1.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-09-08 — Milestone v1.1 completed and archived
 
 ## Performance Metrics
 
@@ -224,12 +222,20 @@ None yet.
 
 ## Deferred Items
 
+Items acknowledged at milestone v1.1 close on 2026-09-08（override_closeout——用户裁决接受，audit-open 8 项）:
+
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| deferred_item | GOROOT gofmt CJK 注释接续三处（cmd/wesh/main_test.go + perclient_test.go ×2） | Resolved（13-08 修复 5310723，登记状态未清） | 2026-09-08 |
+| deferred_item | TestMaxClients503/mode=per-client 隔离复跑 flake（pcSessions linger 窗口竞态，基线 9af7ce1 复现 3/3） | Open（修复方向三条登记 deferred-items.md；全量 -race 与 CI 命令不受影响） | 2026-09-08 |
+| debug_session | knowledge-base | unknown | 2026-09-08 |
 
 ## Session Continuity
 
 Last session: 2026-09-08T07:10:00Z
 Stopped at: Phase 14 全收口（verify-work：UAT 34/34 + gap G-14-34 对账 resolved + SECURITY.md threats_open: 0 + verification passed + 转场完成）——v1.1 milestone 5/5 phases ready for /gsd-complete-milestone v1.1
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
