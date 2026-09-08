@@ -4,9 +4,9 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 14
 current_phase_name: 双模式验证矩阵、标定与 herdr UAT
-status: executing
-stopped_at: Completed 14-11-PLAN.md（PC-12 文档三件套：README 会话模式节+标定表回填 / ARCHITECTURE 双模式段+GoTTY 误记修正 / CONFIGURATION max-clients 语义行）
-last_updated: "2026-09-07T14:45:20.027Z"
+status: verifying
+stopped_at: Completed 14-12-PLAN.md（Phase 14 收口闸：六段式全绿 + PC-12/PC-13 勾选 v1.1 15/15 全闭合 + diff 白名单终审 + flagged_assumptions 终验）
+last_updated: "2026-09-08T00:11:46.193Z"
 last_activity: 2026-09-06
 last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
 progress:
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-09-05)
 
 Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
 Plan: 12 of 12
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-09-06 — Phase 14 execution started
 
 Progress: [██████████] 97%
@@ -93,6 +93,7 @@ Progress: [██████████] 97%
 | Phase 14 P09 | 19h50min | 2 tasks | 6 files |
 | Phase 14 P10 | 16min | 2 tasks | 1 files |
 | Phase 14 P11 | 15min | 2 tasks | 3 files |
+| Phase 14 P12 | 9h20min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -195,6 +196,11 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-10] Rule 3 清障：残留核验命中的 2 wesh 进程 + 2 herdr 会话经 ps 起始时间实证为 14-09 minrepro/pw 诊断陈旧残留（早于本次矩阵运行 2.5h+，非本次泄漏——矩阵自身 phase14 S1j/S2g 零残留 PASS），SIGTERM + session stop/delete 清障后 default 外零残留——14-12 收口闸从清洁基线起跑
 - [Phase ?]: [Phase 14-11] PC-12 三件套落地：README「会话模式」节同位扩展（:96 段字节级不动纯插入——shared 表述零削弱以 diff 纯新增自证）+ ARCHITECTURE 七分支点/goroutine 拓扑 mermaid 段 + :7 GoTTY 误记修正（实为 per-connection spawn）+ CONFIGURATION max-clients 兼任进程上限行；herdr 配方取 phase14.mjs argv 逐字形态（--writable 在前——T-14-23 实证优先于 plan 文本 flag 序）；PC-12 勾选留 14-12（共享 ID 门）
 - [Phase ?]: [Phase 14-11] D-11 建议值表三档分档：默认 32「实测可承载，保持不变」明示 / 低配 VPS·内存受限 8 / 个人多端 4——依据列全部锚定 14-07 LOADDATA 实测值（每会话 bash ~3.7MiB + wesh 侧 ~61KiB），标注资源画像分档非硬性门槛；标定表 30 项程序化数据核对全过（N=16 取整 959→960KiB 自审修正）
+- [Phase ?]: [Phase 14-12] Phase 14 收口闸六段式全绿：静态面（gofmt/vet 含 -tags=load 零输出）+ 全量 -race 五包 2m37.986s（mode= 子测 216 RUN/216 PASS 与 14-06 收口审计精确一致）+ darwin amd64/arm64 双编译闸四命令零错 + dist byte-identical（md5 d5c25e27 复建一致）+ UAT 矩阵 17/17 零修改重跑（210.9s 逐脚本计数与 13-08 基线一致）+ load 双剖面八格 + diff 白名单终审零外改动
+- [Phase ?]: [Phase 14-12] phase 基点 = 03268f0^（Phase 14 首提交 docs(14): capture phase context 的父提交 = 96a188a Phase 13 PR #17 合并点）——branching_strategy=none 平直 main 下 merge-base 退化，11-06/12-05/13-08 先例同构
+- [Phase ?]: [Phase 14-12] diff 白名单 35 文件终审零外改动：27 internal/server 测试文件恰=各 plan files_modified 并集（26 M + harness_test.go A）+ 3 文档（14-11 三件套）+ 5 web/uat 新增（3 plan 声明 + minrepro 双件套 14-09 Track2 偏差副产经 #33 三轴裁决先例纳入白名单）；565 真删除行全归类零期望值漂移（断言文案字面量全保留，仅结构包裹/装配点收编/变量名形态变化）
+- [Phase ?]: [Phase 14-12] PC-12/PC-13 勾选收口——v1.1 全部 15/15 需求闭合（PC-12 证据链 = 三文档段 + 14-07 LOADDATA 八格回填 + diff 审查；PC-13 证据链 = phase14.mjs 两轮 18/18 + phase14-pw Windows 两轮 4/4 截图六帧 + run-all 三脚本重跑）；flagged_assumptions 终验：14-08 PC-13 unclassified 三边界形态检索结论登记，µs 级/版本漂移类保持 flagged-unverified（主面覆盖 + 同构论证口径，13-08 先例同构）
+- [Phase ?]: [Phase 14-12] Key Decisions 三行登记 PROJECT.md：三维归类执行机械（newTestServer 小族 + t.Run 双跑，ci.yml 零 diff 单 step 天然覆盖）/ maxClients=32 经负载矩阵实测成立不动（D-11 两段式——零公开契约变更 one-way 门不触发，README 三档建议值表）/ herdr 观测通道钉定（api snapshot 翻转链 + pane read + 版本钉定 0.8.100）
 
 ### Pending Todos
 
@@ -217,6 +223,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-07T14:45:20.004Z
-Stopped at: Completed 14-11-PLAN.md（PC-12 文档三件套：README 会话模式节+标定表回填 / ARCHITECTURE 双模式段+GoTTY 误记修正 / CONFIGURATION max-clients 语义行）
+Last session: 2026-09-08T00:11:46.169Z
+Stopped at: Completed 14-12-PLAN.md（Phase 14 收口闸：六段式全绿 + PC-12/PC-13 勾选 v1.1 15/15 全闭合 + diff 白名单终审 + flagged_assumptions 终验）
 Resume file: None

@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 42
+open_count: 43
 waived_count: 0
 fixed_count: 3
-total_count: 45
-last_updated: 2026-09-06T16:19:37.260Z
+total_count: 46
+last_updated: 2026-09-08T00:12:15.819Z
 ---
 
 # Broken Windows Ledger
@@ -60,6 +60,7 @@ last_updated: 2026-09-06T16:19:37.260Z
 | 43 | 14 | deviation | internal/server/harness_test.go |  | 14-04 Rule 3 files_modified 枚举缺口：startResizeServer 删除验收闸（全仓零引用）要求 harness_test.go shared 分支内联 + e2e_test.go:36 注释同步——两文件不在 plan files_modified 清单（13-06 WINDOWS #36 同形态） | open |  | 2026-09-06T15:51:10.809Z |  |
 | 44 | 14 | deviation | internal/server/handshake_test.go | 358 | TestReadOnlyAllowsResize 断言分叉面：plan truth 断言 10 测全部同断言双跑零期望改写，代码现实 ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通，server.go:1264-1287）——按 14-01 分叉表形态落地，shared 列逐字 + per-client 列断言直通真值 50/120 | open |  | 2026-09-06T16:19:37.109Z |  |
 | 45 | 14 | deviation | internal/server/e2e_test.go |  | Rule 3 枚举缺口：startTestServer 兼容包装随 handshake 改造全仓零引用，按 14-02/14-04 收编闭环先例删除（-6 行）；e2e_test.go 不在 plan files_modified 白名单 | open |  | 2026-09-06T16:19:37.260Z |  |
+| 46 | 14 | deviation | web/uat/minrepro-p14.mjs |  | 14-12 收口闸 diff 审查白名单补充项（#33 先例同构）：minrepro 双件套（web/uat/minrepro-p14.mjs Linux loopback + web/uat/pw/minrepro-win.mjs Windows 过转发器）为 14-09 Track2 偏差副产——14-09 SUMMARY key-files + 偏差 #2 已完整登记（海森bug 调查交付物，两形态均未复现停摆即服务端无罪反向证据）；三轴裁决（plan 相邻授权/SUMMARY 声明在案/零产品代码与零断言影响）纳入白名单，非回归 | open |  | 2026-09-08T00:12:15.819Z |  |
 
 ````json
 [
@@ -601,6 +602,18 @@ last_updated: 2026-09-06T16:19:37.260Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-09-06T16:19:37.260Z",
+    "resolved_at": null
+  },
+  {
+    "id": 46,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "web/uat/minrepro-p14.mjs",
+    "line": null,
+    "description": "14-12 收口闸 diff 审查白名单补充项（#33 先例同构）：minrepro 双件套（web/uat/minrepro-p14.mjs Linux loopback + web/uat/pw/minrepro-win.mjs Windows 过转发器）为 14-09 Track2 偏差副产——14-09 SUMMARY key-files + 偏差 #2 已完整登记（海森bug 调查交付物，两形态均未复现停摆即服务端无罪反向证据）；三轴裁决（plan 相邻授权/SUMMARY 声明在案/零产品代码与零断言影响）纳入白名单，非回归",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-08T00:12:15.819Z",
     "resolved_at": null
   }
 ]
