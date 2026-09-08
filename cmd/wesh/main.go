@@ -349,11 +349,11 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// error 即可——client-option 的记录式上报仅用于值含敏感内容的场景）。
 	fs.StringVar(&cfg.writePolicy, "write-policy", writePolicyDefault, "write policy when --writable is on: owner|all (default owner)")
 	// 10-01 PC-01：会话模式（one-way 公开契约，P2 D-15 同纪律）——shared 为
-	// 内置默认（REQUIREMENTS 反特性 A5：默认永不翻转）；per-client 装配中，
-	// 当前版本行为与 shared 等价（10-CONTEXT D-05 注记随 help 文案同 PR——
-	// 防用户开了发现无新行为误以为 bug）。parse 期枚举校验在 Parse 返回处
-	//（write-policy 同位先例——值非敏感，直接 return error 即可）。
-	fs.StringVar(&cfg.sessionMode, "session-mode", sessionModeDefault, "session mode: shared|per-client (default shared; per-client is being assembled and currently behaves as shared)")
+	// 内置默认（REQUIREMENTS 反特性 A5：默认永不翻转）；per-client 自 v1.1
+	// 起完整落地（每连接独立 PTY，见 README「会话模式」节）。parse 期枚举
+	// 校验在 Parse 返回处（write-policy 同位先例——值非敏感，直接 return
+	// error 即可）。
+	fs.StringVar(&cfg.sessionMode, "session-mode", sessionModeDefault, "session mode: shared|per-client (default shared; per-client gives each connection its own PTY child process)")
 	// D-08：最大并发客户端数（one-way 公开契约——容量策略是部署关切开 flag，
 	// 与 P2 D-10 攻击面上限常量不同类）。默认 32（ARCHITECTURE §6『10–100 连接
 	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小），Phase 9 负载
