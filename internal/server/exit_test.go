@@ -137,9 +137,16 @@ func TestExitFrameBroadcast(t *testing.T) {
 				if err := cB.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, []byte("echo BEXITOK_7q2\r")...)); err != nil {
 					t.Fatalf("write INPUT on B: %v", err)
 				}
-				// (?:\$ )? 容忍 PS1 交错形态（perclient_test.go TestPerClientExitPrivate42
-				// CI run 33843785651 同源竞态先例）。
-				accumFramesUntil(t, resCh, regexp.MustCompile(`(?m)^(?:\$ )?BEXITOK_7q2\r?$`))
+				// 行首锚定容忍两形态：(?:\$ )? PS1 交错（perclient_test.go
+				// TestPerClientExitPrivate42 CI run 33843785651 同源竞态先例）；
+				// (?:\x1b\[\?2004l\r)? bash 5.2 bracketed-paste 关闭序列+CR——本测
+				// argv 是 bash（先例均 sh 无 readline 序列），CI ubuntu bash 5.2
+				// readline 接受行后输出 \x1b[?2004l\r，结果行前缀为 \r 非 \n，
+				// (?m)^ 只认 \n 会漏配（实证：run 34198964828 累积串
+				// "echo BEXITOK_7q2\r\n\x1b[?2004l\rBEXITOK_7q2\r\n..."超时；
+				// 本地 bash 4.4 无此序列故全绿——环境差异）。回显行带 "echo "
+				// 前缀仍不误命中，锚定强度不变。
+				accumFramesUntil(t, resCh, regexp.MustCompile(`(?m)^(?:\x1b\[\?2004l\r)?(?:\$ )?BEXITOK_7q2\r?$`))
 
 				// exitf 静默：B 仍在线，per-client 无第二终结源路径（PC-02/03）。
 				assertNoExit(t, exitCh)
