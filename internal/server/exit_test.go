@@ -167,7 +167,28 @@ func TestExitFrameBroadcast(t *testing.T) {
 			if len(framesA) == 0 || len(framesB) == 0 {
 				t.Fatalf("collected frames A=%d B=%d, want >=1（EXIT 帧缺失）", len(framesA), len(framesB))
 			}
-			lastA, lastB := framesA[len(framesA)-1], framesB[len(framesB)-1]
+			// 尾部余波 W 帧剥离：A 的 Close(1000) 触发其 reader detach →
+			// removeMember(A) → 嵌套 recalcNow（resize.go:186-197 注释自证）向留存
+			// 端 B 补发尺寸推送 W——与 lifecycle goroutine(B) 的 Close(1000) 竞态
+			//（EXIT 直写绕过 outbox（server.go:1593 写序论证），W 经 outbox writer
+			// drain，两条并发写路径谁先上 wire 不定）。B 末帧可为 X 或余波 W（darwin
+			// CI run 34201354818 实证 [X, W(100x40), 1000] 形态——A 移除后单成员
+			// last-wins 仲裁 100x40）。剥离后比较：「EXIT 必先于 1000」（readExitClose
+			// 结构性质——全部数据帧先于关闭帧到达）与「ro/rw 全员同帧」两断言本质
+			// 零损失，仅免疫关停余波噪声。
+			trimTrailingWelcome := func(frames [][]byte) []byte {
+				for len(frames) > 0 && len(frames[len(frames)-1]) > 0 && frames[len(frames)-1][0] == proto.Welcome {
+					frames = frames[:len(frames)-1]
+				}
+				if len(frames) == 0 {
+					return nil
+				}
+				return frames[len(frames)-1]
+			}
+			lastA, lastB := trimTrailingWelcome(framesA), trimTrailingWelcome(framesB)
+			if lastA == nil || lastB == nil {
+				t.Fatalf("A/B 帧序剥余波后为空（EXIT 帧缺失）：A=%d B=%d", len(framesA), len(framesB))
+			}
 			epA := decodeExitFrame(t, lastA)
 			// 双端 EXIT 帧体逐字节一致（rw+ro 全员同帧——终结无权限语义，无分档）。
 			if !bytes.Equal(lastA, lastB) {

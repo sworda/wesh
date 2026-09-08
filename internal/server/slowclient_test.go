@@ -326,10 +326,20 @@ func TestGlobalCredit(t *testing.T) {
 
 				// 等对照端累积超 12MiB：此刻 c1 端管道（最坏 ~10MiB）+ outbox（64KiB）
 				// 必然已满——c1 停读已完全传导（自有洪水同量论证）。
+				want := int64(12 * 1024 * 1024)
+				if runtime.GOOS == "darwin" {
+					// darwin seqFlood 仅 seq 1 999999 ≈ 6.9MB（seqFlood 平台分支，
+					// slowclient_test.go:58-63）——12MiB 结构性不可达（CI run
+					// 34201354818 实证 15s 收 7.5MB 死等超时）。c1 侧 darwin loopback
+					// 吸收极限 ~190KB（multi_test.go kick 路径同源论证）+ 64KiB
+					// outbox——4MiB 已以数量级余量越过满箱点，洪水流动与 D-03
+					// 可证伪断言强度不变（12MiB 的 Linux 论证镜像降档）。
+					want = 4 * 1024 * 1024
+				}
 				deadline := time.Now().Add(15 * time.Second)
-				for c2Bytes.Load() < 12*1024*1024 {
+				for c2Bytes.Load() < want {
 					if time.Now().After(deadline) {
-						t.Fatalf("对照端 received %d bytes in 15s, want >= 12MiB（洪水未流动）", c2Bytes.Load())
+						t.Fatalf("对照端 received %d bytes in 15s, want >= %d（洪水未流动）", c2Bytes.Load(), want)
 					}
 					time.Sleep(50 * time.Millisecond)
 				}
