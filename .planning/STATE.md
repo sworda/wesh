@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 14
-status: completed
-stopped_at: Phase 14 verify-work 全收口（UAT 34/34 + SECURITY threats_open: 0 + verification passed）——v1.1 milestone 5/5 phases，ready for complete-milestone
-last_updated: "2026-09-08T07:10:00Z"
+status: "Phase 14 shipped — PR #18"
+stopped_at: "Phase 14 verify-work 全收口（UAT 34/34 + SECURITY threats_open: 0 + verification passed）——v1.1 milestone 5/5 phases，ready for complete-milestone"
+last_updated: "2026-09-08T07:26:15.552Z"
 last_activity: 2026-09-08
-last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 5
   completed_phases: 5
   total_plans: 38
   completed_plans: 38
 current_phase_name: herdr-uat
+last_activity_desc: Phase 14 execution started
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-09-08)
 
 Phase: 14
 Plan: Not started
-Status: All phases complete
-Last activity: 2026-09-08 — Phase 14 complete
+Status: Phase 14 shipped — PR #18
+Last activity: 2026-09-08
 
 Progress: [██████████] 100%
 
@@ -216,8 +216,10 @@ None yet.
 - [14-06 执行期发现→14-12 知悉] TestMaxClients503/mode=per-client 隔离复跑（-run 过滤非 -race 形态）高概率 flake：pcSessions linger 窗口竞态（detach 槽位释放早于收割，pre-spawn 容量再闸 1011；轮询仅重试 HTTP 503）——14-02 遗留（基线 9af7ce1 复现 3/3），全量 -race CI 同款命令不受影响；deferred-items.md 已登记修复方向
 
 <!-- v1.1 收口清理（2026-09-08，Phase 14 verify-work 转场时）：
+
   - [v1.1 规划期裁决项] 移除：① stop-timeout 默认 5s 经 13-01 落地（27909f8 三态断言组）；③ healthz/metrics 四 OQ 经 13-03/13-05 落地；②④ 原文已注明闭合
   - [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态 移除：13-08 D-10 裁决=接受 1006 语义（死连接更早收口）+ README.md:155「保活先杀时序」文档化收口
+
 -->
 
 ## Deferred Items
