@@ -570,7 +570,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. 并发进程负载矩阵（1/4/16/32 会话）实测内存/fd/goroutine/吞吐有界，数据回填 maxClients 默认建议值与 README 资源义务段
   5. README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 经多路复用汇聚）；v1.0「GoTTY 式共享进程模型」误记已修正（GoTTY 实为 per-connection spawn，源码已核实）
 
-**Plans**: 13 plans（12/12 executed + 14-13 gap closure）
+**Plans**: 13/13 plans executed（12/12 executed + 14-13 gap closure）
 **Wave 1**
 
 - [x] 14-01-PLAN.md — 三维归类 tracer：newTestServer 单一装配点（D-01）+ exit/stopseq/health/slowclient 小型 mode-mapped 批双模式改造（PC-13）
@@ -594,7 +594,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Gap closure** *(UAT G-14-34：ARCHITECTURE.md 组件图 mermaid 词法错误渲染失败——三处 subgraph id 含 `/` + L41 边标签 `{` 被解析为 DIAMOND_START；修复方案经 Node 端 mermaid.parse 11.17.2 预验证 PASS，2026-09-08 诊断)*
 
-- [ ] 14-13-PLAN.md — G-14-34 闭合：组件图 subgraph 合法 id + 引号标题（CMDWESH/SRV/PTYLAYER/WEBPKG）+ 带标签边统一引号化（块 2 零改动）+ scripts/check-mermaid.mjs 词法校验载具固化（负对照自证，堵 14-11 结构化校验不查词法的漏检面）+ GitHub/渲染器目检人工门（PC-12）
+- [x] 14-13-PLAN.md — G-14-34 闭合：组件图 subgraph 合法 id + 引号标题（CMDWESH/SRV/PTYLAYER/WEBPKG）+ 带标签边统一引号化（块 2 零改动）+ scripts/check-mermaid.mjs 词法校验载具固化（负对照自证，堵 14-11 结构化校验不查词法的漏检面）+ GitHub/渲染器目检人工门（PC-12）
 
 **Research flag**: 32 会话资源曲线为账面推算（唯一 MEDIUM 置信面），负载矩阵实测回填；herdr 端到端断言设计依赖外部子程序行为，需实测标定——建议 `/gsd-plan-phase --research-phase 14`。测试拓扑遵循双机分工（CODEBUDDY.md）：协议层 UAT 在 Linux 开发机（headless，禁浏览器），Playwright 浏览器全链在 Windows 工作站（经 TCP 转发器 kill/restore 模拟断网）。
 
@@ -618,4 +618,4 @@ Phases execute in numeric order: 1 → … → 9（v1.0 shipped）→ 10 → 11 
 | 11. per-client 生命周期主干 | v1.1 | 7/7 | Complete    | 2026-09-04 |
 | 12. per-client 交互与背压语义 | v1.1 | 5/5 | Complete | 2026-09-04 |
 | 13. 资源防线与终结语义 | v1.1 | 8/8 | Complete    | 2026-09-05 |
-| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 12/13 | Gap closure | — |
+| 14. 双模式验证矩阵、标定与 herdr UAT | v1.1 | 13/13 | In Progress|  |

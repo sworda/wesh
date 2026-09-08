@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 14
-current_phase_name: 双模式验证矩阵、标定与 herdr UAT
-status: verifying
-stopped_at: Completed 14-12-PLAN.md（Phase 14 收口闸：六段式全绿 + PC-12/PC-13 勾选 v1.1 15/15 全闭合 + diff 白名单终审 + flagged_assumptions 终验）
-last_updated: "2026-09-08T00:11:46.193Z"
-last_activity: 2026-09-06
-last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
+current_phase_name: herdr-uat
+status: executing
+stopped_at: Completed 14-13-PLAN.md（G-14-34 闭合：mermaid 词法修复红转绿 + 校验载具固化 + 渲染目检 approved，Phase 14 13/13 plan 全完成，UAT 34/34）
+last_updated: "2026-09-08T03:36:08.709Z"
+last_activity: 2026-09-08
+last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 37
-  completed_plans: 36
+  completed_phases: 5
+  total_plans: 38
+  completed_plans: 38
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-05)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 14 — 双模式验证矩阵、标定与 herdr UAT
+**Current focus:** Phase 14 — herdr-uat
 
 ## Current Position
 
-Phase: 14 (双模式验证矩阵、标定与 herdr UAT) — EXECUTING
-Plan: 12 of 12
-Status: Phase complete — ready for verification
-Last activity: 2026-09-06 — Phase 14 execution started
+Phase: 14 (herdr-uat) — EXECUTING
+Plan: 13 of 13 (all plans complete — gap closure 14-13 G-14-34 闭合收口，phase 终局 VERIFICATION 待 orchestrator)
+Status: Phase 14 全部 plan 完成（UAT 34/34、gap 清零）
+Last activity: 2026-09-08 — 14-13 gap closure completed
 
-Progress: [██████████] 97%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -94,6 +94,7 @@ Progress: [██████████] 97%
 | Phase 14 P10 | 16min | 2 tasks | 1 files |
 | Phase 14 P11 | 15min | 2 tasks | 3 files |
 | Phase 14 P12 | 9h20min | 3 tasks | 6 files |
+| Phase 14 P13 | 35min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -201,6 +202,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 14-12] diff 白名单 35 文件终审零外改动：27 internal/server 测试文件恰=各 plan files_modified 并集（26 M + harness_test.go A）+ 3 文档（14-11 三件套）+ 5 web/uat 新增（3 plan 声明 + minrepro 双件套 14-09 Track2 偏差副产经 #33 三轴裁决先例纳入白名单）；565 真删除行全归类零期望值漂移（断言文案字面量全保留，仅结构包裹/装配点收编/变量名形态变化）
 - [Phase ?]: [Phase 14-12] PC-12/PC-13 勾选收口——v1.1 全部 15/15 需求闭合（PC-12 证据链 = 三文档段 + 14-07 LOADDATA 八格回填 + diff 审查；PC-13 证据链 = phase14.mjs 两轮 18/18 + phase14-pw Windows 两轮 4/4 截图六帧 + run-all 三脚本重跑）；flagged_assumptions 终验：14-08 PC-13 unclassified 三边界形态检索结论登记，µs 级/版本漂移类保持 flagged-unverified（主面覆盖 + 同构论证口径，13-08 先例同构）
 - [Phase ?]: [Phase 14-12] Key Decisions 三行登记 PROJECT.md：三维归类执行机械（newTestServer 小族 + t.Run 双跑，ci.yml 零 diff 单 step 天然覆盖）/ maxClients=32 经负载矩阵实测成立不动（D-11 两段式——零公开契约变更 one-way 门不触发，README 三档建议值表）/ herdr 观测通道钉定（api snapshot 翻转链 + pane read + 版本钉定 0.8.100）
+- [Phase ?]: [Phase 14-13] G-14-34 闭合：ARCHITECTURE 组件图 mermaid 词法修复（4 subgraph 合法 id + 引号标题 + 12 边标签引号化，含 L41 {token} DIAMOND_START 主修复点）红转绿 + check-mermaid.mjs 词法校验载具常驻 scripts/（负对照自证堵 14-11 结构化校验不查词法的漏检面）+ 用户渲染目检 approved——UAT 34/34 全过 gap 清零
 
 ### Pending Todos
 
@@ -223,6 +225,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-08T00:11:46.169Z
-Stopped at: Completed 14-12-PLAN.md（Phase 14 收口闸：六段式全绿 + PC-12/PC-13 勾选 v1.1 15/15 全闭合 + diff 白名单终审 + flagged_assumptions 终验）
+Last session: 2026-09-08T03:36:08.686Z
+Stopped at: Completed 14-13-PLAN.md（G-14-34 闭合：mermaid 词法修复红转绿 + 校验载具固化 + 渲染目检 approved，Phase 14 13/13 plan 全完成，UAT 34/34）
 Resume file: None
