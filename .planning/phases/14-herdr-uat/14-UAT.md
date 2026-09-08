@@ -1,19 +1,14 @@
 ---
-status: testing
+status: diagnosed
 phase: 14-herdr-uat
 source: [14-VERIFICATION.md]
 started: 2026-09-07T01:31:45Z
-updated: 2026-09-08T01:00:00Z
+updated: 2026-09-08T10:45:00Z
 ---
 
 ## Current Test
-<!-- OVERWRITE each test - shows where we are -->
 
-number: 34
-name: mermaid 渲染目检（docs/ARCHITECTURE.md 双模式拓扑图）
-expected: |
-  在 GitHub（或任意 mermaid 渲染器）打开 docs/ARCHITECTURE.md，确认「双模式架构」节两个 goroutine 拓扑图正常渲染：shared/per-client subgraph 成形、节点与边箭头完整、无渲染错误占位。14-11 D3 显式递延项（Linux 侧禁浏览器）；结构化校验已过（14-11 SUMMARY），风险低。
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -221,7 +216,9 @@ evidence: "2026-09-07T01:35Z 实测：18/18 协议断言通过，exit 0；herdr 
 
 ### 34. mermaid 渲染目检（14-11 D3 递延项 / 14-VERIFICATION human_verification）
 expected: GitHub 或 mermaid 渲染器打开 docs/ARCHITECTURE.md，双模式架构节两个 goroutine 拓扑图正常渲染（subgraph 成形、边箭头完整、无错误占位）
-result: [pending]
+result: issue
+reported: "文档中的组件图mermaid部分无法正常渲染，排查下是否有语法错误"
+severity: major
 source: human
 evidence: "14-11 SUMMARY：mermaid 结构化校验通过，渲染目检因 Linux 侧禁浏览器显式递延至验证阶段；14-VERIFICATION.md 列为唯一 human_verification 项"
 
@@ -229,10 +226,24 @@ evidence: "14-11 SUMMARY：mermaid 结构化校验通过，渲染目检因 Linux
 
 total: 34
 passed: 33
-issues: 0
-pending: 1
+issues: 1
+pending: 0
 skipped: 0
 
 ## Gaps
 
-[none yet]
+- gap_id: G-14-34
+  truth: "docs/ARCHITECTURE.md 中 mermaid 图在 GitHub/渲染器正常渲染（无错误占位）"
+  status: failed
+  reason: "User reported: 文档中的组件图mermaid部分无法正常渲染，排查下是否有语法错误"
+  severity: major
+  test: 34
+  root_cause: "组件图（第一个 mermaid 块，L11-56）存在两类 mermaid 语法错误（Node 端 mermaid.parse 11.17.2 实证）：(1) L15/L19/L29 三处 subgraph 的 id 含非法字符 /（subgraph cmd/wesh（CLI 装配层）、internal/server（网关层）、internal/pty（数据面））触发词法错误 'Lexical error: Unrecognized text'；(2) L41 边标签 |GET / · /s/{token}/| 中 { 被词法解析为 DIAMOND_START（菱形节点起始符）触发 parse error。第二块双模式拓扑图（L98-132）用规范形式（subgraph ID[\"标题\"] + -->|\"标签\"|）parse PASS 无问题。14-11 的结构化校验只查结构完整性（节点数/边目标存在/subgraph-end 配对/围栏成对），不查 mermaid 词法合法性，因此漏检"
+  artifacts:
+    - path: "docs/ARCHITECTURE.md"
+      issue: "L15/L19/L29 subgraph id 含 /；L41 边标签 {token} 未加引号"
+  missing:
+    - "4 个 subgraph 改为合法 id + 引号标题：CMDWESH[\"cmd/wesh（CLI 装配层）\"] / SRV[\"internal/server（网关层）\"] / PTYLAYER[\"internal/pty（数据面）\"] / WEBPKG[\"web（前端装配）\"]（新 id 不与现有节点冲突）"
+    - "所有含特殊字符的边标签加引号（-->|\"...\"|，与双模式拓扑图 L98 块风格统一）"
+    - "修复后用 Node 端 mermaid.parse 复验（/tmp/mermaid-check 已预验证修复草案 parse PASS flowchart-v2）"
+  debug_session: ""
