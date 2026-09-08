@@ -3,36 +3,36 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 14
-current_phase_name: 双模式验证矩阵、标定与 herdr UAT
-status: "Phase 13 shipped — PR #17"
-stopped_at: Phase 13 complete — UAT 11/11 全过（13-UAT.md），ready to plan Phase 14
-last_updated: "2026-09-06T03:43:45.008Z"
-last_activity: 2026-09-06
+status: "Phase 14 shipped — PR #18"
+stopped_at: "Phase 14 verify-work 全收口（UAT 34/34 + SECURITY threats_open: 0 + verification passed）——v1.1 milestone 5/5 phases，ready for complete-milestone"
+last_updated: "2026-09-08T07:26:15.552Z"
+last_activity: 2026-09-08
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 25
-  completed_plans: 25
-last_activity_desc: Phase 13 UAT verified (11/11), transitioned to Phase 14
+  total_phases: 5
+  completed_phases: 5
+  total_plans: 38
+  completed_plans: 38
+current_phase_name: herdr-uat
+last_activity_desc: Phase 14 execution started
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-05)
+See: .planning/PROJECT.md (updated 2026-09-08)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 14 — 双模式验证矩阵、标定与 herdr UAT
+**Current focus:** Milestone v1.1 complete — 5/5 phases, 15/15 requirements closed（Phase 14 经 verify-work 全收口：UAT 34/34 + SECURITY threats_open: 0）
 
 ## Current Position
 
-Phase: 14 — 双模式验证矩阵、标定与 herdr UAT
+Phase: 14
 Plan: Not started
-Status: Phase 13 shipped — PR #17
-Last activity: 2026-09-06
+Status: Phase 14 shipped — PR #18
+Last activity: 2026-09-08
 
-Progress: [████████████████████] 25/25 plans（v1.1 已执行面 10-13 全收口；Phase 14 待规划；v1.0 已 9/9 阶段 70/70 计划收口，v1.0.0 已发布）
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -82,6 +82,19 @@ Progress: [████████████████████] 25/25 p
 | Phase 13 P06 | 23min | 2 tasks | 11 files |
 | Phase 13 P07 | 27min | 2 tasks | 2 files |
 | Phase 13 P08 | 37min | 2 tasks | 11 files |
+| Phase 14 P01 | 43min | 2 tasks | 7 files |
+| Phase 14 P07 | 40min | 2 tasks | 1 files |
+| Phase 14 P08 | 23min | 2 tasks | 1 files |
+| Phase 14 P02 | 28min | 2 tasks | 2 files |
+| Phase 14 P03 | 25min | 3 tasks | 3 files |
+| Phase 14 P04 | 21min | 2 tasks | 4 files |
+| Phase 14 P05 | 25min | 2 tasks | 8 files |
+| Phase 14 P06 | 28min | 2 tasks | 8 files |
+| Phase 14 P09 | 19h50min | 2 tasks | 6 files |
+| Phase 14 P10 | 16min | 2 tasks | 1 files |
+| Phase 14 P11 | 15min | 2 tasks | 3 files |
+| Phase 14 P12 | 9h20min | 3 tasks | 6 files |
+| Phase 14 P13 | 35min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -152,6 +165,44 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 13-07] TestChurn churn 负载格：10rps×30s（300 次）生产默认桶参数零覆写——attached=33/rejected=267/throttled=267、gor 8→8/fd 11→11/mem +110KB 精确回落基线；断言全部基线差值形态（gor/mem/fd 双采样 + 回收轮询 + 容差标定注释——Pitfall 7）；spawn_total==attached 程序序精确对照；PC-08/09/SEC-09/OPS-12 勾选留 13-08（Task 2 承载）
 - [Phase ?]: [Phase 13-08] 收口闸六段式全绿（零回归双证据 + phase13 两轮 29/29 + churn 格 + diff 白名单 23 文件零外改）；phase 基点 = e0ae66b^（首提交父提交，12-05 先例同构）；PC-08/09/SEC-09/OPS-12 四需求勾选收口（v1.1 10/15）
 - [Phase ?]: [Phase 13-08] WR-02 闭合回指：waitDone 非阻塞 select 结构性栅栏落地且同构覆盖三处 kill(-pgid) 面（teardown 快半段/补 KILL 回调/Shutdown 快照循环）——结构性消除非风险接受；D-10 文档段落地（README 保活先杀时序 + CONFIGURATION ping-interval 小节）；gofmt 三处 deferred 存量与 README「per-client 装配中」失实残留收口期归一
+- [Phase ?]: [Phase 14-01] D-01 小族四形态落地并双模式实证：newTestServer/newTracked/newHandle/newSess 两分支直传两族母本零改写；tracked 形态经 TestOversize1009、handle 形态经 TestHealthzDraining 获运行期首证，sess 形态编译期在场（14-04 首证）——后续 14-02..06 改造 plan 直接复用
+- [Phase ?]: [Phase 14-01] TestSlowConsumerKick per-client 列同步边勘误（Rule 1）：独立洪水拓扑下 shared 的「正常端 12MiB 等待」不构成踢出同步——首次 Read 过早续读重置 dwell 使会话 1000 收尾（全量 -race 负载实测命中）；kick 观测统一走 /healthz clients 计数轮询（TestPerClientDwellKick 先例通道），Read 推迟到踢出可观测后
+- [Phase ?]: [Phase 14-01] CI 时长增量实测：双跑使 internal/server -race 全量从 ~98.5s 增至 ~104-106s（+6-8s，洪水类测双跑为主贡献）；14-02..06 批量推开持续累积——14-12 收口闸知悉 CI 时长预算（蓝本估算 3-4 min/leg）
+- [Phase ?]: [Phase 14-01] TestReadLimitBoundary D-02 偏差登记：startRawCatServer 的 pre-listen stty 装配与 per-client attach 期 spawn 结构性不等价（无 pre-listen 窗口）——蓝本 limits 同断言双跑行的例外，保持 shared 单跑（边界值断言与进程模型无关，per-client 同值面由 TestOversize1009/PreHelloReadLimit 双跑承载）
+- [Phase ?]: [Phase 14-07] D-11 判定证真：32 会话实测（wesh 侧 Alloc 增量 2.2MB ≈ 24MiB 账面 9% / 子进程 VmRSS 合计 120MB < 160MB 账面 / fd 差值精确 4N / gor 5N+1）全部在可接受界线内——maxClients=32 默认值不动（零公开契约变更），one-way 确认门不触发；LOADDATA pc_flood/pc_resident 八行供 14-11 README 标定表回填
+- [Phase ?]: [Phase 14-07] Rule 1 夹具修正：loadDrain.note() 流尾采样帧级重置改跨帧滚动窗——tty ONLCR 行尾拆分使末帧载荷仅 \r\n（探针实证），帧级重置把帧边界误当流边界误判流截断（洪水格 sessions_16 复现率 4/6）；滚动窗保流截断判别力且内存恒 ≤128B，既有六负载格全套件回归绿
+- [Phase ?]: [Phase 14-07] 驻留格 fd 账面 4N 推导归类：master+pidfd+accepted 为服务端生产账面（ARCHITECTURE §10）+ dial socket 为 in-process harness 成本单独注释归类——实测差值精确 4N 逐项证实；gor 按生产账面 6N 收口（harness pinger 退场实测 5N+1）；PC-12 勾选留 14-11 文档承载（shared-ID 门先例）
+- [Phase ?]: [Phase 14-08] herdr UAT 就绪门 Rule 1 实测修正：「layouts 非空」不充分——server 启动期 area 先 {0,0,0,0} 再默认布局瞬态 {x>0,width≈默认宽-侧栏}（后者同样满足 isFullFor 谓词）且移动端过早 attach 使桌面 size 上报成 last-activity（compact-40 永不现 + S1d 假绿）；修正为桌面初始全量帧到达落定（OUTPUT>0 且 150ms 双采样相等）+ area 桌面全量几何双条件门——后续 herdr 断言类 UAT 沿用
+- [Phase ?]: [Phase 14-08] herdr 清理序列补 session delete：stop 后 session list 行保留 stopped 态（探针实证），delete 才清册+状态目录——「list 零残留」完整序列 = stop → delete → list 核验；session stop 以会话名为准（ambient HERDR_SOCKET_PATH 不干扰，执行 shell 位于 herdr pane 内的运行期再实证）
+- [Phase ?]: [Phase 14-08] phase14.mjs 两轮 18/18（S1 driving 三通道：area 翻转链四步 + 流层 254B/55B<<97049B + wesh 层双 pid/双 Welcome/流几何 120vs40；S2 ro 汇聚：ticket 全链 + pane read 门控实证 + rw 对照）；PC-13 勾选留 14-09（pw 观感层承载，共享 ID 先例）
+- [Phase ?]: [Phase 14-08] maxCursorCol 流层几何特征通道：CUP/HVP/CHA 三形态正则扫描取列坐标最大值（spike 只标定 CUP，实现扩展）——移动端几何只能寻址 ≤cols 列的关系断言材料，禁绝对常量
+- [Phase ?]: [Phase 14-02] e2e/multi 双模式分叉表落地：断开/重连（CORE-05 反转面经 newSessTestServer spawned 访问器取 pid 锚点，argv 零漂移）、fanout 双标记串交叉断言、owner 四测 D-03 四段式未装配列（零 t.Skip）、MaxClients spawn-intent 经 wesh_pty_spawn_total 程序序对照——50 个 mode= 子测试 -race 逐名绿，shared 87 条期望文案逐字零漂移
+- [Phase ?]: [Phase 14-03] 三文件归一映射落定：TestShutdown1001 per-client 列=TwoGroups 归位（N=2 组，plan action 3 明示 shared 保持单组语义）、StopTimeout 列=JoinBounded 归位（stop-timeout KILL 兜底唯一同需求映射）；ResidualGroup/DeadlineExits 判 per-client-only 保持原样（pcSessions 残留/D-state 收口无 shared 对照面）；emptyexit/metrics 混入测全归位吸收
+- [Phase ?]: [Phase 14-03] TestExitWhenEmptyPromoteKickOnce per-client 列 D-03 四段式 + 尾部 Shutdown 收口（1min 悬挂宽限计时器在 per-client 无 lifecycle-exiting 免疫——不收口即 +1min 迟触发 exit_when_empty 事件污染后继捕获窗；Pattern 7 供后续长 grace per-client 测试沿用）
+- [Phase ?]: [Phase 14-03] series 镜像口径以 metrics.go 现状核定：双模式同持 21 series（shared 四 spawn 计数器恒 0 不摘），plan 文本「17 shared/21 per-client」与 13-05 落地不符——WINDOWS #42 登记（14-12 diff 白名单审查知悉）；TestMetricsValues 放大比分叉 shared ×2 / per-client 1:1（R-08）
+- [Phase ?]: [Phase 14-04] resize_arb per-client 列三重可证伪面：双端各自 RESIZE（A→110x40/B→70x25）+ B 落定后 A 保持 110x40 负向余量断言（互不压缩为 Isolation 测外独有面）+ 双泵静默窗零 'W' 帧——比 TestGlobalCredit 单面形态更完整的三观测面（Pattern 8）
+- [Phase ?]: [Phase 14-04] startResizeServer 收编内联终态：装配体逐字内联至 newSessTestServer shared 分支（helper 名消失满足全仓零引用字面闸；e2e_test.go:36 注释同步）——14-02 startShutdownServerWith 后第二例专用 helper 收编闭环；Rule 3 枚举缺口（harness/e2e 不在 files_modified）WINDOWS 登记
+- [Phase ?]: [Phase 14-04] 蓝本三则归属偏差登记 CONTEXT 落地（D-02 偏差登记小节——14-06 续登 events/log 的既定通道）：owner 四测实在 multi_test.go:541/647/746/850（plan 行号 :301/373/428/497 为规划期陈旧值）/ resize wire 面实在 resize_arb_test.go / 计数不变量白盒面 clients_test:29 + wire 面 TestMaxClients503:1222；clients_test/resize_test 六测纯白盒单跑判定
+- [Phase ?]: [Phase 14-05] TestReadOnlyAllowsResize 为 handshake 行唯一分叉面：ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通）——按 14-01 断言分叉表落地（shared 逐字 + per-client 断言直通真值 50/120），exitf 面同 TestExitFrameSignal 分叉；WINDOWS #44
+- [Phase ?]: [Phase 14-05] 零值/Writable:false Options 经 mutate 显式回写（Pattern 9）：小族基线 Writable:true 下 TestNoAuthMode/TestReadOnly* 覆写回 false 保期望值零改写；TestPingDisabled 显式 PingInterval=0 锁定禁用语义防基线漂移
+- [Phase ?]: [Phase 14-05] auth/origin/throttle/tickets 四文件 6 测纯函数白盒形态判定保持单跑（无装配可参数化，非覆盖缺口）；auth_e2e :403 收编 newTrackedTestServer（tracked 形态第二消费方）；startTestServer 零引用收编删除（14-02/04 闭环第三例，WINDOWS #45）
+- [Phase ?]: [Phase 14-06] sharetoken 白盒镜像双分支落地：package server 白盒文件经本地 startShareServer(t,mode) 镜像小族两分支（per-client = New(nil)+SpawnFunc 生产闭包镜像+spawned Kill+Close Cleanup）——包墙结构性不可达 server_test 小族的 D-01 同构形态；部署面 9 测双跑收口（sharetoken 2+customindex 8+proxy_e2e 4+basepath 3，proxy_e2e 5 调用点按 waitHandlers 用途分流）
+- [Phase ?]: [Phase 14-06] 三维归类收口核对：server 包实测 34 文件（plan 33+harness_test.go 小族本体零测桶）= ① 18 文件 81 测双跑（-v mode= 子测 216 PASS）+② perclient 36 测单模式+③ load 8 测+④ 纯白盒/纯函数 10 文件+⑤ events 9/log 1 单跑（D-02 续登第 4/5 则）+⑥ export 零测桶；蓝本 :378-399 十七行全命中或偏差登记，零静默漏网——SC1 单 step 双模式 CI 门形态达成（ci.yml 零 diff）
+- [Phase ?]: [Phase 14-06] TestMaxClients503/mode=per-client 隔离复跑 flake 判 14-02 遗留（基线 9af7ce1 worktree 复现 3/3，pcSessions linger 窗口竞态，轮询仅覆盖 HTTP 503 形态）——与本 plan 无关（全量 -race 两轮全绿），deferred-items.md 登记三修复方向，14-12 知悉
+- [Phase ?]: [Phase 14-09] pw 层海森bug 架构裁决（Rule 3 实证驱动，承重）：浏览器 tab 首键入后输出流非确定性死亡为载具级（10 轮实跑 + 23 探针 + minrepro 双形态均不复现——herdr/wesh 服务端无罪）；键入通道改 Windows Node 裸 WS 驱动端（ticket 认证），浏览器双 tab 退化为纯被动渲染观测面，D-07 断言面不变（桌面 tab 渲染观测 + 结构行对齐比较）
+- [Phase ?]: [Phase 14-09] 结构行幸存前缀判别面：目标行 = 含 │ 且边框右侧空白的结构行（pane 内容行排除——前台 reflow 属 herdr 正确行为）；pane 内容向下增长只从尾部吞 blank 行使幸存前缀序位不变，shared 压缩会整体改写边框列——herdr 类 TUI 布局稳定性断言的判别面形态
+- [Phase ?]: [Phase 14-09] minrepro 双件套交付（Track2 偏差副产）：minrepro-p14.mjs（Linux loopback）+ minrepro-win.mjs（Windows 过转发器）——两形态均未复现停摆本身即服务端无罪的反向证据，供 herdr 上游定位浏览器输入链停摆
+- [Phase ?]: [Phase 14-09] PC-13 勾选收口（14-08 既定裁决兑现：协议层 18/18 + 浏览器面 Windows 两轮 4/4 + 截图六帧人工复核——共享 ID 先例 11-01/12-01/13-01）
+- [Phase ?]: [Phase 14-10] run-all.mjs 17 项矩阵 runner 落地（D-04 形式化）：串行 spawn 聚合 + 10min 超时护栏（detached 进程组 SIGTERM→2s→SIGKILL）+ argv[3:] 过滤子集（未知名 exit 2 防静默跑空 + 脚本名误传二进制位守卫）+ pw 独立入口注记；全矩阵首跑 17/17 全绿 213.4s，逐脚本计数与 13-08 基线完全一致（phase14 实测 5.6s 远快于 A6 预估 1-2min）——SC2 三脚本重跑证据成型，14-12 收口闸单命令复用载具就位
+- [Phase ?]: [Phase 14-10] Rule 3 清障：残留核验命中的 2 wesh 进程 + 2 herdr 会话经 ps 起始时间实证为 14-09 minrepro/pw 诊断陈旧残留（早于本次矩阵运行 2.5h+，非本次泄漏——矩阵自身 phase14 S1j/S2g 零残留 PASS），SIGTERM + session stop/delete 清障后 default 外零残留——14-12 收口闸从清洁基线起跑
+- [Phase ?]: [Phase 14-11] PC-12 三件套落地：README「会话模式」节同位扩展（:96 段字节级不动纯插入——shared 表述零削弱以 diff 纯新增自证）+ ARCHITECTURE 七分支点/goroutine 拓扑 mermaid 段 + :7 GoTTY 误记修正（实为 per-connection spawn）+ CONFIGURATION max-clients 兼任进程上限行；herdr 配方取 phase14.mjs argv 逐字形态（--writable 在前——T-14-23 实证优先于 plan 文本 flag 序）；PC-12 勾选留 14-12（共享 ID 门）
+- [Phase ?]: [Phase 14-11] D-11 建议值表三档分档：默认 32「实测可承载，保持不变」明示 / 低配 VPS·内存受限 8 / 个人多端 4——依据列全部锚定 14-07 LOADDATA 实测值（每会话 bash ~3.7MiB + wesh 侧 ~61KiB），标注资源画像分档非硬性门槛；标定表 30 项程序化数据核对全过（N=16 取整 959→960KiB 自审修正）
+- [Phase ?]: [Phase 14-12] Phase 14 收口闸六段式全绿：静态面（gofmt/vet 含 -tags=load 零输出）+ 全量 -race 五包 2m37.986s（mode= 子测 216 RUN/216 PASS 与 14-06 收口审计精确一致）+ darwin amd64/arm64 双编译闸四命令零错 + dist byte-identical（md5 d5c25e27 复建一致）+ UAT 矩阵 17/17 零修改重跑（210.9s 逐脚本计数与 13-08 基线一致）+ load 双剖面八格 + diff 白名单终审零外改动
+- [Phase ?]: [Phase 14-12] phase 基点 = 03268f0^（Phase 14 首提交 docs(14): capture phase context 的父提交 = 96a188a Phase 13 PR #17 合并点）——branching_strategy=none 平直 main 下 merge-base 退化，11-06/12-05/13-08 先例同构
+- [Phase ?]: [Phase 14-12] diff 白名单 35 文件终审零外改动：27 internal/server 测试文件恰=各 plan files_modified 并集（26 M + harness_test.go A）+ 3 文档（14-11 三件套）+ 5 web/uat 新增（3 plan 声明 + minrepro 双件套 14-09 Track2 偏差副产经 #33 三轴裁决先例纳入白名单）；565 真删除行全归类零期望值漂移（断言文案字面量全保留，仅结构包裹/装配点收编/变量名形态变化）
+- [Phase ?]: [Phase 14-12] PC-12/PC-13 勾选收口——v1.1 全部 15/15 需求闭合（PC-12 证据链 = 三文档段 + 14-07 LOADDATA 八格回填 + diff 审查；PC-13 证据链 = phase14.mjs 两轮 18/18 + phase14-pw Windows 两轮 4/4 截图六帧 + run-all 三脚本重跑）；flagged_assumptions 终验：14-08 PC-13 unclassified 三边界形态检索结论登记，µs 级/版本漂移类保持 flagged-unverified（主面覆盖 + 同构论证口径，13-08 先例同构）
+- [Phase ?]: [Phase 14-12] Key Decisions 三行登记 PROJECT.md：三维归类执行机械（newTestServer 小族 + t.Run 双跑，ci.yml 零 diff 单 step 天然覆盖）/ maxClients=32 经负载矩阵实测成立不动（D-11 两段式——零公开契约变更 one-way 门不触发，README 三档建议值表）/ herdr 观测通道钉定（api snapshot 翻转链 + pane read + 版本钉定 0.8.100）
+- [Phase ?]: [Phase 14-13] G-14-34 闭合：ARCHITECTURE 组件图 mermaid 词法修复（4 subgraph 合法 id + 引号标题 + 12 边标签引号化，含 L41 {token} DIAMOND_START 主修复点）红转绿 + check-mermaid.mjs 词法校验载具常驻 scripts/（负对照自证堵 14-11 结构化校验不查词法的漏检面）+ 用户渲染目检 approved——UAT 34/34 全过 gap 清零
 
 ### Pending Todos
 
@@ -161,9 +212,15 @@ None yet.
 
 - [Phase 9 遗留]: TestResize CI 时序 flake（CI 观察一次，重载 runner 调度延迟所致，非产品缺陷）——择机以轮询替代固定 sleep 修复
 - [Phase 9 遗留]: README.md:96「及其 `.gz`」Phase 1 遗留文档债——随 WR 清单择机处置
-- [v1.1 规划期裁决项]: ① per-client stop-timeout 默认值重议（0=不补 KILL 在新模式下=HUP 免疫泄漏，公开契约变更，Pitfall 8）→ Phase 13——**Phase 11 post-merge 调查已实证泄漏窗真实存在**（2026-09-04）：本机 bash 4.4 交互模式在「提示符 pselect + 竞态输入行待读」窗口内可无声吸收 SIGHUP（kill 成功发出、非阻塞非 pending、进程存活；cat 对照组 50/50 全收，服务端信号面零缺陷），11-04 竞态测试经 StopTimeout=1s 覆写走 KILL 兜底确定性收口（14143fe）；③ healthz/metrics 四个 OQ（session_alive 语义/series 双语义/1013 vs 阻塞/spawn 失败 wire 面，研究均有推荐答案）→ Phase 13（② write-policy×per-client 经 Phase 10 D-01/D-02 闭合；④ spawn-intent 口径经 Phase 11 D-03 复检回收提前消解）
 - [v1.1 测试拓扑]: 协议层 UAT 在 Linux 开发机（headless 禁浏览器/禁 playwright）；Playwright 浏览器全链在 Windows 工作站（TCP 转发器 kill/restore 模拟断网）——见 CODEBUDDY.md 双机拓扑
-- [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态：默认 --ping-interval=5s 下 TCP 级停读客户端在 (停读+5s, 停读+10s] 被 1006 pong_timeout 先杀，PC-10 dwell 1013 结构性后到（writeControl 5s 写超时 × pinger 单一 DeadlineExceeded 判读；Go 测 harness PingInterval 零值未暴露，phase12.mjs S6 以 --ping-interval=0 隔离取证）。真实浏览器端网络栈自动回 pong 不触发；herdr 类自管 socket 客户端可触发。裁决面：pinger 区分「写阻塞超时」与「pong 等待超时」（lib 错误链 failed to acquire lock vs failed to wait for pong 可区分）或接受 1006 语义（死连接更早收口）
+- [14-06 执行期发现→14-12 知悉] TestMaxClients503/mode=per-client 隔离复跑（-run 过滤非 -race 形态）高概率 flake：pcSessions linger 窗口竞态（detach 槽位释放早于收割，pre-spawn 容量再闸 1011；轮询仅重试 HTTP 503）——14-02 遗留（基线 9af7ce1 复现 3/3），全量 -race CI 同款命令不受影响；deferred-items.md 已登记修复方向
+
+<!-- v1.1 收口清理（2026-09-08，Phase 14 verify-work 转场时）：
+
+  - [v1.1 规划期裁决项] 移除：① stop-timeout 默认 5s 经 13-01 落地（27909f8 三态断言组）；③ healthz/metrics 四 OQ 经 13-03/13-05 落地；②④ 原文已注明闭合
+  - [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态 移除：13-08 D-10 裁决=接受 1006 语义（死连接更早收口）+ README.md:155「保活先杀时序」文档化收口
+
+-->
 
 ## Deferred Items
 
@@ -173,6 +230,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-06T02:35:00Z
-Stopped at: Phase 13 complete — UAT 11/11 全过（13-UAT.md aaa6126），ready to plan Phase 14
+Last session: 2026-09-08T07:10:00Z
+Stopped at: Phase 14 全收口（verify-work：UAT 34/34 + gap G-14-34 对账 resolved + SECURITY.md threats_open: 0 + verification passed + 转场完成）——v1.1 milestone 5/5 phases ready for /gsd-complete-milestone v1.1
 Resume file: None

@@ -64,15 +64,29 @@ type loadDrain struct {
 }
 
 // note 记账一条 OUTPUT 载荷（帧类型字节不计入字节数——与 wesh_pty_output_bytes_total
-// 口径对齐）。
+// 口径对齐）。tail 为【跨帧滚动的流尾采样窗】（恒 ≤loadTailKeep 有界——内存画像
+// 与帧级形态一致）：负载纪律：32 端全量缓存超测试进程内存预算，一致性采样靠
+// 字节数 + 末位字段。
+//
+// 14-07 Rule 1 修正（帧级重置 → 跨帧滚动）：末帧载荷可能仅是 tty ONLCR 行尾
+// 拆分片段（实证：per-client 16/32 会话并发 ReadLoop 竞争下，末行 "4000000\n"
+// 的 "\r\n" 膨胀可单独成帧——探针实测 lastTail="\r\n"、prevTail="…4000000"，
+// 字节跨端相等 + 1000 关闭均正常，纯 wire 帧拆分）；帧级 tail 重置把帧边界误当
+// 流边界，末位字段断言误判流截断。滚动窗保持对流截断的判别力（截断使窗内
+// 末位字段早于洪水末位）且内存恒 ≤loadTailKeep（append 前先裁 keep——backing
+// 稳定在 2×loadTailKeep 量级，TestLoadMemoryBound 的 GC 回基线断言不受累）。
 func (r *loadDrain) note(data []byte) {
 	r.bytes += int64(len(data) - 1)
 	r.frames++
 	payload := data[1:]
-	if len(payload) > loadTailKeep {
-		payload = payload[len(payload)-loadTailKeep:]
+	if len(payload) >= loadTailKeep {
+		r.tail = append(r.tail[:0], payload[len(payload)-loadTailKeep:]...)
+		return
 	}
-	r.tail = append(r.tail[:0], payload...)
+	if keep := loadTailKeep - len(payload); len(r.tail) > keep {
+		r.tail = r.tail[len(r.tail)-keep:]
+	}
+	r.tail = append(r.tail, payload...)
 }
 
 // drainClient 持续读 conn 至终结（只计数不缓存）。Read 永不带 deadline ctx
@@ -832,4 +846,338 @@ func TestChurnPerClientSpawnThrottle(t *testing.T) {
 	}
 	t.Logf("LOADDATA cell=churn attempts=%d rate=10rps attached=%d rejected=%d throttled=%d gor_base=%d gor_end=%d gor_peak=%d mem_base=%d mem_end=%d mem_peak=%d fd_base=%d fd_end=%d dur_ms=%d",
 		attempts, attached, rejected, throttled, baseGor, endGor, peaks["wesh_goroutines"], baseMem, endMem, peaks["wesh_mem_alloc_bytes"], baseFDs, endFDs, dur.Milliseconds())
+}
+
+// ====== per-client 负载矩阵双剖面（14-07 D-10/D-12，SC4 标定数据源） ======
+
+// TestLoadPerClientFloodMatrix（D-10 洪水剖面）：per-client N ∈ {1,4,16,32} 会话
+// 各自独立 seq 洪水（gatedFloodArgv 触发式先例复用；churn 格 :726 同款装配）。
+// 【与 shared 扇出格（TestLoadFanoutMatrix :331 conns[0] 单端触发）的关键差异】
+// per-client 每会话独立 stdin——每客户端独立 bash read x 各等各的触发，必须
+// 【每客户端各发一次】触发 INPUT（RESEARCH §Pattern 4），单端触发只放行一份
+// 洪水、其余会话静默悬置到 240s 护栏翻车。
+//
+// 断言面：每端收流完整（字节数跨端相等 + 流尾末位字段 == loadFloodLast()）+
+// wesh_pty_spawn_total == N（程序序精确对照——churn 格 :813 先例：Welcome 观测
+// 与计数递增同在注册段程序序）+ kicks == 0（活跃读面零误踢）+ 峰值采样入
+// LOADDATA cell=pc_flood 行（sessions/spawn_total 扩展字段——README 标定表与
+// maxClients 建议值的数据源，14-11 承载回填）。
+//
+// awaitDrain 240s/端护栏沿用（A2）：N=32 总量 32×33.8MB ≈ 1.08GB loopback，
+// 与 shared clients_32 扇出格同总量（且扇出格另付 fan-out 放大开销）；per-client
+// 每会话独立 ReadLoop/outbox 无共享扇出锁竞争（ARCHITECTURE §10 第二瓶颈论），
+// 护栏不收紧——证伪时按先例上调并注释论证。
+func TestLoadPerClientFloodMatrix(t *testing.T) {
+	last := loadFloodLast()
+	for _, n := range []int{1, 4, 16, 32} {
+		n := n
+		t.Run(fmt.Sprintf("sessions_%d", n), func(t *testing.T) {
+			// spawn 节流桶放宽（Rule 3——13-02 TestPerClientTeardownRaceOnce
+			// perclient_test.go:1296-1306 先例同形态）：本格 N∈{1,4,16,32} 同 IP
+			//（loopback 测试拓扑结构性单 IP）快速连发 attach 超生产默认桶（per-IP
+			// 1/s burst 4 / 全局 8/s burst 16——首跑实测第 5/17 个起 spawn_throttled
+			// 1011 拒绝）；本格对象是负载吞吐与资源面非 churn 防线（节流行为由
+			// TestChurnPerClientSpawnThrottle 生产默认桶参数专测），放宽隔离两
+			// 测试面。真实部署 32 端来自各异 IP，per-IP 桶按 IP 分立；全局桶
+			// 8/s 对「32 端同时入场」也限流——那是准入节流语义非资源上限，不属
+			// 本格断言面。
+			_, wsURL := startPerClientServer(t, gatedFloodArgv(last), func(o *server.Options) {
+				o.SpawnPerIPRate = 100
+				o.SpawnPerIPBurst = 100
+				o.SpawnGlobalRate = 100
+				o.SpawnGlobalBurst = 100
+			})
+			base := httpBaseOf(wsURL)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			conns := make([]*websocket.Conn, 0, n)
+			drains := make([]<-chan loadDrain, 0, n)
+			for i := 0; i < n; i++ {
+				c := dialLoadClient(t, ctx, wsURL)
+				conns = append(conns, c)
+				drains = append(drains, drainClient(c))
+			}
+			t.Cleanup(func() {
+				for _, c := range conns {
+					c.CloseNow()
+				}
+			})
+
+			runtime.GC()
+			time.Sleep(100 * time.Millisecond)
+			allocBase := readAlloc()
+			smp := startLoadSamplers(base + "/metrics")
+
+			// 触发洪水：每客户端各发一次 INPUT——per-client 每会话独立 stdin，
+			// 各 bash read x 独立放行（见函数头注释差异点论证）。
+			start := time.Now()
+			for _, c := range conns {
+				if err := c.Write(ctx, websocket.MessageBinary, []byte{proto.Input, 'x', '\n'}); err != nil {
+					t.Fatalf("write 触发 INPUT: %v", err)
+				}
+			}
+			results := make([]loadDrain, n)
+			for i := range drains {
+				results[i] = awaitDrain(t, drains[i], 240*time.Second, fmt.Sprintf("client %d", i))
+			}
+			dur := time.Since(start)
+			allocPeak, outboxMax := smp.stop()
+
+			for i, r := range results {
+				assertClosed1000(t, r, fmt.Sprintf("client %d", i))
+			}
+			// 每端收流完整：字节数跨端相等（各会话独立同构洪水）+ 末位字段到洪水末尾。
+			for i := 1; i < n; i++ {
+				if results[i].bytes != results[0].bytes {
+					t.Fatalf("client %d 收流 = %d 字节, want == client 0 的 %d（每会话独立洪水全端一致）", i, results[i].bytes, results[0].bytes)
+				}
+			}
+			wantTail := strconv.Itoa(last)
+			for i, r := range results {
+				fields := strings.Fields(string(r.tail))
+				if len(fields) == 0 || fields[len(fields)-1] != wantTail {
+					t.Fatalf("client %d 流尾末位字段 = %v, want %d（收流完整到洪水末尾）", i, fields, last)
+				}
+			}
+
+			body := getMetrics(t, base+"/metrics")
+			kicks, _ := metricSample(t, body, "wesh_clients_kicked_total")
+			spawnTotal, ok := metricSample(t, body, "wesh_pty_spawn_total")
+			if !ok {
+				t.Fatalf("wesh_pty_spawn_total series 缺席")
+			}
+			memAlloc, _ := metricSample(t, body, "wesh_mem_alloc_bytes")
+			if kicks != 0 {
+				t.Fatalf("wesh_clients_kicked_total = %d, want 精确 0（活跃读面零误踢）", kicks)
+			}
+			if spawnTotal != int64(n) {
+				t.Fatalf("wesh_pty_spawn_total = %d, want == %d（程序序精确对照——每客户端恰好一次 spawn）", spawnTotal, n)
+			}
+			// gate_transitions 不采：per-client 不装配信用门（D-03——12-05
+			// TestGlobalCredit per-client 列显式断言未装配），恒 0 series 入行徒增噪音。
+			t.Logf("LOADDATA cell=pc_flood sessions=%d spawn_total=%d profile=seq_flood(last=%d) slowlink=none kicks=%d outbox_max=%d alloc_peak=%d alloc_base=%d mem_alloc_end=%d bytes_per_session=%d dur_ms=%d",
+				n, spawnTotal, last, kicks, outboxMax, allocPeak, allocBase, memAlloc, results[0].bytes, dur.Milliseconds())
+		})
+	}
+}
+
+// readProcVmRSS 读 /proc/<pid>/status 的 VmRSS 行（kB → 字节；readProcState 同
+// 文件 /proc 先例——state 字段的姊妹观测面，D-12 子进程观测通道）。进程已收割
+// 消失返回 false（驻留格语义 = 会话死亡信号）。
+func readProcVmRSS(pid int) (int64, bool) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(line, "VmRSS:") {
+			continue
+		}
+		fields := strings.Fields(line) // ["VmRSS:", "<kB>", "kB"]——proc(5) status 惯例
+		if len(fields) < 2 {
+			return 0, false
+		}
+		kb, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return kb * 1024, true
+	}
+	return 0, false
+}
+
+// TestLoadPerClientResident（D-12 驻留剖面 + D-11 两段式实证裁决）：per-client
+// N ∈ {1,4,16,32} 会话 sh 零输入驻留——「32 并发 shell 驻留 ~160MB」账面
+// （ROADMAP Research flag 唯一 MEDIUM 置信面）的实测证真/证伪通道。
+//
+// 断言三面（Pitfall 7 双采样差值纪律——churn 格母本，禁无基线对照绝对上限）：
+//   - mem：Alloc 增量 ≤ N×(768KiB 账面 + ε)——账面锚点 clients.go:36
+//     defaultOutboxBytes=512KiB + :50 defaultInputQueueBytes=256KiB（outbox/
+//     inputQ 为帧队列容量记账非预分配，idle 驻留态空队列，实测值应远低账面）；
+//   - gor：≤ 基线+6N+ε——ARCHITECTURE §5 表 per-client 每客户端 6 goroutine
+//     （reader/writer/pinger/ReadLoop 闭包/inputWriter/sessionWatcher）；
+//   - fd：≤ 基线+4N+ε——每会话 PTY master(1) + Linux pidfd(1，Go≥1.23
+//     CLONE_PIDFD 收割 reap_linux.go) + 服务端 accepted socket(1)（生产账面
+//     ≈ ARCHITECTURE §10 :480「~2×N + pidfd」PTY 对账 + accepted）+ 测试侧
+//     dial socket(1)（in-process 装配使 harness 客户端 socket 同落
+//     /proc/self/fd——测试成本非服务端账面，LOADDATA 原始差值如实登记）。
+//
+// 子进程观测（D-12 口径）：/proc/<pid>/status VmRSS 逐会话采样入 LOADDATA
+// （rss_per_proc_max / rss_sum）+ ≤15MB/进程宽松上界（防 wesh 侧大 env/驻留
+// 缓冲注入子进程的泄漏面；sh 自身 RSS 环境因子不硬断——bash/dash 发行版差异
+// 由 15MB 上界吸收）。
+//
+// 时序纪律：驻留稳定门轮询（spawn_total==N 全 spawn + session_active==N 全活
+// + outbox_sum==0 prompt 输出已 drain——静默驻留态）+ 200ms 间隔 + 10s 护栏，
+// 禁固定 sleep 精确时点（churn 格 :776-789 母本）；ε 容差首跑实测定值并注释
+// 论证（Pitfall 7）。
+func TestLoadPerClientResident(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("pc_resident 驻留格的 VmRSS/fd 观测面为 Linux-only（/proc 口径）——darwin 分支 skip 先例（TestLoadDefunct）；P9 kqueue N 规模由 CI macOS leg 常规测试承担")
+	}
+	// ε 容差（首跑实测定值，推导见各常量注释——Pitfall 7 禁无论证常量）：
+	const (
+		// gorEps 吸收采样瞬态与常数项杂项——首跑实测 goroutine 差值精确
+		// 5N+1（N=1/4/16/32 四档逐档验证：+6/+21/+81/+161；每会话 5 =
+		// reader/writer/ReadLoop 闭包/inputWriter/sessionWatcher，harness
+		// PingInterval 零值使 pinger 启动即退场 emptyexit_test.go:305 先例，
+		// 断言仍按生产账面 6N 收口——pinger 武装的生产形态上界；+1 常数项
+		// 为测试框架驻留项）。+8 为 churn 格同族裕度（keep-alive scrape
+		// 连接双侧均在基线/终态采样内复用，对差值零贡献——见基线 scrape
+		// 先行注释）。
+		gorEps = 8
+		// memEpsPerSession 吸收 pcSession 控制结构 + WS/http 连接缓冲（bufio
+		// 对 + coder/websocket 连接态）+ 限速器/令牌桶 map 条目——首跑三连
+		// 实测每会话 68-103KiB（N=1 单会话含不摊薄常数项 ~100KiB；N=32 摊薄
+		// 后 ~68KiB），远低于 768KiB 账面（9-13%——outbox/inputQ 为容量记账
+		// 非预分配，idle 驻留空队列）；128KiB ≥ 实测上界的保守余量，非账面
+		// 放宽（标定诚信：账面 768KiB 本体不动）。
+		memEpsPerSession = 128 * 1024
+		// fdPerSession：master + pidfd + accepted（服务端账面）+ dial（harness）
+		// ——首跑实测差值精确 4N（N=1/4/16/32 四档逐档验证：+4/+16/+64/
+		// +128），账面推导逐项证实。
+		fdPerSession = 4
+		// fdEps 吸收采样瞬态 fd（/proc/self/fd ReadDir 的 dirfd 自引用双侧
+		// 同在）+ 跨子测试残留 scrape 连接对（双侧同在基线/终态——差值零
+		// 贡献后的残余护量）。
+		fdEps = 8
+	)
+	for _, n := range []int{1, 4, 16, 32} {
+		n := n
+		t.Run(fmt.Sprintf("sessions_%d", n), func(t *testing.T) {
+			// spawn 节流桶放宽同洪水格（同 IP N 连发超生产默认桶——准入节流
+			// 语义非本格断言面；节流行为由 churn 格生产默认参数专测）。
+			_, wsURL, _, spawnedSessions := startPerClientServerWithSpawn(t, defaultPCSpawnFn([]string{"sh"}), func(o *server.Options) {
+				o.SpawnPerIPRate = 100
+				o.SpawnPerIPBurst = 100
+				o.SpawnGlobalRate = 100
+				o.SpawnGlobalBurst = 100
+			})
+			base := httpBaseOf(wsURL)
+
+			// 基线（attach 前 GC 后双采样——TestLoadMemoryBound 双 GC 形态）。
+			// 首 scrape 先行建立 keep-alive 连接（churn 格先例）：基线含连接池
+			// 侧影，驻留轮询/终态采样复用同连接，scrape 通道对差值零贡献。
+			runtime.GC()
+			time.Sleep(150 * time.Millisecond)
+			runtime.GC()
+			baseBody := getMetrics(t, base+"/metrics")
+			baseGor, ok := metricSample(t, baseBody, "wesh_goroutines")
+			if !ok {
+				t.Fatalf("基线 wesh_goroutines series 缺席")
+			}
+			baseMem, ok := metricSample(t, baseBody, "wesh_mem_alloc_bytes")
+			if !ok {
+				t.Fatalf("基线 wesh_mem_alloc_bytes series 缺席")
+			}
+			baseFDs := countFds(t)
+
+			// 格内峰值观测（Pitfall 7 多次轮询纪律；驻留窗口为秒级量级，间隔
+			// 500ms）。
+			stopScrape := make(chan struct{})
+			peakCh := scrapePeakSampler(base+"/metrics", []string{"wesh_goroutines", "wesh_mem_alloc_bytes"}, 500*time.Millisecond, stopScrape)
+
+			// N 端 attach（零输入驻留——sh prompt 后静默）。
+			start := time.Now()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			conns := make([]*websocket.Conn, 0, n)
+			for i := 0; i < n; i++ {
+				conns = append(conns, dialLoadClient(t, ctx, wsURL))
+			}
+			t.Cleanup(func() {
+				for _, c := range conns {
+					c.CloseNow()
+				}
+			})
+
+			// 驻留稳定门：轮询至全 spawn + 全活 + outbox 排空（200ms 间隔 +
+			// 10s 护栏到期转 FAIL 携诊断值——禁固定 sleep 精确时点）。
+			// 【连续 3 拍持续达标】才放行——瞬时达标不构成「驻留」证据，持续
+			// 稳态采样窗（≥400ms）使 LOADDATA 的格内峰值采样器（500ms 间隔）
+			// 必然捕获至少一拍。
+			t0 := time.Now()
+			stable := 0
+			var spawnTotal, sessionActive, outboxSum int64
+			for {
+				body := getMetrics(t, base+"/metrics")
+				spawnTotal, _ = metricSample(t, body, "wesh_pty_spawn_total")
+				sessionActive, _ = metricSample(t, body, "wesh_session_active")
+				outboxSum, _ = metricSample(t, body, "wesh_outbox_depth_bytes_sum")
+				if spawnTotal == int64(n) && sessionActive == int64(n) && outboxSum == 0 {
+					stable++
+					if stable >= 3 {
+						break
+					}
+				} else {
+					stable = 0
+				}
+				if time.Since(t0) > 10*time.Second {
+					t.Fatalf("驻留稳定门 10s 未达：spawn=%d active=%d outbox_sum=%d stable=%d, want %d/%d/0", spawnTotal, sessionActive, outboxSum, stable, n, n)
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+
+			// 终态采样（驻留窗口后 GC 双采样——in-process 装配使测试侧 GC 即
+			// 服务端 GC，差值断言不受未回收瞬态垃圾干扰）。
+			runtime.GC()
+			time.Sleep(150 * time.Millisecond)
+			runtime.GC()
+			endBody := getMetrics(t, base+"/metrics")
+			endGor, _ := metricSample(t, endBody, "wesh_goroutines")
+			endMem, _ := metricSample(t, endBody, "wesh_mem_alloc_bytes")
+			endFDs := countFds(t)
+			close(stopScrape)
+			peaks := <-peakCh
+
+			// 子进程观测：spawnedSessions pid 集 → /proc/<pid>/status VmRSS。
+			sessions := spawnedSessions()
+			if len(sessions) != n {
+				t.Fatalf("spawned 会话数 = %d, want == %d", len(sessions), n)
+			}
+			var rssMax, rssSum int64
+			for _, sess := range sessions {
+				if sess.Cmd == nil || sess.Cmd.Process == nil {
+					t.Fatalf("会话进程句柄缺席（spawn 追踪形态异常）")
+				}
+				rss, ok := readProcVmRSS(sess.Cmd.Process.Pid)
+				if !ok {
+					t.Fatalf("read /proc/<pid>/status VmRSS: 会话进程消失（驻留格会话死亡信号）")
+				}
+				rssSum += rss
+				if rss > rssMax {
+					rssMax = rss
+				}
+			}
+			kicks, _ := metricSample(t, endBody, "wesh_clients_kicked_total")
+
+			// 断言面（差值/程序序对照形态——无基线对照的绝对上限零命中）。
+			if spawnTotal != int64(n) {
+				t.Fatalf("wesh_pty_spawn_total = %d, want == %d（程序序精确对照——每客户端恰好一次 spawn）", spawnTotal, n)
+			}
+			if sessionActive != int64(n) {
+				t.Fatalf("wesh_session_active = %d, want == %d（驻留中全活——会话死亡泄漏信号）", sessionActive, n)
+			}
+			if kicks != 0 {
+				t.Fatalf("wesh_clients_kicked_total = %d, want 精确 0（idle 驻留面无慢客户端）", kicks)
+			}
+			if endGor > baseGor+int64(6*n+gorEps) {
+				t.Fatalf("goroutine 终态 = %d, want ≤ 基线 %d + 6N(%d) + ε(%d)（ARCHITECTURE §5 表 1+6N 账面——goroutine 泄漏信号）", endGor, baseGor, 6*n, gorEps)
+			}
+			memCeil := int64(n) * (768*1024 + memEpsPerSession)
+			if endMem-baseMem > memCeil {
+				t.Fatalf("mem_alloc 增量 = %d, want ≤ %d（N×(768KiB outbox+inputQ 账面 + ε)——wesh 侧驻留内存超账面，D-12 证伪信号）", endMem-baseMem, memCeil)
+			}
+			if endFDs > baseFDs+n*fdPerSession+fdEps {
+				t.Fatalf("fd 终态 = %d, want ≤ 基线 %d + %d×%d + ε(%d)（master+pidfd+accepted 服务端账面 + dial harness 成本——fd 泄漏信号）", endFDs, baseFDs, n, fdPerSession, fdEps)
+			}
+			const rssCeil = int64(15 * 1024 * 1024) // 15MB/进程——D-12 宽松上界（防 wesh 侧注入子进程泄漏面；sh 自身 RSS 环境因子不硬断）
+			if rssMax > rssCeil {
+				t.Fatalf("子进程 VmRSS 峰值 = %d, want ≤ %d（15MB/进程宽松上界——wesh 侧大 env/驻留缓冲注入子进程的泄漏面信号）", rssMax, rssCeil)
+			}
+			t.Logf("LOADDATA cell=pc_resident sessions=%d spawn_total=%d profile=sh_idle_resident kicks=%d mem_base=%d mem_end=%d mem_delta=%d mem_peak=%d gor_base=%d gor_end=%d gor_peak=%d fd_base=%d fd_end=%d rss_per_proc_max=%d rss_sum=%d dur_ms=%d",
+				n, spawnTotal, kicks, baseMem, endMem, endMem-baseMem, peaks["wesh_mem_alloc_bytes"], baseGor, endGor, peaks["wesh_goroutines"], baseFDs, endFDs, rssMax, rssSum, time.Since(start).Milliseconds())
+		})
+	}
 }

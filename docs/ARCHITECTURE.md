@@ -4,7 +4,7 @@
 
 ## 系统概览
 
-wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd> [args...]` 启动后在指定端口提供 HTTP/WebSocket 服务，浏览器打开页面即获得一个运行 `<cmd>` 的完整交互终端。整体为**单二进制分层架构**——Go 服务端（CLI 解析/装配层 → HTTP+WS 网关层 → PTY 数据面层）内嵌经 Vite 单文件构建的 xterm.js 前端（`go:embed`），采用 **GoTTY 式共享进程模型**：PTY 子进程随服务端启动时 spawn 一次，多个浏览器客户端共享同一会话（输出实时扇出、写权限经 owner 递补仲裁），这与 ttyd 的 per-connection spawn 模型是核心架构分叉。主要输入是浏览器键盘/粘贴字节与 RESIZE 事件，主要输出是 PTY 子进程的字节流（扇出 ×N 客户端）；wire 层为自定义二进制 WebSocket 协议 `wesh.v1`（1 字节帧类型 + 载荷）。支持平台仅 linux/darwin（amd64/arm64），Windows 不在支持范围（PTY 层构建标签限定）。
+wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd> [args...]` 启动后在指定端口提供 HTTP/WebSocket 服务，浏览器打开页面即获得一个运行 `<cmd>` 的完整交互终端。整体为**单二进制分层架构**——Go 服务端（CLI 解析/装配层 → HTTP+WS 网关层 → PTY 数据面层）内嵌经 Vite 单文件构建的 xterm.js 前端（`go:embed`）。进程模型自 v1.1 起支持双模式（`--session-mode`，详见「双模式架构」节）：`shared`（默认）——PTY 子进程随服务端启动时 spawn 一次，多个浏览器客户端共享同一会话（输出实时扇出、写权限经 owner 递补仲裁），这是 wesh 的自有差异化设计（勘误：v1.0 文档曾将共享模型归为 GoTTY 同类——经 GoTTY 源码核实，GoTTY 实为 per-connection spawn：每条 WS 连接各 `factory.New` → `pty.Start` 一个进程，此前表述有误，共享模型在同类工具中无先例）；`per-client`——每 WS 客户端 attach 时独立 spawn 一个 PTY 进程（ttyd 式 per-connection 生命周期），断开即终结、重连即全新进程。主要输入是浏览器键盘/粘贴字节与 RESIZE 事件，主要输出是 PTY 子进程的字节流（`shared` 扇出 ×N 客户端 / `per-client` 每会话独立流）；wire 层为自定义二进制 WebSocket 协议 `wesh.v1`（1 字节帧类型 + 载荷）。支持平台仅 linux/darwin（amd64/arm64），Windows 不在支持范围（PTY 层构建标签限定）。
 
 ## 组件图
 
@@ -12,11 +12,11 @@ wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd>
 graph TD
     FE[浏览器前端<br/>web/src/main.ts · xterm.js]
 
-    subgraph cmd/wesh（CLI 装配层）
+    subgraph CMDWESH["cmd/wesh（CLI 装配层）"]
         CLI[flag + TOML 解析<br/>启动校验矩阵 · TLS 预检]
     end
 
-    subgraph internal/server（网关层）
+    subgraph SRV["internal/server（网关层）"]
         HTTP[mux 路由 + 认证链<br/>basicAuth · throttle · origin · 安全头]
         ATTACH[WS 握手状态机<br/>server.Attach · Hello/ticket 核销]
         HUB[注册表 + fan-out hub<br/>信用门 · 模式判定矩阵]
@@ -26,31 +26,31 @@ graph TD
         OBS[可观测性<br/>/healthz · /metrics · slog JSON]
     end
 
-    subgraph internal/pty（数据面）
+    subgraph PTYLAYER["internal/pty（数据面）"]
         PTY[pty.Session<br/>master 读写 · 信号 · 平台收割]
     end
 
-    subgraph web（前端装配）
+    subgraph WEBPKG["web（前端装配）"]
         EMBED[go:embed 静态伺服<br/>gzip 预压 · 自定义首页装饰]
     end
 
     CHILD[子进程 &lt;cmd&gt;]
 
-    CLI -->|spawn| PTY
-    CLI -->|Options 装配| HTTP
-    FE -->|GET / · /s/{token}/| EMBED
-    FE -->|POST /api/attach 换 ticket| HTTP
-    FE -->|WS /ws（wesh.v1）| ATTACH
+    CLI -->|"spawn"| PTY
+    CLI -->|"Options 装配"| HTTP
+    FE -->|"GET / · /s/{token}/"| EMBED
+    FE -->|"POST /api/attach 换 ticket"| HTTP
+    FE -->|"WS /ws（wesh.v1）"| ATTACH
     HTTP --> ATTACH
-    ATTACH -->|注册| HUB
-    PTY -->|ReadLoop 32KiB chunk| HUB
-    HUB -->|'0' OUTPUT 扇出| CLIENTS
-    CLIENTS -->|WS 下行| FE
-    FE -->|'0' INPUT / '1' RESIZE| ATTACH
+    ATTACH -->|"注册"| HUB
+    PTY -->|"ReadLoop 32KiB chunk"| HUB
+    HUB -->|"'0' OUTPUT 扇出"| CLIENTS
+    CLIENTS -->|"WS 下行"| FE
+    FE -->|"'0' INPUT / '1' RESIZE"| ATTACH
     ATTACH --> INPUTQ
     ATTACH --> ARB
-    INPUTQ -->|独占 Master.Write| PTY
-    ARB -->|TIOCSWINSZ| PTY
+    INPUTQ -->|"独占 Master.Write"| PTY
+    ARB -->|"TIOCSWINSZ"| PTY
     PTY --- CHILD
     HTTP --- OBS
 ```
@@ -88,6 +88,58 @@ RESIZE 帧 `{"cols","rows"}` 经钳制 [1,1000] 后进仲裁器（`resize.go`）
 - 子进程退出（唯一终结路径）：lifecycle goroutine 广播 EXIT `'X'` 帧（`{"exit_code","message"}`，信号死亡 exit_code=-1）→ 以 1000 关闭全部客户端 → `exitf` 按子进程退出码退出。
 - SIGTERM/SIGINT 优雅下线：向全部客户端发 1001（close reason `server_shutting_down`，前端终态面板不自动重连）→ 对子进程进程组执行 stop-signal 序列（`--stop-signal` → `--stop-timeout` 宽限 → SIGKILL）。
 - `--once` / `--exit-when-empty` 空触发：向子进程进程组发 SIGHUP，wesh 退出状态 255。
+
+## 双模式架构
+
+`--session-mode` 的实现纪律是**装配期一次分岔、运行期零分岔**：模式在 `New`（goroutine 拓扑与组件装配）与 `Attach`（升档分支）装配期固化，运行期热路径不因模式判型分流——不抽象统一 session 接口，两模式各自直装配，全仓仅七处显式分支点（`New` 装配分岔、`Attach` 升档分岔、RESIZE 直通、detach/kick 两处 teardown 挂点、exit-when-empty 终结分支、`Shutdown` 收口分支）。INPUT 是零分支面：`client.inQ` 间接字段使读循环同一行代码在 shared 写会话级队列、per-client 写本会话独享队列。
+
+goroutine 拓扑对比（事实源 `internal/server/perclient.go` 五件装配与 `server.go` shared 装配；生产账面 shared 3+3N / per-client 1+6N，实测标定见 README「per-client 资源义务与实测标定」节）：
+
+```mermaid
+graph TD
+    subgraph SH["shared 模式（默认）· 会话级 3 + 客户端级 3×N"]
+        SPTY["PTY 子进程 ×1<br/>启动期 spawn 一次"]
+        SRL["ReadLoop（会话级）<br/>onChunk 持 hubMu 经 fan-out hub 扇出 ×N<br/>全局信用门 hubCond 反压"]
+        SIW["inputWriter（会话级）<br/>会话级 inputQ → 独占 Master.Write"]
+        SLC["lifecycle（会话级）<br/>子死 → EXIT 广播 → exitf"]
+        SAR["resize 仲裁器<br/>min-rect · 参与集分层 · 50ms 防抖"]
+        SCL["每客户端 ×N<br/>reader · writer · pinger"]
+        SPTY -->|"32KiB chunk"| SRL
+        SRL -->|"OUTPUT 扇出"| SCL
+        SCL -->|"INPUT"| SIW
+        SIW --> SPTY
+        SCL -->|"RESIZE"| SAR
+        SAR -->|"TIOCSWINSZ"| SPTY
+        SLC -.->|"EXIT 广播 + 1000"| SCL
+    end
+    subgraph PC["per-client 模式（opt-in）· 服务级 1 + 会话级 6×N"]
+        PSUP["pcSupervisor ×1<br/>--once / exit-when-empty 第二终结源"]
+        PPTY["PTY 子进程 ×N<br/>attach 期 spawn"]
+        PRD["reader 读循环<br/>ro 门控 + 输入限速"]
+        PWR["writer<br/>outbox 512KiB drain"]
+        PPI["pinger"]
+        PRL["ReadLoop 闭包<br/>1:1 直投属主 outbox + dwell 看门狗"]
+        PIW["inputWriter<br/>每会话独享 inputQ"]
+        PSW["sessionWatcher<br/>唯一收割者 · EXIT 私有直写"]
+        PPTY --> PRL
+        PRL --> PWR
+        PRD -->|"INPUT"| PIW
+        PIW --> PPTY
+        PRD -->|"RESIZE 直通 TIOCSWINSZ"| PPTY
+        PSW -.->|"cmd.Wait 唯一收割"| PPTY
+        PSUP -.->|"等 pcSessions 归零 → exitf"| PSW
+    end
+```
+
+两模式的组件差异（keep / degrade / vanish）：
+
+| 去向 | 组件与机制 |
+|------|-----------|
+| **vanish**（仅 shared 装配） | fan-out hub（输出扇出 + 全局信用门 hubCond）· resize 仲裁器（per-client 尺寸直通 + 每会话防抖）· owner 递补升格与写权限仲裁矩阵 · 'W' 约束帧（per-client 的 Welcome 回显自有尺寸） |
+| **degrade**（机制保留，语义改变） | EXIT 帧广播 → 私有单播（服务端退出与子进程死亡解耦）· `--once`/`--exit-when-empty` 触发条件不变、终结目标 1 → N 进程组（pcSupervisor 承接）· 优雅关停 stop-signal 序列对每进程组各执行一遍 · ro/rw 分享链接「同会话视图凭证」→「按权限级别的独立进程入场券」· `--max-clients` 连接闸兼任进程闸（握手 503 + spawn 前复检）· Welcome cols/rows「会话尺寸」→「自有尺寸」 |
+| **keep**（模式无关零改动） | ticket 核销 · 认证失败节流 · Origin 白名单 · per-IP 半开上限 · TLS/安全头 · 读上限两档 · ping/pong 保活 · 关闭码纪律 · 1006-only 重连退避 · env 白名单 · 降权 · `/healthz` · `/metrics` · 审计日志 · 标题 `[ro]` 前缀 · `--client-option` 偏好三级覆盖 |
+
+模式语义（分享链接/ro/herdr·tmux 汇聚）与 per-client 资源义务的面向用户表述见 README「会话模式」节。
 
 ## 关键抽象
 

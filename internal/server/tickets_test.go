@@ -8,6 +8,11 @@ import (
 	"github.com/sworda/wesh/internal/proto"
 )
 
+// 【14-05 形态判定】TestTicketStore 为纯函数白盒测——ticketStore 经 now 手工
+// 注入推进，无 server 装配面，mode-agnostic 无装配可参数化，保持单跑（蓝本
+// tickets 行的传输面双跑由 auth_e2e_test.go TestAttachFlow/TestTicketInvalid/
+// TestTicketExpiry 承载）。
+
 // TestTicketStore 锁定一次性 ticket 存储语义（SEC-02）：单次使用（查即删）/
 // mode 签发时绑定（D-11）/ 22 字符 base64url 独立 secret 形态（C6）/
 // 重放·过期·非法同归 false（D-10 无 oracle）/ 签发惰性清扫（Pitfall 4）。

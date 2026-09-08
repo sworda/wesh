@@ -88,8 +88,8 @@
 - [x] **PC-09**: `--once` / `--exit-when-empty` / 优雅关停语义适配：触发条件（计数归零）不变，终结目标为全部存活 per-client 进程组各执行一遍 stop-signal 序列；注册表空迁移存在显式第二终结源（无子进程可等时仍能退出）
 - [x] **PC-10**: per-client 慢客户端保护：每客户端有界 outbox 写满 1013 踢出（无全局信用门；自然反压为停读该 PTY→内核缓冲满→子进程写阻塞）
 - [x] **PC-11**: per-PTY 停读/续读背压（ttyd pty_pause/resume parity）：慢客户端先停读其 PTY 而非立即踢出，恢复后自动续读；持续过载仍按 PC-10 踢出
-- [ ] **PC-12**: 模式语义文档：README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 时经多路复用汇聚）；修正 v1.0「GoTTY 式共享进程模型」误记（GoTTY 实为 per-connection spawn，源码已核实）
-- [ ] **PC-13**: herdr/tmux 等多路复用应用场景下多客户端互不干扰：移动端 attach 不再压缩其他客户端面板尺寸（herdr is_foreground + per-client area 仲裁恢复生效）；协议层 UAT 断言进程独立/尺寸互不干扰 + Windows Playwright 全链观感断言
+- [x] **PC-12**: 模式语义文档：README/CONFIGURATION/ARCHITECTURE 补 per-client 模型段（分享链接=按权限级别的独立进程入场券、ro=自有进程输入门控、配合 herdr/tmux 时经多路复用汇聚）；修正 v1.0「GoTTY 式共享进程模型」误记（GoTTY 实为 per-connection spawn，源码已核实）
+- [x] **PC-13**: herdr/tmux 等多路复用应用场景下多客户端互不干扰：移动端 attach 不再压缩其他客户端面板尺寸（herdr is_foreground + per-client area 仲裁恢复生效）；协议层 UAT 断言进程独立/尺寸互不干扰 + Windows Playwright 全链观感断言
 
 ### 安全（SEC 续）
 
@@ -199,8 +199,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PC-09 | Phase 13 | Complete |
 | PC-10 | Phase 12 | Complete |
 | PC-11 | Phase 12 | Complete |
-| PC-12 | Phase 14 | Pending |
-| PC-13 | Phase 14 | Pending |
+| PC-12 | Phase 14 | Complete |
+| PC-13 | Phase 14 | Complete |
 | SEC-09 | Phase 13 | Complete |
 | OPS-12 | Phase 13 | Complete |
 
@@ -213,4 +213,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-08-13*
-*Last updated: 2026-09-05 — Phase 13 收口：PC-08/PC-09/SEC-09/OPS-12 四条勾选（13-08 收口闸六段式全绿 + 四证据链：Go 新测组 26 测 -race 逐名 + phase13.mjs 六场景两轮 29/29×2 + churn 负载格 300 次/10rps 资源回落基线 + 期望值逐字未动 diff 白名单审查）；v1.1 累计 10/15（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12；PC-08/09/SEC-09/OPS-12→13）*
+*Last updated: 2026-09-08 — Phase 14 收口：PC-12/PC-13 两勾选（14-12 收口闸六段式全绿——零回归双证据：全量 -race 五包双模式 t.Run 216 mode= 子测 + run-all.mjs 17/17 零修改重跑基线逐脚本一致；PC-12 证据链 = 三文档段（README 会话模式节+标定表 / ARCHITECTURE 双模式段+GoTTY 误记修正 / CONFIGURATION max-clients 语义行）+ 14-07 LOADDATA 八格回填 + diff 白名单终审零外改动；PC-13 证据链 = phase14.mjs 两轮 18/18 + phase14-pw Windows 两轮 4/4 + 截图六帧人工复核 + run-all 三脚本重跑）；v1.1 全闭合 15/15（PC-01→10；PC-02/03/04→11；PC-05/06/07/10/11→12；PC-08/09/SEC-09/OPS-12→13；PC-12/13→14）*

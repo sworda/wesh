@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,92 +27,156 @@ import (
 // INPUT 帧应收同字节 OUTPUT 帧；随后断开客户端，断言不触发 exitf 且服务端存活
 // 可再 attach echo（多客户端推论：P1 D-11 单次语义终结，断开 = 注册表移除）。
 // 02-02 起建连经 dialHello 过 wesh.v1 握手（writable 装配保持 echo 语义）。
+//
+// 14-02 双模式断言分叉表（D-01/D-02，蓝本 PITFALLS :384 e2e 行「per-client：
+// 断开即 SIGHUP、重连=新 pid（与 CORE-05 shared 断言相反）」——生命周期主干
+// 断开/重连两族真值两模式相反，是三维归类中语义最重的分叉本体）。装配经
+// newSessTestServer 小族 sess 形态（per-client 列 pid 观测面：spawned 追踪
+// 访问器直取 Cmd.Process.Pid 作进程组锚点——argv 两列同持 /bin/cat 零漂移；
+// shared 分支装配序列（pty.Start+server.New，14-04 收编内联）与原自装配同构）。
+// 断言分叉表（mode → expected 显式表——PITFALLS :264 认可形态，shared 值字面在场）：
+//
+//	echo 双列同值：INPUT→OUTPUT 逐字节（行规程 ECHO 两模式同链）。
+//	断开语义：shared（v1.0 逐字）= 进程存活不触发 exitf、可再 attach；
+//	  per-client = 断开即 SIGHUP 杀进程组（pgid ESRCH 到达——waitPgroupESRCH
+//	  perclient_test.go 既有探针零新写；宽限/僵尸等细节面归 perclient_test.go
+//	  Phase 11-13 既有测单一承载，本列只锁分叉点，T-14-04 防双写漂移）。
+//	重连语义：shared = 接回同一存活进程（CORE-05：再 attach 成功且 echo 一致，
+//	  原断言逐字）；per-client = 全新进程新 pid（pid2 != pid1）。
 func TestEchoPTY(t *testing.T) {
-	// 零值等价形态（07-04 选项化适配）：Dir/Term 空 = 继承/xterm-256color 现状，Uid/Gid -1 = 不降权。
-	sess, err := pty.Start([]string{"/bin/cat"}, pty.StartOptions{Uid: -1, Gid: -1})
-	if err != nil {
-		t.Fatalf("pty.Start: %v", err)
-	}
-	exitCh := make(chan int, 1)
-	srv := server.New(sess, func(code int) { exitCh <- code }, server.Options{Writable: true})
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			// 零值等价形态（07-04 选项化适配）：Dir/Term 空 = 继承/xterm-256color
+			// 现状，Uid/Gid -1 = 不降权；Writable:true 基线与原自装配
+			// server.Options{Writable: true} 等价（小族统一装配）。
+			exitCh, wsURL, sessions := newSessTestServer(t, mode, []string{"/bin/cat"}, nil)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("net.Listen: %v", err)
-	}
-	defer ln.Close()
-	go http.Serve(ln, srv.Handler())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			c, _ := dialHello(t, ctx, wsURL, 80, 24)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	c, _ := dialHello(t, ctx, "ws://"+ln.Addr().String()+"/ws", 80, 24)
+			// per-client 列 pid 锚点预取（attach 期 spawn 已完成；setsid
+			// pgid==pid 不变量下 Cmd.Process.Pid 即进程组锚点）。
+			pid1 := 0
+			if mode == server.SessionModePerClient {
+				spawned := sessions()
+				if len(spawned) != 1 || spawned[0].Cmd == nil || spawned[0].Cmd.Process == nil {
+					t.Fatalf("spawned sessions = %d, want 1 with live process（attach 期 spawn 追踪缺失）", len(spawned))
+				}
+				pid1 = spawned[0].Cmd.Process.Pid
+			}
 
-	payload := []byte("hello wesh")
-	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
-		t.Fatalf("write INPUT: %v", err)
-	}
+			payload := []byte("hello wesh")
+			if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+				t.Fatalf("write INPUT: %v", err)
+			}
 
-	// PTY 回显可能分块，累积至收齐
-	got := make([]byte, 0, len(payload))
-	for len(got) < len(payload) {
-		_, data, err := c.Read(ctx)
-		if err != nil {
-			t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
-		}
-		if len(data) == 0 || data[0] != proto.Output {
-			t.Fatalf("unexpected frame: %v", data)
-		}
-		got = append(got, data[1:]...)
-	}
-	if string(got) != string(payload) {
-		t.Fatalf("echo payload = %q, want %q", got, payload)
-	}
+			// PTY 回显可能分块，累积至收齐
+			got := make([]byte, 0, len(payload))
+			for len(got) < len(payload) {
+				_, data, err := c.Read(ctx)
+				if err != nil {
+					t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
+				}
+				if len(data) == 0 || data[0] != proto.Output {
+					t.Fatalf("unexpected frame: %v", data)
+				}
+				got = append(got, data[1:]...)
+			}
+			if string(got) != string(payload) {
+				t.Fatalf("echo payload = %q, want %q", got, payload)
+			}
 
-	// 客户端断开 → 多客户端推论：注册表移除，不触发 exitf（200ms 静默反证）。
-	c.Close(websocket.StatusNormalClosure, "")
-	assertNoExit(t, exitCh)
+			// 客户端断开 → 多客户端推论：注册表移除，不触发 exitf（200ms 静默反证）。
+			c.Close(websocket.StatusNormalClosure, "")
+			if mode == server.SessionModePerClient {
+				// 断开语义分叉（per-client 列）：断开即 SIGHUP 杀进程组——
+				// pgid ESRCH 到达（进程组消失含收割完成的强证据，与 shared
+				// 「进程存活可重连」相反——蓝本 e2e 行分叉本体）。
+				waitPgroupESRCH(t, pid1, 2*time.Second)
+			}
+			assertNoExit(t, exitCh)
 
-	// 服务端存活断言：同实例再 attach 成功且 echo 一致（断开即移除的行为化证明）。
-	c2, _ := dialHello(t, ctx, "ws://"+ln.Addr().String()+"/ws", 80, 24)
-	payload2 := []byte("still alive after detach")
-	if err := c2.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload2...)); err != nil {
-		t.Fatalf("write INPUT after re-attach: %v", err)
+			// 服务端存活断言：同实例再 attach 成功且 echo 一致（断开即移除的行为化证明）。
+			c2, _ := dialHello(t, ctx, wsURL, 80, 24)
+			if mode == server.SessionModePerClient {
+				// 重连语义分叉（per-client 列）：全新进程新 pid（spawned 追加序
+				// = spawn 程序序，第 2 项即重连会话；与 CORE-05「接回同 pid」相反）。
+				after := sessions()
+				if len(after) != 2 {
+					t.Fatalf("spawned sessions after re-attach = %d, want 2（重连应有全新 spawn）", len(after))
+				}
+				if pid2 := after[1].Cmd.Process.Pid; pid2 == pid1 {
+					t.Fatalf("重连 pid = %d 与断开前相同——per-client 重连须为全新进程（ttyd parity，PC-03）", pid1)
+				}
+			}
+			payload2 := []byte("still alive after detach")
+			if err := c2.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload2...)); err != nil {
+				t.Fatalf("write INPUT after re-attach: %v", err)
+			}
+			got2 := make([]byte, 0, len(payload2))
+			for len(got2) < len(payload2) {
+				_, data, err := c2.Read(ctx)
+				if err != nil {
+					t.Fatalf("read OUTPUT after re-attach: %v (got %q so far)", err, got2)
+				}
+				if len(data) == 0 || data[0] != proto.Output {
+					t.Fatalf("unexpected frame: %v", data)
+				}
+				got2 = append(got2, data[1:]...)
+			}
+			if string(got2) != string(payload2) {
+				t.Fatalf("echo payload after re-attach = %q, want %q", got2, payload2)
+			}
+			c2.Close(websocket.StatusNormalClosure, "")
+		})
 	}
-	got2 := make([]byte, 0, len(payload2))
-	for len(got2) < len(payload2) {
-		_, data, err := c2.Read(ctx)
-		if err != nil {
-			t.Fatalf("read OUTPUT after re-attach: %v (got %q so far)", err, got2)
-		}
-		if len(data) == 0 || data[0] != proto.Output {
-			t.Fatalf("unexpected frame: %v", data)
-		}
-		got2 = append(got2, data[1:]...)
-	}
-	if string(got2) != string(payload2) {
-		t.Fatalf("echo payload after re-attach = %q, want %q", got2, payload2)
-	}
-	c2.Close(websocket.StatusNormalClosure, "")
 }
 
 // TestDrainBeforeAttach（D-12 行为证明）：无 WS 客户端 attach 时，输出超 64KiB PTY
 // 内核缓冲的命令必须照常退出——若 ReadLoop 未自 New 启动 drain，子进程写满内核缓冲后
 // 阻塞、永不退出，本测试超时即暴露接线缺失。
+//
+// 14-02 双模式分叉表（D-03）：D-12「New 期 ReadLoop 自启 drain」组件为 shared-only
+// 装配（per-client New(nil) 无会话、attach 期才 spawn——研究 §1.2 装配期一次分岔）。
+// shared 列 = 上述 v1.0 断言逐字（Writable 基线 true 与原零值 Options 在零客户端
+// 形态下结构性不可观测——TestPreHelloReadLimit 14-01 注记同款论证）；per-client 列 =
+// 显式断言未装配——零 attach 即零 spawn（spawned 窗口内恒空；若误把装配期 spawn
+// 漂移进 per-client，sessions() 非空即翻红），exitf 静默（Shutdown/exit-when-empty
+// 均不在场）。原自装配无 listener，经小族 sess 形态统一装配（shared 分支装配序列
+// 同构 startTestServerWith，断言面零变化）。
 func TestDrainBeforeAttach(t *testing.T) {
-	sess, err := pty.Start([]string{"seq", "1", "200000"}, pty.StartOptions{Uid: -1, Gid: -1}) // 约 1.3MB 输出
-	if err != nil {
-		t.Fatalf("pty.Start: %v", err)
-	}
-	exitCh := make(chan int, 1)
-	server.New(sess, func(code int) { exitCh <- code }, server.Options{}) // 不连接任何 WS 客户端（零值 Options 仅需编译适配 New 签名）
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			exitCh, _, sessions := newSessTestServer(t, mode, []string{"seq", "1", "200000"}, nil) // 约 1.3MB 输出
 
-	select {
-	case code := <-exitCh:
-		if code != 0 {
-			t.Fatalf("exit code = %d, want 0", code)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("child did not exit within 5s — D-12 drain not wired")
+			if mode == server.SessionModePerClient {
+				// per-client 列（D-03 显式断言未装配）：零 attach 零 spawn——
+				// 500ms 窗口内 spawned 恒空（可证伪：装配期 spawn 漂移即非空翻红）。
+				deadline := time.Now().Add(500 * time.Millisecond)
+				for {
+					if n := len(sessions()); n != 0 {
+						t.Fatalf("零 attach 下 spawned = %d, want 0——per-client 装配期 spawn 漂移（D-12 组件未装配红线）", n)
+					}
+					if time.Now().After(deadline) {
+						break
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+				assertNoExit(t, exitCh) // 无会话无终结源，exitf 静默
+				return
+			}
+
+			// shared 列（v1.0 期望值逐字）：不连接任何 WS 客户端。
+			select {
+			case code := <-exitCh:
+				if code != 0 {
+					t.Fatalf("exit code = %d, want 0", code)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("child did not exit within 5s — D-12 drain not wired")
+			}
+		})
 	}
 }
 
@@ -153,12 +218,6 @@ func startTestServerWith(t *testing.T, argv []string, opts server.Options) (exit
 	t.Cleanup(func() { killServer(ln, sess) })
 	go http.Serve(ln, srv.Handler())
 	return exitCh, "ws://" + ln.Addr().String() + "/ws"
-}
-
-// startTestServer 兼容包装：Writable:true 装配，保持既有五个 Dial 测试的 echo 语义。
-func startTestServer(t *testing.T, argv []string) (exitCh chan int, wsURL string) {
-	t.Helper()
-	return startTestServerWith(t, argv, server.Options{Writable: true})
 }
 
 // startTrackedServerWith 是 startTestServerWith 的 handler 追踪变体：返回的
@@ -447,132 +506,208 @@ func TestHelperProcess(t *testing.T) {
 // 两端各自实时收到同一 OUTPUT 字节流且累积 payload 逐字节一致。
 // 第二 Dial 同样携带 wesh.v1 子协议（守卫链 ① 形态不变）。
 // 第三人 503 断言不在此做——max-clients 闸 05-07 才落地（该 plan 的 TestMaxClients503 覆盖）。
+//
+// 14-02 双模式分叉表（D-01/D-02，蓝本 :384 e2e 行 fanout 面）：shared 列 = 双端
+// 逐字节一致扇出（v1.0 逐字）；per-client 列 = 各端输出即自身进程输出——c1 标记
+// 只回 c1，c2 静默窗零 c1 标记（可证伪：共享扇出误装配则 c2 必收 c1 回显即翻红；
+// 双标记交叉断言的 fanout 全链形态由 TestMultiClientFanout per-client 列承载，
+// 本测锁 e2e 侧双 attach 语义分叉点，T-14-04 防双写漂移）。
 func TestSecondClientAttach(t *testing.T) {
-	exitCh, wsURL := startTestServer(t, []string{"/bin/cat"})
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c1, _ := dialHello(t, ctx, wsURL, 80, 24)
-	c2, _ := dialHello(t, ctx, wsURL, 80, 24) // 双 attach 成功（原 409 语义终结）
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			c1, _ := dialHello(t, ctx, wsURL, 80, 24)
+			c2, _ := dialHello(t, ctx, wsURL, 80, 24) // 双 attach 成功（原 409 语义终结）
 
-	// c1 发 INPUT，行规程回显经 hub 组一次共享帧扇出 → c1/c2 两端各自累积收齐。
-	payload := []byte("dual attach echo")
-	if err := c1.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
-		t.Fatalf("write INPUT on c1: %v", err)
-	}
-	accum := func(c *websocket.Conn) []byte {
-		t.Helper()
-		got := make([]byte, 0, len(payload))
-		for len(got) < len(payload) {
-			_, data, err := c.Read(ctx)
-			if err != nil {
-				t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
+			// c1 发 INPUT，行规程回显经 hub 组一次共享帧扇出 → c1/c2 两端各自累积收齐。
+			payload := []byte("dual attach echo")
+			if err := c1.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+				t.Fatalf("write INPUT on c1: %v", err)
 			}
-			if len(data) == 0 || data[0] != proto.Output {
-				t.Fatalf("unexpected frame: %v", data)
+			accum := func(c *websocket.Conn) []byte {
+				t.Helper()
+				got := make([]byte, 0, len(payload))
+				for len(got) < len(payload) {
+					_, data, err := c.Read(ctx)
+					if err != nil {
+						t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
+					}
+					if len(data) == 0 || data[0] != proto.Output {
+						t.Fatalf("unexpected frame: %v", data)
+					}
+					got = append(got, data[1:]...)
+				}
+				return got
 			}
-			got = append(got, data[1:]...)
-		}
-		return got
-	}
-	got1 := accum(c1)
-	got2 := accum(c2)
-	if string(got1) != string(payload) || string(got2) != string(payload) {
-		t.Fatalf("fan-out payload = %q / %q, want both %q", got1, got2, payload)
-	}
-	if string(got1) != string(got2) {
-		t.Fatalf("fan-out streams differ (byte-identical violated): %q vs %q", got1, got2)
-	}
+			got1 := accum(c1)
 
-	// 清理：双端关闭不触发 exitf（多客户端推论，静默反证）。
-	c1.Close(websocket.StatusNormalClosure, "")
-	c2.Close(websocket.StatusNormalClosure, "")
-	assertNoExit(t, exitCh)
+			if mode == server.SessionModePerClient {
+				// per-client 列：c1 自有进程回显（逐字节精确比对）。
+				if string(got1) != string(payload) {
+					t.Fatalf("c1 echo payload = %q, want %q（per-client 自有进程回显）", got1, payload)
+				}
+				// c2 静默窗（select + time.After 竞速——客户端 Read 永不带
+				// per-read deadline，perclient_test.go:13-14 夹具纪律红线）：
+				// 窗内零帧零错误，OUTPUT 载荷累积后交叉断言零 c1 标记（帧级
+				// 累积免疫标记跨帧切分）。
+				resCh := make(chan frameRes, 8)
+				quit := make(chan struct{})
+				defer close(quit)
+				go readPump(ctx, c2, resCh, quit)
+				var c2Acc []byte
+				silent := time.After(1500 * time.Millisecond)
+			c2Quiet:
+				for {
+					select {
+					case r := <-resCh:
+						if r.err != nil {
+							t.Fatalf("c2 静默窗内 read error: %v（连接应存活）", r.err)
+						}
+						if len(r.data) > 0 && r.data[0] == proto.Output {
+							c2Acc = append(c2Acc, r.data[1:]...)
+						}
+					case <-silent:
+						break c2Quiet
+					}
+				}
+				if bytes.Contains(c2Acc, payload) {
+					t.Fatalf("c2 静默窗收到 c1 标记 %q——per-client 输出串台（共享扇出误装配）: %q", payload, c2Acc)
+				}
+				// 清理：双端关闭不触发 exitf（多客户端推论，静默反证）。
+				c1.Close(websocket.StatusNormalClosure, "")
+				c2.Close(websocket.StatusNormalClosure, "")
+				assertNoExit(t, exitCh)
+				return
+			}
+
+			got2 := accum(c2)
+			if string(got1) != string(payload) || string(got2) != string(payload) {
+				t.Fatalf("fan-out payload = %q / %q, want both %q", got1, got2, payload)
+			}
+			if string(got1) != string(got2) {
+				t.Fatalf("fan-out streams differ (byte-identical violated): %q vs %q", got1, got2)
+			}
+
+			// 清理：双端关闭不触发 exitf（多客户端推论，静默反证）。
+			c1.Close(websocket.StatusNormalClosure, "")
+			c2.Close(websocket.StatusNormalClosure, "")
+			assertNoExit(t, exitCh)
+		})
+	}
 }
 
 // TestExitCodePropagation（D-10 唯一终结路径）：子进程以 42 退出时，lifecycle
 // 广播 1000 正常关闭帧到全部已 attach 客户端（本例单客户端），随后 exitf 被以
 // 42 调用（退出码传递语义不变，T-03-03 缓解固化）。
+//
+// 14-02 双模式分叉表（D-01/D-02，蓝本 :384 e2e 行）：wire 面（1000 关闭）双列
+// 同值——单客户端形态广播/私有化不可观测（exit_test.go TestExitFrameSignal 同款
+// 判定；他端零感知分叉由 TestExitFrameBroadcast per-client 列承载）；exitf 面
+// 分叉——shared = 1000 广播后 exitf 以 42 收口（原断言逐字）；per-client = 静默
+// （exitf 唯二触发源 Shutdown/exit-when-empty 均不在场，服务端续跑待新 attach，
+// PC-02/PC-03 语义——信号死亡形态的 per-client 同构见 TestExitFrameSignal）。
 func TestExitCodePropagation(t *testing.T) {
-	exitCh, wsURL := startTestServer(t, helperArgv(t, "wesh-helper-exit42"))
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			exitCh, wsURL := newTestServer(t, mode, helperArgv(t, "wesh-helper-exit42"), nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c, _ := dialHello(t, ctx, wsURL, 80, 24)
-	// 触发 helper 自杀：helper 读到 '\n' 后 os.Exit(42)
-	if err := c.Write(ctx, websocket.MessageBinary, []byte{proto.Input, 'x', '\n'}); err != nil {
-		t.Fatalf("write INPUT: %v", err)
-	}
-
-	// 读到关闭帧为止（途中 PTY 回显等 OUTPUT 帧丢弃）
-	var ce websocket.CloseError
-	for {
-		if _, _, rerr := c.Read(ctx); rerr != nil {
-			if !errors.As(rerr, &ce) {
-				t.Fatalf("read terminated without CloseError: %v", rerr)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			c, _ := dialHello(t, ctx, wsURL, 80, 24)
+			// 触发 helper 自杀：helper 读到 '\n' 后 os.Exit(42)
+			if err := c.Write(ctx, websocket.MessageBinary, []byte{proto.Input, 'x', '\n'}); err != nil {
+				t.Fatalf("write INPUT: %v", err)
 			}
-			break
-		}
+
+			// 读到关闭帧为止（途中 PTY 回显等 OUTPUT 帧丢弃）
+			var ce websocket.CloseError
+			for {
+				if _, _, rerr := c.Read(ctx); rerr != nil {
+					if !errors.As(rerr, &ce) {
+						t.Fatalf("read terminated without CloseError: %v", rerr)
+					}
+					break
+				}
+			}
+			if ce.Code != websocket.StatusNormalClosure {
+				t.Fatalf("close code = %d, want %d (1000)", ce.Code, websocket.StatusNormalClosure)
+			}
+			if mode == server.SessionModePerClient {
+				// per-client 列（exitf 面分叉）：静默——服务端续跑。
+				assertNoExit(t, exitCh)
+				return
+			}
+			// 1000 广播关闭帧先于 exitf（lifecycle：先并行关闭全部客户端再 terminate）——
+			// 此后 exitf 必以 42 收口
+			waitExit(t, exitCh, 42)
+		})
 	}
-	if ce.Code != websocket.StatusNormalClosure {
-		t.Fatalf("close code = %d, want %d (1000)", ce.Code, websocket.StatusNormalClosure)
-	}
-	// 1000 广播关闭帧先于 exitf（lifecycle：先并行关闭全部客户端再 terminate）——
-	// 此后 exitf 必以 42 收口
-	waitExit(t, exitCh, 42)
 }
 
 // TestUnknownFrame1002（D-16 关闭码纪律）：未知类型帧（'9'）导致 WS 以 1002 关闭；
 // 全程不出现 1006（1006 永不写入，RFC6455 §7.4 / PITFALLS C9，T-03-02 缓解固化）。
+//
+// 14-02 双模式（蓝本 :378-379 协议守卫行「与进程模型无关」口径——handshake/
+// limits/keepalive 同断言行族）：未知帧 1002 是读循环协议守卫，两列同断言双跑。
+// per-client 下列面差异（被踢端自有会话 SIGHUP 收割、再 attach 为全新进程）不
+// 改变任何断言真值——断开/重连语义分叉本体由 TestEchoPTY per-client 列承载，
+// 此处不双写（T-14-04 防双写漂移）。
 func TestUnknownFrame1002(t *testing.T) {
-	exitCh, wsURL := startTestServer(t, []string{"/bin/cat"})
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c, _ := dialHello(t, ctx, wsURL, 80, 24)
-	if err := c.Write(ctx, websocket.MessageBinary, []byte{'9', 'x'}); err != nil {
-		t.Fatalf("write unknown frame: %v", err)
-	}
-
-	var ce websocket.CloseError
-	for {
-		if _, _, rerr := c.Read(ctx); rerr != nil {
-			if !errors.As(rerr, &ce) {
-				t.Fatalf("read terminated without CloseError: %v", rerr)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			c, _ := dialHello(t, ctx, wsURL, 80, 24)
+			if err := c.Write(ctx, websocket.MessageBinary, []byte{'9', 'x'}); err != nil {
+				t.Fatalf("write unknown frame: %v", err)
 			}
-			break
-		}
-	}
-	if ce.Code == websocket.StatusAbnormalClosure {
-		t.Fatal("close code 1006 observed — must never be written (RFC6455 §7.4, PITFALLS C9)")
-	}
-	if ce.Code != websocket.StatusProtocolError {
-		t.Fatalf("close code = %d, want %d (1002)", ce.Code, websocket.StatusProtocolError)
-	}
 
-	// 服务端 reader 随关闭握手终结 → 多客户端推论：detach 不触发 exitf（静默反证）
-	// + 会话存活断言（同实例再 attach 成功并 echo 一致，同 TestEchoPTY 新形态）。
-	assertNoExit(t, exitCh)
-	c2, _ := dialHello(t, ctx, wsURL, 80, 24)
-	payload := []byte("alive after 1002")
-	if err := c2.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
-		t.Fatalf("write INPUT after re-attach: %v", err)
+			var ce websocket.CloseError
+			for {
+				if _, _, rerr := c.Read(ctx); rerr != nil {
+					if !errors.As(rerr, &ce) {
+						t.Fatalf("read terminated without CloseError: %v", rerr)
+					}
+					break
+				}
+			}
+			if ce.Code == websocket.StatusAbnormalClosure {
+				t.Fatal("close code 1006 observed — must never be written (RFC6455 §7.4, PITFALLS C9)")
+			}
+			if ce.Code != websocket.StatusProtocolError {
+				t.Fatalf("close code = %d, want %d (1002)", ce.Code, websocket.StatusProtocolError)
+			}
+
+			// 服务端 reader 随关闭握手终结 → 多客户端推论：detach 不触发 exitf（静默反证）
+			// + 会话存活断言（同实例再 attach 成功并 echo 一致，同 TestEchoPTY 新形态）。
+			assertNoExit(t, exitCh)
+			c2, _ := dialHello(t, ctx, wsURL, 80, 24)
+			payload := []byte("alive after 1002")
+			if err := c2.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+				t.Fatalf("write INPUT after re-attach: %v", err)
+			}
+			got := make([]byte, 0, len(payload))
+			for len(got) < len(payload) {
+				_, data, err := c2.Read(ctx)
+				if err != nil {
+					t.Fatalf("read OUTPUT after re-attach: %v (got %q so far)", err, got)
+				}
+				if len(data) == 0 || data[0] != proto.Output {
+					t.Fatalf("unexpected frame: %v", data)
+				}
+				got = append(got, data[1:]...)
+			}
+			if string(got) != string(payload) {
+				t.Fatalf("echo payload after re-attach = %q, want %q", got, payload)
+			}
+			c2.Close(websocket.StatusNormalClosure, "")
+		})
 	}
-	got := make([]byte, 0, len(payload))
-	for len(got) < len(payload) {
-		_, data, err := c2.Read(ctx)
-		if err != nil {
-			t.Fatalf("read OUTPUT after re-attach: %v (got %q so far)", err, got)
-		}
-		if len(data) == 0 || data[0] != proto.Output {
-			t.Fatalf("unexpected frame: %v", data)
-		}
-		got = append(got, data[1:]...)
-	}
-	if string(got) != string(payload) {
-		t.Fatalf("echo payload after re-attach = %q, want %q", got, payload)
-	}
-	c2.Close(websocket.StatusNormalClosure, "")
 }
 
 // ====== plan 02-02 增量：握手 tracer 端到端 ======
@@ -581,57 +716,64 @@ func TestUnknownFrame1002(t *testing.T) {
 // writable 配置一致（D-14）；rw 半侧补 INPUT echo 全链路断言（沿用 TestEchoPTY 累积模式）。
 // 两个半侧各自独立装配（ro/rw 由 New 装配期固化），均以客户端正常关闭 + exitCh 静默
 // 反证 + 断开即移除（再 attach 成功）收口（多客户端推论形态）。
+// 14-02 双模式（蓝本 :378-379 handshake 行「与进程模型无关」口径）：Welcome
+// mode 由装配期 Writable 固化（ro 半侧 mutate 覆写 false / rw 半侧基线 true），
+// 两列同断言双跑——per-client 下再 attach 为全新会话，Welcome mode 判定同值。
 func TestHelloWelcome(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 
-	// ro 半侧：默认只读（D-14 Welcome{mode:"ro"}）
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: false})
-	c, mode := dialHello(t, ctx, wsURL, 80, 24)
-	if mode != proto.ModeRO {
-		t.Fatalf("welcome mode = %q, want %q (writable=false)", mode, proto.ModeRO)
-	}
-	c.Close(websocket.StatusNormalClosure, "")
-	assertNoExit(t, exitCh) // 多客户端推论：客户端断开不触发 exitf
-	// 断开即移除的行为化：再 attach 成功且 mode 判定不变
-	c2, mode2 := dialHello(t, ctx, wsURL, 80, 24)
-	if mode2 != proto.ModeRO {
-		t.Fatalf("re-attach welcome mode = %q, want %q", mode2, proto.ModeRO)
-	}
-	c2.Close(websocket.StatusNormalClosure, "")
+			// ro 半侧：默认只读（D-14 Welcome{mode:"ro"}）
+			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) { o.Writable = false })
+			c, mode2 := dialHello(t, ctx, wsURL, 80, 24)
+			if mode2 != proto.ModeRO {
+				t.Fatalf("welcome mode = %q, want %q (writable=false)", mode2, proto.ModeRO)
+			}
+			c.Close(websocket.StatusNormalClosure, "")
+			assertNoExit(t, exitCh) // 多客户端推论：客户端断开不触发 exitf
+			// 断开即移除的行为化：再 attach 成功且 mode 判定不变
+			c2, mode3 := dialHello(t, ctx, wsURL, 80, 24)
+			if mode3 != proto.ModeRO {
+				t.Fatalf("re-attach welcome mode = %q, want %q", mode3, proto.ModeRO)
+			}
+			c2.Close(websocket.StatusNormalClosure, "")
 
-	// rw 半侧：--writable 等价装配（D-15）→ Welcome{mode:"rw"} + INPUT 正常 echo
-	exitChRW, wsURLRW := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
-	cRW, modeRW := dialHello(t, ctx, wsURLRW, 80, 24)
-	if modeRW != proto.ModeRW {
-		t.Fatalf("welcome mode = %q, want %q (writable=true)", modeRW, proto.ModeRW)
+			// rw 半侧：--writable 等价装配（D-15）→ Welcome{mode:"rw"} + INPUT 正常 echo
+			exitChRW, wsURLRW := newTestServer(t, mode, []string{"/bin/cat"}, nil)
+			cRW, modeRW := dialHello(t, ctx, wsURLRW, 80, 24)
+			if modeRW != proto.ModeRW {
+				t.Fatalf("welcome mode = %q, want %q (writable=true)", modeRW, proto.ModeRW)
+			}
+			payload := []byte("hello wesh")
+			if err := cRW.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+				t.Fatalf("write INPUT: %v", err)
+			}
+			got := make([]byte, 0, len(payload))
+			for len(got) < len(payload) {
+				_, data, err := cRW.Read(ctx)
+				if err != nil {
+					t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
+				}
+				if len(data) == 0 || data[0] != proto.Output {
+					t.Fatalf("unexpected frame: %v", data)
+				}
+				got = append(got, data[1:]...)
+			}
+			if string(got) != string(payload) {
+				t.Fatalf("echo payload = %q, want %q", got, payload)
+			}
+			cRW.Close(websocket.StatusNormalClosure, "")
+			assertNoExit(t, exitChRW)
+			// 断开即移除的行为化：再 attach 成功且 mode 判定不变
+			cRW2, modeRW2 := dialHello(t, ctx, wsURLRW, 80, 24)
+			if modeRW2 != proto.ModeRW {
+				t.Fatalf("re-attach welcome mode = %q, want %q", modeRW2, proto.ModeRW)
+			}
+			cRW2.Close(websocket.StatusNormalClosure, "")
+		})
 	}
-	payload := []byte("hello wesh")
-	if err := cRW.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
-		t.Fatalf("write INPUT: %v", err)
-	}
-	got := make([]byte, 0, len(payload))
-	for len(got) < len(payload) {
-		_, data, err := cRW.Read(ctx)
-		if err != nil {
-			t.Fatalf("read OUTPUT: %v (got %q so far)", err, got)
-		}
-		if len(data) == 0 || data[0] != proto.Output {
-			t.Fatalf("unexpected frame: %v", data)
-		}
-		got = append(got, data[1:]...)
-	}
-	if string(got) != string(payload) {
-		t.Fatalf("echo payload = %q, want %q", got, payload)
-	}
-	cRW.Close(websocket.StatusNormalClosure, "")
-	assertNoExit(t, exitChRW)
-	// 断开即移除的行为化：再 attach 成功且 mode 判定不变
-	cRW2, modeRW2 := dialHello(t, ctx, wsURLRW, 80, 24)
-	if modeRW2 != proto.ModeRW {
-		t.Fatalf("re-attach welcome mode = %q, want %q", modeRW2, proto.ModeRW)
-	}
-	cRW2.Close(websocket.StatusNormalClosure, "")
 }
 
 // ====== plan 04-01 增量：Welcome prefs 端到端 ======
@@ -644,56 +786,63 @@ func TestHelloWelcome(t *testing.T) {
 // 05-03 适配：ClientPrefs 单字段分裂为 ro/rw 双档（D-13）——本测试锁定的语义是
 // 「注入 blob → Welcome 逐键透传」而非双档分化，故两档注同一 blob（单客户端 rw
 // 半侧实际选 rw 档）；ro/rw 选档与 osc52 强制缺席行为由 TestOwnerPolicy 专测。
+//
+// 14-02 双模式（蓝本 :378-379 协议守卫行口径——Welcome 载荷内容与进程模型无关）：
+// 两列同断言双跑（per-client 下再 attach 为全新会话，Welcome 经 outbox 首条入队
+// 路径同构）。
 func TestWelcomePrefs(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 
-	// 注入半侧：ClientPrefsRO/RW 非空 → Welcome 携 prefs 键，逐键值相等
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{
-		Writable:      true,
-		ClientPrefsRO: json.RawMessage(`{"fontSize":18,"osc52":true}`),
-		ClientPrefsRW: json.RawMessage(`{"fontSize":18,"osc52":true}`),
-	})
-	c, wm := dialHelloPayload(t, ctx, wsURL, 80, 24)
-	if wm["mode"] != proto.ModeRW {
-		t.Errorf("welcome mode = %v, want %q (writable=true)", wm["mode"], proto.ModeRW)
-	}
-	prefs, ok := wm["prefs"].(map[string]any)
-	if !ok {
-		t.Fatalf("Welcome prefs = %v, want JSON object (ClientPrefsRO/RW injected)", wm["prefs"])
-	}
-	if got := prefs["fontSize"]; got != float64(18) {
-		t.Errorf("prefs.fontSize = %v, want 18", got)
-	}
-	if got := prefs["osc52"]; got != true {
-		t.Errorf("prefs.osc52 = %v, want true", got)
-	}
-	if len(prefs) != 2 {
-		t.Errorf("prefs keys = %v, want exactly {fontSize, osc52}", prefs)
-	}
-	c.Close(websocket.StatusNormalClosure, "")
-	assertNoExit(t, exitCh)
-	// 断开即移除的行为化：再 attach 成功且 prefs 逐键值一致（Welcome 经 outbox
-	// 首条入队路径对再 attach 同样成立）
-	c2, wm2 := dialHelloPayload(t, ctx, wsURL, 80, 24)
-	prefs2, ok := wm2["prefs"].(map[string]any)
-	if !ok || prefs2["fontSize"] != float64(18) || prefs2["osc52"] != true {
-		t.Errorf("re-attach Welcome prefs = %v, want {fontSize:18, osc52:true}", wm2["prefs"])
-	}
-	c2.Close(websocket.StatusNormalClosure, "")
+			// 注入半侧：ClientPrefsRO/RW 非空 → Welcome 携 prefs 键，逐键值相等
+			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+				o.ClientPrefsRO = json.RawMessage(`{"fontSize":18,"osc52":true}`)
+				o.ClientPrefsRW = json.RawMessage(`{"fontSize":18,"osc52":true}`)
+			})
+			c, wm := dialHelloPayload(t, ctx, wsURL, 80, 24)
+			if wm["mode"] != proto.ModeRW {
+				t.Errorf("welcome mode = %v, want %q (writable=true)", wm["mode"], proto.ModeRW)
+			}
+			prefs, ok := wm["prefs"].(map[string]any)
+			if !ok {
+				t.Fatalf("Welcome prefs = %v, want JSON object (ClientPrefsRO/RW injected)", wm["prefs"])
+			}
+			if got := prefs["fontSize"]; got != float64(18) {
+				t.Errorf("prefs.fontSize = %v, want 18", got)
+			}
+			if got := prefs["osc52"]; got != true {
+				t.Errorf("prefs.osc52 = %v, want true", got)
+			}
+			if len(prefs) != 2 {
+				t.Errorf("prefs keys = %v, want exactly {fontSize, osc52}", prefs)
+			}
+			c.Close(websocket.StatusNormalClosure, "")
+			assertNoExit(t, exitCh)
+			// 断开即移除的行为化：再 attach 成功且 prefs 逐键值一致（Welcome 经 outbox
+			// 首条入队路径对再 attach 同样成立）
+			c2, wm2 := dialHelloPayload(t, ctx, wsURL, 80, 24)
+			prefs2, ok := wm2["prefs"].(map[string]any)
+			if !ok || prefs2["fontSize"] != float64(18) || prefs2["osc52"] != true {
+				t.Errorf("re-attach Welcome prefs = %v, want {fontSize:18, osc52:true}", wm2["prefs"])
+			}
+			c2.Close(websocket.StatusNormalClosure, "")
 
-	// 未注入半侧：ClientPrefsRO/RW 零值 → Welcome JSON 无 "prefs" 键（omitempty 缺席）
-	exitChNil, wsURLNil := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
-	cNil, wmNil := dialHelloPayload(t, ctx, wsURLNil, 80, 24)
-	if _, present := wmNil["prefs"]; present {
-		t.Errorf("Welcome JSON = %v, must not contain %q key (omitempty, zero ClientPrefsRO/RW)", wmNil, "prefs")
+			// 未注入半侧：ClientPrefsRO/RW 零值 → Welcome JSON 无 "prefs" 键（omitempty 缺席）
+			exitChNil, wsURLNil := newTestServer(t, mode, []string{"/bin/cat"}, nil)
+			cNil, wmNil := dialHelloPayload(t, ctx, wsURLNil, 80, 24)
+			if _, present := wmNil["prefs"]; present {
+				t.Errorf("Welcome JSON = %v, must not contain %q key (omitempty, zero ClientPrefsRO/RW)", wmNil, "prefs")
+			}
+			cNil.Close(websocket.StatusNormalClosure, "")
+			assertNoExit(t, exitChNil)
+			// 断开即移除的行为化：再 attach 成功且仍无 prefs 键
+			cNil2, wmNil2 := dialHelloPayload(t, ctx, wsURLNil, 80, 24)
+			if _, present := wmNil2["prefs"]; present {
+				t.Errorf("re-attach Welcome JSON = %v, must not contain %q key", wmNil2, "prefs")
+			}
+			cNil2.Close(websocket.StatusNormalClosure, "")
+		})
 	}
-	cNil.Close(websocket.StatusNormalClosure, "")
-	assertNoExit(t, exitChNil)
-	// 断开即移除的行为化：再 attach 成功且仍无 prefs 键
-	cNil2, wmNil2 := dialHelloPayload(t, ctx, wsURLNil, 80, 24)
-	if _, present := wmNil2["prefs"]; present {
-		t.Errorf("re-attach Welcome JSON = %v, must not contain %q key", wmNil2, "prefs")
-	}
-	cNil2.Close(websocket.StatusNormalClosure, "")
 }

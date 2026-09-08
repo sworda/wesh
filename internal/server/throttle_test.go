@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+// 【14-05 形态判定】TestThrottleStore 为纯函数白盒测——throttleStore 经 now
+// 手工注入推进，无 server 装配面，mode-agnostic 无装配可参数化，保持单跑
+//（蓝本 throttle 行的传输面双跑由 auth_e2e_test.go TestThrottleHTTP/
+// TestThrottleHelloSharedCounter 承载）。
+
 // TestThrottleStore 锁定 per-IP 指数退避计数器语义（SEC-03，D-08/D-09 标定）：
 // 级数 1/2/4/8/16/30/30（位移即 ×2 幂，cap 封顶）/ 窗口内命中不延长 notBefore /
 // 成功清零（D-08）/ lastSeen 超 15min 惰性重置（Pitfall 4 内存界纪律）。

@@ -5,6 +5,12 @@ package server_test
 // TestEmptyFragmentFloodResilience / TestPreHelloReadLimit，与 RESEARCH
 // §Validation Architecture RES-01 五行映射一一对应。
 //
+// 14-01 双模式改造（D-01/D-02，PITFALLS :382 行「limits = 双模式同断言——协议
+// 守卫/上限与进程模型无关」）：四测经 newTestServer/newTrackedTestServer 小族
+// t.Run 双跑、同断言（stderr 捕获同步边 waitHandlers 在两列同构保留——
+// TestOversize1009 是 newTrackedTestServer 形态的运行期首证）；
+// TestReadLimitBoundary 保持 shared 单跑——D-02 偏差登记（见该测头注释）。
+//
 // 库行为锚点（coder/websocket v1.8.15 源码核实）：
 //   - SetReadLimit 内部 +1 余量供 fin 帧收尾读（read.go:97-105）——边界恰为
 //     "limit 字节通过 / limit+1 字节在收尾读时被 1009"；
@@ -123,53 +129,71 @@ func captureStderr(t *testing.T) func() string {
 // （ReadLimitPostAuth+1，首字节随意：超限在协议解析前由库拦截）触发库自动 1009；
 // 服务端 stderr 留下恰一行 message_too_big 事件（remote/code/reason 三要素），
 // 随后经 detach 收口（多客户端推论：不触发 exitf）。
+//
+// 14-01 双跑（蓝本 :382 行 mode-agnostic 同断言）：stderr 捕获同步边两列
+// 同构——waitHandlers 在 restore() 前调用的形态保留（shared 经
+// startTrackedServerWith / per-client 经 TrackedWithSpawn 姊妹变体，harness
+// newTrackedTestServer 统一——本测即该形态的运行期首证：14-01 tracer 期
+// tracked 装配 per-client 侧的 -race 实证）。
 func TestOversize1009(t *testing.T) {
-	restore := captureStderr(t)
-	defer restore() // 失败路径兜底恢复 os.Stderr（幂等，成功路径显式调用后空转）
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			restore := captureStderr(t)
+			defer restore() // 失败路径兜底恢复 os.Stderr（幂等，成功路径显式调用后空转）
 
-	// handler 追踪变体：restore() 写 os.Stderr 前需与 handler 内 logEvent 的读
-	// 建立同步边（waitExit 消亡后的替代形态，见 startTrackedServerWith 注释）。
-	exitCh, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+			// handler 追踪变体：restore() 写 os.Stderr 前需与 handler 内 logEvent 的读
+			// 建立同步边（waitExit 消亡后的替代形态，见 startTrackedServerWith 注释）。
+			exitCh, wsURL, waitHandlers := newTrackedTestServer(t, mode, []string{"/bin/cat"}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			c, _ := dialHello(t, ctx, wsURL, 80, 24)
 
-	if err := c.Write(ctx, websocket.MessageBinary, make([]byte, proto.ReadLimitPostAuth+1)); err != nil {
-		t.Fatalf("write oversize message: %v", err)
-	}
-	ce := readCloseErr(t, c, ctx)
-	if ce.Code != websocket.StatusMessageTooBig {
-		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
-	}
-	// 同步边：等该连接的 Attach handler 返回——logEvent 在 handler 内先于返回
-	// 执行，WaitGroup happens-before 使 restore() 的 os.Stderr 写与该读同步。
-	waitHandlers()
-	// 多客户端推论：超限断开不再触发 exitf——200ms 静默反证。
-	assertNoExit(t, exitCh)
+			if err := c.Write(ctx, websocket.MessageBinary, make([]byte, proto.ReadLimitPostAuth+1)); err != nil {
+				t.Fatalf("write oversize message: %v", err)
+			}
+			ce := readCloseErr(t, c, ctx)
+			if ce.Code != websocket.StatusMessageTooBig {
+				t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
+			}
+			// 同步边：等该连接的 Attach handler 返回——logEvent 在 handler 内先于返回
+			// 执行，WaitGroup happens-before 使 restore() 的 os.Stderr 写与该读同步。
+			waitHandlers()
+			// 多客户端推论：超限断开不再触发 exitf——200ms 静默反证。
+			assertNoExit(t, exitCh)
 
-	// D-12② 超限可见性三腿之二：stderr 恰一条 message_too_big JSON 事件，
-	// 三要素齐全（event 名精确相等；code 按 float64 比——08-RESEARCH Pitfall 4）。
-	out := restore()
-	evs := parseEvents(t, out)
-	if n := countByEvent(evs, "message_too_big"); n != 1 {
-		t.Fatalf("stderr message_too_big event count = %d, want exactly 1 (out=%q)", n, out)
-	}
-	var ev map[string]any
-	for _, m := range evs {
-		if m["event"] == "message_too_big" {
-			ev = m
-		}
-	}
-	remote, _ := ev["remote"].(string)
-	if ev["code"] != float64(websocket.StatusMessageTooBig) || !strings.HasPrefix(remote, "127.0.0.1:") {
-		t.Fatalf("message_too_big 事件三要素不符（code/remote）: %v (out=%q)", ev, out)
+			// D-12② 超限可见性三腿之二：stderr 恰一条 message_too_big JSON 事件，
+			// 三要素齐全（event 名精确相等；code 按 float64 比——08-RESEARCH Pitfall 4）。
+			out := restore()
+			evs := parseEvents(t, out)
+			if n := countByEvent(evs, "message_too_big"); n != 1 {
+				t.Fatalf("stderr message_too_big event count = %d, want exactly 1 (out=%q)", n, out)
+			}
+			var ev map[string]any
+			for _, m := range evs {
+				if m["event"] == "message_too_big" {
+					ev = m
+				}
+			}
+			remote, _ := ev["remote"].(string)
+			if ev["code"] != float64(websocket.StatusMessageTooBig) || !strings.HasPrefix(remote, "127.0.0.1:") {
+				t.Fatalf("message_too_big 事件三要素不符（code/remote）: %v (out=%q)", ev, out)
+			}
+		})
 	}
 }
 
 // TestReadLimitBoundary（RES-01）：两层硬顶边界精确——总长恰 16384 的 INPUT 帧
 // 被正常接受（不触发 1009、连接存活、数据通路有序完好），总长 16385 的 INPUT
 // 帧被 1009 切断。
+//
+// 【D-02 偏差登记——结构性 shared-only 单跑】蓝本（PITFALLS :382）limits 行为
+// 同断言双跑，本测除外：startRawCatServer 的装配前提 = net.Listen 之前经
+// master fd 同步 stty raw（消除子进程内 stty 启动窗口，见下方装配注释）；
+// per-client 的 spawn 发生在 attach 期（Listen 之后），无 pre-listen 窗口可
+// 用——装配结构性不等价，强行双跑即装配语义漂移。边界值断言本体（16384
+// 通过 / 16385 切断）与进程模型无关，per-client 侧同值面由 TestOversize1009/
+// TestPreHelloReadLimit 双跑承载。
 //
 // 载荷用 'A' 不用零字节（plan 字面 zeros 的实测偏差修正）：NUL 是控制字符，
 // PTY 规范模式 ECHOCTL 将其回显为 "^@" 两字节；可打印字符回显语义干净。
@@ -261,29 +285,33 @@ func TestReadLimitBoundary(t *testing.T) {
 // 库客户端可覆盖）。断言放宽形态：服务端切断后连接随 Attach 终结关闭，Write
 // 循环中出错即 break，最终 CloseError 必须是 1009。
 func TestFragmentedFlood1009(t *testing.T) {
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			c, _ := dialHello(t, ctx, wsURL, 80, 24)
 
-	w, err := c.Writer(ctx, websocket.MessageBinary)
-	if err != nil {
-		t.Fatalf("writer: %v", err)
-	}
-	for i := 0; i < proto.ReadLimitPostAuth+100; i++ {
-		if _, err := w.Write([]byte{0x41}); err != nil {
-			break // 服务端已切断：连接死亡后的写错误属预期
-		}
-	}
-	_ = w.Close() // 连接已死，忽略错误
+			w, err := c.Writer(ctx, websocket.MessageBinary)
+			if err != nil {
+				t.Fatalf("writer: %v", err)
+			}
+			for i := 0; i < proto.ReadLimitPostAuth+100; i++ {
+				if _, err := w.Write([]byte{0x41}); err != nil {
+					break // 服务端已切断：连接死亡后的写错误属预期
+				}
+			}
+			_ = w.Close() // 连接已死，忽略错误
 
-	ce := readCloseErr(t, c, ctx)
-	if ce.Code != websocket.StatusMessageTooBig {
-		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
+			ce := readCloseErr(t, c, ctx)
+			if ce.Code != websocket.StatusMessageTooBig {
+				t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
+			}
+			// 多客户端推论：断开不触发 exitf（静默反证）。
+			assertNoExit(t, exitCh)
+		})
 	}
-	// 多客户端推论：断开不触发 exitf（静默反证）。
-	assertNoExit(t, exitCh)
 }
 
 // TestEmptyFragmentFloodResilience（RES-01，D-09 修订残余风险的显式断言形态）：
@@ -296,84 +324,98 @@ func TestFragmentedFlood1009(t *testing.T) {
 // 503 闸 05-07 重建）。内存断言为宽松参考防线（backstop 非精确门禁）：
 // HeapAlloc 增量 < 8MiB，防回归性分配（SEC-08 结构目标：无消息级缓冲预分配）。
 func TestEmptyFragmentFloodResilience(t *testing.T) {
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{Writable: true})
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	c, _ := dialHello(t, ctx, wsURL, 80, 24)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			c, _ := dialHello(t, ctx, wsURL, 80, 24)
 
-	// 采样前 GC：HeapAlloc 近似活堆（sync.Pool 等缓存随 GC 清空，增量读数稳定）。
-	runtime.GC()
-	var m1 runtime.MemStats
-	runtime.ReadMemStats(&m1)
+			// 采样前 GC：HeapAlloc 近似活堆（sync.Pool 等缓存随 GC 清空，增量读数稳定）。
+			runtime.GC()
+			var m1 runtime.MemStats
+			runtime.ReadMemStats(&m1)
 
-	for i := 0; i < 5000; i++ {
-		if err := c.Write(ctx, websocket.MessageBinary, []byte{}); err != nil {
-			t.Fatalf("empty flood write #%d: %v — 空帧洪水下连接被切断", i, err)
-		}
+			for i := 0; i < 5000; i++ {
+				if err := c.Write(ctx, websocket.MessageBinary, []byte{}); err != nil {
+					t.Fatalf("empty flood write #%d: %v — 空帧洪水下连接被切断", i, err)
+				}
+			}
+
+			// 存活证据一：洪水后 INPUT echo 全链路功能正常（累积收齐）。
+			payload := []byte("alive-after-empty-flood")
+			if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
+				t.Fatalf("write INPUT after flood: %v", err)
+			}
+			got := make([]byte, 0, len(payload))
+			for len(got) < len(payload) {
+				_, data, err := c.Read(ctx)
+				if err != nil {
+					t.Fatalf("read OUTPUT after flood: %v (got %q so far)", err, got)
+				}
+				if len(data) == 0 || data[0] != proto.Output {
+					t.Fatalf("unexpected frame: %v", data)
+				}
+				got = append(got, data[1:]...)
+			}
+			if string(got) != string(payload) {
+				t.Fatalf("echo payload = %q, want %q", got, payload)
+			}
+
+			// 存活证据二：exitf 未被提前触发（连接存活、单次生命周期未被消耗）。
+			select {
+			case code := <-exitCh:
+				t.Fatalf("exitf called during empty flood (code=%d) — 空帧洪水触发终结", code)
+			default:
+			}
+
+			// 内存平坦宽松防线：采样前再 GC，HeapAlloc 增量断言 < 8MiB。
+			runtime.GC()
+			var m2 runtime.MemStats
+			runtime.ReadMemStats(&m2)
+			delta := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
+			t.Logf("HeapAlloc delta after 5000 empty messages: %d bytes", delta)
+			if delta > 8*1024*1024 {
+				t.Fatalf("HeapAlloc grew by %d bytes (> 8MiB) — 空帧洪水存在回归性分配", delta)
+			}
+
+			c.Close(websocket.StatusNormalClosure, "")
+			assertNoExit(t, exitCh)
+		})
 	}
-
-	// 存活证据一：洪水后 INPUT echo 全链路功能正常（累积收齐）。
-	payload := []byte("alive-after-empty-flood")
-	if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Input}, payload...)); err != nil {
-		t.Fatalf("write INPUT after flood: %v", err)
-	}
-	got := make([]byte, 0, len(payload))
-	for len(got) < len(payload) {
-		_, data, err := c.Read(ctx)
-		if err != nil {
-			t.Fatalf("read OUTPUT after flood: %v (got %q so far)", err, got)
-		}
-		if len(data) == 0 || data[0] != proto.Output {
-			t.Fatalf("unexpected frame: %v", data)
-		}
-		got = append(got, data[1:]...)
-	}
-	if string(got) != string(payload) {
-		t.Fatalf("echo payload = %q, want %q", got, payload)
-	}
-
-	// 存活证据二：exitf 未被提前触发（连接存活、单次生命周期未被消耗）。
-	select {
-	case code := <-exitCh:
-		t.Fatalf("exitf called during empty flood (code=%d) — 空帧洪水触发终结", code)
-	default:
-	}
-
-	// 内存平坦宽松防线：采样前再 GC，HeapAlloc 增量断言 < 8MiB。
-	runtime.GC()
-	var m2 runtime.MemStats
-	runtime.ReadMemStats(&m2)
-	delta := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
-	t.Logf("HeapAlloc delta after 5000 empty messages: %d bytes", delta)
-	if delta > 8*1024*1024 {
-		t.Fatalf("HeapAlloc grew by %d bytes (> 8MiB) — 空帧洪水存在回归性分配", delta)
-	}
-
-	c.Close(websocket.StatusNormalClosure, "")
-	assertNoExit(t, exitCh)
 }
 
 // TestPreHelloReadLimit（SEC-08/D-11）：预认证 4KiB 档——Dial（带 wesh.v1 子协议）
 // 成功但不发 Hello，直接发 >4KiB 消息，库在预认证窗口首读处自动 1009（ReadLimitPreAuth
 // 档生效；此路径同时命中 02-05 Task 1 预认证首读的 message_too_big 埋点）。
+//
+// 14-01 双跑装配注记：原装配为零值 server.Options（Writable false）；小族
+// shared 分支基线 {Writable: true}——Writable 只作用于 Welcome 模式字段与
+// INPUT 门控，本测连接在 Hello 处理前的首读即被 1009 切断，该旗标在本路径
+// 结构性不可观测（per-client 侧同：upgradePerClient 在 Hello 之后才被调用，
+// pre-Hello 切断时零 spawn 零会话）。
 func TestPreHelloReadLimit(t *testing.T) {
-	exitCh, wsURL := startTestServerWith(t, []string{"/bin/cat"}, server.Options{})
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			c, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
 
-	if err := c.Write(ctx, websocket.MessageBinary, make([]byte, proto.ReadLimitPreAuth+1)); err != nil {
-		t.Fatalf("write pre-auth oversize: %v", err)
+			if err := c.Write(ctx, websocket.MessageBinary, make([]byte, proto.ReadLimitPreAuth+1)); err != nil {
+				t.Fatalf("write pre-auth oversize: %v", err)
+			}
+			ce := readCloseErr(t, c, ctx)
+			if ce.Code != websocket.StatusMessageTooBig {
+				t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
+			}
+			// 多客户端推论：断开不触发 exitf（静默反证）。
+			assertNoExit(t, exitCh)
+		})
 	}
-	ce := readCloseErr(t, c, ctx)
-	if ce.Code != websocket.StatusMessageTooBig {
-		t.Fatalf("close code = %d, want %d (1009)", ce.Code, websocket.StatusMessageTooBig)
-	}
-	// 多客户端推论：断开不触发 exitf（静默反证）。
-	assertNoExit(t, exitCh)
 }

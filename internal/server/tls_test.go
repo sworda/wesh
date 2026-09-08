@@ -1,5 +1,13 @@
 package server
 
+// tls_test.go —— SEC-05 TLS 版本/cipher 下限 + 安全头中间件行为锁。
+//
+// 14-06 判定登记（蓝本 PITFALLS :383 tls 行的实测偏差）：两测为
+// httptest.NewUnstartedServer + securityHeaders 中间件直测的纯函数形态——
+// 零 wesh server 装配面可参数化（TLSConfig()/securityHeaders 与进程模型
+// 无交集，per-client 侧无独立 TLS/头面），保持单跑；SUMMARY 收口核对
+// 清单 ④ 桶（纯白盒/纯函数单跑）登记。
+
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
