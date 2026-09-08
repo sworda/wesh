@@ -1631,6 +1631,10 @@ func TestPerClientInputRateLimitKept(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	c, mode := dialHello(t, ctx, wsURL, 80, 24)
+	// 回显洪水经 writer mergeBatch（clients.go）折叠为单条 OUTPUT 消息，合并段
+	// 可达 outbox cap 量级（slowclient_test.go:310 既定纪律）——放宽客户端默认
+	// 32768 读限，否则 Read 报 message too big 误判为服务端终结（RES-02 假阳性）。
+	c.SetReadLimit(4 * 1024 * 1024)
 	defer c.Close(websocket.StatusNormalClosure, "")
 	if mode != proto.ModeRW {
 		t.Fatalf("Welcome mode = %q, want %q", mode, proto.ModeRW)

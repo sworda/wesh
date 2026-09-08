@@ -23,9 +23,11 @@ jobs:
         with:
           # web/package.json 无 packageManager 字段，显式钉版（ci.yml:24 同款）
           version: 11.21.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
+          cache: pnpm # lockfile 在 web/ 下不在仓库根，需显式指定路径（ci.yml:27 同款）
+          cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm -C web install --frozen-lockfile
       - run: pnpm -C web build # tsc && vite build && gzip -k9（web/package.json 实证；dist 真实产物经 go:embed 进入发布二进制）
       - uses: actions/setup-go@v7.0.0

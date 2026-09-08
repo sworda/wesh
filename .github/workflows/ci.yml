@@ -23,9 +23,11 @@ jobs:
         with:
           # web/package.json 无 packageManager 字段，显式钉版（与本地一致，lockfileVersion 9.0）
           version: 11.21.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
+          cache: pnpm # lockfile 在 web/ 下不在仓库根，需显式指定路径（v5+ 默认 package-manager-cache 开启会找不到根 lockfile）
+          cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm -C web install --frozen-lockfile
       - run: pnpm -C web build # tsc 类型检查 + vite 构建一体（D-18 构建顺序的 CI 固化）
   fuzz:
