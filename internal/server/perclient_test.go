@@ -1874,23 +1874,26 @@ func TestPerClientDwellKick(t *testing.T) {
 	assertKicked1013(t, c, 15*time.Second, "per-client stall client")
 }
 
-// PC-11 慢但在前进永不踢（12-03，D-02 判据核心）：SlowDwell=3s 覆写 + 事件
+// PC-11 慢但在前进永不踢（12-03，D-02 判据核心）：SlowDwell=10s 覆写 + 事件
 // 驱动 duty-cycle——每轮「停读形成（gateTransitions +1，dwell 武装）→ 刻意
-// 停读 0.4×dwell → 全速读取至续读（再 +1，dwell 重置）」，循环 3 轮：每轮
-// 停读间隔 ~0.42×dwell < dwell（安全），累计停读 ~1.26×dwell > dwell（若
-// dwell 不随续读重置——跨停读累计形态——第 3 轮停读中段即被 1013 踢出，
-// 测试判别力内建）；3 轮后全速收干 → CloseError 1000 + seq 连续无缺口 +
-// gateTransitions ≥ +6（3 对停读/续读递增点）。
+// 停读 0.25×dwell → 全速读取至续读（再 +1，dwell 重置）」，循环 5 轮：每轮
+// 停读 0.25×dwell < dwell（安全），累计停读 1.25×dwell > dwell（若
+// dwell 不随续读重置——跨停读累计形态——第 5 轮停读中段即被 1013 踢出，
+// 测试判别力内建）；5 轮后全速收干 → CloseError 1000 + seq 连续无缺口 +
+// gateTransitions ≥ +10（5 对停读/续读递增点）。
 //
-// dwell 基数 5s 的三轮 CI flake 收口（1s 两版停读比例 0.5/0.4 均在 ubuntu
-// runner 误踢，kick 恒于 attach+1.37s；3s 版 run 34203175590 第三次发作——
-// 第 1 轮停读 1.2s 后续读链路未能在剩余 1.8s 内完成）：续读链路「客户端读取→
-// 多 MB send queue 排空→writer 解阻塞→drain→notFull→续读」的绝对耗时由内核
-// send queue 容量与 runner 读取速率决定（2 vCPU + race 检测器下 >0.5s 实证，
-// CI 负载波动可至 ~2s），停读比例缩放不改变绝对预算——唯一稳健收口是放大
-// dwell 基数（5s 使续读窗口 3s ≈ 6×实证瓶颈，2vCPU 高负载 ~1.5×余量），
-// 时长代价 ~+4s/CI 可接受，判别力结构不变（累计停读 3×0.4×dwell=1.2×dwell
-// > dwell 的跨轮累计判别保留）。
+// dwell 基数与停读占比的四轮 CI flake 收口史（放大基数路线 1s→3s→5s 三次
+// 边际失效，第四次改组合参数）：X = 续读链路「客户端读取→多 MB send queue
+// 排空→writer 解阻塞→drain→notFull→续读」的绝对耗时，由内核 send queue
+// 容量与 runner 吞吐决定，实测重尾演化 0.5s → ~1.4s → >3s（run 34203960901
+// dwell=5s 版第 1 轮误踢；同 SHA 的 PR run 34203964808 PASS——同规格 VM 的
+// 宿主噪声抽签实证，非代码差异）。X 与停读占比 p 的安全不等式：
+// p×dwell + X < dwell → X 预算 = (1-p)×dwell。参数组合取 dwell=10s、
+// p=0.25、5 轮：X 预算 7.5s（对实测重尾上界 >3s 有 2.5× 裕量，前三次失败
+// 版本预算仅 0.5s/1.8s/3s ≈ 1× 恰好翻车）；判别力等价保留（5×0.25=1.25×
+// dwell > dwell 的跨轮累计判别）。acc 预分配 40MiB：race 检测器下 append
+// grow 的重复拷贝（30.9MB 洪水 ~2× 均摊 memcpy）挤占 X 预算，一次性分配
+// 消减。时长代价 ~+15s/CI 可接受（ctx 90s 总窗收口）。
 //
 // 滴漏形态的执行期实证演化（Rule 3 调试结论，与 plan 文本「每 ~dwell/3 读
 // 一小批」的差异登记）：配额泵滴漏（每 tick 读 128KiB）在本机实证下永不触
@@ -1899,11 +1902,11 @@ func TestPerClientDwellKick(t *testing.T) {
 // 信用不足以完成「管线排空→writer 解阻塞→drain→notFull→续读」链路（停读
 // 态按 D-02 定义持续，dwell 正常触发踢出——机制行为正确，测试形态错误）。
 // 事件驱动 duty-cycle 以停读/续读事件本身为节拍：停读间隔由测试刻意构造
-// （固定 0.4×dwell），续读由全速读取触发（全速续读的可行性由停读续读主测
+// （固定 0.25×dwell），续读由全速读取触发（全速续读的可行性由停读续读主测
 // 锁定）——参数机器无关，判别力内建。
 func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 	floodArgv, floodLast := seqFlood()
-	dwell := 5 * time.Second
+	dwell := 10 * time.Second
 	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
@@ -1911,19 +1914,20 @@ func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 		o.SlowDwell = dwell
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	c, _ := dialHello(t, ctx, wsURL, 80, 24)
 	defer c.CloseNow()
 	c.SetReadLimit(4 * 1024 * 1024)
 
-	var acc []byte
+	// 预分配 40MiB：洪水 30.9MB 一次装下，免 append grow 的重复拷贝挤占 X 预算。
+	acc := make([]byte, 0, 40<<20)
 	base := srv.GateTransitionsForTest()
-	// 三轮 duty-cycle：停读（不读，等 +1）→ 刻意停读 0.5×dwell（dwell 计时
+	// 五轮 duty-cycle：停读（不读，等 +1）→ 刻意停读 0.25×dwell（dwell 计时
 	// 中——本段是判别力的载体）→ 全速读到续读（+1）。
-	for cycle := 0; cycle < 3; cycle++ {
+	for cycle := 0; cycle < 5; cycle++ {
 		stalled := waitGateTransitions(t, srv, base, 2*cycle+1, 15*time.Second)
-		time.Sleep(dwell * 2 / 5) // 停读持续 0.4×dwell——累计跨轮 > dwell，单轮 < dwell
+		time.Sleep(dwell / 4) // 停读持续 0.25×dwell——累计跨轮 > dwell，单轮 < dwell
 		for srv.GateTransitionsForTest() < stalled+1 {
 			_, data, err := c.Read(ctx)
 			if err != nil {
@@ -1938,10 +1942,10 @@ func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 			}
 		}
 	}
-	// 三对停读/续读递增点齐备（+6；此后全速收干段的瞬态二次停读可能追加
+	// 五对停读/续读递增点齐备（+10；此后全速收干段的瞬态二次停读可能追加
 	// 成对增量——下界断言）。
-	if diff := srv.GateTransitionsForTest() - base; diff < 6 {
-		t.Fatalf("duty-cycle gateTransitions 差值 = %d, want ≥ 6（3 对停读/续读递增点未齐备）", diff)
+	if diff := srv.GateTransitionsForTest() - base; diff < 10 {
+		t.Fatalf("duty-cycle gateTransitions 差值 = %d, want ≥ 10（5 对停读/续读递增点未齐备）", diff)
 	}
 	// 全速收干至终结：零 1013、退出广播 1000、seq 连续（慢消费全程零丢数据）。
 	res := readUntilError(c)
