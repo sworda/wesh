@@ -19,7 +19,7 @@ wesh 只支持 **linux/darwin（amd64/arm64）**，Windows 不在支持范围—
 |------|------|------|
 | Go | >= 1.26.3 | 以 `go.mod` 为准，CI 按其钉版 |
 | Node.js | 24 | CI 钉版 |
-| pnpm | 11.21.0 | CI 钉版（`web/package.json` 无 `packageManager` 字段，须显式对齐） |
+| pnpm | 11.21.0 | CI 钉版（`web/package.json` 无 `packageManager` 字段，须显式对齐）；web 侧一律用 pnpm，不用 npm，避免 lockfile 漂移 |
 
 关键构建纪律——**前端构建必须先于 `go build`**：
 
@@ -31,7 +31,8 @@ pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 
 ## 代码规范
 
-- **Go**：标准 `gofmt` 格式；CI 以 `go vet ./...` + `-race` 全量测试为门禁，无额外 lint 工具链。
+- **Go**：标准 `gofmt` 格式，但**以 GOROOT 的 gofmt（go1.26.3）为准**——PATH 上的旧版 gofmt（部分系统自带版本）会漏检 CJK 注释接续行，而本仓库注释大量使用中文；检查请用 `$(go env GOROOT)/bin/gofmt -l .`。CI 以 `go vet ./...` + `-race` 全量测试为门禁，无额外 lint 工具链。
+- **零新依赖纪律**：`go.mod` 仅五个外部依赖（`coder/websocket`、`creack/pty`、`golang.org/x/sys`、`golang.org/x/time`、`go-toml/v2`）。新增依赖需充分理据——标准库可胜任的不引第三方，PR 描述中说明用途与放弃标准库/自实现的理由。
 - **前端**：TypeScript 类型检查内嵌在构建里（`pnpm -C web build` 为 `tsc && vite build && gzip` 一体脚本），CI web job 强制执行；无独立 ESLint/Prettier 配置。
 - **提交信息**：Conventional Commits 形态 `type(scope): subject`。实际使用的 type 包括 `feat` / `fix` / `docs` / `test` / `chore` / `style`。注意：发布 changelog 自动剔除 `docs:` / `test:` / `chore:` / `ci:` / `style:` 前缀的提交（见 `.goreleaser.yml`）——只有 `feat` / `fix` 等实质变更会进入发布说明。
 
@@ -46,10 +47,11 @@ pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 | `web` | ubuntu | `pnpm -C web install --frozen-lockfile` + `pnpm -C web build`（类型检查 + 构建 + 预压缩） |
 | `fuzz` | ubuntu | `FuzzDecodeHello`（`./internal/proto/`）与 `FuzzDecodeFileConfig`（`./cmd/wesh/`）各 60s 短跑回归 |
 
-- **提交前本地自查**建议与 CI 同口径：`go vet ./...`、`go test -race -count=1 ./...`、`pnpm -C web build`。
+- **提交前本地自查**建议与 CI 同口径：`go vet ./...`、`go test -race -count=1 ./...`、`pnpm -C web build`；改动含 mermaid 图的文档时另跑 `node scripts/check-mermaid.mjs`（词法校验，无参默认扫 `docs/` 全部 .md，可传文件列表定向校验；任一块 FAIL 退出码为 1）。
 - **前端改动的产物纪律**：改 `web/` 后重建，若重建改写了被跟踪的 `web/dist/index.html`，新产物须随源码一并提交——发布闸按「已提交 dist 与构建产物一致」校验，不一致会拒绝发布（`scripts/release.sh` 的 dist 漂移闸）。
 - **PTY/信号/进程收割相关改动**需在 Linux 与 macOS 双平台验证（CI 矩阵已覆盖，macOS 腿同时承担 kqueue 运行时行为的验证）。
 - **测试分层**：改哪层跑哪层——Go 逻辑用包内单测；协议层用 `web/uat/phaseNN.mjs` 零依赖脚本（spawn 真实二进制断言）；浏览器观感面用 `web/uat/pw/` Playwright 套件（双机模型，见其 README）。分层策略详见 [docs/TESTING.md](docs/TESTING.md)。fuzz 崩溃语料会自动落入对应包 `testdata/fuzz/`，修复后随常规测试回归。
+- **internal/server 双模式测试纪律**：该包测试经 `newTestServer` 小族装配点（`harness_test.go` 的 `newTestServer` / `newTrackedTestServer` / `newHandleTestServer` / `newSessTestServer`）以 `t.Run("mode=shared"/"mode=per-client")` 双跑（现 216 个 mode= 子测），两列执行同一断言体。**shared 列期望值逐字不动是零回归证据本体**——改动 shared 行为的 PR 须在描述中逐条列出变更的 shared 期望值及理据。新增测试同样走小族装配（未知 mode 一律 `t.Fatalf`），不要绕开小族另建单模式装配。
 
 ## Issue 报告
 
@@ -71,6 +73,8 @@ pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 ## 文档
 
 权威文档为 [README.md](README.md) 与 `docs/` 目录（GETTING-STARTED / ARCHITECTURE / CONFIGURATION / DEPLOYMENT / DEVELOPMENT / TESTING）。这些文档由工具链自动生成并会整体再生成——**直接手改的内容在下次生成时可能被覆盖**，发现问题请开 issue 或在 PR 描述中指出。代码注释与 `web/uat/` 脚本内的说明不属于自动生成范围。
+
+其中 README、CONFIGURATION、ARCHITECTURE 三件套同源描述公开契约：**变更 flag / 环境变量 / TOML 键等公开契约时，须同步修改 `cmd/wesh/main.go`（flag 定义）与 `cmd/wesh/config.go`（TOML 结构）双源，并让三件套文档一并在同一 PR 中更新**，避免文档与实现漂移。
 
 ## 许可证
 

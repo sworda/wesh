@@ -15,9 +15,9 @@ wesh [flags] -- <cmd> [args...]
 
 - **单二进制部署**：前端页面经 `go:embed` 内嵌进二进制，scp 一个文件即用
 - **默认只读**：不带 `--writable` 时浏览器输入被服务端丢弃，旁观零风险
-- **多客户端共享同一会话**：ro/rw 两条分享链接复制即用，慢客户端保护性踢出，异常断线自动重连
+- **双会话模式**：`shared`（默认）多客户端共享同一会话——ro/rw 两条分享链接复制即用，慢客户端保护性踢出，异常断线自动重连；`per-client` 每客户端独立 PTY 进程（ttyd 式生命周期），配合 herdr/tmux 汇聚同一会话
 - **安全默认值**：Basic 认证 + 一次性 ticket、TLS、Origin 白名单、认证失败节流、子进程环境变量白名单
-- **生产可运维**：`/healthz` 探活、`/metrics` Prometheus 指标、JSON 结构化审计日志、优雅下线
+- **生产可运维**：`/healthz` 探活、`/metrics` Prometheus 指标（per-client 下含 `wesh_pty_spawn_total`/`wesh_pty_kills_total` 等 spawn 生命周期系列）、JSON 结构化审计日志（per-client 每次 spawn 成功追加一条带 pid/client_id 的 `session_start` 事件）、优雅下线
 - **部署形态齐全**：TOML 配置文件、UNIX socket、反代子路径挂载、systemd/Docker 参考配方
 
 完整 flag 列表与配置说明见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。
@@ -102,11 +102,12 @@ share read-only:  http://127.0.0.1:7681/s/<ro-token>/
 | `shared`（默认） | 多人同屏共享同一 PTY 进程：输出实时扇出 ×N 客户端、写权限经 owner 仲裁与递补——wesh 的差异化本体 | `--session-mode=shared` 或 TOML `session-mode = "shared"`（缺省即此） |
 | `per-client` | 每客户端独立 PTY 进程（ttyd 式 per-connection 生命周期）：断开即终结、重连即全新进程、尺寸直通无仲裁 | `--session-mode=per-client` 或 TOML `session-mode = "per-client"` |
 
-`per-client` 下三个与 `shared` 直觉不同的语义：
+`per-client` 下四个与 `shared` 直觉不同的语义：
 
 - **分享链接 = 按权限级别的独立进程入场券**：ro/rw 链接不再指向同一会话视图——子进程为普通 shell 时，每位开链接者得到互不可见的私有 shell；ro/rw 权限级别仍由 ticket 绑定（机制零改动）。
 - **ro = 对自有进程的输入门控**：只读访客同样获得独立进程，wesh 在服务端丢弃其键盘输入（只读是服务端边界，两种模式一致）；「围观同一会话」的体验经子程序间接保留（见下条）。
 - **配合 herdr/tmux 时经多路复用汇聚**：每位客户端的独立 herdr/tmux 客户端进程连接同一个多路复用器会话——分享体验保留，且各客户端按自身终端几何独立渲染，移动端 attach 不再压缩桌面端。
+- **反代用户身份注入子进程环境**：配置 `--auth-header`（可信反代用户头名，如 `X-Remote-User`）时，每位客户端 spawn 的子进程环境额外注入 `WESH_REMOTE_USER=<头值>`（经控制字符清洗），子进程可据此识别 attached 用户；`--auth-header` 未配置或请求未携头时不注入，`shared` 模式无此注入。
 
 **herdr 配方**（每客户端独立进程 + 经 herdr server 汇聚同一会话；argv 形态与仓库 UAT `web/uat/phase14.mjs` 的被测物逐字一致——文档即被测物）：
 
