@@ -51,6 +51,34 @@ share read-only:  http://127.0.0.1:7681/s/<ro-token>/
 
 `Ctrl+C` 关停：SIGTERM/SIGINT 触发优雅下线，子进程随进程组终结。运行期事件以单行 JSON 打到 stderr，启动行/分享链接行保持人读文本打到 stdout。
 
+## 会话模式（shared / per-client）
+
+v1.1 起通过 `--session-mode=shared|per-client` 选择会话模式，默认 `shared`——上面的首次运行示例即 shared 模式。两种模式各一个最小示例：
+
+**shared（默认）——多人同屏共享同一终端**：
+
+```sh
+./wesh --bind 127.0.0.1 -- bash
+```
+
+所有打开分享链接的浏览器连接同一个 PTY 会话：输出实时扇出 ×N 客户端，写权限经 owner 仲裁与递补（首个可写客户端独占、断开后按 attach 顺序递补）。
+
+**per-client——每个浏览器连接一个独立 shell**（ttyd 式生命周期）：
+
+```sh
+./wesh --bind 127.0.0.1 --session-mode=per-client --writable -- bash
+```
+
+每位客户端获得独立 PTY 进程：断开即终结、重连即全新进程、终端尺寸直通无仲裁。ro/rw 分享链接不再是同一会话的两条入场券——它们是按权限级别的独立进程入场券（子进程为普通 shell 时互不可见）；只读仍是服务端边界，ro 客户端键盘输入在服务端丢弃。
+
+per-client 速记（完整语义见 [README 会话模式](../README.md)与 [CONFIGURATION.md](CONFIGURATION.md)）：
+
+- `--stop-timeout` 默认按模式分岔：per-client 未显式设置时默认 `5s`（客户端断开后 SIGKILL 兜底回收 SIGHUP 免疫进程）；显式 `0` 尊重用户意图但启动时警告泄漏风险。
+- `--write-policy` 在 per-client 下不生效（启动时警告）——ro/rw 权限级别仍由 ticket 绑定。
+- `--max-clients`（默认 32）兼任并发子进程上限——客户端数 == 子进程数。
+- 经 herdr/tmux 汇聚同一会话可保留「围观同屏」体验：`wesh --writable --session-mode=per-client -- herdr --session <name>`。
+- TOML 等价键：`session-mode = "per-client"`（覆盖顺序 flag > 配置文件 > 内置默认）。
+
 ## 常见问题
 
 **1. `wesh -- bash` 拒绝启动（exit 2）**
