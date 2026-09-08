@@ -1272,18 +1272,24 @@ func TestMaxClients503(t *testing.T) {
 					}
 				}
 
-				// 槽位释放（detach 路径）：A CloseNow → detach -1 → 第三人 attach 成功。
-				// detach 经服务端 reader 终结异步完成，轮询重试消除到达序竞态（每次 503
-				// 重试自身也走 acquire→release，不污染半开计数）。
-				cA.CloseNow()
-				var cE *websocket.Conn
-				deadline := time.Now().Add(5 * time.Second)
-				for cE == nil {
-					c, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
-					if err == nil {
-						cE = c
-						break
-					}
+			// 槽位释放（detach 路径）：A CloseNow → detach -1 → 第三人 attach 成功。
+			// 「attach 成功」判定 = Welcome 到手，非 dial 放行：per-client 下 detach
+			// 只移除 registry（HTTP 503 闸即放行），pcSessions 移除滞后于 teardown
+			// 全链（Drain + 子进程收割）——Hello 后 pre-spawn 容量再闸在 linger 窗口
+			// 内 capacity 拒绝（perclient.go D-02「断开待收割 linger」登记行为，
+			// run 34225422898 macos 实证）。拒绝/读错连接弃置重试（半开名额在升档
+			// 分岔前已 release，503 重试与 capacity 重试均不污染 halfOpen 计数），
+			// 轮询消除到达序竞态。
+			cA.CloseNow()
+			var cE *websocket.Conn
+			deadline := time.Now().Add(5 * time.Second)
+			hello, herr := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
+			if herr != nil {
+				t.Fatalf("marshal Hello: %v", herr)
+			}
+			for cE == nil {
+				c, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{proto.Subprotocol}})
+				if err != nil {
 					if resp != nil && resp.StatusCode == http.StatusServiceUnavailable {
 						if time.Now().After(deadline) {
 							t.Fatal("A CloseNow 后 5s 内仍满员——detach 槽位释放失败（计数只增不减，Pitfall 4）")
@@ -1293,21 +1299,21 @@ func TestMaxClients503(t *testing.T) {
 					}
 					t.Fatalf("槽位释放后轮询 dial 非 503 失败: err=%v resp=%v", err, resp)
 				}
-				// 完成 Hello 握手断言 Welcome（attach 成功全链，计数=2 的第三人）。
-				hello, err := json.Marshal(proto.HelloPayload{Version: proto.Subprotocol, Cols: 80, Rows: 24})
-				if err != nil {
-					t.Fatalf("marshal Hello: %v", err)
-				}
-				if err := cE.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, hello...)); err != nil {
+				// Hello → Welcome 全链判定；capacity 拒绝（teardown linger 窗口）弃置重试。
+				if err := c.Write(ctx, websocket.MessageBinary, append([]byte{proto.Hello}, hello...)); err != nil {
 					t.Fatalf("cE write Hello: %v", err)
 				}
-				_, data, err := cE.Read(ctx)
-				if err != nil {
-					t.Fatalf("cE read Welcome: %v", err)
+				_, data, err := c.Read(ctx)
+				if err == nil && len(data) > 0 && data[0] == proto.Welcome {
+					cE = c // attach 成功全链，计数=2 的第三人
+					break
 				}
-				if len(data) == 0 || data[0] != proto.Welcome {
-					t.Fatalf("cE first frame = %v, want Welcome ('W')——槽位释放后 attach 未成功", data)
+				_ = c.CloseNow() // capacity 拒绝序列/异常帧/读错——连接弃置，重试
+				if time.Now().After(deadline) {
+					t.Fatalf("A CloseNow 后 5s 内 attach 未成功（最后首帧=%v err=%v）——槽位释放或 teardown 收割未在护栏内落定", data, err)
 				}
+				time.Sleep(20 * time.Millisecond)
+			}
 
 				// per-client 列对照延续：cE attach 成功恰一次新 spawn（程序序精确 == 3）。
 				if mode == server.SessionModePerClient {
