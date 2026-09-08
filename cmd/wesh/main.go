@@ -21,6 +21,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,8 +32,49 @@ import (
 	"github.com/sworda/wesh/internal/server"
 )
 
-// version 由发布构建注入；开发构建为 dev。
-var version = "dev"
+// 版本三元组由发布构建注入（.goreleaser.yml builds.ldflags）；本地 go build 为默认值，
+// 再经 resolveVCS 从 buildinfo 回填仓库 VCS 信息（Go 1.18+ 仓库内构建自动嵌入）。
+var (
+	version = "dev"
+	commit  = "none" // 完整 git commit hash
+	builtAt = "0"    // commit Unix 时间戳（秒，字符串）——与 mod_timestamp 同源，保可复现构建
+)
+
+// resolveVCS 用 buildinfo 回填本地构建缺失的 commit/builtAt——本地 go build 无 ldflags
+// 注入时，Go 1.18+ 在仓库内构建自动嵌入 vcs.revision/vcs.time（-trimpath 不影响）；
+// ldflags 注入值优先（commit 非默认值即跳过）。仓库外构建无 VCS 信息时保持默认值，
+// 展示层落 unknown。
+func resolveVCS() {
+	if commit != "none" {
+		return
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if s.Value != "" {
+				commit = s.Value
+			}
+		case "vcs.time":
+			if t, err := time.Parse(time.RFC3339, s.Value); err == nil {
+				builtAt = strconv.FormatInt(t.Unix(), 10)
+			}
+		}
+	}
+}
+
+// formatBuiltAt 把内置 Unix 秒时间戳转本机时区 RFC3339；无有效值（值为 "0" 或非法）
+// 显示 unknown。
+func formatBuiltAt(s string) string {
+	ts, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || ts <= 0 {
+		return "unknown"
+	}
+	return time.Unix(ts, 0).Format(time.RFC3339)
+}
 
 type config struct {
 	port         int
@@ -1318,7 +1360,8 @@ func run(args []string) int {
 		return 2
 	}
 	if cfg.showVersion {
-		fmt.Printf("wesh %s\n", version)
+		resolveVCS() // 本地构建无 ldflags 注入时从 buildinfo 回填（注入值优先）
+		fmt.Printf("wesh %s (commit %s, built %s)\n", version, commit, formatBuiltAt(builtAt))
 		return 0
 	}
 	// D-03/D-05 启动校验矩阵：先于 pty.Start/net.Listen——拒绝路径零资源占用；

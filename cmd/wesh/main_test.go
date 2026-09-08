@@ -1404,15 +1404,17 @@ func TestListenSocket(t *testing.T) {
 	})
 }
 
-// TestVersionFlag：`--version` 返回 0 且 stdout 含 wesh 与版本字符串
-// （version 为包内 var，发布构建注入，开发构建为 dev，不强制构建期注入）。
+// TestVersionFlag：`--version` 返回 0 且 stdout 含 wesh、版本字符串与 commit/built 字段
+// （三元组为包内 var，发布构建注入；本地构建经 buildinfo 回填，断言只看字段存在与版本值）。
 func TestVersionFlag(t *testing.T) {
 	code, out := captureFd(t, &os.Stdout, func() int { return run([]string{"--version"}) })
 	if code != 0 {
 		t.Fatalf("run(--version) = %d, want 0", code)
 	}
-	if !strings.Contains(out, "wesh") || !strings.Contains(out, version) {
-		t.Errorf("run(--version) stdout = %q, want containing %q and version %q", out, "wesh", version)
+	for _, want := range []string{"wesh", version, "commit ", "built "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("run(--version) stdout = %q, want containing %q", out, want)
+		}
 	}
 }
 
