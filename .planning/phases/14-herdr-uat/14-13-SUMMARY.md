@@ -136,6 +136,12 @@ None - no external service configuration required.
 
 None——零 stub/占位/TODO 遗留。
 
+## Self-Check: PASSED
+
+- `.planning/phases/14-herdr-uat/14-13-SUMMARY.md` 存在 ✓
+- 提交全部存在：68ea29c（Task 1）/ 17962d5（Task 2）/ d7f1b80（docs 14-13 收口）/ 89757c9（tracking）✓
+- 工作树零残留（唯一 untracked `14-VERIFICATION.md` 为 orchestrator 域文件，非本 plan 产物，未触碰）✓
+
 ---
 *Phase: 14-herdr-uat*
 *Completed: 2026-09-08*
