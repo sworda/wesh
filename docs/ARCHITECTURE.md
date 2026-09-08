@@ -12,11 +12,11 @@ wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd>
 graph TD
     FE[浏览器前端<br/>web/src/main.ts · xterm.js]
 
-    subgraph cmd/wesh（CLI 装配层）
+    subgraph CMDWESH["cmd/wesh（CLI 装配层）"]
         CLI[flag + TOML 解析<br/>启动校验矩阵 · TLS 预检]
     end
 
-    subgraph internal/server（网关层）
+    subgraph SRV["internal/server（网关层）"]
         HTTP[mux 路由 + 认证链<br/>basicAuth · throttle · origin · 安全头]
         ATTACH[WS 握手状态机<br/>server.Attach · Hello/ticket 核销]
         HUB[注册表 + fan-out hub<br/>信用门 · 模式判定矩阵]
@@ -26,31 +26,31 @@ graph TD
         OBS[可观测性<br/>/healthz · /metrics · slog JSON]
     end
 
-    subgraph internal/pty（数据面）
+    subgraph PTYLAYER["internal/pty（数据面）"]
         PTY[pty.Session<br/>master 读写 · 信号 · 平台收割]
     end
 
-    subgraph web（前端装配）
+    subgraph WEBPKG["web（前端装配）"]
         EMBED[go:embed 静态伺服<br/>gzip 预压 · 自定义首页装饰]
     end
 
     CHILD[子进程 &lt;cmd&gt;]
 
-    CLI -->|spawn| PTY
-    CLI -->|Options 装配| HTTP
-    FE -->|GET / · /s/{token}/| EMBED
-    FE -->|POST /api/attach 换 ticket| HTTP
-    FE -->|WS /ws（wesh.v1）| ATTACH
+    CLI -->|"spawn"| PTY
+    CLI -->|"Options 装配"| HTTP
+    FE -->|"GET / · /s/{token}/"| EMBED
+    FE -->|"POST /api/attach 换 ticket"| HTTP
+    FE -->|"WS /ws（wesh.v1）"| ATTACH
     HTTP --> ATTACH
-    ATTACH -->|注册| HUB
-    PTY -->|ReadLoop 32KiB chunk| HUB
-    HUB -->|'0' OUTPUT 扇出| CLIENTS
-    CLIENTS -->|WS 下行| FE
-    FE -->|'0' INPUT / '1' RESIZE| ATTACH
+    ATTACH -->|"注册"| HUB
+    PTY -->|"ReadLoop 32KiB chunk"| HUB
+    HUB -->|"'0' OUTPUT 扇出"| CLIENTS
+    CLIENTS -->|"WS 下行"| FE
+    FE -->|"'0' INPUT / '1' RESIZE"| ATTACH
     ATTACH --> INPUTQ
     ATTACH --> ARB
-    INPUTQ -->|独占 Master.Write| PTY
-    ARB -->|TIOCSWINSZ| PTY
+    INPUTQ -->|"独占 Master.Write"| PTY
+    ARB -->|"TIOCSWINSZ"| PTY
     PTY --- CHILD
     HTTP --- OBS
 ```
