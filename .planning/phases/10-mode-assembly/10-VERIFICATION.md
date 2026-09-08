@@ -1,6 +1,6 @@
 ---
 phase: 10-mode-assembly
-verified: 2026-09-03T04:50:00Z
+verified: 2026-09-08T09:52:00Z
 status: passed
 score: 19/19 must-haves verified
 behavior_unverified: 0
@@ -13,6 +13,13 @@ re_verification:
     - "WR-02：ValidateOptions 前移至分岔块尾部、pty.Start/listen 之前——单调用点 + V(1328)<P(1334)<L(1342) 位序断言成立，守卫触发零资源占用"
   gaps_remaining: []
   regressions: []
+  stale_reverify:
+    previous_status: stale
+    trigger: "10-04-SUMMARY.md 提交（2026-09-04 00:10 +0800）晚于 10-VERIFICATION.md 提交（2026-09-03 13:25 +0800）→ 机械 stale 判定；非行为性变更"
+    verified_at: 2026-09-08T09:52:00Z
+    base_commit: 72da76c
+    result: passed
+    regressions: []
 ---
 
 # Phase 10: 模式装配与接缝 Verification Report
@@ -144,7 +151,25 @@ SKIPPED（本阶段无 probe 脚本约定——验证面为 Go 测试 + UAT + �
 
 10-05 flagged_assumption 挂账项（PATH 含相对项 × 裸命令名的残余错位面，Go LookPath ErrDot 走拒绝通道——安全方向无误放）已显式登记归 Phase 11 attach 期 spawn 语义收口复核，非本 phase 缺口。Phase 11 前提（SC4 预检为唯一启动闸，语义已固化并经行为锁 + 进程级双向实证）就位。
 
+## Stale Re-verification (2026-09-08)
+
+**触发**：10-04-SUMMARY.md 提交时间（09-04 00:10 +0800）晚于本报告提交时间（09-03 13:25 +0800）→ 机械 stale 判定；10-04 为文档与回归收口 plan，无行为性变更。用户授权全量自动化复验（沿用 2026-09-03 「能自动化测试的你就自动化测试」授权）。
+
+**基点**：main HEAD `72da76c`（v1.1 milestone 5/5 phases 收尾、Phase 14 PR #18 merge 后，含 Phase 11-14 全部演进）。
+
+**复验结果**（19/19 truths 维持 VERIFIED，零回归）：
+
+| 闸 | 命令 | 结果 |
+|----|------|------|
+| 静态三闸 | `go build` / `go vet ./...` / GOROOT gofmt -l cmd internal web | build 0.627s ✓ / vet 干净 ✓ / gofmt 零输出 ✓ |
+| 全量 -race | `go test -race -count=1 ./...` | 五包全 ok（server 165.6s） |
+| 冒烟矩阵 | 进程级 25 项检查 | banana CLI/TOML 双源 rc=2 同文案逐字；三形态 listening on（stdout）；write-policy×per-client warn 双 flag 名；WR-01 六形态（放行/noexec/norun/shared 对照/缺失/近形值×2）全中 |
+| WR-01 连接期证据 | Node 原生 WS 客户端（phase02.mjs 同款协议） | per-client × --cwd × ./run.sh → WELCOME 握手 + run.sh 输出 `ok` 经 OUTPUT 帧到达 + stderr session_start |
+| 八协议 UAT 脚本 | `node web/uat/phase0{2..9}.mjs $BIN` | exit 全 0；PASS 计数 12/18/10/28/23/34/21/18 对齐基线，FAIL=0（06/07 各 1 项 skipped 为既定平台豁免） |
+
+**语义演进注记（非回归）**：per-client 模式启动期 stderr 无 `session_start` 为 Phase 11-01 既定惰性 spawn 演进——SpawnFunc 语义由 inert（≈shared 启动即 spawn）升档为 attach 期 spawn（server.go:336-347 注记「11-01 起生效」），连接期独立证据补齐 PASS。
+
 ---
 
-_Verified: 2026-09-03T04:50:00Z_
-_Verifier: Claude (gsd-verifier)_
+_Verified: 2026-09-08T09:52:00Z（stale 复验刷新；原验证 2026-09-03T04:50:00Z）_
+_Verifier: Claude (gsd-verifier / verify-work)_
