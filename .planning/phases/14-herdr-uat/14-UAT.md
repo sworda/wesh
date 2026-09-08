@@ -216,17 +216,16 @@ evidence: "2026-09-07T01:35Z 实测：18/18 协议断言通过，exit 0；herdr 
 
 ### 34. mermaid 渲染目检（14-11 D3 递延项 / 14-VERIFICATION human_verification）
 expected: GitHub 或 mermaid 渲染器打开 docs/ARCHITECTURE.md，双模式架构节两个 goroutine 拓扑图正常渲染（subgraph 成形、边箭头完整、无错误占位）
-result: issue
-reported: "文档中的组件图mermaid部分无法正常渲染，排查下是否有语法错误"
+result: pass
 severity: major
 source: human
-evidence: "14-11 SUMMARY：mermaid 结构化校验通过，渲染目检因 Linux 侧禁浏览器显式递延至验证阶段；14-VERIFICATION.md 列为唯一 human_verification 项"
+evidence: "14-13 闭合（2026-09-08）：组件图 16 行修复（68ea29c 载具 + 17962d5 修复链）后 Node 端 mermaid.parse 11.17.2 全 3 块 PASS exit 0（词法自动化等价物）+ 用户 GitHub/渲染器目检 approved（Task 3 human-verify 门：4 subgraph 框成形含全角括号标题、边箭头完整、GET / · /s/{token}/ 边标签完整显示、无语法错误占位；第二块双模式拓扑图渲染如常零回归）"
 
 ## Summary
 
 total: 34
-passed: 33
-issues: 1
+passed: 34
+issues: 0
 pending: 0
 skipped: 0
 
@@ -234,8 +233,10 @@ skipped: 0
 
 - gap_id: G-14-34
   truth: "docs/ARCHITECTURE.md 中 mermaid 图在 GitHub/渲染器正常渲染（无错误占位）"
-  status: failed
-  reason: "User reported: 文档中的组件图mermaid部分无法正常渲染，排查下是否有语法错误"
+  status: resolved
+  resolved_by: 14-13-PLAN.md
+  resolved_at: 2026-09-08
+  reason: "已闭合（2026-09-08）：14-13 修复链（68ea29c 词法校验载具 check-mermaid.mjs 含负对照自证 + 17962d5 组件图 16 行红转绿：4 subgraph 合法 id + 引号标题 CMDWESH/SRV/PTYLAYER/WEBPKG + 12 处带标签边统一引号化含 L41 {token} DIAMOND_START 主修复点）+ Node 端 mermaid.parse 11.17.2 全 3 块 PASS exit 0 + 用户渲染目检 approved（4 subgraph 成形、边完整、标签显示、无错误占位；第二块双模式拓扑图如常零回归）——终局对账由 /gsd-verify-work 裁定"
   severity: major
   test: 34
   root_cause: "组件图（第一个 mermaid 块，L11-56）存在两类 mermaid 语法错误（Node 端 mermaid.parse 11.17.2 实证）：(1) L15/L19/L29 三处 subgraph 的 id 含非法字符 /（subgraph cmd/wesh（CLI 装配层）、internal/server（网关层）、internal/pty（数据面））触发词法错误 'Lexical error: Unrecognized text'；(2) L41 边标签 |GET / · /s/{token}/| 中 { 被词法解析为 DIAMOND_START（菱形节点起始符）触发 parse error。第二块双模式拓扑图（L98-132）用规范形式（subgraph ID[\"标题\"] + -->|\"标签\"|）parse PASS 无问题。14-11 的结构化校验只查结构完整性（节点数/边目标存在/subgraph-end 配对/围栏成对），不查 mermaid 词法合法性，因此漏检"
