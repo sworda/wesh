@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: per-client 会话模式
 status: Awaiting next milestone
-stopped_at: "Phase 14 全收口（verify-work：UAT 34/34 + gap G-14-34 对账 resolved + SECURITY.md threats_open: 0 + verification passed + 转场完成）——v1.1 milestone 5/5 phases ready for /gsd-complete-milestone v1.1"
+stopped_at: "v1.1 milestone complete（override_closeout：8 项 open 按已知状态确认入 Deferred Items；归档+ROADMAP 重组+PROJECT 演进+RETROSPECTIVE 完成）——ready for /gsd-new-milestone"
 last_updated: "2026-09-08T11:14:36.010Z"
 last_activity: 2026-09-08
 last_activity_desc: Phase 14 execution started
@@ -23,7 +23,7 @@ current_phase_name: herdr-uat
 See: .planning/PROJECT.md (updated 2026-09-08)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Milestone v1.1 complete — 5/5 phases, 15/15 requirements closed（Phase 14 经 verify-work 全收口：UAT 34/34 + SECURITY threats_open: 0）
+**Current focus:** Planning next milestone — run `/gsd-new-milestone`（v1.1 已归档，REQUIREMENTS.md 已删除，下一里程碑以全新 requirements 开始）
 
 ## Current Position
 
