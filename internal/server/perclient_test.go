@@ -1882,12 +1882,15 @@ func TestPerClientDwellKick(t *testing.T) {
 // 测试判别力内建）；3 轮后全速收干 → CloseError 1000 + seq 连续无缺口 +
 // gateTransitions ≥ +6（3 对停读/续读递增点）。
 //
-// dwell 基数 3s 的两轮 CI flake 收口（1s 两版停读比例 0.5/0.4 均在 ubuntu
-// runner 误踢，kick 恒于 attach+1.37s）：续读链路「客户端读取→多 MB send
-// queue 排空→writer 解阻塞→drain→notFull→续读」的绝对耗时由内核 send
-// queue 容量与 runner 读取速率决定（2 vCPU + race 检测器下 >0.5s 实证），
-// 停读比例缩放不改变绝对预算——唯一稳健收口是放大 dwell 基数（3s 使续读
-// 窗口 ~1.7s ≈ 3.4×实证瓶颈），时长代价 ~+5s/CI 可接受，判别力结构不变。
+// dwell 基数 5s 的三轮 CI flake 收口（1s 两版停读比例 0.5/0.4 均在 ubuntu
+// runner 误踢，kick 恒于 attach+1.37s；3s 版 run 34203175590 第三次发作——
+// 第 1 轮停读 1.2s 后续读链路未能在剩余 1.8s 内完成）：续读链路「客户端读取→
+// 多 MB send queue 排空→writer 解阻塞→drain→notFull→续读」的绝对耗时由内核
+// send queue 容量与 runner 读取速率决定（2 vCPU + race 检测器下 >0.5s 实证，
+// CI 负载波动可至 ~2s），停读比例缩放不改变绝对预算——唯一稳健收口是放大
+// dwell 基数（5s 使续读窗口 3s ≈ 6×实证瓶颈，2vCPU 高负载 ~1.5×余量），
+// 时长代价 ~+4s/CI 可接受，判别力结构不变（累计停读 3×0.4×dwell=1.2×dwell
+// > dwell 的跨轮累计判别保留）。
 //
 // 滴漏形态的执行期实证演化（Rule 3 调试结论，与 plan 文本「每 ~dwell/3 读
 // 一小批」的差异登记）：配额泵滴漏（每 tick 读 128KiB）在本机实证下永不触
@@ -1900,7 +1903,7 @@ func TestPerClientDwellKick(t *testing.T) {
 // 锁定）——参数机器无关，判别力内建。
 func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 	floodArgv, floodLast := seqFlood()
-	dwell := 3 * time.Second
+	dwell := 5 * time.Second
 	_, wsURL, srv, _ := startPerClientServerWithSpawn(t, func(cols, rows int, _ string) (*pty.Session, error) {
 		return pty.StartWithSize(floodArgv, pty.StartOptions{Uid: -1, Gid: -1}, cols, rows)
 	}, func(o *server.Options) {
