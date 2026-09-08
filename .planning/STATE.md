@@ -4,8 +4,8 @@ milestone: v1.1
 milestone_name: per-client 会话模式
 current_phase: 14
 status: completed
-stopped_at: Completed 14-13-PLAN.md（G-14-34 闭合：mermaid 词法修复红转绿 + 校验载具固化 + 渲染目检 approved，Phase 14 13/13 plan 全完成，UAT 34/34）
-last_updated: "2026-09-08T06:56:14.539Z"
+stopped_at: Phase 14 verify-work 全收口（UAT 34/34 + SECURITY threats_open: 0 + verification passed）——v1.1 milestone 5/5 phases，ready for complete-milestone
+last_updated: "2026-09-08T07:10:00Z"
 last_activity: 2026-09-08
 last_activity_desc: Phase 14 execution started
 progress:
@@ -20,10 +20,10 @@ current_phase_name: herdr-uat
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-05)
+See: .planning/PROJECT.md (updated 2026-09-08)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Phase 14 — herdr-uat
+**Current focus:** Milestone v1.1 complete — 5/5 phases, 15/15 requirements closed（Phase 14 经 verify-work 全收口：UAT 34/34 + SECURITY threats_open: 0）
 
 ## Current Position
 
@@ -212,10 +212,13 @@ None yet.
 
 - [Phase 9 遗留]: TestResize CI 时序 flake（CI 观察一次，重载 runner 调度延迟所致，非产品缺陷）——择机以轮询替代固定 sleep 修复
 - [Phase 9 遗留]: README.md:96「及其 `.gz`」Phase 1 遗留文档债——随 WR 清单择机处置
-- [v1.1 规划期裁决项]: ① per-client stop-timeout 默认值重议（0=不补 KILL 在新模式下=HUP 免疫泄漏，公开契约变更，Pitfall 8）→ Phase 13——**Phase 11 post-merge 调查已实证泄漏窗真实存在**（2026-09-04）：本机 bash 4.4 交互模式在「提示符 pselect + 竞态输入行待读」窗口内可无声吸收 SIGHUP（kill 成功发出、非阻塞非 pending、进程存活；cat 对照组 50/50 全收，服务端信号面零缺陷），11-04 竞态测试经 StopTimeout=1s 覆写走 KILL 兜底确定性收口（14143fe）；③ healthz/metrics 四个 OQ（session_alive 语义/series 双语义/1013 vs 阻塞/spawn 失败 wire 面，研究均有推荐答案）→ Phase 13（② write-policy×per-client 经 Phase 10 D-01/D-02 闭合；④ spawn-intent 口径经 Phase 11 D-03 复检回收提前消解）
 - [v1.1 测试拓扑]: 协议层 UAT 在 Linux 开发机（headless 禁浏览器/禁 playwright）；Playwright 浏览器全链在 Windows 工作站（TCP 转发器 kill/restore 模拟断网）——见 CODEBUDDY.md 双机拓扑
-- [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态：默认 --ping-interval=5s 下 TCP 级停读客户端在 (停读+5s, 停读+10s] 被 1006 pong_timeout 先杀，PC-10 dwell 1013 结构性后到（writeControl 5s 写超时 × pinger 单一 DeadlineExceeded 判读；Go 测 harness PingInterval 零值未暴露，phase12.mjs S6 以 --ping-interval=0 隔离取证）。真实浏览器端网络栈自动回 pong 不触发；herdr 类自管 socket 客户端可触发。裁决面：pinger 区分「写阻塞超时」与「pong 等待超时」（lib 错误链 failed to acquire lock vs failed to wait for pong 可区分）或接受 1006 语义（死连接更早收口）
 - [14-06 执行期发现→14-12 知悉] TestMaxClients503/mode=per-client 隔离复跑（-run 过滤非 -race 形态）高概率 flake：pcSessions linger 窗口竞态（detach 槽位释放早于收割，pre-spawn 容量再闸 1011；轮询仅重试 HTTP 503）——14-02 遗留（基线 9af7ce1 复现 3/3），全量 -race CI 同款命令不受影响；deferred-items.md 已登记修复方向
+
+<!-- v1.1 收口清理（2026-09-08，Phase 14 verify-work 转场时）：
+  - [v1.1 规划期裁决项] 移除：① stop-timeout 默认 5s 经 13-01 落地（27909f8 三态断言组）；③ healthz/metrics 四 OQ 经 13-03/13-05 落地；②④ 原文已注明闭合
+  - [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态 移除：13-08 D-10 裁决=接受 1006 语义（死连接更早收口）+ README.md:155「保活先杀时序」文档化收口
+-->
 
 ## Deferred Items
 
@@ -225,6 +228,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-09-08T03:36:08.686Z
-Stopped at: Completed 14-13-PLAN.md（G-14-34 闭合：mermaid 词法修复红转绿 + 校验载具固化 + 渲染目检 approved，Phase 14 13/13 plan 全完成，UAT 34/34）
+Last session: 2026-09-08T07:10:00Z
+Stopped at: Phase 14 全收口（verify-work：UAT 34/34 + gap G-14-34 对账 resolved + SECURITY.md threats_open: 0 + verification passed + 转场完成）——v1.1 milestone 5/5 phases ready for /gsd-complete-milestone v1.1
 Resume file: None
