@@ -1,3 +1,6 @@
+minimumReleaseAgeExclude:
+  - '@xterm/addon-webgl@0.20.0-beta.300'
+  - '@xterm/xterm@6.1.0-beta.304'
 # pnpm 11 起 settings 不再读 package.json 的 "pnpm" 字段（安装时 WARN 明示），
 # overrides 的新家即本文件——js-base64 钉 3.9.2 避开 2026-08-17 发布仅 1 天的 3.9.3
 # （RESEARCH §Package Legitimacy Audit [SUS too-new] 单信号规避；addon-clipboard 传递依赖 ^3.7.5）
