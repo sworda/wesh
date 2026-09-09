@@ -15,9 +15,9 @@ wesh [flags] -- <cmd> [args...]
 
 - **单二进制部署**：前端页面经 `go:embed` 内嵌进二进制，scp 一个文件即用
 - **默认只读**：不带 `--writable` 时浏览器输入被服务端丢弃，旁观零风险
-- **多客户端共享同一会话**：ro/rw 两条分享链接复制即用，慢客户端保护性踢出，异常断线自动重连
+- **双会话模式**：`shared`（默认）多客户端共享同一会话——ro/rw 两条分享链接复制即用，慢客户端保护性踢出，异常断线自动重连；`per-client` 每客户端独立 PTY 进程（ttyd 式生命周期），配合 herdr/tmux 汇聚同一会话
 - **安全默认值**：Basic 认证 + 一次性 ticket、TLS、Origin 白名单、认证失败节流、子进程环境变量白名单
-- **生产可运维**：`/healthz` 探活、`/metrics` Prometheus 指标、JSON 结构化审计日志、优雅下线
+- **生产可运维**：`/healthz` 探活、`/metrics` Prometheus 指标（per-client 下含 `wesh_pty_spawn_total`/`wesh_pty_kills_total` 等 spawn 生命周期系列）、JSON 结构化审计日志（per-client 每次 spawn 成功追加一条带 pid/client_id 的 `session_start` 事件）、优雅下线
 - **部署形态齐全**：TOML 配置文件、UNIX socket、反代子路径挂载、systemd/Docker 参考配方
 
 完整 flag 列表与配置说明见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。
@@ -92,6 +92,68 @@ share read-only:  http://127.0.0.1:7681/s/<ro-token>/
 ```sh
 ./wesh --writable --write-policy all --credential alice:密码 --tls-cert cert.pem --tls-key key.pem -- bash
 ```
+
+## 会话模式
+
+`--session-mode=shared|per-client` 选择会话模式（默认 `shared`）。`--stop-timeout` 默认值按模式分岔：`shared` 默认 `0`（不补发 SIGKILL，子进程继续运行）；`per-client` 未显式设置默认 `5s`（客户端断开后 SIGKILL 兜底回收 SIGHUP 免疫进程），显式 `0` 尊重用户意图但启动时警告泄漏风险。
+
+| 模式 | 语义 | 选择方式 |
+|------|------|----------|
+| `shared`（默认） | 多人同屏共享同一 PTY 进程：输出实时扇出 ×N 客户端、写权限经 owner 仲裁与递补——wesh 的差异化本体 | `--session-mode=shared` 或 TOML `session-mode = "shared"`（缺省即此） |
+| `per-client` | 每客户端独立 PTY 进程（ttyd 式 per-connection 生命周期）：断开即终结、重连即全新进程、尺寸直通无仲裁 | `--session-mode=per-client` 或 TOML `session-mode = "per-client"` |
+
+`per-client` 下四个与 `shared` 直觉不同的语义：
+
+- **分享链接 = 按权限级别的独立进程入场券**：ro/rw 链接不再指向同一会话视图——子进程为普通 shell 时，每位开链接者得到互不可见的私有 shell；ro/rw 权限级别仍由 ticket 绑定（机制零改动）。
+- **ro = 对自有进程的输入门控**：只读访客同样获得独立进程，wesh 在服务端丢弃其键盘输入（只读是服务端边界，两种模式一致）；「围观同一会话」的体验经子程序间接保留（见下条）。
+- **配合 herdr/tmux 时经多路复用汇聚**：每位客户端的独立 herdr/tmux 客户端进程连接同一个多路复用器会话——分享体验保留，且各客户端按自身终端几何独立渲染，移动端 attach 不再压缩桌面端。
+- **反代用户身份注入子进程环境**：配置 `--auth-header`（可信反代用户头名，如 `X-Remote-User`）时，每位客户端 spawn 的子进程环境额外注入 `WESH_REMOTE_USER=<头值>`（经控制字符清洗），子进程可据此识别 attached 用户；`--auth-header` 未配置或请求未携头时不注入，`shared` 模式无此注入。
+
+**herdr 配方**（每客户端独立进程 + 经 herdr server 汇聚同一会话；argv 形态与仓库 UAT `web/uat/phase14.mjs` 的被测物逐字一致——文档即被测物）：
+
+```sh
+wesh --writable --session-mode=per-client -- herdr --session <name>
+```
+
+效果：herdr 以最后活动客户端（is_foreground）仲裁前台几何并按 per-client area 渲染——移动端 attach 后布局翻紧凑，桌面端一有键入即恢复全量布局，桌面端面板不再被压缩。
+
+tmux 对照：多个客户端 attach 同一 tmux 会话时，默认 window-size=latest 下小屏客户端活动会使窗口收缩，桌面端观感被压缩；window-size 可配但均为单窗口尺寸语义，不存在 per-client 独立渲染——需要多人异尺寸互不压缩时，用上面的 per-client + herdr 配方。
+
+### per-client 资源义务与实测标定
+
+per-client 下客户端数 == 子进程数：`--max-clients`（默认 `32`）兼任并发进程上限（握手 503 闸 + spawn 前计数复检，并发子进程数恒 ≤ max-clients）。**32 个并发 shell 是重负载**——默认值 32 经负载矩阵实测可承载（下表数据），保持不变。
+
+实测标定（2026-09-06，`go test -tags=load` 负载矩阵，linux/amd64；「验证为主、证伪才改」——全部实测值在账面界线内，零默认值改动）：
+
+**驻留剖面**（N 会话 bash idle 空转，双采样差值）：
+
+| 会话数 N | wesh 侧内存增量 | goroutine 增量 | fd 增量 | 子进程 VmRSS 合计 |
+|---|---|---|---|---|
+| 1 | 81KiB | 6 | 4 | 3.6MiB |
+| 4 | 235KiB | 21 | 16 | 14.4MiB |
+| 16 | 960KiB | 81 | 64 | 57.2MiB |
+| 32 | 1.9MiB | 161 | 128 | 114.7MiB |
+
+**洪水剖面**（每会话独立 seq 洪水 33.3MiB/端，全端收流完整、零误踢）：
+
+| 会话数 N | wesh 侧 Alloc 峰值 | 全端收流完成 | 每端吞吐（推算） |
+|---|---|---|---|
+| 1 | 2.7MiB | 3.3s | ≈10.0MiB/s |
+| 4 | 2.2MiB | 4.6s | ≈7.2MiB/s |
+| 16 | 15.2MiB | 6.7s | ≈5.0MiB/s |
+| 32 | 55.0MiB | 8.8s | ≈3.8MiB/s |
+
+标定口径：内存/goroutine/fd 为 wesh 服务端侧双采样差值，VmRSS 为子进程 `/proc/<pid>/status` 实测合计；goroutine 实测增量 5N+1（UAT 关闭保活形态，生产 `--ping-interval=5s` 下账面 6N）；吞吐列 = 实测每端字节 ÷ 实测完成时长（推算值）。
+
+按部署形态的 `--max-clients` 建议值（默认 32 不动；建议值是资源画像分档，非硬性门槛）：
+
+| 部署形态 | 建议 `--max-clients` | 依据 |
+|---|---|---|
+| 常规服务器（默认） | 32——实测可承载，不改动 | 32 会话实测：wesh 侧驻留增量 ~1.9MiB、洪水 Alloc 峰值 55MiB、子进程合计 ~115MiB（bash） |
+| 低配 VPS / 内存受限容器 | 8 | 按实测每会话 bash 子进程 ~3.7MiB + wesh 侧 ~61KiB 折算；真实成本取决于 `<cmd>` 本体（编辑器/构建工具远高于 bash），受限环境保守分档 |
+| 个人多端（herdr/tmux 桌面 + 手机汇聚） | 4 | 个人多端典型 1-4 个客户端；小上限收紧误分享链接时的进程放大面 |
+
+**保活先杀时序**（默认 `--ping-interval=5s`）：TCP 级完全停止读取的连接（不回 pong）会在「停止读取后 5s~10s」窗口内被 pong 超时以 1006 关闭——比慢客户端看门狗（1013）更早收口。真实浏览器结构性不会触发（网络栈自动回 pong，不受页面节流影响）；自管 WebSocket socket 的客户端（如 herdr 类）若停读则适用——不回 pong 的连接本就是死连接，1006 更早回收是正确行为。1006 会触发前端自动重连；`per-client` 模式下重连即获得全新进程，这正是真死连接场景的合理恢复路径。
 
 ## 安全默认值
 

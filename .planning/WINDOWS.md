@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 24
+open_count: 43
 waived_count: 0
 fixed_count: 3
-total_count: 27
-last_updated: 2026-08-30T07:57:44.432Z
+total_count: 46
+last_updated: 2026-09-08T00:12:15.819Z
 ---
 
 # Broken Windows Ledger
@@ -42,6 +42,25 @@ last_updated: 2026-08-30T07:57:44.432Z
 | 25 | 09 | deviation | web/uat/phase06-dom.mjs |  | 09-03: D13 夹具形态替换——plan 括注建议『hold 或不发 Hello 使 opened 保持 false』两形态结构性不可达（fetch hold 期间 WS 未构造无 socket 可驱动；opened 在 WS onopen 即置位先于 Hello 发送），改黑洞 TCP 伺服器夹具（accept-never-upgrade + SpyWebSocket URL 端口改写）确定性构造 pre-onopen 驻留；断言面与 plan 行为逐字一致（D13a RED 复现 WARNING#3 后 GREEN） | open |  | 2026-08-30T04:14:53.268Z |  |
 | 26 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: task 级 tdd RED 形态裁决——被测实现属先序 plan（09-04 已落地），failing-first 提交结构性不可达（交付物即测试脚本）；RED 以 git archive 49ed5b2 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1），GREEN 当前二进制 18/18 exit 0（1649639） | open |  | 2026-08-30T07:57:33.918Z |  |
 | 27 | 09 | deviation | web/uat/phase09.mjs |  | 09-05: Task 2 回归里程碑取 --allow-empty 提交——plan 指定提交语但 verification-only 任务零文件改动，裸 git commit 必失败；空提交保持 per-task 原子提交协议（四脚本 18+28+40+34 断言零 FAIL 证据入提交信息，95f06f0） | open |  | 2026-08-30T07:57:44.432Z |  |
+| 28 | 11 | deviation | internal/server/perclient_test.go |  | plan 文本 package server 与 helper 同包复用矛盾——裁决落 package server_test（详见 11-01-SUMMARY Deviations #1） | open |  | 2026-09-03T17:02:56.654Z |  |
+| 29 | 11 | deviation | internal/server/perclient_test.go |  | 11-04 执行期勘误：plan 文本 kill -TERM $$ 对交互 shell 不致死（交互 shell 无 trap 忽略 SIGTERM），实测修正为 kill -HUP $$（exit_test.go 信号夹具同款），断言面不变——已修复并锁定，非遗留缺陷 | open |  | 2026-09-03T18:27:12.817Z |  |
+| 30 | 11 | deviation | web/uat/phase11.mjs |  | 11-05: S5d 自杀信号 plan 文本 kill -TERM $$ 勘误为 kill -HUP $$（交互 shell 无 trap 忽略 SIGTERM——11-04 实测先例 + STATE 裁决「后续 plan 信号夹具直接用 HUP/trap」；断言面 -1+大写 SIGHUP+1000 不变） | open |  | 2026-09-03T18:55:25.713Z |  |
+| 31 | 11 | unrun-verify | web/uat/phase11.mjs |  | 11-05: S4b 1006 真实异常断开形态 skipped+reason（CODEBUDDY.md §5 平台豁免——OS 断网时序 + Node 原生 WebSocket 无 TCP 层强杀面）；协议层等价物 S4a（正常关闭→ESRCH）+ 11-01 挂点覆盖论证 + 11-04 竞态注入测已覆盖 | open |  | 2026-09-03T18:55:25.878Z |  |
+| 32 | 12 | deviation | web/uat/phase12.mjs |  | S6 以 --ping-interval=0 隔离 dwell 看门狗取证（默认 ping 下 dwell 1013 被 1006 pong_timeout 先杀——writeControl 5s 写超时交互，Phase 13 裁决，STATE Blockers 登记） | open |  | 2026-09-04T14:59:05.938Z |  |
+| 33 | 12 | deviation | internal/server/export_test.go |  | 12-05 收口闸 diff 审查白名单枚举缺口：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——三轴裁决（plan 授权/append-only/零断言）登记为白名单补充项①，非回归；裁决详情见 12-05-SUMMARY 段⑥ | open |  | 2026-09-04T15:23:02.537Z |  |
+| 34 | 13 | deviation | internal/server/perclient_test.go | 1237 | 13-02 Rule 3：TestPerClientTeardownRaceOnce mutate 追加 SpawnPerIP 桶放宽两行（10 轮同 IP attach 超默认 burst 4 被 per-IP 桶误伤——测试对象 teardown 竞态非 churn 防线；断言行零改动，plan 白名单「仅新增函数」之外的两行，SUMMARY 偏差①登记） | open |  | 2026-09-05T15:21:22.252Z |  |
+| 35 | 13 | deviation | internal/server/perclient.go |  | 13-03 Rule 1：session_end emit 位置取 close(waitDone) 前（plan 文本「hubMu 解锁后」偏差——plan 位置与慢半段 Broadcast 无同步边，exitf(os.Exit) 可先于事件落流；emit→close(waitDone)→delete→Broadcast→exitf happens-before 链论证，SUMMARY 偏差①登记） | open |  | 2026-09-05T16:18:54.963Z |  |
+| 36 | 13 | deviation | internal/server/perclient.go |  | 13-03 Rule 1：upgradePerClient 补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷；GraceCancel 测试首跑实测暴露，fix c44a8d9，SUMMARY 偏差②登记） | open |  | 2026-09-05T16:18:55.126Z |  |
+| 37 | 13 | deviation | internal/server/events_test.go |  | 13-03 Rule 1：TestAuthFailedNoUsername 装配改 startEventsServerWith + 体内 Kill→waitExit lifecycle 收口同步边（原装配弃置 exitCh，cleanup SIGKILL 迟到 session_end emit 落入后继捕获窗——全量 -race 下 TestPerClientSessionEnd 严格计数实测受害；断言行零改动，SUMMARY 偏差③登记） | open |  | 2026-09-05T16:18:55.275Z |  |
+| 38 | 13 | deviation | internal/server/server.go |  | 13-04 Rule 2：Shutdown 侧 D-state 兜底 terminate（join 到期未清零经 termOnce 直接收口——T-13-13 mitigation「有界 join 后无条件经 termOnce 退出」为 threat register 硬要求而 plan behavior 四锚点未列；drained 形态终结仍归 pcSupervisor 零漂移，SUMMARY 偏差①登记） | open |  | 2026-09-05T16:54:07.441Z |  |
+| 39 | 13 | deviation | internal/server/shutdown_test.go |  | 13-06 files_modified 枚举缺口：SpawnFunc 签名扩散波及 shutdown_test.go/metrics_test.go/events_test.go 三文件注入点机械加参（plan 白名单未列但编译必需——12-05 export_test.go 先例同构，非回归） | open |  | 2026-09-05T18:38:42.514Z |  |
+| 40 | 13 | deviation | cmd/wesh/main_test.go |  | 13-08 段① Rule 3：GOROOT gofmt 三处 deferred 存量归一（main_test.go:950 + perclient_test.go:1547 CJK 标点补空格 + :2018 双空行——must_haves 零输出要求 vs 13-02/13-03「范围外不修」辖域冲突，白名单内纯注释/空行修正，style 5310723，deferred-items 处置列回写） | open |  | 2026-09-05T19:51:33.948Z |  |
+| 41 | 13 | deviation | README.md |  | 13-08 Task 2 Rule 1：README:96/CONFIGURATION:57/:154「per-client 行为装配中，当前版本与 shared 等价」Phase 10 时代失实残留最小修正（Phase 11-13 行为已全部落地，与同段 stop-timeout per-client 语义自相矛盾——文档即被测物纪律；PC-12 完整模型段仍归 Phase 14） | open |  | 2026-09-05T19:51:34.103Z |  |
+| 42 | 14 | deviation | internal/server/metrics_test.go |  | 14-03 plan behavior「series 镜像 17 shared / 21 per-client」与 13-05 落地现状不符（metrics.go 双模式同持 21 series，shared 四 spawn 计数器恒 0 不摘——credit_gate 恒 0 先例）：按 plan action 2 以 metrics.go 现状核定两列期望值（assertExpositionShape 双模式同断言），口径偏差登记供 14-12 收口闸 diff 白名单审查知悉 | open |  | 2026-09-06T15:26:29.105Z |  |
+| 43 | 14 | deviation | internal/server/harness_test.go |  | 14-04 Rule 3 files_modified 枚举缺口：startResizeServer 删除验收闸（全仓零引用）要求 harness_test.go shared 分支内联 + e2e_test.go:36 注释同步——两文件不在 plan files_modified 清单（13-06 WINDOWS #36 同形态） | open |  | 2026-09-06T15:51:10.809Z |  |
+| 44 | 14 | deviation | internal/server/handshake_test.go | 358 | TestReadOnlyAllowsResize 断言分叉面：plan truth 断言 10 测全部同断言双跑零期望改写，代码现实 ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通，server.go:1264-1287）——按 14-01 分叉表形态落地，shared 列逐字 + per-client 列断言直通真值 50/120 | open |  | 2026-09-06T16:19:37.109Z |  |
+| 45 | 14 | deviation | internal/server/e2e_test.go |  | Rule 3 枚举缺口：startTestServer 兼容包装随 handshake 改造全仓零引用，按 14-02/14-04 收编闭环先例删除（-6 行）；e2e_test.go 不在 plan files_modified 白名单 | open |  | 2026-09-06T16:19:37.260Z |  |
+| 46 | 14 | deviation | web/uat/minrepro-p14.mjs |  | 14-12 收口闸 diff 审查白名单补充项（#33 先例同构）：minrepro 双件套（web/uat/minrepro-p14.mjs Linux loopback + web/uat/pw/minrepro-win.mjs Windows 过转发器）为 14-09 Track2 偏差副产——14-09 SUMMARY key-files + 偏差 #2 已完整登记（海森bug 调查交付物，两形态均未复现停摆即服务端无罪反向证据）；三轴裁决（plan 相邻授权/SUMMARY 声明在案/零产品代码与零断言影响）纳入白名单，非回归 | open |  | 2026-09-08T00:12:15.819Z |  |
 
 ````json
 [
@@ -367,6 +386,234 @@ last_updated: 2026-08-30T07:57:44.432Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-30T07:57:44.432Z",
+    "resolved_at": null
+  },
+  {
+    "id": 28,
+    "kind": "deviation",
+    "phase": "11",
+    "file": "internal/server/perclient_test.go",
+    "line": null,
+    "description": "plan 文本 package server 与 helper 同包复用矛盾——裁决落 package server_test（详见 11-01-SUMMARY Deviations #1）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T17:02:56.654Z",
+    "resolved_at": null
+  },
+  {
+    "id": 29,
+    "kind": "deviation",
+    "phase": "11",
+    "file": "internal/server/perclient_test.go",
+    "line": null,
+    "description": "11-04 执行期勘误：plan 文本 kill -TERM $$ 对交互 shell 不致死（交互 shell 无 trap 忽略 SIGTERM），实测修正为 kill -HUP $$（exit_test.go 信号夹具同款），断言面不变——已修复并锁定，非遗留缺陷",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:27:12.817Z",
+    "resolved_at": null
+  },
+  {
+    "id": 30,
+    "kind": "deviation",
+    "phase": "11",
+    "file": "web/uat/phase11.mjs",
+    "line": null,
+    "description": "11-05: S5d 自杀信号 plan 文本 kill -TERM $$ 勘误为 kill -HUP $$（交互 shell 无 trap 忽略 SIGTERM——11-04 实测先例 + STATE 裁决「后续 plan 信号夹具直接用 HUP/trap」；断言面 -1+大写 SIGHUP+1000 不变）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:55:25.713Z",
+    "resolved_at": null
+  },
+  {
+    "id": 31,
+    "kind": "unrun-verify",
+    "phase": "11",
+    "file": "web/uat/phase11.mjs",
+    "line": null,
+    "description": "11-05: S4b 1006 真实异常断开形态 skipped+reason（CODEBUDDY.md §5 平台豁免——OS 断网时序 + Node 原生 WebSocket 无 TCP 层强杀面）；协议层等价物 S4a（正常关闭→ESRCH）+ 11-01 挂点覆盖论证 + 11-04 竞态注入测已覆盖",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-03T18:55:25.878Z",
+    "resolved_at": null
+  },
+  {
+    "id": 32,
+    "kind": "deviation",
+    "phase": "12",
+    "file": "web/uat/phase12.mjs",
+    "line": null,
+    "description": "S6 以 --ping-interval=0 隔离 dwell 看门狗取证（默认 ping 下 dwell 1013 被 1006 pong_timeout 先杀——writeControl 5s 写超时交互，Phase 13 裁决，STATE Blockers 登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-04T14:59:05.938Z",
+    "resolved_at": null
+  },
+  {
+    "id": 33,
+    "kind": "deviation",
+    "phase": "12",
+    "file": "internal/server/export_test.go",
+    "line": null,
+    "description": "12-05 收口闸 diff 审查白名单枚举缺口：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——三轴裁决（plan 授权/append-only/零断言）登记为白名单补充项①，非回归；裁决详情见 12-05-SUMMARY 段⑥",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-04T15:23:02.537Z",
+    "resolved_at": null
+  },
+  {
+    "id": 34,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/perclient_test.go",
+    "line": 1237,
+    "description": "13-02 Rule 3：TestPerClientTeardownRaceOnce mutate 追加 SpawnPerIP 桶放宽两行（10 轮同 IP attach 超默认 burst 4 被 per-IP 桶误伤——测试对象 teardown 竞态非 churn 防线；断言行零改动，plan 白名单「仅新增函数」之外的两行，SUMMARY 偏差①登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T15:21:22.252Z",
+    "resolved_at": null
+  },
+  {
+    "id": 35,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/perclient.go",
+    "line": null,
+    "description": "13-03 Rule 1：session_end emit 位置取 close(waitDone) 前（plan 文本「hubMu 解锁后」偏差——plan 位置与慢半段 Broadcast 无同步边，exitf(os.Exit) 可先于事件落流；emit→close(waitDone)→delete→Broadcast→exitf happens-before 链论证，SUMMARY 偏差①登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:18:54.963Z",
+    "resolved_at": null
+  },
+  {
+    "id": 36,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/perclient.go",
+    "line": null,
+    "description": "13-03 Rule 1：upgradePerClient 补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷；GraceCancel 测试首跑实测暴露，fix c44a8d9，SUMMARY 偏差②登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:18:55.126Z",
+    "resolved_at": null
+  },
+  {
+    "id": 37,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/events_test.go",
+    "line": null,
+    "description": "13-03 Rule 1：TestAuthFailedNoUsername 装配改 startEventsServerWith + 体内 Kill→waitExit lifecycle 收口同步边（原装配弃置 exitCh，cleanup SIGKILL 迟到 session_end emit 落入后继捕获窗——全量 -race 下 TestPerClientSessionEnd 严格计数实测受害；断言行零改动，SUMMARY 偏差③登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:18:55.275Z",
+    "resolved_at": null
+  },
+  {
+    "id": 38,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/server.go",
+    "line": null,
+    "description": "13-04 Rule 2：Shutdown 侧 D-state 兜底 terminate（join 到期未清零经 termOnce 直接收口——T-13-13 mitigation「有界 join 后无条件经 termOnce 退出」为 threat register 硬要求而 plan behavior 四锚点未列；drained 形态终结仍归 pcSupervisor 零漂移，SUMMARY 偏差①登记）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T16:54:07.441Z",
+    "resolved_at": null
+  },
+  {
+    "id": 39,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "internal/server/shutdown_test.go",
+    "line": null,
+    "description": "13-06 files_modified 枚举缺口：SpawnFunc 签名扩散波及 shutdown_test.go/metrics_test.go/events_test.go 三文件注入点机械加参（plan 白名单未列但编译必需——12-05 export_test.go 先例同构，非回归）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T18:38:42.514Z",
+    "resolved_at": null
+  },
+  {
+    "id": 40,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "cmd/wesh/main_test.go",
+    "line": null,
+    "description": "13-08 段① Rule 3：GOROOT gofmt 三处 deferred 存量归一（main_test.go:950 + perclient_test.go:1547 CJK 标点补空格 + :2018 双空行——must_haves 零输出要求 vs 13-02/13-03「范围外不修」辖域冲突，白名单内纯注释/空行修正，style 5310723，deferred-items 处置列回写）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T19:51:33.948Z",
+    "resolved_at": null
+  },
+  {
+    "id": 41,
+    "kind": "deviation",
+    "phase": "13",
+    "file": "README.md",
+    "line": null,
+    "description": "13-08 Task 2 Rule 1：README:96/CONFIGURATION:57/:154「per-client 行为装配中，当前版本与 shared 等价」Phase 10 时代失实残留最小修正（Phase 11-13 行为已全部落地，与同段 stop-timeout per-client 语义自相矛盾——文档即被测物纪律；PC-12 完整模型段仍归 Phase 14）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-05T19:51:34.103Z",
+    "resolved_at": null
+  },
+  {
+    "id": 42,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "internal/server/metrics_test.go",
+    "line": null,
+    "description": "14-03 plan behavior「series 镜像 17 shared / 21 per-client」与 13-05 落地现状不符（metrics.go 双模式同持 21 series，shared 四 spawn 计数器恒 0 不摘——credit_gate 恒 0 先例）：按 plan action 2 以 metrics.go 现状核定两列期望值（assertExpositionShape 双模式同断言），口径偏差登记供 14-12 收口闸 diff 白名单审查知悉",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T15:26:29.105Z",
+    "resolved_at": null
+  },
+  {
+    "id": 43,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "internal/server/harness_test.go",
+    "line": null,
+    "description": "14-04 Rule 3 files_modified 枚举缺口：startResizeServer 删除验收闸（全仓零引用）要求 harness_test.go shared 分支内联 + e2e_test.go:36 注释同步——两文件不在 plan files_modified 清单（13-06 WINDOWS #36 同形态）",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T15:51:10.809Z",
+    "resolved_at": null
+  },
+  {
+    "id": 44,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "internal/server/handshake_test.go",
+    "line": 358,
+    "description": "TestReadOnlyAllowsResize 断言分叉面：plan truth 断言 10 测全部同断言双跑零期望改写，代码现实 ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通，server.go:1264-1287）——按 14-01 分叉表形态落地，shared 列逐字 + per-client 列断言直通真值 50/120",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:19:37.109Z",
+    "resolved_at": null
+  },
+  {
+    "id": 45,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "internal/server/e2e_test.go",
+    "line": null,
+    "description": "Rule 3 枚举缺口：startTestServer 兼容包装随 handshake 改造全仓零引用，按 14-02/14-04 收编闭环先例删除（-6 行）；e2e_test.go 不在 plan files_modified 白名单",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-06T16:19:37.260Z",
+    "resolved_at": null
+  },
+  {
+    "id": 46,
+    "kind": "deviation",
+    "phase": "14",
+    "file": "web/uat/minrepro-p14.mjs",
+    "line": null,
+    "description": "14-12 收口闸 diff 审查白名单补充项（#33 先例同构）：minrepro 双件套（web/uat/minrepro-p14.mjs Linux loopback + web/uat/pw/minrepro-win.mjs Windows 过转发器）为 14-09 Track2 偏差副产——14-09 SUMMARY key-files + 偏差 #2 已完整登记（海森bug 调查交付物，两形态均未复现停摆即服务端无罪反向证据）；三轴裁决（plan 相邻授权/SUMMARY 声明在案/零产品代码与零断言影响）纳入白名单，非回归",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-09-08T00:12:15.819Z",
     "resolved_at": null
   }
 ]

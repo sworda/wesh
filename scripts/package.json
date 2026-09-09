@@ -1,0 +1,11 @@
+{
+  "name": "wesh-doc-check",
+  "version": "1.0.0",
+  "private": true,
+  "description": "wesh 文档校验工具（mermaid 词法载具：jsdom 注入 + Node 端 mermaid.parse——Linux 开发机禁浏览器约束下的渲染合法性等价物）",
+  "type": "module",
+  "dependencies": {
+    "jsdom": "^30.0.1",
+    "mermaid": "^11.17.2"
+  }
+}

@@ -1,0 +1,691 @@
+package server
+
+// perclient.go —— per-client 会话生命周期主干（11-01/11-03，PC-02/PC-03/PC-04，
+// D-01/D-02/D-03/D-04；研究 ARCHITECTURE §2.1/§3.1/§3.5/§4.1/§5 与 PITFALLS
+// Pitfall 2/3/4/5 锚点登记；13-02 增量：spawn 双令牌桶 pre-spawn 判定——
+// PC-08 churn 防线，存储件 spawnthrottle.go；13-03 增量：PC-09 终结语义——
+// sessionWatcher 收割链三补（last-reaped 记录/session_end 事件/慢半段
+// Broadcast）+ teardownPCLocked WR-02 waitDone 结构性栅栏；pcSupervisor
+// 第二终结源本体与触发端在 server.go/clients.go）：
+//
+//   - pcSession：单客户端会话的全部服务端状态（pty.Session + 每会话输入
+//     队列 + 收口信号集 + 收割/终结同步边）；
+//   - upgradePerClient：Attach 升档 per-client 分支——spawn 点 = ticket
+//     核销之后 / Welcome 组帧之前 / hubMu 之外（SEC-08 + Anti-Pattern 1/3）；
+//     11-03 落地 D-02 pre-spawn 容量再闸（1011+容量文案 wire 形态）与
+//     D-03 注册点复检回收（「并发子进程数 ≤ maxClients」硬不变量）；
+//   - startSessionGoroutines：五 goroutine 装配（writer/pinger/ReadLoop
+//     闭包/inputWriter/sessionWatcher——注册后启动，Welcome 恒首帧纪律）；
+//   - sessionWatcher：每会话唯一收割者（cmd.Wait 仅此处调用——断开路径
+//     绝不自己 Wait）+ EXIT 私有化直写（组帧一次 → 同步 Write 2s ctx →
+//     Close(1000)，禁 outbox 异步——Anti-Pattern 6）；
+//   - teardownPCLocked：D-01 固定序列恰好一次（sync.Once）——SIGHUP（经
+//     reaped 栅栏，Pitfall 2）→ stopTimeout>0 则 AfterFunc 补 SIGKILL
+//    （栅栏同构覆盖补 KILL 发信号点，planner 裁定：Pitfall 2「信号与 reap
+//     锁内序列化」语义对一切 kill(-pgid) 同构适用，不只 SIGHUP）→
+//     Drain(200ms) → Close(master) → 等待收割返回（waitDone）→ pcSessions
+//     单点移除；慢半段绝不占 hubMu（Pitfall 3 行头阻塞红线）。
+//   - reapOrphanSession：D-03 复检淘汰孤儿会话的异步回收（SignalGroup(HUP)
+//     → AfterFunc 补 KILL（局部 reaped 原子闸）→ Drain → Close → Wait——
+//     该会话的唯一收割者，11-03）。
+//
+// 13-03 落地登记（Phase 11 D-04 窗口期已闭合）：--once/--exit-when-empty 的
+// 第二终结源已落地——pcSupervisor 单例 goroutine（server.go，New per-client
+// 分支钉死；触发端 = clients.go maybeExitWhenEmptyLocked per-client 分支，
+// Pitfall 1 窗口期闭合）；session_end 审计事件已由 sessionWatcher emit
+//（per-client 粒度 + client_id 关联键，D-09 前半）。13-05 落地登记：D-09
+// 后半闭合——session_start 审计事件由 upgradePerClient emit（每次 spawn
+// 成功恰一条：pid + client_id，紧随 attach 事件之后、startSessionGoroutines
+// 之前）；三计数器递增点接线（ptySpawn/ptySpawnFailures/ptyKills——
+// metrics.go 四 series 的数据源，D-08）。13-06 落地登记：SEC-09
+// WESH_REMOTE_USER 注入——spawnFunc 第三参 remoteUser（Attach 提取
+// sanitize 产物直传，生产闭包 main.go 经 StartOptions.RemoteUser 落子
+// 进程 env；shared 模式 D-15 收窄语义零漂移）。
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"os/exec"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/coder/websocket"
+	"golang.org/x/time/rate"
+
+	"github.com/sworda/wesh/internal/proto"
+	"github.com/sworda/wesh/internal/pty"
+)
+
+// pcSession 是 per-client 模式单客户端会话的全部服务端状态（研究 §2.1 参考
+// 实现 + D-01/Pitfall 2 要求的 waitDone/teardownDone/reaped 三件——研究 §2.1
+// 未含，本阶段新增）。
+//
+// 写一次纪律（client 结构 remoteUser 注释形态同构）：sess/inQ/inputDone/
+// waitDone/teardownDone/startedAt 写一次于 attach 升档（registerLocked 与
+// pcSessions 登记之前），此后读者为该会话自有 goroutine 群（ReadLoop 闭包/
+// inputWriter/sessionWatcher/teardown 慢半段）与 hubMu 内读者——
+// happens-before 由 goroutine 启动 + hubMu 建立。exitCode/reaped/dwellTimer
+// （12-03）为运行期可写字段，hubMu 保护（pinger pongTimedOut「置位取 hubMu
+// 写、detach 同锁读」先例同形态——与 hubMu 同锁免新锁类型，S6 纪律）。
+type pcSession struct {
+	sess *pty.Session
+	inQ  *inputQ // 每会话独享（newInputQ(defaultInputQueueBytes)——容量常量复用）
+	// inputDone 为该会话 inputWriter 的收口信号（shared s.inputDone 同构）：
+	// sessionWatcher 在 teardown 落定后 close——master 已经 Drain→Close，在途
+	// Master.Write 经 runtime poller 解除阻塞返回错误（D-12 同款语义）。
+	inputDone chan struct{}
+	// waitDone 为 watcher 的 Wait 返回即 close 的同步边——teardown 慢半段经它
+	// 等待收割完成（唯一收割者纪律每会话粒度保持：断开路径绝不自己 Wait，
+	// 只等本信号）。
+	waitDone chan struct{}
+	// teardownDone 为 teardown 慢半段落定信号（Drain/Close/pcSessions 移除
+	// 完成后 close）——sessionWatcher 等它落定再发 EXIT（终结输出先经 outbox
+	// 送达的时序与 lifecycle 同序）。
+	teardownDone chan struct{}
+	// startedAt 为会话起点（spawn 成功时刻）：13-03 激活——sessionWatcher
+	// session_end 事件的 duration_seconds 数据源（shared s.startedAt 同构；
+	// Phase 11 预留字段本 phase 起有消费方）。
+	startedAt time.Time
+	// exitCode 为 watcher 收割的退出码（hubMu 保护）：信号死亡 = -1
+	//（exec.ExitError ExitCode 语义，lifecycle 退出码提取同形）；13-03 起
+	// 仍为零读者（pcSupervisor 消费 Server 级 pcLastExitCode last-reaped
+	// 记录——单值消费面单点化）——本每会话粒度记录保持（hubMu 内写一次，
+	// 白盒/审计面数据源）。
+	exitCode int
+	// reaped 为「已被 Wait 收割」栅栏位（hubMu 保护，Pitfall 2）：一切
+	// kill(-pgid) 发信号点（SIGHUP 与 AfterFunc 补 KILL 两处）只在本位为
+	// false 时发送——信号与 reap 经 hubMu 内标志位序列化，kill-after-reap
+	// 误杀复用 pgid 结构性不可能。
+	reaped bool
+	// teardownOnce 收口双触发路径（detach/kick 断开挂点 × watcher 子死
+	// 路径）——两路径都只「触发」，执行序列只有一个（Pitfall 3 恰好一次）。
+	teardownOnce sync.Once
+	// 12-02（PC-05）RESIZE 直通三字段：resizeMu 为 pendingResize 的叶锁
+	// （锁序三规则 §5——持有期间不取任何其他锁；读循环写 pendingResize 与
+	// 防抖回调读 pendingResize 经它互斥，Reset 与回调执行的并发安全由
+	// Go 1.23+ timer 语义承接）；pendingResize 为最新上报尺寸（防抖窗内
+	// 合并，到期只应用最后值——arbiter 同款语义，Pitfall 7 SIGWINCH 风暴
+	// 防线每会话粒度）；resizeDeb 为每会话防抖（共用件 debouncer，时长源
+	// s.resizeDebounce 与 arbiter 同源——不新增第二份常量，防双写漂移）。
+	// 回调锁序可证：resizeMu 内取 pendingResize → 放锁 → sess.Resize 仅
+	// fdMu（hubMu > sess.fdMu 全序不受影响，回调函数体零 hubMu）；closed
+	// 会话 Resize 返回 os.ErrClosed 静默（Attach 读循环既有纪律同款）。
+	resizeMu      sync.Mutex
+	pendingResize dims
+	resizeDeb     *debouncer
+	// dwellTimer 为停读态看门狗计时器（12-03，PC-10/PC-11，D-02/D-03）：
+	// 停读点武装（ReadLoop 输出闭包持帧阻塞起点，armSlowDwellLocked）、续读点
+	// Stop 置 nil（每次续读重置——计时器只在停读窗口存活，再停重新武装完整
+	// dwell；「慢但在前进的客户端永不被踢」的 D-02 判据核心）；到期回调 hubMu
+	// 内身份比对（pc.dwellTimer != t 即陈旧不动作）+ cl.done 早退后走
+	// kickSlowConsumerLocked 既有序列（1013 slow_consumer）。hubMu 保护——
+	// 运行期可写字段，与 exitCode/reaped 同锁先例（pinger pongTimedOut
+	//「置位取 hubMu 写、detach 同锁读」同形态）。武装/停摆两写点均在 ReadLoop
+	// 输出闭包（单 goroutine 写）+ 到期回调读，hubMu 建立 happens-before。
+	dwellTimer *time.Timer
+}
+
+// capacityMessage 是 D-02 容量拒绝的统一文案（11-03）：pre-spawn 闸与注册点
+// 复检回收两调用点共用同一字面量单点——wire 面两种容量拒绝不可区分是有意为之
+// （D-02「wire 聚合」）；定值常量纪律与 spawn 失败文案同款（绝不携带路径/
+// errno/argv/计数器快照等内部状态，Pitfall 5 + Security Mistakes 表红线，
+// T-11-03b）。
+const capacityMessage = "server is at capacity"
+
+// rejectCapacity 执行容量拒绝序列（D-02 wire 形态单点，11-03）：
+// Error{server_error, 容量文案} 直写（握手期 Error 直写先例——server.go
+// version_mismatch 形态，注册前维持直写不变）→ max_clients 单行审计（logEvent
+// 既有四段 schema：remote/code/reason/remoteUser，零敏感值，S3）→
+// Close(1011, server_error)。与 spawn 失败同码 1011 同机器串 server_error
+// （协议零改动红线），分辨率由 logEvent 事件名承担（max_clients vs
+// spawn_failed——「wire 聚合、日志细分」，SEC-07 先例同构，D-04）。
+// 两调用点：upgradePerClient 的 pre-spawn 闸与注册点复检回收分支。
+func rejectCapacity(ctx context.Context, c *websocket.Conn, remote, remoteUser string) {
+	_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, capacityMessage))
+	logEvent(remote, websocket.StatusInternalError, "max_clients", remoteUser)
+	_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
+}
+
+// upgradePerClient 是 Attach 升档的 per-client 分支（研究 §3.1 时序 + PATTERNS
+// §1/§6b；调用点 = server.go Attach 分岔，close(helloDone)+release() 已在其前
+// 执行——半开名额不泄漏）。拒绝/失败路径自行写 Error+Close 并返回 nil，调用方
+// 据此直接 return；成功路径完成装配并启动五 goroutine 后返回 cl。
+// 13-02：throttleIP 为 spawn 节流桶键（Attach 上游 :883 既有 clientIP 提取点
+// 产物——trust 开启时 XFF 链首换键，D-05；本函数不碰 *http.Request）。
+func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote, remoteUser, throttleIP string, h proto.HelloPayload, ticketMode string, cancel context.CancelFunc) *client {
+	// 单行门算 effMode（decideModeLocked 不调用——write-policy 仲裁矩阵在
+	// per-client 不装配，owner 递补语义不存在）。
+	effMode := proto.ModeRO
+	if s.writable && ticketMode == proto.ModeRW {
+		effMode = proto.ModeRW
+	}
+	// 13-02（PC-08，D-03/D-04/D-05）spawn 双令牌桶判定（pre-spawn 容量闸
+	// 之前——fork 预算保护必须在 spawn 调用点之前，T-13-04/T-13-05）：全局
+	// 桶（8/s burst 16）收断网惊群、per-IP 桶（1/s burst 4）收单点 churn
+	//（键 = throttleIP，trust 开启时 XFF 链首——反代部署合法多用户不共享
+	// 一桶，D-05）。判定纯内存无阻塞（store 自有 mu 最小临界区），spawnFunc
+	// 调用点保持 hubMu 之外不动（Anti-Pattern 1）。取不到令牌即拒——拒绝
+	// 序列与 rejectCapacity 同码同串不同事件名（D-04 wire 聚合、日志细分
+	// 第三次应用：Error{server_error, capacityMessage} 定值文案——三拒绝
+	// wire 不可区分是有意为之 → spawn_throttled 单行审计 → Close(1011,
+	// server_error)；ptySpawnThrottled 计数递增先于首帧写出）。1011 不在前端
+	// shouldReconnect 触发集（main.ts:1023 仅 1006，reconnect.test.ts 对
+	// 1011 false）——节流拒绝不触发自动重连，无重连放大 fork 循环
+	//（T-13-06；1008 亦禁用——认证/版本策略受众不混入容量/节流策略）。
+	// 拒绝路径零注册零登记零残留——半开名额已在升档分岔前 release() 既有
+	// 结构性保证（下方容量闸注释同款论证）。
+	if !s.spawnThrottle.allow(throttleIP, time.Now()) {
+		// 计数递增先于一切对外可见响应（13-07 CI flake 收口）：c.Write/
+		// c.Close 返回 ≠ 客户端已观测完整拒绝序列，但一旦 close 帧被
+		// 客户端收到，测试/观测方即可能读取计数器——递增必须先于帧写
+		// 出，建立「拒绝可观测 ⟹ 计数已递增」的单向序。
+		s.mc.ptySpawnThrottled.Add(1)
+		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, capacityMessage))
+		logEvent(remote, websocket.StatusInternalError, "spawn_throttled", remoteUser)
+		_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
+		return nil
+	}
+	// D-02 pre-spawn 容量再闸（11-03）：hubMu 短临界区只读 len(pcSessions)
+	// 计数——绝不持锁 spawn（Anti-Pattern 1：fork/exec 阻塞不得冻结全控制面；
+	// 闸内读 → 放锁 spawn → 再取锁注册）。满员即拒（rejectCapacity 序列）。
+	// 1013 否决：main.ts:946 前端 1013 分派只认 code 不渲染 reason，固定显示
+	// 慢消费者文案（"The session itself is unaffected"——per-client 满员语义
+	// 双重错位，前端改动窗口在 Phase 12）；1008 否决：既有语义为认证/版本策略
+	// 违反（version_mismatch/auth_failed），容量策略混入污染 1008 受众分治。
+	// 与 ③位 HTTP 503 闸（server.go 守卫区，registry.n 计数源）分工不变：
+	// 满员且注册表满 → 既有 503（零改动）；注册表空出但 pcSessions 满（断开
+	// 待收割 linger 形态）或并发竞态窗口 → 本闸 1011 容量文案。半开名额已在
+	// 升档分岔前 release()（server.go Attach close(helloDone)+release() 共用
+	// 行结构性保证恰好一次），本拒绝路径零注册零登记零残留。
+	s.hubMu.Lock()
+	full := len(s.pcSessions) >= s.maxClients
+	s.hubMu.Unlock()
+	if full {
+		rejectCapacity(ctx, c, remote, remoteUser)
+		return nil
+	}
+	// spawn 在 hubMu 之外（Anti-Pattern 1：fork/exec 阻塞不得冻结全控制面）；
+	// h.Cols/h.Rows 已经 DecodeHello ClampDim 钳制，满足 StartWithSize
+	//「调用方已钳制」契约——直通出生即正确尺寸（无 80x24 中间态，SC1 后半）。
+	// SEC-08 + Anti-Pattern 3：checkTicket 成功是 spawn 唯一前置，本调用点
+	// 在升档分岔内结构性保证。13-06（SEC-09）第三参 remoteUser = 本函数
+	// 既有形参（Attach :953 提取点 s.proxy.remoteUser(r) 的 sanitize 产物
+	// 直传——upgradePerClient 与 Attach 入口同值的写一次字段链，零新管道；
+	// shared 模式零漂移：spawnFunc 恒 nil 不经本调用点）。
+	sess, err := s.spawnFunc(h.Cols, h.Rows, remoteUser)
+	if err != nil {
+		// 失败路径（D-04/Pitfall 5 清理清单）：Error 帧直写（握手期 Error 直写
+		// 先例——注册前维持直写不变；message 为定值常量，绝不携带底层错误
+		// 细节，Pitfall 5 + Security Mistakes 表红线）→ spawn_failed 单行审计
+		//（logEvent 既有通道，S3：四段 schema 零敏感值，无 pid/client_id——
+		// 失败点在注册之前，无关联键可挂）→ Close(1011)（D-07 code 与 reason
+		// 同名机器串）。收口 = 关连接零残留：零 client 构造、零注册、零
+		// pcSessions 登记；spawn 失败由 pty 包保证 fd 完好（Pitfall 5）。
+		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, "failed to start process"))
+		logEvent(remote, websocket.StatusInternalError, "spawn_failed", remoteUser)
+		// 13-05（OPS-12 D-08）ptySpawnFailures 递增点：logEvent 同点（失败分支
+		// 单点——与 13-02 throttled 拒绝序列同形态的计数器分辨率）。
+		s.mc.ptySpawnFailures.Add(1)
+		_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
+		return nil
+	}
+	// 成功路径：构造 pcSession（写一次字段集——见 pcSession 注释）。
+	pc := &pcSession{
+		sess:         sess,
+		inQ:          newInputQ(defaultInputQueueBytes),
+		inputDone:    make(chan struct{}),
+		waitDone:     make(chan struct{}),
+		teardownDone: make(chan struct{}),
+		startedAt:    time.Now(),
+	}
+	// 12-02（PC-05）每会话 RESIZE 防抖装配（共用件 debouncer，构造即 stopped：
+	// 首次 RESIZE 上报才武装——server.go RESIZE case per-client 直通分支在
+	// resizeMu 内写 pendingResize 后 Reset）。回调：resizeMu 内取 pendingResize
+	// → 放锁 → sess.Resize 仅 fdMu（锁序三规则 §5——回调函数体绝不取 hubMu；
+	// closed 会话返回 os.ErrClosed 静默）。
+	pc.resizeDeb = newDebouncer(s.resizeDebounce, func() {
+		pc.resizeMu.Lock()
+		d := pc.pendingResize
+		pc.resizeMu.Unlock()
+		_ = pc.sess.Resize(d.cols, d.rows)
+	})
+	s.hubMu.Lock()
+	// D-03 注册点复检（11-03）：spawn 成功后在注册段的同一 hubMu 持有内复检
+	// 容量——竞态窗口 = 两并发升档同时过上方 pre-spawn 闸（Pitfall 4 超编形态：
+	// 并发握手各自通过容量检查后同时 spawn，瞬时进程数可超 maxClients）。
+	// 复检使「并发子进程数 ≤ maxClients」硬不变量 Phase 11 即成立；Phase 13
+	// 裁决项④（spawn-intent 预占/回滚口径）由此提前消解——STATE.md Blockers
+	// ④ 已标注消解，Phase 13 规划时移除该开放项。超编者放锁后异步回收
+	// （reapOrphanSession——该孤儿会话的唯一收割者），客户端收与 pre-spawn
+	// 闸完全相同的容量拒绝序列（同文案同事件名同关闭码——wire 面两种容量
+	// 拒绝不可区分是有意为之，D-02「wire 聚合」）。
+	if len(s.pcSessions) >= s.maxClients {
+		s.hubMu.Unlock()
+		s.reapOrphanSession(sess)
+		rejectCapacity(ctx, c, remote, remoteUser)
+		return nil
+	}
+	cl := &client{
+		conn:       c,
+		remote:     remote,
+		remoteUser: remoteUser, // 07-03：Attach 入口提取一次，此后只读（clients.go 字段注释）
+		// rwEligible 零值 false——per-client 无 owner 递补语义
+		//（promoteNextLocked 永不可达：registry.owner 恒 nil）。
+		dims:   dims{cols: h.Cols, rows: h.Rows}, // Hello 首尺寸（DecodeHello 已 ClampDim）
+		outbox: newOutbox(s.outboxBytes),
+		done:   make(chan struct{}),
+		cancel: cancel,
+		// 每客户端输入限速令牌桶（与 shared 升档同形同值；ro 端同样构造，
+		// 无害——INPUT 先过 mode 门）。
+		limiter: rate.NewLimiter(rate.Limit(s.inputRate), s.inputBurst),
+		inQ:     pc.inQ, // Pattern 2 间接字段：读循环零分支的关键（shared = s.inputQ）
+		pc:      pc,     // per-client 会话绑定（detach/kick 的 teardown 触发以 pc != nil 为门）
+	}
+	cl.mode.Store(effMode) // 生效模式初始值（atomic 承载：INPUT 门无锁读者）
+	// Welcome 恒首帧（S5 时序纪律，P2 D-02 同构）：入队先于 registerLocked +
+	// pcSessions 登记且全程持 hubMu——本分支 ReadLoop 闭包只投本端 outbox，
+	// 注册前绝无帧夹入；goroutine 群注册后启动，spawn→ReadLoop 启动间输出由
+	// 64KiB PTY 内核缓冲承接（研究 §3.1 约束 2）。cols/rows 回显本端 Hello
+	// 钳制尺寸——不经 sessionDimsLocked（per-client 无仲裁，G-05-1 契约退化
+	// 为恒等式）。prefs 双档选档（ro 档永不含 osc52，D-13/P5-6 纪律不动）。
+	prefs := s.clientPrefsRO
+	if effMode == proto.ModeRW {
+		prefs = s.clientPrefsRW
+	}
+	cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, h.Cols, h.Rows, s.sessionMode))
+	s.registry.registerLocked(cl)
+	// 宽限取消点 + 空纪元门闩清零（13-03 补齐 per-client 侧挂点——shared
+	// Attach 路径 server.go 同位同款，registerLocked 登记成功后同一 hubMu
+	// 持有内）：① cancelExitEmptyTimerLocked 取消 exit-when-empty 宽限计时
+	//（宽限内任一端 attach 成功即取消——D-14；11-01 早退守卫期本挂点在
+	// per-client 不可达故未装配，13-03 触发端激活后为必需——缺失则取消只靠
+	// 回调 registry 非空复查兜底、计时锚点漂移）；② exitEmptySignaled 清零
+	// 开新空纪元（08-review WR-01——缺失则门闩永不清零，后续空迁移被门闩
+	// 抑制永不重触发，exit-when-empty 退化为进程生命周期单发）。
+	s.cancelExitEmptyTimerLocked(cl.remote, cl.remoteUser)
+	s.exitEmptySignaled = false
+	s.pcSessions[pc] = struct{}{}
+	// 13-05（OPS-12 D-08）ptySpawn 递增点：登记成功点（hubMu 持有内——atomic
+	// Add 本可锁外，取登记点为语义锚：唯有真正入册的 spawn 才计「成功」，
+	// 注册点复检淘汰的孤儿 spawn 不计）。递增点 → snapshotMetrics 单趟快照
+	// 读出 → metricsHandler wesh_pty_spawn_total 输出。
+	s.mc.ptySpawn.Add(1)
+	s.hubMu.Unlock()
+	// attach 事件（shared 升档同形态同字段集：event=attach + remote +
+	// client_id=attachSeq + mode + remote_user 非空出键；registerLocked 分配
+	// attachSeq 的写 happens-before 本读）。
+	attachAttrs := []slog.Attr{
+		slog.String("event", "attach"),
+		slog.String("remote", cl.remote),
+		slog.Int64("client_id", cl.attachSeq),
+		slog.String("mode", effMode),
+	}
+	if cl.remoteUser != "" {
+		attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
+	}
+	emitEvent(attachAttrs...)
+	// 13-05（OPS-12 D-09 后半）session_start 事件（每次 spawn 成功恰一条）：
+	// 紧随 attach 事件之后、startSessionGoroutines 之前（shared 母本
+	// server.go :597-601「审计事件先于任何连接/会话流量落流」同序——程序序
+	// 保证事件先于会话流量落流）；pid = 子进程 PID、client_id = cl.attachSeq
+	//（attach/detach 事件同键先例——会话级事件与连接级事件关联检索，与
+	// session_end 同键闭合单个会话全生命周期串联）；startedAt 为 pc 既有
+	// 写一次字段（13-03 session_end duration 数据源，本事件起点同源）。
+	// 零敏感值红线（log.go:85-89）：pid 数值 + client_id 定长数值关联键，
+	// 无 token/ticket/凭据面（T-13-17）。
+	emitEvent(slog.String("event", "session_start"), slog.Int("pid", pc.sess.Cmd.Process.Pid), slog.Int64("client_id", cl.attachSeq))
+	c.SetReadLimit(proto.ReadLimitPostAuth)
+	s.startSessionGoroutines(ctx, cl, pc)
+	return cl
+}
+
+// startSessionGoroutines 启动 per-client 会话的五件 goroutine（研究 §5 拓扑
+// 表：每客户端 6 = reader + writer + pinger + ReadLoop 闭包 + inputWriter +
+// sessionWatcher；reader 即 Attach 返回后的读循环本体）。调用点 = 注册完成
+// 之后（Welcome 恒首帧论证见 upgradePerClient）。
+func (s *Server) startSessionGoroutines(ctx context.Context, cl *client, pc *pcSession) {
+	go s.writer(cl)
+	go s.pinger(ctx, cl, s.pingInterval)
+	// ReadLoop 闭包（研究 §3.5/PATTERNS §6c，每会话输出路径——1:1 直投属主
+	// outbox，不复用全局 onChunk 扇出，Pitfall 6 红线）：detach 门提前返回
+	//（SIGHUP→死亡窗口期不做无谓组帧）；同一 mc.ptyOutputBytes 计数器聚合
+	// 口径不变；每帧 make+copy（P5-1 别名红线——ReadLoop 缓冲复用，
+	// pty/io.go:14；阻塞持帧期间帧在闭包栈上，读循环自然停摆无别名窗口）。
+	//
+	// 12-03（PC-10/PC-11，D-01/D-02/D-03/D-04/D-05）背压语义：trySend 失败
+	// 不再直踢 1013（Phase 11 形态），改为阻塞持帧 + dwell 看门狗——
+	//   - 停读：闭包阻塞持帧 → ReadLoop 停摆 → PTY 内核缓冲（64KiB）积压 →
+	//     子进程写阻塞（ttyd pty_pause 等效，不丢数据；frames 在闭包栈上）；
+	//   - 续读：outbox drain 至非满（notFull 恢复信号，clients.go）→ 重试
+	//     同一帧成功 → 返回正常读循环（gateTransitions 停读/续读两点递增，
+	//     D-05）；
+	//   - 踢出：停读态连续无恢复超过 s.slowDwell（defaultSlowDwell 10s，
+	//     Options 测试可覆写）→ dwell 到期回调 1013 slow_consumer
+	//     （armSlowDwellLocked → kickSlowConsumerLocked 既有序列）。
+	//
+	// WR-01 闭合（STATE.md Phase 11 REVIEW 遗留，D-04「dwell 涵盖不复刻」）：
+	// dwell 从停读起点武装，结构性涵盖 500ms attach 宽限（×20 余量）与一切
+	// 瞬态满箱；阻塞持帧即暂存——帧在闭包栈上 ≡ shared 侧触发帧暂存字段的
+	// 语义等价（shared fan-out 不能阻塞读循环正是该暂存层的存在理由，
+	// per-client 单消费者自由度下复刻即死代码面）——shared 信用门暂存/重投
+	// 两形态（kickOrCreditLocked/afterDrain）一律不复刻进本路径。shared 侧
+	// dwell 第 5 轮实证废弃（clients.go kickOrCreditLocked 演化记录）为反面
+	// 教材而非母本：其死因「全体可写端均满 → 置信用保护」语义冲突在
+	// per-client 单消费者下结构性不存在（D-02 论证）。
+	//
+	// 锁序红线（D-01）：持帧阻塞段绝不持任何锁（hubMu/outbox.mu 均不放行
+	// ——单消费者自由度 = 阻塞点在闭包栈上、锁全放；clients.go 信用门
+	// hubCond.Wait「持锁等待」是 shared fan-out 的唯一合法形态，本路径反向
+	// 约束）。CR-01 保持：阻塞点只在输出闭包（PTY→WS 方向），INPUT 路径
+	// 零改动。
+	go pc.sess.ReadLoop(func(chunk []byte) {
+		select {
+		case <-cl.done:
+			return
+		default:
+		}
+		s.mc.ptyOutputBytes.Add(int64(len(chunk)))
+		frame := make([]byte, 1+len(chunk))
+		frame[0] = proto.Output
+		copy(frame[1:], chunk)
+		if cl.outbox.trySend(frame) {
+			return
+		}
+		// 停读点（D-05 递增点之一）：hubMu 内递增 gateTransitions + 武装
+		// dwell 看门狗（AfterFunc 三件套见 armSlowDwellLocked）。
+		s.hubMu.Lock()
+		s.registry.gateTransitions++
+		t := s.armSlowDwellLocked(cl, pc)
+		s.hubMu.Unlock()
+		// 逃逸兜底（T-12-08 双防线之一）：cl.done 逃逸路径（detach/kick/
+		// teardown→conn.Close→reader detach）return 时停掉本闭包武装的
+		// 计时器——身份比对使续读路径（已 Stop 置 nil）经本 defer 二次进入
+		// 时 no-op；另一防线 = 回调内身份比对 + cl.done 早退。
+		defer func() {
+			s.hubMu.Lock()
+			if pc.dwellTimer == t {
+				pc.dwellTimer.Stop()
+				pc.dwellTimer = nil
+			}
+			s.hubMu.Unlock()
+		}()
+		// 持帧阻塞（D-01 核心形态）：select 等 outbox.notFull（drain 恢复
+		// 信号）或 cl.done 逃逸——本段绝不持锁（上方锁序红线）；notFull
+		// 唤醒后重试同一帧，失败（防御分支——单消费者下 drain 后余量 ≥ cap
+		// 数学上必容纳本帧，不可达）继续 select 等待（drain 每次都发新
+		// token，无死锁面）。
+		resumed := false
+		for !resumed {
+			select {
+			case <-cl.done:
+				// 客户端已消亡（detach/kick/teardown）——丢帧合法
+				//（prohibition 只禁「丢帧保活连接」；已消亡端无画面可损坏）。
+				return
+			case <-cl.outbox.notFull:
+				if cl.outbox.trySend(frame) {
+					resumed = true
+				}
+			}
+		}
+		// 续读点（D-05 递增点之二 + dwell 重置，select 等待段之外——持帧
+		// 期间零锁持有的结构面证据）：每次续读重置计时——计时器只在停读
+		// 窗口存活，再停重新武装完整 dwell（D-02「慢但在前进的客户端永不
+		// 被踢」判据核心）。
+		s.hubMu.Lock()
+		s.registry.gateTransitions++
+		if pc.dwellTimer == t {
+			pc.dwellTimer.Stop()
+			pc.dwellTimer = nil
+		}
+		s.hubMu.Unlock()
+	})
+	go inputWriter(pc.sess, pc.inQ, pc.inputDone) // CR-01：读循环永不直写 master（Anti-Pattern 5）
+	go s.sessionWatcher(cl, pc)
+}
+
+// armSlowDwellLocked 武装 per-client 停读态 dwell 看门狗（12-03，PC-10/PC-11，
+// D-02/D-03）并登记 pc.dwellTimer。调用方必须已持 hubMu（停读点临界区内）；
+// 返回计时器供闭包逃逸/续读路径做身份比对与停摆。
+//
+// AfterFunc 三件套（maybeExitWhenEmptyLocked 母本，clients.go）：var 预声明
+// 自引用闭包（:= 短声明作用域起始于声明结束之后，闭包内引用 t 将编译失败）+
+// 回调首句取 hubMu（武装方持锁中，取锁成功时赋值必然已完成且可见——锁同步
+// 边）+ 身份比对/状态复查（陈旧回调不动作）。
+//
+// 到期踢出走 kickSlowConsumerLocked 既有序列（hubMu 内）：1013 wire 形态
+// Close(1013,"slow_consumer") / kicks 计数 / detach reason=kick 事件 /
+// removeMember-recalcNow（arbiter 空集天然 no-op）/ c.pc != nil teardown
+// 挂点全部既有零改动复用。三层防线（T-12-08）：①身份比对（续读 Stop 置 nil
+// 或新停读重武装后，旧回调的 t ≠ pc.dwellTimer——陈旧不动作）；②cl.done
+// 早退（客户端已消亡时 kickSlowConsumerLocked 的 removeLocked 亦幂等兜底）；
+// ③持帧闭包 defer Stop（perclient.go ReadLoop 闭包）。dwell 与 R-08 shared
+// 分工表无语义冲突（单消费者无信用集——见 defaultSlowDwell 注释反面教材段）。
+func (s *Server) armSlowDwellLocked(cl *client, pc *pcSession) *time.Timer {
+	var t *time.Timer
+	t = time.AfterFunc(s.slowDwell, func() {
+		s.hubMu.Lock()
+		defer s.hubMu.Unlock()
+		// 身份比对：陈旧回调（续读已停摆本计时器 / 新停读已重武装）不动作。
+		if pc.dwellTimer != t {
+			return
+		}
+		select {
+		case <-cl.done:
+			return // 客户端已消亡（detach/kick/teardown 收口中）——不动作
+		default:
+		}
+		s.kickSlowConsumerLocked(cl)
+	})
+	pc.dwellTimer = t
+	return t
+}
+
+// sessionWatcher 是 per-client 会话的终结者（每会话一个，子进程死亡的唯一
+// 感知者——cmd.Wait 唯一收割者纪律每会话粒度保持，断开路径绝不自己 Wait；
+// darwin 共享 kqueue watcher 天然 N 会话安全，reap_darwin.go 设计注释逐字）。
+//
+// 序列（研究 §4.1）：Wait 返回 → 退出码提取（lifecycle 内联三行同形，信号
+// 死亡 ExitCode()=-1 语义免费）→ session_end 事件 emit（13-03，D-09 前半——
+// 位置与 shared lifecycle 母本同位：退出码提取后、一切收口活动前；hubMu
+// 之外（hubMu 内 I/O 禁忌——emitEvent 写 stderr 经动态 writer 锁，锁序不
+// 混入 hubMu），先于一切收口活动——事件先于 pcSupervisor 终结路径（exitf
+// 生产语义 = os.Exit，事件必须在其前落流）且先于 EXIT 组帧直写）→ hubMu
+// 内置 exitCode+reaped+last-reaped 记录（13-03：pcLastExitCode/pcHasExitCode
+// 置位——pcSupervisor 消费数据源，退出码两时序逐位对齐 shared：子先死 →
+// exitf(子码)；客户端先断 → HUP → -1 → exitf(-1) → 进程级 255）并触发
+// teardown（同锁持有内——若断开路径已先触发则 Once 去重无操作；若本路径
+// 先触发，reaped 已在同临界区置位，快半段栅栏成立）→ 放锁后 close(waitDone)
+// （teardown 慢半段的收割同步边；13-07 后置于状态写入——「exitCode 记录 →
+// 慢半段 <-waitDone → delete+Broadcast → pcSupervisor/Shutdown join 读取」
+// 成 happens-before 链，终结读取方不再可能与状态写入竞态读空）→ 等
+// teardownDone
+// 落定（Drain/Close/注册表移除完成后再发 EXIT——终结输出先经 outbox
+// 送达的时序与 lifecycle 同序）→ close(inputDone)（inputWriter 收口，
+// shared close(s.inputDone) 同构）→ EXIT 私有化直写（S1 直写纪律逐字
+// 形态：组帧一次共享只读 → 同步 Write 2s ctx → Close(1000)——禁 outbox
+// 异步入队，Anti-Pattern 6 关闭帧超车防线；Write 失败不补救直接 Close，
+// server.go lifecycle 授权先例；与 Shutdown 1001 竞态由库 Close 幂等承接）。
+//
+// session_end schema（shared 母本 server.go lifecycle 逐键 + 关联键）：
+// event/exit_code/duration_seconds（数据源 = pc.startedAt）/signal（仅信号
+// 死亡且 signalName 映射命中出键——KILL 兜底死亡经本字段归因为 "SIGKILL"，
+// 不另起独立事件，D-09）+ client_id（cl.attachSeq——attach/detach 事件
+// 同键先例，会话级事件与连接级事件关联检索）。
+func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
+	err := pc.sess.Wait()
+	code := 0
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	}
+	// 13-03（D-09 前半）session_end 事件：位置/形态/shared 母本论证见函数
+	// 头注释（emit 先于 close(waitDone)——事件落流先于一切终结链）。
+	endAttrs := []slog.Attr{
+		slog.String("event", "session_end"),
+		slog.Int("exit_code", code),
+		slog.Float64("duration_seconds", time.Since(pc.startedAt).Seconds()),
+		slog.Int64("client_id", cl.attachSeq),
+	}
+	if sig, ok := exitSignalNum(err); ok {
+		if name, ok := signalName(syscall.Signal(sig)); ok {
+			endAttrs = append(endAttrs, slog.String("signal", name))
+		}
+	}
+	emitEvent(endAttrs...)
+	s.hubMu.Lock()
+	pc.exitCode = code
+	pc.reaped = true
+	// 13-03（PC-09）last-reaped-code 记录（hubMu 保护）：pcSupervisor 出循环
+	// 消费的数据源——与 pc.exitCode 同临界区写（会话级记录与 Server 级
+	// last-reaped 记录同步置位）。
+	s.pcLastExitCode = code
+	s.pcHasExitCode = true
+	s.teardownPCLocked(pc)
+	s.hubMu.Unlock()
+	// close(waitDone) 在 hubMu 状态写入之后（13-07 CI flake 收口）：慢半段
+	// <-waitDone 放行 → hubMu delete+Broadcast 唤醒 pcSupervisor/Shutdown
+	// join 读取 pcHasExitCode——close 先于写入时三者可读到未更新值（exitf(0)
+	// 竞态）；close 后移使「exitCode 记录 → delete+Broadcast → 终结读取」
+	// 成 happens-before 链。waitDone 关闭语义不变（Wait 已返回）——WR-02
+	// 栅栏读它仍只作「已收割」判据，且生产序列中「waitDone 关 + reaped 未
+	// 置位」微窗口随之消失（栅栏仅剩手工构造态，export_test 预关闭形态
+	// 继续覆盖健壮性）。
+	close(pc.waitDone)
+	<-pc.teardownDone
+	close(pc.inputDone)
+	exitFrame := proto.ExitFrame(code, exitMessage(err, code))
+	// 2s Write 超时（RESEARCH OQ3 定值，常量纪律同 lifecycle）：stall/慢链路
+	// 2s 未写完 ~100B EXIT 帧即放弃直写，该端退化为 1000 + 前端硬编码回退
+	// 文案（R2 回退路径既有，非致命）。
+	wctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = cl.conn.Write(wctx, websocket.MessageBinary, exitFrame)
+	cancel()
+	_ = cl.conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// teardownPCLocked 是 per-client 会话的 D-01 固定 teardown 序列，恰好一次
+// （sync.Once；三调用点：detach 挂点、kick 挂点、sessionWatcher 同锁持有
+// 内——两触发路径都只「触发」，执行序列只有一个，Pitfall 3）。调用方必须
+// 已持 hubMu（Locked 后缀纪律）。
+//
+// 快半段（hubMu 持有内同步执行）：每会话 RESIZE 防抖停摆 + WR-02 结构性
+// 栅栏（13-03，Phase 11 REVIEW 登记）后的信号面——栅栏形态：reaped 位读
+// 通过后再对 pc.waitDone 做非阻塞 select，waitDone 已关闭即视为已收割
+// 跳过信号（Wait 返回 = 内核态 reap 完成点，close(pc.waitDone) 已在该点
+// 无需移动；reaped 位在 hubMu 内置位晚于 close(waitDone)，Wait-return→
+// hubMu-acquire 微窗口内位读不可信，channel 关闭是结构性同步边——零新
+// 同步件，kill-after-reap 误杀复用 pgid 面结构性闭合，T-13-10）。守卫通过
+// 才进信号分支：发 s.stopSignal（默认 HUP = milestone 字面语义，OPS-04
+// --stop-signal 可配通道自然继承；SignalGroup 不取 fdMu，hubMu 内发送安全，
+// 锁序 hubMu > sess.fdMu 不受影响）且 stopTimeout>0 时 AfterFunc 补
+// SIGKILL——闭包内先取 hubMu 复检 !reaped 并经同一 waitDone 非阻塞 select
+// 栅栏（planner 裁定：Pitfall 2「信号与 reap 序列化」语义对一切
+// kill(-pgid) 同构适用，不只 SIGHUP；pinger pongTimedOut 置位取 hubMu
+// 先例同形态；timer 随会话消亡，ESRCH 幂等静默）。
+//
+// 慢半段（独立 goroutine——Drain/Close/waitDone 等待绝不在 hubMu 内，
+// Pitfall 3 行头阻塞红线）：Drain(200ms) → Close(master) → <-waitDone
+// （watcher Wait 返回信号）→ hubMu 内 delete(pcSessions)（活性记账单点
+// 移除——map delete 幂等）+ hubCond.Broadcast()（13-03 PC-09 补行：
+// pcSessions 归零是 pcSupervisor 终结等待条件的组成部分，delete 后
+// Broadcast 唤醒其重估）→ close(teardownDone)。
+func (s *Server) teardownPCLocked(pc *pcSession) {
+	pc.teardownOnce.Do(func() {
+		// 快半段：每会话 RESIZE 防抖停摆（12-02——计时器随会话消亡；teardown
+		// 后在途 RESIZE 再武装亦无害：AfterFunc 回调对 closed 会话 Resize 返回
+		// os.ErrClosed 静默，双防线）。
+		pc.resizeDeb.Stop()
+		// 快半段：信号面（Pitfall 2 reaped 栅栏 + 13-03 WR-02 waitDone 结构性
+		// 栅栏——形态论证见函数头注释）。
+		if !pc.reaped {
+			select {
+			case <-pc.waitDone:
+				// waitDone 已关闭 = watcher Wait 已返回（内核态 reap 完成）——
+				// reaped 置位在途微窗口，视为已收割，信号面整体跳过。
+			default:
+				pc.sess.SignalGroup(s.stopSignal)
+				if s.stopTimeout > 0 {
+					time.AfterFunc(s.stopTimeout, func() {
+						s.hubMu.Lock()
+						defer s.hubMu.Unlock()
+						if pc.reaped {
+							return
+						}
+						if pc.reaped {
+							return
+						}
+						// WR-02 栅栏同构覆盖补 KILL 发信号点（planner 裁定：
+						// Pitfall 2 语义对一切 kill(-pgid) 同构适用）。
+						select {
+						case <-pc.waitDone:
+							return // Wait 已返回——reaped 置位在途，KILL 跳过
+						default:
+						}
+						// 13-05（OPS-12 D-08）ptyKills 递增点之一：SIGKILL 兜底
+						//「实际发送」才计（复检/栅栏通过后、SignalGroup 之前——
+						// 被栅栏拦截的空转回调不计）。
+						s.mc.ptyKills.Add(1)
+						pc.sess.SignalGroup(syscall.SIGKILL)
+					})
+				}
+			}
+		}
+		// 慢半段：阻塞面移出 hubMu。
+		go func() {
+			pc.sess.Drain(200 * time.Millisecond)
+			_ = pc.sess.Close()
+			<-pc.waitDone
+			s.hubMu.Lock()
+			delete(s.pcSessions, pc)
+			// 13-03（PC-09）pcSupervisor 重估唤醒：见函数头注释。
+			s.hubCond.Broadcast()
+			s.hubMu.Unlock()
+			close(pc.teardownDone)
+		}()
+	})
+}
+
+// reapOrphanSession 异步回收 D-03 注册点复检淘汰的孤儿会话（11-03）。唯一收割
+// 者纪律：该会话从未注册 pcSessions、从未装配 goroutine 群（无 sessionWatcher）
+// ——本 goroutine 是其 Wait 的唯一调用方（每会话恰好一个 Wait 调用方：正常路径
+// = sessionWatcher，回收路径 = 本 goroutine，两路径互斥不可同时装配）。
+//
+// 序列参照 teardownPCLocked 的信号纪律（SignalGroup → stopTimeout>0 则
+// AfterFunc 补 SIGKILL → Drain(200ms) → Close(master) → Wait 收割），两处
+// 差异锚定：①信号恒 syscall.SIGHUP 字面（D-03——容量回收路径非断开语义，
+// 不走 --stop-signal 通道）；②reaped 闸用局部 atomic.Bool 而非 hubMu 内标志位
+// ——该会话无 watcher 无注册，无第二置位/读取方，局部原子量即达到 Pitfall 2
+// 「信号与 reap 序列化」同构语义，且避免回收 goroutine 与 hubMu 的无谓耦合
+// （11-03 flagged_assumptions 登记形态，与主 teardown 路径 hubMu 内标志位同档）。
+//
+// AfterFunc 回调先查 reaped 才补 KILL——Wait 返回后补 KILL 可能打中复用 pgid
+// （Pitfall 2 kill-after-reap）。窄窗口论证：Wait 返回与 reaped.Store(true)
+// 相邻两指令，窗口内 AfterFunc 恰到期且 pgid 已被内核整轮复用分配，实际不可达
+// （与主 teardown 路径 hubMu 置位同档形态）。
+//
+// 全程异步（单 goroutine）——Drain/Close/Wait 阻塞面绝不占 hubMu（Pitfall 3
+// 行头阻塞红线）；调用点 = 注册点复检放锁之后（upgradePerClient）。
+func (s *Server) reapOrphanSession(pcSess *pty.Session) {
+	go func() {
+		var reaped atomic.Bool
+		pcSess.SignalGroup(syscall.SIGHUP)
+		if s.stopTimeout > 0 {
+			time.AfterFunc(s.stopTimeout, func() {
+				if !reaped.Load() {
+					// 13-05（OPS-12 D-08）ptyKills 递增点之二：孤儿回收路径
+					// 补 KILL 实际发送点（teardown 路径同计——两路径覆盖
+					// 全部 SIGKILL 兜底发送面）。
+					s.mc.ptyKills.Add(1)
+					pcSess.SignalGroup(syscall.SIGKILL)
+				}
+			})
+		}
+		pcSess.Drain(200 * time.Millisecond)
+		_ = pcSess.Close()
+		_ = pcSess.Wait()
+		reaped.Store(true)
+	}()
+}

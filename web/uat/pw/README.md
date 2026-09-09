@@ -53,6 +53,7 @@ node web/uat/pw/phase06-pw.mjs t1
 | `phase06-pw.mjs` | 断网重连/观感全链（经本机 TCP 转发器 kill/restore） | `pnpm -C web/uat/pw uat:06` |
 | `phase07-a2-pw.mjs` + `phase07-a2-ctl.sh` | 真 nginx 反代子路径双机全链（G-07-2 实证锚点） | `node web/uat/pw/phase07-a2-pw.mjs` |
 | `phase09-caddy-pw.mjs` + `phase09-caddy-ctl.sh` | Caddy 反代双机全链（09-08 D-15：Host 默认透传/WS upgrade 内建/无默认 idle 超时实证面；LAN :10014 → loopback :17682） | `node web/uat/pw/phase09-caddy-pw.mjs` |
+| `phase12-pw.mjs` | CR-01 per-client resize 观感（真实 Chromium：放大/缩小往复渲染跟随 fit + cols 轴长行不折 + 断网重连 reset 清残影；P12-T0 先做 gzip/明文两通道产物一致性自检——2026-09-05 实证：预压旁路回送陈旧包会让观感断言在旧 bundle 上全绿） | `node web/uat/pw/phase12-pw.mjs` |
 
 ## 新 phase 复用
 

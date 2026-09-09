@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 // testGuard 是全部用例的统一超时护栏：任何 Wait/drain 挂死必须在 10s 内翻车，
@@ -83,8 +85,9 @@ func TestEnvWhitelist(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-leak-value")
 	t.Setenv("WESH_CREDENTIAL", "test-cred-leak-value")
 
-	// (a) 单元层：白名单构造函数（零值等价形态：Term 空 = xterm-256color、Uid -1 = 不降权）
-	env := whitelistEnv("", -1)
+	// (a) 单元层：白名单构造函数（零值等价形态：Term 空 = xterm-256color、
+	// Uid -1 = 不降权、RemoteUser 空 = 不出键）
+	env := whitelistEnv("", -1, "")
 	for _, kv := range env {
 		if strings.Contains(kv, "AWS_SECRET_ACCESS_KEY") {
 			t.Fatalf("whitelistEnv 泄露宿主注入键: %q", kv)
@@ -119,6 +122,57 @@ func TestEnvWhitelist(t *testing.T) {
 	if !strings.Contains(out, "TERM=xterm-256color") {
 		t.Fatalf("子进程 env 输出缺 TERM=xterm-256color（输出捕获无效？）: %q", out)
 	}
+
+	// 13-06（SEC-09）WESH_REMOTE_USER 白名单扩展三分支：注入可见（非空 →
+	// 精确行出键）/ 空串不出键（零值形态 = shared 路径与未携头场景的结构性
+	// 保证，非分支判断）/ e2e 双形态（/usr/bin/env 子进程真实输出含/不含
+	// 两态 + 阳性对照防空串假绿——上方 (b) 段同款纪律）。
+	t.Run("RemoteUser 注入可见", func(t *testing.T) {
+		env := whitelistEnv("", -1, "alice")
+		if !slices.Contains(env, "WESH_REMOTE_USER=alice") {
+			t.Fatalf("whitelistEnv(remoteUser=alice) 缺 WESH_REMOTE_USER=alice 精确行: %v", env)
+		}
+	})
+	t.Run("RemoteUser 空串不出键", func(t *testing.T) {
+		for _, kv := range whitelistEnv("", -1, "") {
+			if strings.HasPrefix(kv, "WESH_REMOTE_USER=") {
+				t.Fatalf("whitelistEnv(remoteUser 空串) 不应出 WESH_REMOTE_USER 键（空串不出键——shared 零漂移结构性保证）: %q", kv)
+			}
+		}
+	})
+	t.Run("e2e 双形态", func(t *testing.T) {
+		// 注入形态：StartOptions.RemoteUser 经 StartWithSize → cmd.Env 真实
+		// 到达子进程（/usr/bin/env 输出含精确行）。
+		sess, err := Start([]string{"/usr/bin/env"}, StartOptions{Uid: -1, Gid: -1, RemoteUser: "bob"})
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		out, werr := awaitSession(t, sess, startCollect(sess))
+		if werr != nil {
+			t.Fatalf("env 退出异常: %v", werr)
+		}
+		if !strings.Contains(out, "WESH_REMOTE_USER=bob") {
+			t.Fatalf("子进程 env 输出缺 WESH_REMOTE_USER=bob: %q", out)
+		}
+		if !strings.Contains(out, "TERM=xterm-256color") {
+			t.Fatalf("注入形态阳性对照缺 TERM=xterm-256color（输出捕获无效？）: %q", out)
+		}
+		// 空串形态：RemoteUser 零值 "" → 键整行缺席（子进程真实 env 无键）。
+		sess2, err := Start([]string{"/usr/bin/env"}, StartOptions{Uid: -1, Gid: -1})
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		out2, werr2 := awaitSession(t, sess2, startCollect(sess2))
+		if werr2 != nil {
+			t.Fatalf("env 退出异常: %v", werr2)
+		}
+		if strings.Contains(out2, "WESH_REMOTE_USER") {
+			t.Fatalf("空串形态子进程 env 输出不应含 WESH_REMOTE_USER: %q", out2)
+		}
+		if !strings.Contains(out2, "TERM=xterm-256color") {
+			t.Fatalf("空串形态阳性对照缺 TERM=xterm-256color（输出捕获无效？）: %q", out2)
+		}
+	})
 }
 
 // TestEnvWhitelistEmptyPathFallback（SEC-06 边界）：PATH 存在但为空串时须回退默认
@@ -127,7 +181,7 @@ func TestEnvWhitelist(t *testing.T) {
 func TestEnvWhitelistEmptyPathFallback(t *testing.T) {
 	t.Setenv("PATH", "")
 	var paths []string
-	for _, kv := range whitelistEnv("", -1) {
+	for _, kv := range whitelistEnv("", -1, "") {
 		if strings.HasPrefix(kv, "PATH=") {
 			paths = append(paths, kv)
 		}
@@ -190,7 +244,7 @@ func TestStartOptionsDir(t *testing.T) {
 // 子进程真实 $TERM。
 func TestStartOptionsTerm(t *testing.T) {
 	// 单元层：TERM= 行参数化 + 空串回落默认
-	env := whitelistEnv("vt100", -1)
+	env := whitelistEnv("vt100", -1, "")
 	if !slices.Contains(env, "TERM=vt100") {
 		t.Fatalf("whitelistEnv(vt100) 缺 TERM=vt100: %v", env)
 	}
@@ -199,8 +253,8 @@ func TestStartOptionsTerm(t *testing.T) {
 			t.Fatalf("whitelistEnv(vt100) 出现重复/异常 TERM 行: %q in %v", kv, env)
 		}
 	}
-	if !slices.Contains(whitelistEnv("", -1), "TERM=xterm-256color") {
-		t.Fatalf("whitelistEnv(空串) 未回落默认 TERM=xterm-256color: %v", whitelistEnv("", -1))
+	if !slices.Contains(whitelistEnv("", -1, ""), "TERM=xterm-256color") {
+		t.Fatalf("whitelistEnv(空串) 未回落默认 TERM=xterm-256color: %v", whitelistEnv("", -1, ""))
 	}
 	// e2e 层：子进程真实 $TERM
 	sess, err := Start([]string{"/bin/sh", "-c", `printf %s "$TERM"; sleep 0.2`}, StartOptions{Term: "vt100", Uid: -1, Gid: -1})
@@ -229,8 +283,8 @@ func TestStartZeroValueParity(t *testing.T) {
 	if sess.Cmd.Dir != "" {
 		t.Fatalf("零值 opts cmd.Dir = %q, want 空串（继承服务端 cwd 的零值语义）", sess.Cmd.Dir)
 	}
-	if !slices.Equal(sess.Cmd.Env, whitelistEnv("", -1)) {
-		t.Fatalf("零值 opts cmd.Env 与 whitelistEnv(空, -1) 不等价:\n got %v\nwant %v", sess.Cmd.Env, whitelistEnv("", -1))
+	if !slices.Equal(sess.Cmd.Env, whitelistEnv("", -1, "")) {
+		t.Fatalf("零值 opts cmd.Env 与 whitelistEnv(空, -1) 不等价:\n got %v\nwant %v", sess.Cmd.Env, whitelistEnv("", -1, ""))
 	}
 	if sess.Cmd.SysProcAttr != nil && sess.Cmd.SysProcAttr.Credential != nil {
 		t.Fatalf("Uid -1 时 SysProcAttr.Credential = %+v, want nil（不降权现状）", sess.Cmd.SysProcAttr.Credential)
@@ -289,7 +343,7 @@ func TestDropPrivilegesIdentityEnv(t *testing.T) {
 	t.Setenv("HOME", "/wesh-should-not-inherit")
 	t.Setenv("USER", "wesh-not-inherited")
 	t.Setenv("LOGNAME", "wesh-not-inherited")
-	env := whitelistEnv("", uid)
+	env := whitelistEnv("", uid, "")
 	for _, want := range []string{"HOME=" + u.HomeDir, "USER=" + u.Username, "LOGNAME=" + u.Username} {
 		if !slices.Contains(env, want) {
 			t.Errorf("whitelistEnv(uid=self) 缺身份改写行 %q: %v", want, env)
@@ -325,7 +379,7 @@ func TestWhitelistEnvDropUnknownUid(t *testing.T) {
 	t.Setenv("HOME", "/wesh-host-home")
 	t.Setenv("USER", "wesh-host-user")
 	t.Setenv("LOGNAME", "wesh-host-logname")
-	env := whitelistEnv("", 4999999999)
+	env := whitelistEnv("", 4999999999, "")
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "USER=") || strings.HasPrefix(kv, "LOGNAME=") {
 			t.Errorf("LookupId 失败路径白名单含身份键（应剔除）: %q", kv)
@@ -339,8 +393,65 @@ func TestWhitelistEnvDropUnknownUid(t *testing.T) {
 		t.Errorf("剔除路径 COLORTERM 行丢失: %v", env)
 	}
 	// uid<0 现状路径不受影响——三键按名继承照旧。
-	envNoDrop := whitelistEnv("", -1)
+	envNoDrop := whitelistEnv("", -1, "")
 	if !slices.Contains(envNoDrop, "HOME=/wesh-host-home") {
 		t.Errorf("不降权路径 HOME 按名继承丢失: %v", envNoDrop)
 	}
+}
+
+// TestStartWithSizeDelegation（10-02 PC-01 接缝行为锁，TestStartZeroValueParity
+// 同文件同夹具）：
+//   - 委托等价面：Start(argv, opts) ≡ StartWithSize(argv, opts, SpawnCols,
+//     SpawnRows)——cmd.Env 经 slices.Equal 逐项相等、cmd.Dir 相等、SysProcAttr
+//     同 nil（Uid -1 不降权）；80×24 单一事实源纪律（SpawnCols/SpawnRows
+//     常量同源，G-05-1）。两会话各自 awaitSession 正常退出。
+//   - 尺寸功能面：StartWithSize 自定义 132x43 真实到达 TIOCSWINSZ
+//     （creack/pty GetsizeFull 读回——80×24 之外的第二数据点，防「尺寸参数
+//     被忽略回落默认」的静默失效）。
+func TestStartWithSizeDelegation(t *testing.T) {
+	t.Run("delegation parity", func(t *testing.T) {
+		argv := []string{"/usr/bin/env"}
+		opts := StartOptions{Uid: -1, Gid: -1}
+		sessA, err := Start(argv, opts)
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		sessB, err := StartWithSize(argv, opts, SpawnCols, SpawnRows)
+		if err != nil {
+			t.Fatalf("StartWithSize: %v", err)
+		}
+		if !slices.Equal(sessA.Cmd.Env, sessB.Cmd.Env) {
+			t.Fatalf("cmd.Env 不等价:\n Start         = %v\n StartWithSize = %v", sessA.Cmd.Env, sessB.Cmd.Env)
+		}
+		if sessA.Cmd.Dir != sessB.Cmd.Dir {
+			t.Fatalf("cmd.Dir = %q vs %q, want 相等", sessA.Cmd.Dir, sessB.Cmd.Dir)
+		}
+		if (sessA.Cmd.SysProcAttr == nil) != (sessB.Cmd.SysProcAttr == nil) {
+			t.Fatalf("SysProcAttr nil 性分叉: %v vs %v（Uid -1 不降权）", sessA.Cmd.SysProcAttr, sessB.Cmd.SysProcAttr)
+		}
+		if _, werr := awaitSession(t, sessA, startCollect(sessA)); werr != nil {
+			t.Fatalf("Start 会话 env 退出异常: %v", werr)
+		}
+		if _, werr := awaitSession(t, sessB, startCollect(sessB)); werr != nil {
+			t.Fatalf("StartWithSize 会话 env 退出异常: %v", werr)
+		}
+	})
+	t.Run("custom size reaches TIOCSWINSZ", func(t *testing.T) {
+		sess, err := StartWithSize([]string{"/usr/bin/env"}, StartOptions{Uid: -1, Gid: -1}, 132, 43)
+		if err != nil {
+			t.Fatalf("StartWithSize: %v", err)
+		}
+		// 尺寸读回在 startCollect/awaitSession 之前——GetsizeFull 裸取 Fd() 不过
+		// fdMu（Setsize 同款），与 ReadLoop/Close 并发是 fd 竞态面（02-02 先例）。
+		ws, gerr := pty.GetsizeFull(sess.Master)
+		if gerr != nil {
+			t.Fatalf("GetsizeFull: %v", gerr)
+		}
+		if ws.Cols != 132 || ws.Rows != 43 {
+			t.Fatalf("TIOCSWINSZ 读回 = %dx%d, want 132x43（尺寸参数真实到达）", ws.Cols, ws.Rows)
+		}
+		if _, werr := awaitSession(t, sess, startCollect(sess)); werr != nil {
+			t.Fatalf("env 退出异常: %v", werr)
+		}
+	})
 }

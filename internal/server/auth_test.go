@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+// 【14-05 形态判定】本文件两测（TestParseCredential/TestCredentialMatch）为纯
+// 函数白盒测——ParseCredential/matchCredential 无 server 装配面，mode-agnostic
+// 无装配可参数化，保持单跑（蓝本 PITFALLS :383 auth* 行的认证传输面双跑由
+// auth_e2e_test.go 九测承载）。
+
 // TestParseCredential 锁定凭据解析形态（SEC-01）：首个 ':' 切分（密码可含
 // ':'，user 不可含——RFC 7617 user-id 约束）；无冒号/空 user 报错；
 // 空 pass 合法（"user:" → passHash 为空串摘要，不额外禁止，文档化决策）。

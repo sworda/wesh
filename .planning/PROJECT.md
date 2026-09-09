@@ -4,11 +4,38 @@
 
 ## What This Is
 
-wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <command> [args...]` 启动后在指定端口提供 HTTPS/WebSocket 服务，浏览器打开页面即获得一个运行 `<command>` 的完整终端。它是对 ttyd 1.7.7 的现代化重写，面向个人运维场景，在保持 ttyd"单静态二进制、scp 上去就能跑"核心优势的同时，原生解决 ttyd 的无多路复用、安全缺陷、资源控制缺失等已核实问题（会话保持由 tmux/herdr 覆盖，v1 不做）。
+wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <command> [args...]` 启动后在指定端口提供 HTTPS/WebSocket 服务，浏览器打开页面即获得一个运行 `<command>` 的完整终端。它是对 ttyd 1.7.7 的现代化重写，面向个人运维场景，在保持 ttyd"单静态二进制、scp 上去就能跑"核心优势的同时，原生解决 ttyd 的无多路复用、安全缺陷、资源控制缺失等已核实问题（会话保持由 tmux/herdr 覆盖，v1 不做）。v1.1 起支持双会话模式：默认 shared（多客户端共享同一 PTY 进程——真·多人同屏，差异化本体），可选 per-client（ttyd 式每连接独立 spawn，配合 herdr/tmux 等自带多客户端仲裁的应用）。
 
 ## Core Value
 
 **浏览器里获得一个可靠、安全、可多人共享的远程终端。** 其他一切（文件传输、会话保持、Sixel）都可以后续迭代，但"打开页面就有可用的安全终端、能方便地分享给别人看/操作"必须成立。
+
+## Current State
+
+**Shipped: v1.1 per-client 会话模式（2026-09-08）** — 5 phases / 38 plans / 69 tasks，15/15 需求闭合，7 天交付（232 commits）。
+
+- 双会话模式：默认 shared 逐字节零回归；`--session-mode=per-client` 提供 ttyd 式每连接独立 spawn（attach spawn / 断开 SIGHUP 杀进程组 / EXIT 帧私有化 / 重连全新进程 / resize 直通 / ro 自有进程输入门控 / 停读续读背压 / dwell 1013 踢出）
+- 资源防线与终结语义：「并发子进程数 ≤ max-clients」硬不变量、spawn 双令牌桶、KILL 兜底、Shutdown N 进程组、第二终结源、退出码对齐、WESH_REMOTE_USER 注入、metrics/审计 per-client 粒度
+- 验证体系：server 包三维归类（216 mode= 子测 -race 双模式）、run-all.mjs 17 项 UAT 矩阵、herdr 全链（协议层 18/18 + Windows Playwright 观感 4/4）、负载矩阵实测标定（maxClients=32 实证不动）
+
+<details>
+<summary>v1.1 规划期目标（存档）</summary>
+
+**Goal:** wesh 支持 ttyd 式 per-connection spawn——每个 WebSocket 客户端独立 PTY 子进程，使 herdr 等自带多客户端仲裁（is_foreground + per-client area 渲染）的应用在 wesh 下恢复正确行为；shared 共享模式保持默认、零回归。
+
+**Target features:**
+- `--session-mode=shared|per-client` flag + TOML 配置键（默认 shared）
+- per-client 生命周期：attach spawn / 断开 SIGHUP 杀进程 / EXIT 帧私有化 / 重连=全新进程（ttyd 语义）
+- per-client resize 直通（无仲裁）+ ro 输入门控 + 限速保留；resize 仲裁/owner 递补/fan-out/信用门在 per-client 分支不装配
+- `--once` / `--exit-when-empty` / maxClients 语义适配与并发进程资源标定
+- 审计日志 / metrics per-client 粒度
+- herdr 场景端到端 UAT 验证
+
+</details>
+
+## Next Milestone Goals
+
+（待 `/gsd-new-milestone` 定义。v2 候选方向见归档 [milestones/v1.1-REQUIREMENTS.md](milestones/v1.1-REQUIREMENTS.md) 的 v2 节：trzsz/ZMODEM/Sixel 文件传输与渲染增强、会话保持/录制、ACME 自动证书、命令模板、Windows ConPTY）
 
 ## Requirements
 
@@ -50,10 +77,15 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - ✓ 自定义首页 HTML（--index 整页替换零注入零模板 + TOML index/index-max-size 双键 + 启动四拒绝错误行零内容字节 + gzip/Vary 双通道 byte-identity + 认证面不变）— Phase 9（OPS-03；TestCustomIndex -race + phase09.mjs 18/18 含 SEC 红线自净）
 - ✓ 单静态二进制四平台发布（goreleaser linux/darwin × amd64/arm64 全静态 CGO_ENABLED=0 + 前端单 HTML embed + checksums.txt + release.sh 单命令发布链 + release.yml CI 全链）— Phase 9（OPS-10；v1.0.0 实发布：GitHub Release 五资产核验 sha256 全 OK + linux_amd64 --version 实跑 wesh 1.0.0）
 - ✓ 修复源码核实的全部 ttyd 缺陷（预认证崩溃/内存放大/凭据日志/Origin/TLS/env 泄露/关闭码/健康检查缺失等 Context 节清单项，?arg= 经裁决 v1 砍掉）— 跨 Phase 1-9（44/44 需求里程碑收口，各 phase VERIFICATION/SECURITY 独立复演）
+- ✓ 会话模式阀门装配（--session-mode=shared|per-client flag + TOML session-mode 键 + parse 期枚举校验 + Options.SessionMode/SpawnFunc 接缝 + ValidateOptions 零资源占用位序 + SC4 预检 --cwd 感知对齐；全部 inert，shared 逐字节零回归）— Phase 10（PC-01；10-VERIFICATION 19/19 passed：六形态进程级冒烟 + -race 五包 + 八 UAT 12/18/10/28/23/34/21/18 对齐基线 + append-only 零删除行）
+- ✓ per-client 生命周期主干（attach 独立 spawn + Welcome 首帧钳制尺寸 / spawn 失败类型化 Error+1011 / 断开 SIGHUP 进程组终结 + reaped 栅栏序列化 + KILL 兜底 / EXIT 帧私有化 exit_code/信号 -1 + 1000 / 容量再闸与注册点复检回收 / darwin kqueue dup-watch fail-closed；shared 逐字节零回归三重证据）— Phase 11（PC-02/PC-03/PC-04；11-VERIFICATION 12/12 passed：十四测 -race + phase11.mjs 21/21 + CI 双平台全绿 33844831146 + diff 四件套；G-11-2 gap closure 经 11-07 探针参数化闭合；SECURITY.md 21 威胁全 closed）
+- ✓ per-client 交互与背压语义（Welcome.session 模式位 + 重连 terminal.reset() 清旧屏 / RESIZE 直通零 'W' 帧 / ro 双闸配对 / ro INPUT 门控限速保留 / 停读续读 ttyd pty_pause parity / dwell 10s 看门狗 1013）— Phase 12（PC-05/06/07/10/11；12-VERIFICATION 六段全绿 + phase12.mjs 两轮 20/20 + phase12-dom 14/14；WR-01 按「dwell 涵盖不复刻」闭合）
+- ✓ per-client 资源防线与终结语义（并发子进程硬不变量竞态注入成立 / spawn 双令牌桶全局+per-IP / stop-timeout 双默认值 / Shutdown N 进程组有界 join + D-state 兜底 / pcSupervisor 第二终结源 / 退出码 last-reaped-code 双时序对齐 / churn 负载 RSS-gor-fd 有界 / metrics 四计数器零身份 label / 审计 pid 归因 / WESH_REMOTE_USER 注入）— Phase 13（PC-08/PC-09/SEC-09/OPS-12；13-VERIFICATION + churn 格 + phase13.mjs 29/29）
+- ✓ 双模式验证矩阵、标定与 herdr UAT（三维归类 216 mode= 子测 -race / run-all.mjs 17 项矩阵 / herdr 移动端 attach 不压缩桌面面板——协议层 18/18 + Windows Playwright 4/4 + 截图六帧 / 负载矩阵实测回填 maxClients=32 不动 + README 三档建议值 / 双模式文档三件套 + GoTTY 误记修正）— Phase 14（PC-12/PC-13；14-VERIFICATION 六段全绿 + UAT 34/34）
 
 ### Active
 
-（milestone v1 全部 44/44 需求闭合——见 Validated；后续需求见 v2 规划）
+（v1.0 44/44 + v1.1 15/15 全部闭合——见 Validated；下一里程碑需求待 `/gsd-new-milestone` 定义）
 
 ### Out of Scope
 
@@ -66,8 +98,15 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 - **多租户 / 嵌入产品的 API 平台化** — 定位为个人运维工具，不做 SaaS 化
 - **ttyd CLI 参数兼容** — 用户明确选择全新设计，不背兼容包袱
 - **ttyd 式 ?arg= URL 传参** — 已核实注入面，v1 砍掉（Key Decisions）；v2 以命令模板安全替代。Phase 4 的 query 覆盖仅限 --client-option 白名单键，非命令注入面
+- **per-client 重连 reattach（sessionKey + 服务端输出缓冲）** — v1.1 反特性：等于把会话保持偷渡进 per-client；持久性由子进程侧 herdr/tmux 承接（per-client 模式的存在意义）
+- **per-client 断开后 linger 宽限再杀进程** — v1.1 反特性：半吊子会话保持，宽限窗内进程占资源且收割竞态面增大；ttyd/wetty 均立即杀
+- **运行期/按 URL 切换会话模式** — v1.1 反特性：?arg= 注入面前车之鉴；运行期切模式使生命周期不变量双份化；替代=起两个实例不同端口
+- **per-client 设为默认模式** — v1.1 反特性：违背 v1.0 零回归承诺；shared（真·多人同屏）是差异化本体，per-client 显式 opt-in
+- **ro 访客共享单个进程省资源** — v1.1 反特性：直接重新引入 driving bug（移动端 attach 缩小所有人面板）；进程开销由 max-clients 上限管控
 
 ## Context
+
+**当前状态（v1.1 交付后）**：Go 27,844 LOC + 前端单 HTML（xterm.js 6）；双会话模式（shared 默认 / per-client opt-in，装配期一次分岔、运行期零分岔，零新依赖）；Go 全量 -race 五包 ~2m38s（216 mode= 子测双模式）；17 项 UAT 矩阵（run-all.mjs 一键）；v1.0.0 已发布上架（四平台），v1.1 发布待 tag。
 
 **功能基线**：完整功能清单见 `~/open_src/ttyd/.codebuddy/ttyd-analysis/01-功能清单.md`。ttyd 后端 C 约 2100 行 + 前端 TS 约 940 行，架构为 libwebsockets + libuv + forkpty，前端 xterm.js。
 
@@ -137,6 +176,11 @@ wesh 是一个"通过 Web 分享终端"的命令行工具：`wesh [options] <com
 | opener 子进程 goroutine Wait + 非零退出 stderr 警告行 | fire-and-forget 使桌面异常不可观测且每次 --open 驻留一个僵尸；Wait err 仅 exit status N 结构性保证警告行不含 URL（token 红线） | ✓ Phase 7 G-07-8 闭合（选项 A）：main.go:1282 + b6 7/7 |
 | v1.0.0 发布链形态：release.sh 单命令全链（四闸→race 全量→build→fuzz 2×10min→负载矩阵→确认闸→tag push）+ goreleaser/release.yml CI 侧接管 | 发布前操作整合单一脚本一次跑完，崩溃即中止（语料自动落 testdata 进回归）；CI 侧 pnpm build 先于 goreleaser 防 dist 陈旧 | ✓ Phase 9 首证（2026-08-30）：第一轮中止于 fuzz 断言误报（见下条）修复后第二轮全链绿，v1.0.0 上架 |
 | FuzzDecodeFileConfig 值红线断言的键名回显豁免口径 | fuzzer 可把探针搬进键名位置（表头 ["FUZZ_PROBE_SECRET"] 语料实证），全文字面断言误判合法键名回显；stripKeyNameEcho 剥除 configErr 单写口仅有的两处键名上下文后再断，值透传形态仍 FAIL（fail-closed）+ 六形态行为锁 | ✓ 发布长跑实证修复（7850bc4，2026-08-30）：产品代码零改动（值剥离经「只取 Key()」实现本就正确） |
+| per-client `--stop-timeout` 双默认值：未显式设置默认 5s（shared 字面 0 逐字不动） | Phase 11 post-merge 实证 bash 4.4 交互模式可无声吸收 SIGHUP（泄漏窗真实存在）——per-client 产品语义相反（断开=进程该死），默认 0 = HUP 免疫泄漏防线默认关闭；5s = 正常程序收 HUP 后清理窗口充分 + 泄漏存活上界有界。one-way 公开契约变更（13-01 D-01 用户派发确认 option-a；显式 0 经 stopTimeoutSet 显式位尊重 + 启动 warn） | ✓ Phase 13-01 落地（27909f8）：三态断言组 + TOML 双源置位 + 双文档行；13-07 S2 零配置实测断开至收割 ≈5.0s |
+| per-client 第二终结源 pcSupervisor/pcExitReq（「注册表空且无子进程可等」形态退出） | --once/--exit-when-empty 在「注册表已空迁移」形态下无计数归零事件可触发——单例 supervisor goroutine 等 `(pcExitReq\|\|exiting) && len(pcSessions)==0` 经 termOnce/terminate 单点收口（「exitf 恰好一次」不变量保持）；退出码 last-reaped-code 规则与 shared 逐位对齐（子先死透传 / 客户端先断 -1→255），Shutdown 侧 join 到期 D-state 兜底 terminate 三源交汇恰好一次 | ✓ Phase 13-03/13-04 落地（2c5fd6e/fe3ca4a）：两时序分叉 + Shutdown 四形态测试组 + phase13.mjs S3 三形态进程级 255 + S4 双组 ESRCH/session_end==2 |
+| 三维归类执行机械 = newTestServer(t, mode) 小族单一装配点 + t.Run 双跑（D-01/D-02/D-03，PITFALLS :264 推荐形态逐字落地） | 收编 startTrackedServerWith/startPerClientServer 两装配族为四形态小族（new/newTracked/newHandle/newSess）；mode-agnostic 同断言双跑 / mode-mapped 断言分叉表（shared 列期望值逐字未动=零回归证据本体）/ mode-exclusive 显式断言未装配（否决 t.Skip——腐化无信号）；CI 结构零新 leg（单 step `go test -race -count=1 -v ./...` 经 t.Run 天然双模式覆盖，ci.yml 零 diff） | ✓ Phase 14-01..06 落地：server 包 34 文件三维归类收口（18 文件 81 测双跑 + per-client-only 36 + load 8 + 纯白盒 10 文件 + events/log 单跑 + export/harness 零测桶），蓝本 :378-399 十七行全命中或 D-02 第 1-6 则偏差登记，216 mode= 子测试 -race 全绿（14-12 收口闸复跑一致） |
+| maxClients=32 默认值经负载矩阵实测成立不动（D-11 两段式结论——零公开契约变更，one-way 门不触发） | 32 会话驻留实测（14-07 LOADDATA）：wesh 侧 Alloc 增量 1.97MB ≈ 24MiB 账面 9%、子进程 VmRSS 合计 137.7MB < 160MB 账面、fd 差值精确 4N、gor 5N+1——全部在可接受界线内；洪水格 kicks=0/吞吐 34.9MB/会话完整收流 | ✓ Phase 14-07 判定证真 + 14-11 文档承载：README 建议值表三档分档（默认 32「实测可承载，保持不变」明示 / 低配 VPS·内存受限 8 / 个人多端 4，依据列锚定 LOADDATA 实测值：每会话 bash ~3.7MiB + wesh 侧 ~61KiB） |
+| herdr 观测通道钉定 = api snapshot 翻转链 + 版本钉定 0.8.100（D-06/D-09，spike 标定产物） | herdr 行为层断言走 `herdr api snapshot` 结构化通道（layouts[0].area 四步翻转链：移动 attach 翻紧凑 → 桌面注入翻全量 → 移动 resize 翻新几何）+ `herdr pane read --source visible`（ro 门控观测）+ 独立命名会话 HERDR_SOCKET_PATH 定向（零污染用户 default）+ 启动打 herdr --version（版本漂移先核版本纪律）；否决终端输出嗅探（herdr 渲染格式随版本漂移即碎） | ✓ Phase 14-08/09 落地：phase14.mjs S1/S2 两轮 18/18（Linux 协议层）+ phase14-pw.mjs Windows 两轮 4/4（结构行幸存前缀判别面——herdr 类 TUI 布局稳定性断言形态）+ 截图六帧人工复核；PW-14 载具级海森bug 经裸 WS 驱动端架构绕道（服务端无罪反证链） |
 
 ## Evolution
 
@@ -156,4 +200,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-31 after Phase 9（发布与打磨闭合：v1.0.0 实发布上架 GitHub Release（四平台产物 + checksums 核验全 OK + linux_amd64 --version 实跑）+ 自定义首页 --index 全链 + 负载标定回填 + 五部署配方；UAT 2/2 pass（含发布链 fuzz 断言误报修复插曲 7850bc4）+ VERIFICATION 3/3 SC + SECURITY 35/35 closed + TestResize CI flake 观察登记；milestone v1 44/44 全量收口）*
+*Last updated: 2026-09-08 after v1.1 milestone — v1.1 per-client 会话模式交付收口（5 phases / 38 plans / 15/15 需求，2026-09-02→09-08 七天 232 commits）；v1.0 于 2026-08-31 全量收口（44/44，v1.0.0 已发布上架）*

@@ -118,6 +118,12 @@ type Server struct {
 	inputRate      int
 	inputBurst     int
 	resizeDebounce time.Duration
+	// slowDwell 为 per-client 停读态 dwell 踢出阈值（12-03，PC-10/PC-11，
+	// D-02/D-03）：Options.SlowDwell 经 New 零值兜底（defaultSlowDwell 10s）
+	// 后装配，运行期只读。消费点 = perclient.go ReadLoop 输出闭包停读点
+	// 武装（armSlowDwellLocked）——停读连续无恢复超本值即 1013。shared 模式
+	// 恒不消费（shared 侧 dwell 已废弃，见 defaultSlowDwell 注释反面教材段）。
+	slowDwell time.Duration
 
 	// halfOpen 为 D-04 per-IP 半开（Hello 未完成）连接计数器；
 	// acquire/release 恰好一次不变量见 halfOpenCounter 类型注释。
@@ -170,6 +176,43 @@ type Server struct {
 	// 伺服字节与读入字节 byte-identity（wesh 零注入零模板零校验，D-05）。
 	customIndex []byte
 
+	// Phase 10 会话模式装配（10-01，PC-01）：sessionMode 为 New 装配期固化、
+	// 运行期只读的会话模式（shared|per-client，零值已在 New 兜底
+	// SessionModeShared）；spawnFunc 为 per-client attach 期 PTY spawn 闭包
+	//（10-01 装配挂点，11-01 起由 upgradePerClient 消费——attach 升档 spawn；
+	// 13-06 起第三参 remoteUser = Attach 提取的 sanitize 后反代用户名
+	//（SEC-09 WESH_REMOTE_USER 注入链——生产闭包经 StartOptions.RemoteUser
+	// 落子进程 env）；shared 模式恒 nil，SessionMode×SpawnFunc 互斥契约由
+	// ValidateOptions 承载）。
+	sessionMode string
+	spawnFunc   func(cols, rows int, remoteUser string) (*pty.Session, error)
+
+	// 11-01（PC-02）：pcSessions 为 per-client 会话活性注册表（hubMu 保护）——
+	// ≠ registry：registry 记 WS 连接活性（detach/kick 移除），pcSessions 记
+	// 会话活性（客户端断开后会话仍可存活至收割，移除单点 = teardownPCLocked
+	// 慢半段）。shared 模式恒 nil（New 尾部分岔仅 per-client 初始化）。
+	pcSessions map[*pcSession]struct{}
+
+	// 13-03（PC-09）第二终结源三字段（全部 hubMu 保护——置位/读取全在
+	// hubMu 内，pinger pongTimedOut「置位取 hubMu 写、detach 同锁读」先例
+	// 同形态）：pcExitReq 为 exit-when-empty/--once 空迁移终结请求位
+	//（maybeExitWhenEmptyLocked per-client 两触发点置位，Pitfall 1 窗口期
+	// 闭合——「注册表已空且无子进程可等」形态下服务端仍能退出的资源驻留
+	// 防线）；pcLastExitCode/pcHasExitCode 为 last-reaped-code 退出码记录
+	//（sessionWatcher hubMu 置位区段写入，pcSupervisor 出循环时消费——
+	// pcHasExitCode=false 缺省 0）。happens-before：三字段零值起步，
+	// pcSupervisor goroutine 启动（New）+ hubMu 读写建立同步边；一切置位方
+	//（detach/kick 移除点及其宽限回调、sessionWatcher）均在 hubMu 持有内写。
+	pcExitReq      bool
+	pcLastExitCode int
+	pcHasExitCode  bool
+
+	// 13-02（PC-08）：spawnThrottle 为 spawn 双令牌桶存储（全局桶 + per-IP
+	// map，spawnthrottle.go）——churn/惊群 fork 预算防线（D-03/D-04/D-05）。
+	// New 尾部仅 per-client 分支装配（shared 零 spawn 热路径，装配期一次
+	// 分岔纪律）；消费点 = upgradePerClient pre-spawn 桶判定（perclient.go）。
+	spawnThrottle *spawnThrottleStore
+
 	// Phase 7 反代信任装配（07-03，SEC-07 D-15..D-20）：proxy 为 New 装配期
 	// 固化、运行期只读的信任配置（AuthHeader 非空 = 信任闸开——XFF 换键与
 	// remote_user 提取共用同一开关，D-20 零双轨；零值 = 不信任，行为与现状
@@ -195,7 +238,7 @@ type Server struct {
 	version string
 	mc      metricsCounters
 
-	termOnce sync.Once // 终结路径收口，exitf 只触发一次（唯一触发源 = lifecycle 子进程退出，D-10）
+	termOnce sync.Once // 终结路径收口，exitf 只触发一次（触发源 = lifecycle 子进程退出（shared）/ pcSupervisor 第二终结源（per-client，13-03）——termOnce 使两源交汇后仍恰好一次，D-10）
 }
 
 // Options 为 New 的装配选项。
@@ -284,6 +327,42 @@ type Options struct {
 	// byte-identity，wesh 零注入零模板零校验 D-05）。伺服装配（gzip 预压装饰）
 	// 见 Handler()。
 	CustomIndex []byte
+	// SessionMode 为生产直传字段（10-01 PC-01，main --session-mode flag 经
+	// parse 期枚举校验后原样透传——取值常量 SessionModeShared/
+	// SessionModePerClient 见 clients.go，WritePolicy 注释分档先例）：零值
+	// = shared，New 显式兜底 SessionModeShared（零值等价纪律：v1.0 逐字节
+	// 不变的结构性保证）。
+	SessionMode string
+	// SpawnFunc 为生产直传字段（10-01 PC-01 装配挂点，11-01 起生效）：
+	// per-client 模式 attach 期 PTY spawn 闭包（run() 分岔处捕获
+	// argv+StartOptions，函数体为 pty.StartWithSize 直通；cols/rows 为
+	// attach 期 Hello 钳制尺寸；remoteUser 为 Attach 提取的 sanitize 后
+	// 反代用户名——13-06 SEC-09 WESH_REMOTE_USER 注入链第三参，闭包内经
+	// startOpts 局部复制赋 StartOptions.RemoteUser，共享 startOpts 直改即
+	// 多客户端环境串台）。消费点 = perclient.go upgradePerClient
+	//（11-01——Phase 10 的 inert 零调用方形态随 attach spawn 落地结束；
+	// T-10-01c 注记保留：SpawnFunc 只许在该升档分岔内被调用，预认证
+	// spawn 面结构性不存在）。SessionMode×SpawnFunc 互斥契约由
+	// ValidateOptions fail-fast 承载（New 之前调用）。
+	SpawnFunc func(cols, rows int, remoteUser string) (*pty.Session, error)
+	// SlowDwell 为测试可覆写字段（12-03，PC-10/PC-11，D-02/D-03）：per-client
+	// 停读态（ReadLoop 输出闭包阻塞持帧）连续无恢复的 dwell 踢出阈值。零值
+	// 取 defaultSlowDwell（clients.go 常量区，10s——OutboxBytes 同档零值兜底
+	// 先例）。刻意不设 CLI flag/TOML 键（D-03）：零调优需求，公开契约面不
+	// 膨胀；量级依据与 shared 侧废弃 dwell 的区别论证见 defaultSlowDwell
+	// 注释。消费点 = perclient.go 停读点武装（armSlowDwellLocked）。
+	SlowDwell time.Duration
+	// SpawnGlobalRate/SpawnGlobalBurst/SpawnPerIPRate/SpawnPerIPBurst 为测试
+	// 可覆写字段（13-02，PC-08，D-03）：spawn 双令牌桶参数——全局桶
+	//（8/s burst 16）防断网惊群 + per-IP 桶（1/s burst 4）防单点 churn。
+	// 零值各取 default 常量（spawnthrottle.go 常量区，InputRate/InputBurst
+	// 同档零值兜底先例）。刻意不设 CLI flag/TOML 键（D-03，SlowDwell 同构）：
+	// 零调优需求，公开契约面不膨胀。消费点 = perclient.go upgradePerClient
+	// pre-spawn 桶判定；shared 模式零装配零消费（装配期一次分岔）。
+	SpawnGlobalRate  int
+	SpawnGlobalBurst int
+	SpawnPerIPRate   int
+	SpawnPerIPBurst  int
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -298,7 +377,36 @@ const defaultMaxHalfOpenPerIP = 8
 // （Pitfall 2），健康的长空闲会话永不因保活被误杀。
 const defaultPongTimeout = 10 * time.Second
 
-// New 装配服务端并钉死三个 goroutine 的启动点：
+// ValidateOptions 校验 Options 的装配契约（10-01 PC-01——PATTERNS「No Analog
+// Found」option (b) 定案：New 现无 error 返回、包内零 panic 先例，包级校验
+// 函数由 main 在 New 前调用，与 validateStartup「拒绝路径零资源占用」纪律
+// 同构）。互斥规则（ROADMAP「含」锁定两条；sess 维度契约 11-01 起由 New 入口
+// 程序错误 panic 承载——planner 裁定：ValidateOptions 签名不扩展防双写，保
+// D-05「options_test.go 一字节不动」与 WR-02 前移纪律）：
+//   - SessionMode=per-client × SpawnFunc=nil → 拒绝（无 spawn 闭包的
+//     per-client 装配是程序错误，fail-fast 不得带病运行）；
+//   - SessionMode=shared × SpawnFunc≠nil → 拒绝（shared 模式不装配 spawn
+//     挂点——SpawnFunc 被调用即未审计 spawn 路径提前暴露，T-10-01c）。
+//
+// 零值归一：SessionMode 空串按 SessionModeShared 处理（与 New 零值兜底同
+// 口径——零值等价纪律）。文案只含公开枚举常量名，无敏感面。
+func ValidateOptions(opts Options) error {
+	mode := opts.SessionMode
+	if mode == "" {
+		mode = SessionModeShared
+	}
+	if mode == SessionModePerClient && opts.SpawnFunc == nil {
+		return errors.New("server: session-mode per-client requires SpawnFunc")
+	}
+	if mode == SessionModeShared && opts.SpawnFunc != nil {
+		return errors.New("server: session-mode shared must not set SpawnFunc")
+	}
+	return nil
+}
+
+// New 装配服务端并钉死三个 goroutine 的启动点（shared 分支——11-01 起
+// per-client 分支零全局 goroutine，仅初始化 pcSessions 注册表；五 goroutine
+// 随 attach 每会话装配，perclient.go startSessionGoroutines）：
 //   - sess.ReadLoop：自装配起持续 drain master（D-12），无客户端期间输出经 hub
 //     空扇出自然丢弃，防 64KiB PTY 内核缓冲填满导致子进程写阻塞；attach 路径内
 //     不得再新建读循环。
@@ -335,8 +443,45 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	if opts.ResizeDebounce <= 0 {
 		opts.ResizeDebounce = defaultResizeDebounce
 	}
+	// 12-03（PC-10/PC-11，D-03）：SlowDwell 零值兜底 defaultSlowDwell
+	//（OutboxBytes :382-384 三段式先例——常量声明见 clients.go 常量区）。
+	if opts.SlowDwell <= 0 {
+		opts.SlowDwell = defaultSlowDwell
+	}
+	// 13-02（PC-08，D-03）：spawn 双令牌桶四参数零值兜底（InputRate/
+	// InputBurst 同位先例——常量声明见 spawnthrottle.go）。
+	if opts.SpawnGlobalRate <= 0 {
+		opts.SpawnGlobalRate = defaultSpawnGlobalRate
+	}
+	if opts.SpawnGlobalBurst <= 0 {
+		opts.SpawnGlobalBurst = defaultSpawnGlobalBurst
+	}
+	if opts.SpawnPerIPRate <= 0 {
+		opts.SpawnPerIPRate = defaultSpawnPerIPRate
+	}
+	if opts.SpawnPerIPBurst <= 0 {
+		opts.SpawnPerIPBurst = defaultSpawnPerIPBurst
+	}
 	if opts.WritePolicy == "" {
 		opts.WritePolicy = WritePolicyOwner // D-05 安全默认
+	}
+	// 10-01 PC-01：SessionMode 零值 = shared（WritePolicy 零值兜底同位先例——
+	// 零值等价纪律：v1.0 逐字节不变的结构性保证；REQUIREMENTS 反特性 A5）。
+	if opts.SessionMode == "" {
+		opts.SessionMode = SessionModeShared
+	}
+	// 11-01（PC-02 装配契约，planner 裁定——executor 不得回改）：sess×mode
+	// 契约在 New 入口以程序错误 panic 承载——sess 与 mode 在 New 边界才同时
+	// 具备；刻意不经 ValidateOptions 签名扩展（该校验只读 Options，sess 维度
+	// 输入面变更会迫使 options_test.go 既有五行改动，破坏 D-05「既有测试
+	// 一字节不动」与 10-review WR-02 前移纪律；PATTERNS §8E 的 options_test
+	// 加行建议由本裁定取代）。main 两分支结构性满足契约（per-client 分支
+	// sess 保持 nil），生产不可达——防御面 = 测试与未来调用方。
+	if opts.SessionMode == SessionModePerClient && sess != nil {
+		panic("server: session-mode per-client requires nil sess")
+	}
+	if opts.SessionMode == SessionModeShared && sess == nil {
+		panic("server: session-mode shared requires non-nil sess")
 	}
 	// D-14 set/grace 分离：grace=0 是合法显式值（最后一个客户端断开立即退出），
 	// 禁止 <=0 零值兜底吞掉显式 0（PATTERNS §3 注意项）；负值无语义，防御性钳 0。
@@ -386,6 +531,13 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 		// New 装配直传（09-04，D-05..D-08；nil 零值 = 未配置，无兜底改写——
 		// Handler() 按零值装配与现状逐字节一致）。
 		customIndex: opts.CustomIndex,
+		// New 装配直传（10-01，PC-01；SessionMode 零值已在上方兜底
+		// SessionModeShared，SpawnFunc 本阶段 inert 零调用方）。
+		sessionMode: opts.SessionMode,
+		spawnFunc:   opts.SpawnFunc,
+		// New 装配直传（12-03，PC-10/PC-11；零值已在上方兜底
+		// defaultSlowDwell——sessionMode 同位形态）。
+		slowDwell: opts.SlowDwell,
 		// New 装配直传（07-03，D-18/D-20）：AuthHeader 非空 = 信任闸开（XFF 换键
 		// 与 remote_user 提取共用同一开关，零双轨）；空串 = 零值不信任。
 		proxy: proxyInfo{trust: opts.AuthHeader != "", userHeader: opts.AuthHeader},
@@ -421,6 +573,29 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// 信用门 cond 挂 hubMu（R-07：信用门状态与注册表同锁；构造必须在 goroutine
 	// 启动前——onChunk 的 Wait 与 detach/kick 的 Broadcast 均以它为挂点）。
 	s.hubCond = sync.NewCond(&s.hubMu)
+	// 11-01（PC-02）New 尾部模式分岔（「装配期一次分岔、运行期零分岔」分支点
+	// ①）：per-client 初始化 pcSessions 注册表并钉死 pcSupervisor（13-03，
+	// PC-09——唯一全局 goroutine，研究 §5 拓扑表；Pitfall 1 窗口期闭合：第二
+	// 终结源随本 phase 落地）；不装
+	// initArbiter（arbiter 零值下 reportResize 成员守卫/recalcNow 零值哨兵/
+	// removeMember nil-map delete 全部天然 no-op，resize.go:88-141 实证——
+	// RESIZE 在 per-client 本阶段静默无效为已知中间态，直通归 Phase 12）；
+	// 不 emit session_start、不置 sessionAlive（D-04 窗口期——/healthz
+	// session_active 恒 false 与 wesh_session_active 恒 0 为 11→13 已知
+	// 中间态，语义裁决归 Phase 13 OQ①②）。
+	if s.sessionMode == SessionModePerClient {
+		s.pcSessions = make(map[*pcSession]struct{})
+		// 13-02（PC-08）：spawn 双令牌桶装配（四参数已在上方零值兜底；
+		// spawnthrottle.go 构造内兜底为直构防御面）。shared 分支零装配
+		//（桶字段 nil，upgradePerClient 为唯一消费点——装配期一次分岔）。
+		s.spawnThrottle = newSpawnThrottleStore(opts.SpawnGlobalRate, opts.SpawnGlobalBurst, opts.SpawnPerIPRate, opts.SpawnPerIPBurst)
+		// 13-03（PC-09）：第二终结源单例钉死——hubCond 已在上方装配（构造
+		// 必须在 goroutine 启动前，R-07 同款纪律）；go 启动与字段零值起步
+		// 建立 happens-before（pcSupervisor 首次取 hubMu 前无任何写方）。
+		go s.pcSupervisor()
+		return s
+	}
+	// shared 分支（现状逐字——零回归红线）。
 	// MULTI-04 仲裁器装配（resize.go）：timer 初始化为 stopped 态——首次
 	// reportResize 的 Reset 才武装；必须在 ReadLoop/lifecycle 启动前完成。
 	s.initArbiter()
@@ -433,7 +608,7 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// 数据源；置 false 挂点在 lifecycle sess.Wait 返回区段）。
 	s.sessionAlive.Store(true)
 	go sess.ReadLoop(s.onChunk)
-	go s.inputWriter() // CR-01：input-writer 唯一装配点——master 写路径独占在专属 goroutine
+	go inputWriter(s.sess, s.inputQ, s.inputDone) // CR-01：input-writer 唯一装配点——master 写路径独占在专属 goroutine
 	go s.lifecycle()
 	return s
 }
@@ -920,96 +1095,118 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// P2 D-02 时序纪律），且未认证客户端在预认证窗口内收不到任何 PTY 输出。
 		close(helloDone)
 		release()
-		s.hubMu.Lock()
-		effMode, rwEligible, becomeOwner := s.decideModeLocked(mode)
-		cl = &client{
-			conn:       c,
-			remote:     remote,
-			remoteUser: remoteUser, // 07-03：Attach 入口提取一次，此后只读（clients.go 字段注释）
-			rwEligible: rwEligible,
-			dims:       dims{cols: h.Cols, rows: h.Rows}, // Hello 首尺寸（DecodeHello 已 ClampDim）
-			outbox:     newOutbox(s.outboxBytes),
-			done:       make(chan struct{}),
-			cancel:     cancel,
-			// 每客户端输入限速令牌桶（RES-02，05-05）：rate 32KiB/s + burst 64KiB
-			// 默认（R-01 参数表——击键 ~10B/s、快粘 ~50KB 瞬时由 burst 容纳）；
-			// 超限唯一动作 = 丢弃该帧（R-02，不断开不打逐次日志）。ro 客户端同样
-			// 构造（无害——INPUT 先过 mode 门）；字段注释见 clients.go。
-			limiter: rate.NewLimiter(rate.Limit(s.inputRate), s.inputBurst),
+		// 11-01（PC-02）Attach 升档模式分岔（「装配期一次分岔、运行期零分岔」
+		// 分支点 ②）：per-client 走 upgradePerClient（perclient.go）——spawn
+		// 在 hubMu 之外（Anti-Pattern 1）、ticket 核销之后（SEC-08/Anti-
+		// Pattern 3）、Welcome 组帧之前；该分支不调用 decideModeLocked/
+		// participates/addMember/recalcNow/sessionDimsLocked/SignalForegroundGroup
+		//（下方参与集登记与序列尾部 SignalForegroundGroup 整段为 shared-only
+		// ——子进程以 Hello 钳制尺寸出生即正确，无重绘需求，研究 §1.2）。
+		// 13-02（D-05）：ip 透传 spawn 节流桶键（throttleIP 形参）——:883
+		// 既有 clientIP 提取点复用，trust 开启时 XFF 链首换键与 halfOpen/
+		// checkTicket 同源（键提取单点，不另写一份）。
+		// cl==nil = spawn 失败等拒绝路径已自行写 Error+Close 收口，直接 return。
+		if s.sessionMode == SessionModePerClient {
+			cl = s.upgradePerClient(ctx, c, remote, remoteUser, ip, h, mode, cancel)
+			if cl == nil {
+				return
+			}
+		} else {
+			s.hubMu.Lock()
+			effMode, rwEligible, becomeOwner := s.decideModeLocked(mode)
+			cl = &client{
+				conn:       c,
+				remote:     remote,
+				remoteUser: remoteUser, // 07-03：Attach 入口提取一次，此后只读（clients.go 字段注释）
+				rwEligible: rwEligible,
+				dims:       dims{cols: h.Cols, rows: h.Rows}, // Hello 首尺寸（DecodeHello 已 ClampDim）
+				outbox:     newOutbox(s.outboxBytes),
+				done:       make(chan struct{}),
+				cancel:     cancel,
+				// 每客户端输入限速令牌桶（RES-02，05-05）：rate 32KiB/s + burst 64KiB
+				// 默认（R-01 参数表——击键 ~10B/s、快粘 ~50KB 瞬时由 burst 容纳）；
+				// 超限唯一动作 = 丢弃该帧（R-02，不断开不打逐次日志）。ro 客户端同样
+				// 构造（无害——INPUT 先过 mode 门）；字段注释见 clients.go。
+				limiter: rate.NewLimiter(rate.Limit(s.inputRate), s.inputBurst),
+				// 11-01（PC-02，Pattern 2 间接字段）：读循环零分支——shared 升档赋
+				// 会话级 s.inputQ、per-client 升档赋 pc.inQ（perclient.go
+				// upgradePerClient）；缺此行则 shared INPUT 经 cl.inQ 触发 nil deref。
+				inQ: s.inputQ,
+			}
+			cl.mode.Store(effMode) // 生效模式初始值（atomic 承载：INPUT 门无锁读者，见 clients.go）
+			// D-09 参与集登记（resize.go participates 矩阵逐字）：rw 端（owner 模式
+			// 仅 owner / all 模式全部 rw 端）与无 --writable 纯 ro 会话的全部 ro 端
+			// 以 Hello 首尺寸参与仲裁；含可写端会话的 ro 旁观者不参与（其 RESIZE 经
+			// D-09 第二闸忽略，尺寸永不影响可写端 PTY 尺寸）。attach 即时重算不防抖
+			//（RESEARCH Pattern 4：无风暴风险）；旁观者 attach 不改变参与集，不重算。
+			// G-05-1 重排：参与集登记/重算前移至 Welcome 组帧之前——Welcome 恒携
+			// attach 完成后生效的会话尺寸（重排前组帧在前，会携带过时的 pre-attach
+			// 尺寸）。recalcNow 的运行期推送不触达 attach 者自身（尚未 registerLocked，
+			// 推送循环遍历注册表）——其会话尺寸由下方 Welcome 承载，零重复帧。
+			if s.participates(effMode) {
+				s.addMember(cl, cl.dims)
+				s.recalcNow()
+			}
+			sd := s.sessionDimsLocked() // G-05-1：重算后的会话尺寸（零参与者期间 = spawn 80x24 回落）
+			// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
+			// trySend 恒成功——Welcome ≪ cap），按生效 mode 选 prefs 档（ro 档永不
+			// 含 osc52，D-13/P5-6）并携会话尺寸（G-05-1 恒在键）。握手期 Error 帧
+			//（version_mismatch/auth_failed）发生在注册前，维持直写不变。入队先于
+			// 登记且全程持 hubMu——hub 扇出遍历注册表，若先登记 onChunk 可在 Welcome
+			// 前夹入 OUTPUT（首帧时序竞态）。
+			prefs := s.clientPrefsRO
+			if effMode == proto.ModeRW {
+				prefs = s.clientPrefsRW
+			}
+			cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, sd.cols, sd.rows, s.sessionMode))
+			s.registry.registerLocked(cl)
+			if becomeOwner {
+				s.registry.owner = cl // D-06：首个 rw attach 立 owner
+			}
+			// 宽限取消点（06-02，D-14）：attach 登记成功即取消断开退出宽限计时——
+			// 宽限内任一端 attach 成功则退出取消、会话继续；恰好一次（Stop + 置 nil
+			// 防重复，实现见 clients.go cancelExitEmptyTimerLocked）。plan 字面
+			//「registerLocked 尾部」的调和：registerLocked 是 registry 方法无 Server
+			// 视角，取消点落同一 hubMu 持有内的登记之后。
+			s.cancelExitEmptyTimerLocked(cl.remote, cl.remoteUser)
+			// 08-review WR-01 门闩清零点（与上方宽限取消点同位同 hubMu 持有）：
+			// 新 attach 开启新空纪元——上次致空的 exitEmptySignaled 置位随登记成功
+			// 清零，下次致空重新允许触发。
+			s.exitEmptySignaled = false
+			// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
+			// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
+			s.hubCond.Broadcast()
+			s.hubMu.Unlock()
+			// 08-02 D-17/D-20：attach 事件（升档完成、注册表登记后）——client_id =
+			// attachSeq（registerLocked 分配，从 1 起单调递增；同一 goroutine 内其写
+			// happens-before 本读），携 remote/mode（RESEARCH A6 增强字段）键；
+			// 无 code 键（连接事件非关闭事件）；remote_user 非空出键（07-03 同口径）。
+			// 同一连接的 detach 事件经 client_id 与本事件关联检索。
+			attachAttrs := []slog.Attr{
+				slog.String("event", "attach"),
+				slog.String("remote", cl.remote),
+				slog.Int64("client_id", cl.attachSeq),
+				slog.String("mode", effMode),
+			}
+			if cl.remoteUser != "" {
+				attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
+			}
+			emitEvent(attachAttrs...)
+			c.SetReadLimit(proto.ReadLimitPostAuth)
+			// writer 是该连接全程唯一 WS 写端（clients.go）；pinger 保活（D-16）挂
+			// 升档序列尾段（PATTERNS 注意 5），与既有单 reader 循环并发装配——库硬性
+			// 要求 Ping 必须与 Reader 并发（conn.go:218-220），不得为 ping 再开
+			// reader；pong 由读循环 handleControl 自动处理（read.go:317-337）；ping
+			// 与 writer 的数据写并发安全、无帧交错（库 writeFrameMu 串行化所有帧，
+			// write.go:288-293）。
+			go s.writer(cl)
+			go s.pinger(ctx, cl, s.pingInterval)
+			// D-11：attach 完成向 PTY 前台进程组显式发一次 SIGWINCH 强制全屏程序重绘
+			//（TIOCGPGRP → kill(-pgid)）——与仲裁 resize 是否发生无关（P5-3 本机实证：
+			// Linux 同尺寸 TIOCSWINSZ 不发信号）；新客秒见画面，行内 shell 下次输出
+			// 自然追上。TIOCGPGRP 失败/无前台进程组静默降级（pty/io.go）。
+			s.sess.SignalForegroundGroup()
 		}
-		cl.mode.Store(effMode) // 生效模式初始值（atomic 承载：INPUT 门无锁读者，见 clients.go）
-		// D-09 参与集登记（resize.go participates 矩阵逐字）：rw 端（owner 模式
-		// 仅 owner / all 模式全部 rw 端）与无 --writable 纯 ro 会话的全部 ro 端
-		// 以 Hello 首尺寸参与仲裁；含可写端会话的 ro 旁观者不参与（其 RESIZE 经
-		// D-09 第二闸忽略，尺寸永不影响可写端 PTY 尺寸）。attach 即时重算不防抖
-		//（RESEARCH Pattern 4：无风暴风险）；旁观者 attach 不改变参与集，不重算。
-		// G-05-1 重排：参与集登记/重算前移至 Welcome 组帧之前——Welcome 恒携
-		// attach 完成后生效的会话尺寸（重排前组帧在前，会携带过时的 pre-attach
-		// 尺寸）。recalcNow 的运行期推送不触达 attach 者自身（尚未 registerLocked，
-		// 推送循环遍历注册表）——其会话尺寸由下方 Welcome 承载，零重复帧。
-		if s.participates(effMode) {
-			s.addMember(cl, cl.dims)
-			s.recalcNow()
-		}
-		sd := s.sessionDimsLocked() // G-05-1：重算后的会话尺寸（零参与者期间 = spawn 80x24 回落）
-		// Welcome 帧作为 outbox 首条入队（组帧函数零改动复用；空队列首帧
-		// trySend 恒成功——Welcome ≪ cap），按生效 mode 选 prefs 档（ro 档永不
-		// 含 osc52，D-13/P5-6）并携会话尺寸（G-05-1 恒在键）。握手期 Error 帧
-		//（version_mismatch/auth_failed）发生在注册前，维持直写不变。入队先于
-		// 登记且全程持 hubMu——hub 扇出遍历注册表，若先登记 onChunk 可在 Welcome
-		// 前夹入 OUTPUT（首帧时序竞态）。
-		prefs := s.clientPrefsRO
-		if effMode == proto.ModeRW {
-			prefs = s.clientPrefsRW
-		}
-		cl.outbox.trySend(proto.WelcomeFrame(effMode, prefs, sd.cols, sd.rows))
-		s.registry.registerLocked(cl)
-		if becomeOwner {
-			s.registry.owner = cl // D-06：首个 rw attach 立 owner
-		}
-		// 宽限取消点（06-02，D-14）：attach 登记成功即取消断开退出宽限计时——
-		// 宽限内任一端 attach 成功则退出取消、会话继续；恰好一次（Stop + 置 nil
-		// 防重复，实现见 clients.go cancelExitEmptyTimerLocked）。plan 字面
-		//「registerLocked 尾部」的调和：registerLocked 是 registry 方法无 Server
-		// 视角，取消点落同一 hubMu 持有内的登记之后。
-		s.cancelExitEmptyTimerLocked(cl.remote, cl.remoteUser)
-		// 08-review WR-01 门闩清零点（与上方宽限取消点同位同 hubMu 持有）：
-		// 新 attach 开启新空纪元——上次致空的 exitEmptySignaled 置位随登记成功
-		// 清零，下次致空重新允许触发。
-		s.exitEmptySignaled = false
-		// P5-7 统一挂点：attach 后门重估——新可写端加入信用集（其 creditBlocked
-		// 恒 false），可能使「全体可写端均满」不再成立，等待中的信用门必须重估。
-		s.hubCond.Broadcast()
-		s.hubMu.Unlock()
-		// 08-02 D-17/D-20：attach 事件（升档完成、注册表登记后）——client_id =
-		// attachSeq（registerLocked 分配，从 1 起单调递增；同一 goroutine 内其写
-		// happens-before 本读），携 remote/mode（RESEARCH A6 增强字段）键；
-		// 无 code 键（连接事件非关闭事件）；remote_user 非空出键（07-03 同口径）。
-		// 同一连接的 detach 事件经 client_id 与本事件关联检索。
-		attachAttrs := []slog.Attr{
-			slog.String("event", "attach"),
-			slog.String("remote", cl.remote),
-			slog.Int64("client_id", cl.attachSeq),
-			slog.String("mode", effMode),
-		}
-		if cl.remoteUser != "" {
-			attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
-		}
-		emitEvent(attachAttrs...)
-		c.SetReadLimit(proto.ReadLimitPostAuth)
-		// writer 是该连接全程唯一 WS 写端（clients.go）；pinger 保活（D-16）挂
-		// 升档序列尾段（PATTERNS 注意 5），与既有单 reader 循环并发装配——库硬性
-		// 要求 Ping 必须与 Reader 并发（conn.go:218-220），不得为 ping 再开
-		// reader；pong 由读循环 handleControl 自动处理（read.go:317-337）；ping
-		// 与 writer 的数据写并发安全、无帧交错（库 writeFrameMu 串行化所有帧，
-		// write.go:288-293）。
-		go s.writer(cl)
-		go s.pinger(ctx, cl, s.pingInterval)
-		// D-11：attach 完成向 PTY 前台进程组显式发一次 SIGWINCH 强制全屏程序重绘
-		//（TIOCGPGRP → kill(-pgid)）——与仲裁 resize 是否发生无关（P5-3 本机实证：
-		// Linux 同尺寸 TIOCSWINSZ 不发信号）；新客秒见画面，行内 shell 下次输出
-		// 自然追上。TIOCGPGRP 失败/无前台进程组静默降级（pty/io.go）。
-		s.sess.SignalForegroundGroup()
 	}
 
 	// C→S：单 reader 循环（c.Read 不可并发，Pitfall 7）。
@@ -1054,15 +1251,40 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 				s.inputDrops.Add(1)
 				continue
 			}
-			// CR-01 完整背压修复（05-05，RESEARCH Pattern 8）：payload 入会话级
-			// inputQ，单 input-writer goroutine 独占 Master.Write——读循环零同步
-			// 写（本 case 的 s.sess.Master.Write 直写已删除；Phase 2 的 O_NONBLOCK
+			// CR-01 完整背压修复（05-05，RESEARCH Pattern 8）：payload 入
+			// cl.inQ（11-01 Pattern 2 间接字段——shared 升档赋 s.inputQ、
+			// per-client 升档赋 pc.inQ，读循环逐行不分支），单 input-writer
+			// goroutine 独占 Master.Write——读循环零同步写（本 case 的
+			// s.sess.Master.Write 直写已删除；Phase 2 的 O_NONBLOCK
 			// 最小缓解从未落地且不再需要，master fd 保持默认阻塞模式——阻塞被关进
 			// 专属 goroutine，队列有界 + 丢弃即背压）。
-			if !s.inputQ.tryEnqueue(data[1:]) {
+			if !cl.inQ.tryEnqueue(data[1:]) {
 				continue // 满则丢（droppedInputs 计数已在 tryEnqueue 内递增）；限速器在前，队列满本应罕见
 			}
 		case proto.Resize:
+			// 12-02（PC-05，D-06）per-client 直通分支：RESIZE 直通本会话 PTY 的
+			// TIOCSWINSZ——DecodeResize 钳制 [1,1000] 既有（proto.go，解码层零
+			// 改动）+ 每会话 50ms 防抖（resizeMu 内写 pendingResize + resizeDeb.Reset，
+			// 到期回调 sess.Resize 仅 fdMu 不持 hubMu——锁序三规则 §5）。ro/rw
+			// 同形直通（D-06：D-09 第二闸在 per-client 分支不生效——ttyd parity，
+			// protocol.c 只门 INPUT 不门 RESIZE；per-client 下 ro 独占自己进程，
+			// 无旁观对象可保护；前端第一闸按模式位放行 = main.ts sendResize 的
+			// sessionMode 判定，两侧闸注释互指，D-06/D-07 同 plan 配对落地）。
+			// 零 Welcome 再推送：本分支不调 recalcNow/pushSessionDimsLocked
+			// （resize 仲裁/owner 递补/fan-out 在 per-client 分支不装配，arbiter
+			// 零值天然 no-op——Welcome cols/rows 即自有尺寸，G-05-1 契约 per-client
+			// 下退化为恒等式，perclient.go Welcome 组帧注释互指）。JSON 解码失败
+			// 静默丢弃（不关连接，与 shared 半侧同语义）。
+			if cl != nil && cl.pc != nil {
+				if cols, rows, ok := proto.DecodeResize(data[1:]); ok {
+					pc := cl.pc
+					pc.resizeMu.Lock()
+					pc.pendingResize = dims{cols: cols, rows: rows}
+					pc.resizeDeb.Reset(s.resizeDebounce)
+					pc.resizeMu.Unlock()
+				}
+				continue
+			}
 			// D-09 第二闸：ro 端 RESIZE 服务端直接忽略（『P2 D-13 ro 放行 RESIZE 为单
 			// 客户端语境，已被 D-09 修订』逐字登记；第一闸 = 前端 ro 不发，05-08 落地）。
 			if cl == nil || cl.mode.Load() == proto.ModeRO {
@@ -1382,14 +1604,65 @@ func (s *Server) lifecycle() {
 	s.terminate(code)
 }
 
-// terminate 以 sync.Once 收口终结路径，exitf 只触发一次（唯一调用方 =
-// lifecycle——P1 D-11 单次语义终结后，wsDisconnected/SIGHUP 路径已消亡，
-// CONTEXT domain 必然推论）。
+// terminate 以 sync.Once 收口终结路径，exitf 只触发一次（调用方 = shared
+// lifecycle（P1 D-11 单次语义终结，wsDisconnected/SIGHUP 路径已消亡）+
+// per-client pcSupervisor（13-03 第二终结源，PC-09）+ per-client Shutdown
+// 的 D-state 兜底（13-04——有界 join 到期未清零时 Shutdown 侧直接收口，
+// PITFALLS P10「有界 join 后无条件经 termOnce 退出」；正常 drained 形态
+// 终结仍归 pcSupervisor，本兜底仅在不可杀残余阻塞其 len==0 谓词时到达）——
+// 多源并发交汇时 termOnce 保证恰好一次，T-13-11/T-13-13）。
 func (s *Server) terminate(code int) {
 	s.termOnce.Do(func() {
 		s.exitf(code)
 	})
 }
+
+// pcSupervisor 是 per-client 模式的第二终结源单例 goroutine（13-03，PC-09，
+// Pitfall 1 窗口期闭合——Phase 11 D-04 明示「--once/--exit-when-empty 永不
+// 退出」中间态的既定兑现）：New per-client 分支钉死启动（研究 §5 拓扑表
+// per-client 唯一全局 goroutine；shared 分支零装配），经既有 hubCond 等待
+// 终结条件：
+//
+//	(pcExitReq || exiting) && len(pcSessions) == 0
+//
+// 两触发源：① exit-when-empty/--once 空迁移（maybeExitWhenEmptyLocked
+// per-client 分支置位 pcExitReq——「注册表已空且无子进程可等」形态下服务端
+// 仍能退出的资源驻留防线，PITFALLS P1）；② Shutdown 终结（既有 exiting 位
+// ——13-04 填充 Shutdown 侧 Broadcast 与 N 进程组快照，本方法消费面先行
+// 落定）。pcSessions 归零唤醒 = teardownPCLocked 慢半段 delete 点的
+// Broadcast 补行 + detach/kick 既有 P5-7 统一挂点 Broadcast（Wait 被任意
+// Broadcast 唤醒后重估条件，不满足继续 Wait——hubCond 语义既有）。
+//
+// 退出码 last-reaped-code 规则（研究 §4.3 两时序逐位对齐证明：子先死 →
+// exitf(子码)；客户端先断 → HUP → watcher 收割 -1 → exitf(-1) → 进程级
+// 255）：出循环后读 pcHasExitCode→pcLastExitCode（sessionWatcher 收割链
+// 写入；缺省 0 = 从未有会话被收割的形态）。放锁后 terminate(code)——
+// termOnce/terminate 逐字复用 shared 收口件（上方 terminate），
+// 「exitf 恰好一次、唯一收口」零漂移；本函数体内绝不直调 s.exitf。
+//
+// 锁序：hubCond.Wait 释放并重取 hubMu（sync.Cond 语义）——临界区内仅读
+// 三字段与 len，零 I/O 零信号零 spawn（hubMu 单锁纪律；快照在 hubMu 内取、
+// terminate 在放锁后调——terminate 经 exitf 的进程级收口不在锁内）。
+func (s *Server) pcSupervisor() {
+	s.hubMu.Lock()
+	for !((s.pcExitReq || s.exiting) && len(s.pcSessions) == 0) {
+		s.hubCond.Wait()
+	}
+	code := 0
+	if s.pcHasExitCode {
+		code = s.pcLastExitCode
+	}
+	s.hubMu.Unlock()
+	s.terminate(code) // termOnce 单点——与 shared 同一收口件
+}
+
+// shutdownJoinMargin 是 13-04 per-client Shutdown 有界 join 的余量（研究 A1
+// 保守形态定值，Claude's Discretion 既定项）：join 上界 = stopTimeout + 本
+// 余量——KILL 兜底在 stopTimeout 到期，余量覆盖 Drain(200ms)/Close/收割/
+// pcSessions 删除的收尾链。内部常量可后调（零公开契约面，throttle.go
+// defaultThrottleBase 先例形态）；stopTimeout=0（无 KILL 兜底）时 join 上界
+// 即本余量——HUP 免疫残余在此界限后不再等待（PITFALLS P10）。
+const shutdownJoinMargin = 2 * time.Second
 
 // Shutdown 是 D-23 1001 优雅下线的触发源（07-05，P6 deferred 兑现；调用方 =
 // main 的 SIGTERM/SIGINT NotifyContext goroutine）：exiting 门置位 → 注册表
@@ -1418,6 +1691,14 @@ func (s *Server) terminate(code int) {
 //     既定不变量）+ ESRCH 幂等静默（已死进程组重复发送无害）；Shutdown 不在
 //     hubMu 内等待（锁序 hubMu > sess.fdMu 不受影响），与 lifecycle 并发
 //     安全——stopTimeout 期间进程若已退出，补发 KILL 到达空 pgid 静默。
+//   - 13-04（PC-09）per-client N 进程组形态：stop-signal 段对 pcSessions
+//     快照逐组发信号（含「客户端已断开、会话 HUP 免疫待收割」的残留者——
+//     Pitfall 6：1001 广播驱动的 detach→teardown 链路覆盖不了无客户端会话，
+//     registry 快照必漏；pcSessions 独立于 registry 存在的核心理由）+ 有界
+//     join（上界 = stopTimeout + shutdownJoinMargin）+ 尾部 Broadcast 唤醒
+//     pcSupervisor（13-03 第二终结源消费端——exiting 位置入口原位，本段
+//     注释详论证）；join 到期未清零（D-state 不可杀残余）Shutdown 侧直接经
+//     terminate 收口，绝不等最坏子进程（PITFALLS P10，详见段内注释）。
 func (s *Server) Shutdown() {
 	// 08-03 D-11：draining 置位 = Shutdown 入口首行（hubMu 锁定之前，与
 	// s.exiting 同源触发点）——1001 广播开始前 /healthz 即翻转为 503
@@ -1447,9 +1728,115 @@ func (s *Server) Shutdown() {
 		}()
 	}
 	wg.Wait()
-	s.sess.SignalGroup(s.stopSignal)
-	if s.stopTimeout > 0 {
-		time.Sleep(s.stopTimeout)
-		s.sess.SignalGroup(syscall.SIGKILL)
+	// 13-04（PC-09）stop-signal 段 per-client 分支：N 进程组快照逐组信号 +
+	// 有界 join + Broadcast 补行（11-01 空操作占位的本 phase 既定填充）。
+	//
+	// 快照源 = pcSessions 非 registry（Pitfall 6）：「客户端已断开、会话
+	// HUP 免疫待收割」的残留会话只在 pcSessions 在册（registry 无对应客户
+	// 端）——1001 广播驱动 detach→teardown 链路覆盖不了无客户端会话，快照
+	// 漏掉残留者即服务端退出后进程泄漏。锁序红线：快照在 hubMu 内取（map
+	// 读需锁）、信号在 hubMu 外发（shared 分支同纪律——下方 shared else 体
+	// 逐字不动，v1.0 关停语义零回归）。
+	//
+	// 1001 广播段（detach→teardown 链）与本快照信号对同一会话双触发，由
+	// teardownOnce 幂等承接（perclient.go——两路径都只「触发」，执行序列
+	// 只有一个；快照信号对已触发 teardown 的会话是冗余第二发，ESRCH/无效
+	// 化静默无害）；残留会话只被本快照链覆盖（其客户端早已不在——这是本
+	// 分支存在的核心理由）。
+	if s.sessionMode == SessionModePerClient {
+		s.hubMu.Lock()
+		pcs := make([]*pcSession, 0, len(s.pcSessions))
+		for pc := range s.pcSessions {
+			pcs = append(pcs, pc)
+		}
+		s.hubMu.Unlock()
+		for _, pc := range pcs {
+			// WR-02 栅栏（13-03 planner 裁定「Pitfall 2 信号/reap 序列化
+			// 语义对一切 kill(-pgid) 同构适用」）：快照→发信号间隔内
+			// watcher 可能已收割（waitDone 已关闭 = Wait 已返回）——跳过
+			// 信号，kill-after-reap 误杀复用 pgid 面结构性闭合（channel
+			// 关闭态读零锁安全，teardownPCLocked 快半段同形态）。
+			select {
+			case <-pc.waitDone:
+			default:
+				pc.sess.SignalGroup(s.stopSignal) // ESRCH 幂等——已死 pgid 静默
+			}
+			// 补 KILL 兜底（teardownPCLocked 快半段同形态母本每会话化）：
+			// 回调 hubMu 内复检 !reaped + waitDone 非阻塞 select 栅栏双
+			// 防线后才发 SIGKILL（与 detach 路径武装的兜底计时器双发幂等，
+			// 后到者必被栅栏拦截；timer 随会话消亡）。
+			if s.stopTimeout > 0 {
+				time.AfterFunc(s.stopTimeout, func() {
+					s.hubMu.Lock()
+					defer s.hubMu.Unlock()
+					if pc.reaped {
+						return
+					}
+					select {
+					case <-pc.waitDone:
+						return // Wait 已返回——reaped 置位在途，KILL 跳过
+					default:
+					}
+					pc.sess.SignalGroup(syscall.SIGKILL)
+				})
+			}
+		}
+		// 有界 join（PITFALLS P10——不等 D-state）：等 len(pcSessions)==0
+		// 收割收敛，上界 = stopTimeout + shutdownJoinMargin（KILL 兜底在
+		// stopTimeout 到期，余量覆盖 Drain/Close/收割/删除收尾链；正常
+		// 死亡会话的 session_end 事件在界限内正常 emit——emit→
+		// close(waitDone)→delete 程序序链，join 观测到 len==0 即全部事件
+		// 已落流）。实现形态：hubCond.Wait（teardown 慢半段 delete 点
+		// Broadcast 唤醒）+ AfterFunc 到期兜底 Broadcast（sync.Cond 无
+		// 超时等待形态；Wait 期间 hubMu 已释放，兜底回调可取锁无死锁面）；
+		// 到期无论收割完毕与否无条件继续——无界等待全部 Wait 返回即把关停
+		// 控制权让给最坏子进程（D-state 不可杀进程拖死关停，P10 红线）。
+		//
+		// deadline 先于 AfterFunc 安排计算（13-07 CI flake 收口）：原形态
+		// 「先安排 wake、后取 deadline」两时刻相差 Δ——wake 的 Broadcast 可
+		// 在 deadline 前几微秒到达，被唤醒方重估 Before(deadline)=true 重进
+		// Wait，而本形态下 wake 是唯一兜底唤醒源（D-state 残余静止收割链
+		// 不再 Broadcast）→ 永久卡死（macos 实测 Shutdown 长眠 8m+ 至
+		// 10m 超时）。deadline 提前计算后 Broadcast 到达时刻 ≥ deadline，
+		// 重估必为 false、必出循环。
+		bound := s.stopTimeout + shutdownJoinMargin
+		deadline := time.Now().Add(bound)
+		wake := time.AfterFunc(bound, func() {
+			s.hubMu.Lock()
+			s.hubCond.Broadcast()
+			s.hubMu.Unlock()
+		})
+		defer wake.Stop()
+		s.hubMu.Lock()
+		for len(s.pcSessions) > 0 && time.Now().Before(deadline) {
+			s.hubCond.Wait()
+		}
+		drained := len(s.pcSessions) == 0
+		code := 0
+		if s.pcHasExitCode {
+			code = s.pcLastExitCode
+		}
+		// Broadcast 补行（13-03 pcSupervisor 消费端）：exiting 已在入口
+		// 置位（原位不动——早于 1001 广播注册表快照，D-13 防线序保持），
+		// 此处补一行唤醒 pcSupervisor 重估 (pcExitReq||exiting)&&len==0——
+		// drained 形态下终结由 pcSupervisor 经 terminate/termOnce 收口
+		//（last-reaped-code 规则，13-03）；pcSessions 全空形态下本补行是
+		// 其唯一唤醒源（入口置位不发信号，watcher 链静止无 Broadcast）。
+		s.hubCond.Broadcast()
+		s.hubMu.Unlock()
+		if !drained {
+			// D-state 兜底（T-13-13/PITFALLS P10「有界 join 后无条件经
+			// termOnce 退出」）：join 到期未清零——Shutdown 侧直接经唯一
+			// 收口件 terminate 退出（退出码同 last-reaped-code 规则），不
+			// 等不可杀残余；与 pcSupervisor 的 terminate 交汇由 termOnce
+			// 保证恰好一次（terminate 上方注释调用方清单随之三源化）。
+			s.terminate(code)
+		}
+	} else {
+		s.sess.SignalGroup(s.stopSignal)
+		if s.stopTimeout > 0 {
+			time.Sleep(s.stopTimeout)
+			s.sess.SignalGroup(syscall.SIGKILL)
+		}
 	}
 }

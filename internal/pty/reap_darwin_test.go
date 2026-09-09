@@ -45,8 +45,8 @@ func TestHelperProcess(t *testing.T) {
 }
 
 // spawnHelper 以 argv 标记 spawn 一个 helper 子进程（不经 shell）。env 走与生产
-// 一致的 whitelistEnv 替换式注入（07-04 签名选项化：零值等价形态 Term 空/Uid -1），
-// 顺带证明 argv 守卫在白名单注入下必然到达。
+// 一致的 whitelistEnv 替换式注入（07-04 签名选项化：零值等价形态 Term 空/Uid -1
+// /RemoteUser 空，13-06 第三参），顺带证明 argv 守卫在白名单注入下必然到达。
 func spawnHelper(t *testing.T, marker string) *exec.Cmd {
 	t.Helper()
 	exe, err := os.Executable()
@@ -54,7 +54,7 @@ func spawnHelper(t *testing.T, marker string) *exec.Cmd {
 		t.Fatalf("os.Executable: %v", err)
 	}
 	cmd := exec.Command(exe, "-test.run=TestHelperProcess", "--", marker)
-	cmd.Env = whitelistEnv("", -1)
+	cmd.Env = whitelistEnv("", -1, "")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("spawn helper %s: %v", marker, err)
 	}
@@ -121,5 +121,58 @@ func TestKqueueExitZombieRace(t *testing.T) {
 	}
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("Wait（exit0 helper 应成功）: %v", err)
+	}
+}
+
+// TestWatchDupPidFailClosed（Pitfall 9 防御的 CI 锁，11-02）：同一 pid 两次
+// watch——首次成功（返回非 nil channel），第二次 fail-closed：errors.Is(err,
+// errDupWatch) 为真且返回 channel 为 nil（kqueue (ident,filter) 唯一键语义下
+// 重复注册是替换而非叠加，静默覆盖将使先注册者 channel 影子化 → awaitExit 的
+// <-exited 永等 → 会话收割挂死）；随后断言首个订阅未被影子化（helper 退出后
+// 首 channel 收到 NOTE_EXIT）——防「dup 检查误伤正常注册」的反向锁。
+//
+// 本测仅在 darwin 运行（文件 build tag 既定）：Linux 开发机验证 = GOOS=darwin
+// 编译/vet 闸（11-02 Task 1 acceptance 已锁）+ CI macOS leg 运行；N 路并发
+// 退出 + 混合僵尸竞态复演（Pitfall 9 剩余面）挂账 Phase 14。
+func TestWatchDupPidFailClosed(t *testing.T) {
+	w, err := newExitWatcher()
+	if err != nil {
+		t.Fatalf("newExitWatcher: %v", err)
+	}
+	cmd := spawnHelper(t, "wesh-helper-exit42-delay")
+	exited, err := w.watch(cmd.Process.Pid)
+	if err != nil {
+		_ = cmd.Wait()
+		t.Fatalf("首次 watch(%d): %v", cmd.Process.Pid, err)
+	}
+	if exited == nil {
+		_ = cmd.Wait()
+		t.Fatal("首次 watch 返回 nil channel")
+	}
+	// 同 pid 二次注册：fail-closed 拒、channel 为 nil
+	dupCh, err := w.watch(cmd.Process.Pid)
+	if !errors.Is(err, errDupWatch) {
+		_ = cmd.Wait()
+		t.Fatalf("二次 watch 错误 = %v，期望 errDupWatch", err)
+	}
+	if dupCh != nil {
+		_ = cmd.Wait()
+		t.Fatal("二次 watch 返回非 nil channel")
+	}
+	// 反向锁：首个订阅未被影子化——helper 退出后首 channel 收到通知
+	select {
+	case <-exited:
+		// 事件到达，首订阅正常成立
+	case <-time.After(5 * time.Second):
+		_ = cmd.Wait()
+		t.Fatal("首订阅 5s 超时未收到 NOTE_EXIT——dup 检查误伤正常注册")
+	}
+	err = cmd.Wait()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("Wait 返回非 *exec.ExitError: %v", err)
+	}
+	if got := exitErr.ExitCode(); got != 42 {
+		t.Fatalf("退出码 = %d，期望 42", got)
 	}
 }

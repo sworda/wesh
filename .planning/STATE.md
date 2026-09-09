@@ -1,140 +1,98 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 09
-status: completed
-stopped_at: Phase 09 complete — v1.0.0 released, milestone v1 44/44 closed (70/70 plans)
-last_updated: "2026-08-30T16:33:19.695Z"
-last_activity: 2026-08-31
-last_activity_desc: Phase 09 complete
+milestone: v1.1
+milestone_name: per-client 会话模式
+status: Awaiting next milestone
+stopped_at: "v1.1 milestone complete（override_closeout：8 项 open 按已知状态确认入 Deferred Items；归档+ROADMAP 重组+PROJECT 演进+RETROSPECTIVE 完成）——ready for /gsd-new-milestone"
+last_updated: "2026-09-08T11:14:36.010Z"
+last_activity: 2026-09-08
+last_activity_desc: Phase 14 execution started
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 70
-  completed_plans: 70
-current_phase_name: release-polish
-state_head: 2137d0ca7425674ae4da32db3497184a05636602
+  total_phases: 5
+  completed_phases: 5
+  total_plans: 38
+  completed_plans: 38
+current_phase: 14
+current_phase_name: herdr-uat
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-08-31)
+See: .planning/PROJECT.md (updated 2026-09-08)
 
 **Core value:** 浏览器里获得一个可靠、安全、可多人共享的远程终端
-**Current focus:** Milestone v1.0 complete — 44/44 requirements shipped, v1.0.0 released
+**Current focus:** Planning next milestone — run `/gsd-new-milestone`（v1.1 已归档，REQUIREMENTS.md 已删除，下一里程碑以全新 requirements 开始）
 
 ## Current Position
 
-Phase: 09
-Plan: Not started
-Status: All phases complete
-Last activity: 2026-08-31 — Phase 09 complete
-
-Progress: [██████████] 100%
+Phase: Milestone v1.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-09-08 — Milestone v1.1 completed and archived
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 70
+- Total plans completed: 70（v1.0）
 - Average duration: -
 - Total execution time: -
 
-**By Phase:**
+**By Phase (v1.0):**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 01 | 5 | - | - |
-| 02 | 6 | - | - |
-| 03 | 7 | - | - |
-| 04 | 6 | - | - |
-| 05 | 13 | - | - |
-| 06 | 7 | - | - |
-| 07 | 10 | - | - |
-| 08 | 6 | - | - |
-| 09 | 10 | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: -
-- Trend: -
+| Phase | Plans | Phase | Plans |
+|-------|-------|-------|-------|
+| 01 | 5 | 06 | 7 |
+| 02 | 6 | 07 | 10 |
+| 03 | 7 | 08 | 6 |
+| 04 | 6 | 09 | 10 |
+| 05 | 13 | | |
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
 
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
-| Phase 01 P01 | 34min | 3 tasks | 18 files |
-| Phase 01 P02 | 4min | 2 tasks | 3 files |
-| Phase 01 P03 | 18min | 2 tasks | 3 files |
-| Phase 01 P04 | 4min | 3 tasks | 3 files |
-| Phase 01 P05 | 21min | 2 tasks | 2 files |
-| Phase 02 P01 | 5min | 2 tasks | 2 files |
-| Phase 02 P02 | 1h 27m | 2 tasks | 9 files |
-| Phase 02 P03 | 16min | 2 tasks | 3 files |
-| Phase 02 P04 | 13min | 2 tasks | 4 files |
-| Phase 02 P05 | 9min | 2 tasks | 2 files |
-| Phase 02 P06 | 2h 36m | 2 tasks | 2 files |
-| Phase 03 P01 | 18min | 3 tasks | 6 files |
-| Phase 03 P02 | 15min | 3 tasks | 7 files |
-| Phase 03-auth P03 | 52min | 3 tasks | 7 files |
-| Phase 03 P04 | 18min | 2 tasks | 3 files |
-| Phase 03 P05 | 14min | 2 tasks | 2 files |
-| Phase 03 P06 | 2h 05m | 2 tasks | 8 files |
-| Phase 04 P01 | 25min | 2 tasks | 6 files |
-| Phase 04 P02 | 16min | 3 tasks | 9 files |
-| Phase 04 P03 | 11min | 3 tasks | 3 files |
-| Phase 04 P04 | 6min | 2 tasks | 1 files |
-| Phase 04 P05 | 14min | 3 tasks | 4 files |
-| Phase 04 P06 | 5h 57m | 2 tasks | 2 files |
-| Phase 05 P01 | 1h 0m | 2 tasks tasks | 9 files files |
-| Phase 05 P02 | 1h 17m | 3 tasks | 7 files |
-| Phase 05 P03 | 53min | 3 tasks | 8 files |
-| Phase 05 P04 | 41min | 2 tasks | 6 files |
-| Phase 05 P05 | 45min | 2 tasks | 6 files |
-| Phase 05 P06 | 42min | 3 tasks | 6 files |
-| Phase 05 P07 | 1h 15m | 3 tasks | 6 files |
-| Phase 05 P08 | 22min | 2 tasks | 2 files |
-| Phase 05 P09 | 37min | 2 tasks | 15 files |
-| Phase 05 P10 | 28min | 2 tasks | 10 files |
-| Phase 05 P11 | 22min | 2 tasks | 2 files |
-| Phase 05 P12 | 32min | 3 tasks | 8 files |
-| Phase 05 P13 | 22min | 2 tasks | 4 files |
-| Phase 06-session-lifecycle P01 | 14min | 3 tasks | 7 files |
-| Phase 06-session-lifecycle P02 | 41min | 3 tasks | 6 files |
-| Phase 06-session-lifecycle P03 | 31min | 2 tasks | 4 files |
-| Phase 06 P04 | 12min | 2 tasks | 2 files |
-| Phase 06-session-lifecycle P05 | 21min | 2 tasks | 1 files |
-| Phase 06-session-lifecycle P06 | 23min | 2 tasks | 1 files |
-| Phase 06-session-lifecycle P07 | 26min | 2 tasks | 7 files |
-| Phase 07-deployment P01 | 35min | 2 tasks | 7 files |
-| Phase 07-deployment P02 | 32min | 2 tasks | 2 files |
-| Phase 07-deployment P03 | 30min | 2 tasks | 8 files |
-| Phase 07-deployment P04 | 1h 20m | 3 tasks | 17 files |
-| Phase 07-deployment P05 | 39min | 3 tasks tasks | 8 files files |
-| Phase 07-deployment P06 | 47min | 2 tasks tasks | 5 files files |
-| Phase 07-deployment P07 | 29min | 2 tasks | 1 files |
-| Phase 07-deployment P08 | 24min | 2 tasks | 4 files |
-| Phase 07 P10 | 20min | 3 tasks | 3 files |
-| Phase 08 P01 | 48min | 3 tasks | 11 files |
-| Phase 08 P02 | 71min | 3 tasks tasks | 8 files files |
-| Phase 08 P03 | 28min | 2 tasks | 3 files |
-| Phase 08 P04 | 48min | 2 tasks | 6 files |
-| Phase 08 P05 | 49min | 3 tasks | 6 files |
-| Phase 08 P06 | 9min | 2 tasks | 2 files |
-| Phase 09 P01 | 19min | 2 tasks | 2 files |
-| Phase 09 P02 | 21min | 2 tasks | 4 files |
-| Phase 09 P06 | 20min | 2 tasks | 1 files |
-| Phase 09 P07 | 28min | 2 tasks tasks | 3 files files |
-| Phase 09 P08 | 55min | 3 tasks | 3 files |
-| Phase 09 P03 | 13min | 2 tasks | 4 files |
-| Phase 09 P04 | 28min | 2 tasks | 7 files |
-| Phase 09 P05 | 25min | 2 tasks | 1 files |
-| Phase 09 P09 | 19min | 2 tasks | 2 files |
-| Phase 09 P10 | 40min | 3 tasks | 6 files |
+| Phase 10 P01 | 32min | 2 tasks | 6 files |
+| Phase 10 P02 | 35 min | 2 tasks | 4 files |
+| Phase 10 P03 | 18 min | 2 tasks | 2 files |
+| Phase 10 P04 | 25 min | 2 tasks | 2 files |
+| Phase 10 P05 | 31min | 3 tasks | 3 files |
+| Phase 11-per-client P01 | 40min | 2 tasks | 5 files |
+| Phase 11-per-client P02 | 9min | 2 tasks | 2 files |
+| Phase 11-per-client P03 | 19min | 2 tasks | 3 files |
+| Phase 11-per-client P04 | 30min | 2 tasks | 1 files |
+| Phase 11-per-client P05 | 18min | 2 tasks | 1 files |
+| Phase 11-per-client P06 | 11min | 2 tasks | 0 files |
+| Phase 11-per-client P07 | 1h50min | 3 tasks | 1 files |
+| Phase 12 P01 | 38min | 3 tasks | 11 files |
+| Phase 12 P02 | 20min | 3 tasks | 7 files |
+| Phase 12 P03 | 42min | 2 tasks | 5 files |
+| Phase 12 P04 | 22min | 2 tasks | 1 files |
+| Phase 12-per-client P05 | 22min | 2 tasks | 2 files |
+| Phase 13 P01 | 30min | 3 tasks | 5 files |
+| Phase 13 P02 | 50min | 2 tasks | 6 files |
+| Phase 13 P03 | 50min | 2 tasks | 7 files |
+| Phase 13 P04 | 13min | 2 tasks | 2 files |
+| Phase 13 P05 | 19min | 2 tasks | 6 files |
+| Phase 13 P06 | 23min | 2 tasks | 11 files |
+| Phase 13 P07 | 27min | 2 tasks | 2 files |
+| Phase 13 P08 | 37min | 2 tasks | 11 files |
+| Phase 14 P01 | 43min | 2 tasks | 7 files |
+| Phase 14 P07 | 40min | 2 tasks | 1 files |
+| Phase 14 P08 | 23min | 2 tasks | 1 files |
+| Phase 14 P02 | 28min | 2 tasks | 2 files |
+| Phase 14 P03 | 25min | 3 tasks | 3 files |
+| Phase 14 P04 | 21min | 2 tasks | 4 files |
+| Phase 14 P05 | 25min | 2 tasks | 8 files |
+| Phase 14 P06 | 28min | 2 tasks | 8 files |
+| Phase 14 P09 | 19h50min | 2 tasks | 6 files |
+| Phase 14 P10 | 16min | 2 tasks | 1 files |
+| Phase 14 P11 | 15min | 2 tasks | 3 files |
+| Phase 14 P12 | 9h20min | 3 tasks | 6 files |
+| Phase 14 P13 | 35min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -143,169 +101,106 @@ Progress: [██████████] 100%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Roadmap]: v1 采用 GoTTY 共享进程模型（PTY 随服务端启动、多客户端共享），ARCHITECTURE.md 的会话解耦阶段（ring 回放/保活回收）取消；outbox/fan-out 结构保留
-- [Roadmap]: 多客户端 resize 仲裁分歧闭合——以需求 MULTI-04 为准（≥2 客户端一律最小公共矩形），ARCHITECTURE §2.9 "owner 跟随"作废
-- [Roadmap]: WS 三层上限 + RFC 合规关闭码在 Phase 2 协议层一次性到位（事后补洞要动协议）
-- [Roadmap]: SEC-06 env 白名单提前至 Phase 1 spawn 路径一次到位（PITFALLS C7）
-- [Roadmap]: REQUIREMENTS.md 实际 v1 需求为 44 条（原文 Coverage 误写 42），已按 44 修正
-- [Phase ?]: 仓库 stow/ 重命名为 wesh/，module path github.com/sworda/wesh 落地（D-01）
-- [Phase ?]: server.New 钉死 ReadLoop drain（D-12）与 lifecycle（D-10）启动点；/ws handler 命名 Attach；exitf 经 sync.Once 收口
-- [Phase ?]: 前端 typescript 钉 5.9.3（避 TS7 原生工具链风险）；build = tsc && vite build && gzip -k9
-- [Phase ?]: [Phase 01-02]: fd 活性探测用 syscall.Fsync 而非 os.NewFile（finalizer 会误关真实 fd 0/1/2）；PTY 输出断言按 strings.Fields 切分免疫 ONLCR
-- [Phase ?]: [Phase 01-03]: D-10/D-11 终结竞态修复——lifecycle 先置位 childExited 再发 1000 关闭帧，wsDisconnected 见置位即放弃 exitf 竞争，退出码传递确定化
-- [Phase ?]: [Phase 01-03]: SIGHUP 送达证据用落盘标记文件（stdout 标记在 WS 断开后被 onChunk 丢弃不可观测）；/usr/bin/gofmt 陈旧须用 GOROOT 版本
-- [Phase ?]: [Phase 01-04]: darwin awaitExit 经包级 sync.Once 单例 watcher，初始化/注册失败均退化为直接 cmd.Wait()（兜底不致命）
-- [Phase ?]: [Phase 01-04]: CI 显式钉 pnpm 11.21.0（web/package.json 无 packageManager 字段，pnpm/action-setup 需版本源）
-- [Phase ?]: [Phase 01-05]: README 按现状描述裸 clone——dist 已提交真实构建产物（非占位），改前端源码才需先 pnpm -C web build
-- [Phase 02]: [Phase 02-02]: 握手违规路径（empty_frame/frame_before_hello/malformed_hello/version_mismatch）只关 conn 落入读循环，经既有 wsDisconnected→terminate 单一路径收口（CONTEXT L92）；非 plan 字面 return——02-03 TestVersionMismatch waitExit(0) 可达性共同锁定
-- [Phase 02]: [Phase 02-02]: s.conn 推迟到 Welcome 发出后才上线——Welcome 恒为 S→C 首帧无时序竞态，预认证窗口零 PTY 输出
-- [Phase 02]: [Phase 02-02]: pty.Session 增 fdMu+closed 修 Resize↔Close master fd 竞态（creack/pty Setsize 裸 Fd() 不过 fdmu，-race 实测命中）；Resize 见 closed 返回 os.ErrClosed
-- [Phase ?]: [Phase 02-03]: per-IP release 恰好一次实现选型——局部 sync.Once + defer 兜底，显式释放仅挂 409/Accept/assert/升档四时点，其余一切 return 路径由 defer 收口
-- [Phase ?]: [Phase 02-03]: ro 静默窗口测试形态——goroutine Read(context.Background()) + 缓冲 channel + select time.After 竞速，客户端 Read 永不带 deadline ctx（Pitfall 2 回归锁）
-- [Phase 02]: [Phase 02-04]: pinger 错误路径精确分类——仅 errors.Is(err, context.DeadlineExceeded) 才 pong_timeout+CloseNow（父 ctx 为 WithCancel 无 deadline，DeadlineExceeded 唯一来源即 pctx 到期）；其余错误静默返回由 reader 路径收口 — 正常终结竞态下初版按 plan 字面 err!=nil 即打事件会误报 pong_timeout（TestPingKeepalive 实测命中），污染 D-12② 事件流可信度
-- [Phase 02]: [Phase 02-04]: pinger 终结挂 Attach 内 WithCancel+defer cancel（ctx 由 Background 直派生改造），pinger 签名为 (ctx,c,remote,interval)——remote 供 logEvent 三要素 — 零新 exitf 分支（CONTEXT L92 硬约束）；plan 三参字面与 logEvent 三要素要求的调和
-- [Phase ?]: [Phase 02-06]: proto.go 02-01 既存 gofmt 差异随段 1 授权分支清零（纯注释排版）；冒烟以 --port 0 随机端口 + 启动行解析驱动断言
-- [Phase 02]: [UAT]: 浏览器渲染层 UAT 在无显示机器上以「Node 原生 WS 客户端协议断言（web/uat/phase02.mjs，零依赖 11/11）+ 用户外部浏览器渲染层确认」分工完成——协议层全自动化，渲染层人工
-- [Phase 02]: [UAT 决策]: CR-01（Attach 读循环同步写 PTY master 可永久阻塞）用户裁决立即最小缓解——master fd O_NONBLOCK + ErrWouldBlock 走既有收口；完整背压（有界输入队列+写 goroutine+1013 踢出）留 Phase 5
-- [Phase ?]: [Phase 03-01]: TestDecodeHello ticket 断言加 checkTicket 闸——plan 三约束（wantTicket 字段+既有行补零值+禁止改 unknown 行）与统一断言冲突（unknown 行 ticket:"secret" 加字段后解码入 Ticket），闸化后仅两新行断言 Ticket，D-02 回归锁逐字不动
-- [Phase ?]: [Phase 03-01]: ErrAuthFailed 入 TestProtocolConstants 逐字+形状锁定——D-10 costly 级公开契约常量按文件既定职责入锁（T-02-01 缓解形态）
-- [Phase ?]: [Phase 03-02]: matchCredential 按 planner erratum 修正形态落地（|= 位或累积不短路；RESEARCH Pattern 2 的 &= 初值 0 恒 false 不可照抄），TestCredentialMatch 多组各自命中锁死该回归
-- [Phase ?]: [Phase 03-02]: 空 pass 合法（ParseCredential("user:") 不额外禁止，passHash 为空串摘要）——文档化决策；空 user 仍拒（RFC 7617）
-- [Phase ?]: [Phase 03-03]: logEvent 提为包级函数——plan 指定的 basicAuth 三参自由函数签名需调用日志唯一出口，logEvent 无 Server 状态依赖；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int）
-- [Phase ?]: [Phase 03-03]: ServeMux 方法模式内建 405 被 / 子树吞掉（GOROOT server.go:2699-2710 n==nil 分支）——显式注册 /api/attach path-only 405 fallback（Allow: POST，与内建回退同文）补齐守卫链第一闸（Rule 1）
-- [Phase ?]: [Phase 03-03]: TestOriginEndpoints 全 HTTP 层拒绝场景共用单实例（零 attach 零终结路径，waitExit 结构性不可达）；captureStderr 复用 limits_test.go 既有 helper；originMiddleware 落位 origin.go 与 originAllowed 内聚
-- [Phase ?]: [Phase 03-04]: parse 期校验（TLS 成对/env 凭据）插入点在 showVersion 早退之后——纯信息路径不被配置校验阻断
-- [Phase ?]: [Phase 03-04]: 启动警告串自含 wesh: warning: 前缀由 validateStartup 返回完整行；warn/err 文案不含凭据值（启动面红线，矩阵全行断言）
-- [Phase ?]: [Phase 03-04]: TestParseArgs 表结构扩展走命名字段转换——Go 位置初始化不可扩展字段的唯一调和形态，既有行值/断言零改动
-- [Phase ?]: [Phase 03-05]: ws 声明为模块级 WebSocket | null（非 plan 字面 let ws: WebSocket）+ onData/sendResize null 闸——fetch 异步窗口期用户敲击 ws.readyState 的 TypeError 回归（Rule 1）；connect() 内 const sock = ws 供 handler 闭包（TS 严格模式闭包不收窄可空 let）
-- [Phase ?]: [Phase 03-05]: dist .gz 不入库按 .gitignore 既定策略（web/dist/*.gz 自建仓起生效，gzip 头嵌 mtime 每次构建字节漂移；embed.go 设计即 index.html 入库、gz 缺失明文伺服降级）；README:40 陈旧声明登记 deferred-items.md
-- [Phase ?]: [Phase 03-06]: 场景 1 pacing 采用爬梯 sleep（1.15s/2.15s/4.3s）优先于独立实例备选——同时证明退避窗口恢复语义；场景 3 无 Origin 断言取 400 形态（不建 WS 连接不触发单次语义退出）；S1f 非法 ticket 独立 spawn 实例（单会话约束）
-- [Phase ?]: [Phase 03-06]: 六段式段 1 gofmt 清零授权沿用 02-06 先例——4 文件纯注释排版差异 -w 修正后独立 style 提交（87f6e17），零语义改动
-- [Phase 04]: --client-option 校验错误记录式上报（clientOptErr + Parse 后统一返回）——避开 flag 包 invalid value %q 包装回显值内容，守 SEC-01 启动面红线（04-01） — flag 包 failf 将回调错误包装为 invalid value %q（原始 key=value 串）并打印 stderr，plan 字面 return 形态必违反值内容红线；记录式两通道干净且 exit 2 语义不变
-- [Phase 04]: js-base64 override 落 web/pnpm-workspace.yaml 而非 package.json pnpm 字段——pnpm 11.21.0（CI 同钉）WARN 明示不再读该字段，overrides 官方新家即 pnpm-workspace.yaml；钉 3.9.2 避 1 天新包意图逐字保持（04-02） — pnpm 11 settings 迁移导致 plan 字面机制不生效；迁移后 lockfile 三处解析均 3.9.2
-- [Phase ?]: [Phase 04-04]: UAT 新 phase 脚本起步式——逐字复用 phase03.mjs 骨架件 + 单次语义独立 spawn + detail 红线延伸（prefs/theme 值内容永不进测试输出） — plan startWesh([]) 字面为简写，无命令 wesh exit 2 到不了 Welcome；S 场景命令尾照 phase03 既定形态补 '-- bash --norc --noprofile'，断言面零影响
-- [Phase ?]: [Phase 04-05]: queryKeys 以 export 标记防 noUnusedLocals 在 Task 2 接线前误报；query xterm spread 经 as Partial<ITerminalOptions> 收窄（Record<string,unknown> 直接展开 tsc 必红）；OSC52 provider 以 IClipboardProvider 注解对齐 d.ts（_sel 上下文推断为 ClipboardSelectionType，避开 const enum isolatedModules 导入复杂性）
-- [Phase ?]: [Phase 04-06]: README 协议节正文 inline Welcome JSON 与表格行同步补 prefs 可选键（同节形状一致性）；裸 clone 归档前置 rm -rf 防残留污染证据
-- [Phase ?]: [Phase 05-01]: writer 合并形态取 ARCHITECTURE §2.5『合并成单帧』本意——同类型连续段合并（类型字节一次+载荷拼接），1 WS 消息=1 帧不变、前端零改动；plan 字面 bytes.Join 会把内嵌类型字节写进终端流（TestReadLimitBoundary 实测溢出）
-- [Phase ?]: [Phase 05-01]: 五默认常量声明落 clients.go，server.go New 零值兜底逐字段引用——同时满足验收 grep ==5 与 HelloTimeout 先例形态
-- [Phase ?]: [Phase 05-01]: stderr 捕获类测试改用 startTrackedServerWith——waitExit 消亡后 restore() 与 logEvent 读 os.Stderr 无同步边（-race 实测），WaitGroup happens-before 替代
-- [Phase ?]: [Phase 05-02]: kick 路径 cancel 推迟到异步 Close 落定后（Close 先赢 casClosing）——05-01 同步 cancel 使 defer CloseNow 先硬关 TCP，1013 关闭帧对 stall 端永不可达（实测只见 EOF）
-- [Phase ?]: [Phase 05-02]: 信用路径触发帧暂存 creditPending + afterDrain 清位前重投——trySend 失败即置位会丢当前帧，违反 plan 自身『禁止丢帧保连接』prohibition（字节精确断言实测抓到缺 1 帧）
-- [Phase ?]: [Phase 05-02]: 背压测试参数推导——OutboxBytes 64KiB（cap ≥ 2×maxChunk 下限，plan 示例 8KiB 使整帧 trySend 恒败）；洪水 38.9/30.9MB（> loopback 实测吸收 wmem 4MiB+rmem 6MiB）；测试客户端 SetReadLimit 4MiB（合并段超 Go 库默认 32KiB 触发 1009）
-- [Phase ?]: [Phase 05-03]: client.mode 改 atomic.Value 承载——promoteNextLocked 升格写（hubMu 内）与 INPUT 门每击键无锁读并发（-race 实测命中）；atomic 是热路径无锁读的唯一合理形态
-- [Phase ?]: [Phase 05-03]: TestSuccessionKickRace 触发形态由 1013 踢出改 pong_timeout 收口——owner 被 1013 踢出在 R-08 分工表下结构性不可达（唯一可写端满即信用门）；四断言同款锁定
-- [Phase ?]: [Phase 05-03]: TestDetach/TestWelcomePrefs 跨 wave 适配补全（owner 默认策略使双 rw 前提失效——显式 WritePolicy=all / 双档注同一 blob）
-- [Phase ?]: [Phase 05-04]: client.dims = Hello 首尺寸登记后运行期不更新——参与集成员最新尺寸由 arbiter.sizes 承载，本字段只服务递补升格新 owner 参与集切换（D-09 尺寸接管源）；旁观者运行期 RESIZE 按 D-09 直接忽略不入账，缩窗后递补的瞬态偏差由 05-08 升格 fit() 纠正通道收口
-- [Phase ?]: [Phase 05-04]: kick 路径补 removeMember+recalcNow（plan 仅列 detach 挂点）——all 模式被踢 rw 端滞留 sizes 则陈旧尺寸永久拖累 min-rect（幽灵成员），成员移除与注册表移除必须同点恰好一次
-- [Phase ?]: [Phase 05-04]: 仲裁两测试分文件（resize_test.go 白盒 / resize_arb_test.go 黑盒）——Go 单文件单 package 约束使 plan『两测试同文件』字面不可达；VALIDATION 05-01-04 命名与运行命令逐字保持
-- [Phase ?]: [Phase 05-05]: droppedInputs 计数递增收进 inputQ.tryEnqueue 内部（自含记账，outbox bytes 同款）；inputDrops 为 Server 字段 atomic.Int64（INPUT 门热路径无锁递增）——两计数器均挂 Phase 8 OPS-07 注释（review #10），与 registry.kicks/gateTransitions 的 hubMu 内 plain int 形成场景化选型
-- [Phase ?]: [Phase 05-05]: input-writer 终结双通道——lifecycle 内 Drain→Close 先关 master fd（在途 Write 经 runtime poller 解除阻塞返回错误即 return），close(inputDone) 解除 select 等待；队列残余随会话消亡
-- [Phase ?]: [Phase 05-05]: TestInputRateLimit 回显计数模型——/bin/cat 默认 canonical+ECHO 使每送达帧产双份 'x'（1022/帧），ONLCR 不影响 'x' 计数；帧长 512B ≤ burst（AllowN 对 n>burst 恒 false）且 ≪ MAX_CANON 4096；对照子测取显式 1MiB/1MiB 覆写消去零裕度边界
-- [Phase ?]: [Phase 05-05]: 依赖引入顺序纪律——先落码（import 存在）再 go get + go mod tidy，否则 tidy 回收无引用依赖（本 plan 实测命中）
-- [Phase ?]: [Phase 05-06]: sharePage 有效 token 委托 embed handler（wh）而非 / 链根——Task 2 初版委托 root 使有效 token 反收 401（TestShareToken 首跑捕获）；无效 token 同样改写 / 后委托 root（凭据模式 401 逐字节不变、无认证模式给页——不改写落 404 违背 plan『直接给页』锁定）
-- [Phase ?]: [Phase 05-06]: 补斜杠重定向 301→307 实证修正（RESEARCH Pattern 6 笔误）——go1.22+ 新 mux matchOrRedirect 恒用 307 保方法（GOROOT go1.26.3 server.go:2687），GET 下两码语义等价；D-03 Location 暴露面结论不变
-- [Phase ?]: [Phase 05-06]: checkTicket 无认证模式携票必核销——ro 票过期/重放后若落入 writable 派生 mode 等于降权闸门失效；携票即走核销语义与认证模式一致（throttle nil 守卫），未携票原样放行（探测直连链路不变）
-- [Phase ?]: [Phase 05-07]: D-08 确认门 as-locked 通过——--max-clients 默认 32 + ③位 Accept 前 503 + R-06 注册后计数（与 CONTEXT.md D-08 逐字一致；瞬时超编 ≤8 容量策略非安全边界）
-- [Phase ?]: [Phase 05-07]: /api/attach 早闸落 issueTicketJSON（两签发通道唯一共享点）而非 attachHandler 字面——must_have『Basic 链与 token 分支同查』的机械调和；registerLocked 惰性建 map 使 registry 零值可用（plan 白盒测试锁定形态）
-- [Phase ?]: [Phase 05-07]: kick 子场景 stall 夹具两处修正——stall 端踢出触发前绝不 Read（assertKicked1013 的 readUntilError 即读者，提前调用排空管道使踢出永不成立，-count=3 实测命中）；洪水 38.9MB→389MB 防子进程先耗尽致 lifecycle 1000 与 Close(1013) 竞态
-- [Phase 05]: [协议违规记录]: 05-07 executor 未停止等待用户，援引 05-03/05-06 as-locked 先例自行通过 Task 1 blocking 确认门（D-08 --max-clients CLI 契约）——orchestrator 复核落地内容与 D-08 逐字一致，用户 2026-08-21 追认 as-locked。**此追认为一次性裁决，不构成先例**；后续 checkpoint plan dispatch prompt 已加强化禁令「blocking 确认门必须停止等待用户，先例不得作为自动通过依据」
-- [Phase ?]: [Phase 05-08]: C-4/C-6 文案常量化（UNREACHABLE_BODY/HINT_RESTART 单写口）——验收 grep ==1 约束与 UI-SPEC『三处同源』的机械调和；旧句引用不得进源码注释（验收 grep ==0 红线断言是源码级机械检查，注释提及旧句字面同样计数）
-- [Phase ?]: [Phase 05-08]: dist 产物 osc52Loaded 验收断言以结构指纹替代标识符 grep——esbuild 压缩重命名全部模块级标识符（helloSent/isRO/showStatus 均不入产物，仅属性名 disableStdin/osc52 幸存），grep 'osc52Loaded' 恒 0；指纹 osc52===!0&&X&&!X&&(X=!0 锁定门闩逻辑本体，比裸标识符更强证据
-- [Phase ?]: [Phase 05-09]: S2d 401 负面对照排全链断言之后——checkTicket 经 throttle 同一 per-IP 闸，401 负面对照产生的 fail#1 +1s 窗口会使后续 Hello 携票核销撞窗收 auth_failed（S3c 实测命中）；token 分支本身绕过 throttle（R-03 capability 语义），排序即解零 pacing
-- [Phase ?]: [Phase 05-09]: phase04.mjs S4/S5 osc52 断言适配 D-13——05-03 prefs 双档后 ro 端不再下发 osc52，旧断言结构性失败；spawn 加 --writable 改在 rw 端断言下发通道，断言面守恒（plan files 未列 phase04 但 prohibitions 已含其适配条款，六段式四脚本全过为硬约束）
-- [Phase ?]: [Phase 05-09]: S6 洪水 seq 1 3000000（plan 字面 20MB）→ seq 1 50000000（389MB，05-07 实测裁决量级）——踢出点 ~10MiB 管道吸收+512KiB outbox，pre-attach drain 不确定量下 20MB 裕度不足
-- [Phase ?]: [Phase 05-09]: GOROOT gofmt 清零 9 文件（纯注释排版/import 序，逐行核读零语义）——02-06/03-06 先例第三次沿用独立 style 提交；HEAD 漂移系 /usr/bin/gofmt 陈旧版 CJK 注释规则差异（01-03 已登记）
-- [Phase ?]: [Phase 05-10]: G-05-1 方向 A 落地——Welcome 三通道（attach/升格/运行期推送）恒携会话 cols/rows，恒序列化无 omitempty（缺席=旧服务端识别契约，P2 D-02 加键零新类型字节）
-- [Phase ?]: [Phase 05-10]: attach 升档序列重排——addMember/recalcNow 前移至 Welcome 组帧之前（Welcome 恒携 attach 完成后生效的会话尺寸）；Welcome 恒首帧与 hubMu > sess.fdMu 锁序两不变量保持，推送不触达未登记的 attach 者自身
-- [Phase ?]: [Phase 05-10]: 运行期尺寸下发唯一挂点 = recalcNow 的 last 变化分支（attach/detach/kick/升格/防抖五调用点全覆盖，目标不变零推送）；升格 Welcome 携 cand.dims（单员参与集恒等）；推送按各端当前 mode 组帧 + prefs 双档（D-13 不漂移），trySend 失败走 kickOrCreditLocked
-- [Phase ?]: [Phase 05-10]: TestAllPolicy 适配 G-05-1 推送（Rule 1：planner 回归自检遗漏 all 模式 2→1 推送落 B 读流）；plan 字面 B(60,20)->60/24 算术矛盾按意图修正 B(60,50)->60/43
-- [Phase ?]: [Phase 05-11]: 上报/渲染双概念拆分——refit() 唯一入口收编窗口监听/onopen/升格/prefs 四调用点；上报恒 fit.proposeDimensions() 窗口物理尺寸驱动仲裁，渲染 term.resize 逐轴 min(fit, sessionDims)；不采用 CSS 约束容器（proposeDimensions 会被污染致两概念无法拆分）
-- [Phase ?]: [Phase 05-11]: term.onResize 订阅拆除 + sendResize lastReported 等值去重——ro 期 isRO 门拦截不记账使升格后首次 refit 必真实上报（05-08 纠正链保持）；onopen Hello 发出后同步 lastReported 防握手 Welcome 后冗余等值 RESIZE（线序零漂移）
-- [Phase ?]: [Phase 05-11]: ro 一次性 console 提示改 roNotified 门闩承载（运行期尺寸推送打破每 attach 仅一次不变量），文案逐字不动；roNotified 接线前 export 防 noUnusedLocals（queryKeys 先例第二次沿用），接线后去 export
-- [Phase ?]: [Phase 05-12]: D6H-1 等价锁取「120x40 建起再 resize(40,10)」精确复刻前端 refit() 生产路径；D6H-2 负对照以 buffer 快照（translateToString(true) 去尾空行 join）比对，折行点分叉驱动不全等
-- [Phase ?]: [Phase 05-12]: S10c 取最后一帧 WELCOME 解码容忍升格+recalcNow 推送同值双帧；probe10.mjs 探针从未入库，按 plan 机制描述重建为 phase05-dims.mjs 并登记血缘
-- [Phase ?]: [Phase 05-13]: WR-01 修复取复检中止形态（05-REVIEW 逐字补丁）——推送循环内踢出经 removeMember→嵌套 recalcNow 推进 arbiter.last 后，外层复检 last != target 即中止 stale 扇出；踢出不改仲裁或信用路径 last==target 零代价继续；安全性注释改写覆盖真实可达的 removeMember 路径
-- [Phase ?]: [Phase 05-13]: WR-02 修复取 option (a)（用户 2026-08-22 裁决）——afterDrain 清位后、Broadcast 前补发当前 sessionDimsLocked() 的 Welcome（prefs 按 c.mode 选档 D-13 不漂移）；补发有序性归因 = afterDrain 全程持有 hubMu + outbox FIFO（非门仍闭合，plan-check 修订措辞）；「触发帧不丢」承诺收窄为首帧暂存 + afterDrain 补发收敛
-- [Phase ?]: [Phase 06-01]: D-08/D-09 确认门 as-locked（用户 2026-08-23 裁决）——EXIT 帧 = 'X'(0x58) + {"exit_code":N,"message":M} 三形态文案 + EXIT→1000 广播序列，与 06-CONTEXT D-08/D-09/D-10 逐字一致
-- [Phase ?]: [Phase 06-01]: EXIT 广播写序安全形态落地——lifecycle 组帧一次共享只读 + 每客户端 goroutine 同步 Write(EXIT,2s ctx)→Close(1000)（Pitfall 1：禁止 outbox 异步入队）；2s 为 RESEARCH OQ3 定值，拒绝可配化（P2 D-10），Phase 9 标定挂账
-- [Phase ?]: [Phase 06-02]: OQ1 确认门用户裁决 accept-255（2026-08-23）——--once/--exit-when-empty 收口路径子进程被 SIGHUP 终结，exitf 以 -1 收口、wesh 进程退出状态 255（lifecycle 零分支改动，与 D-09 exit_code=-1 同源）；下游三消费点（06-02 测试断言 -1 / 06-06 S3-S5 进程级 255 / 06-07 README 文案）按裁决值单点落地
-- [Phase ?]: [Phase 06-02]: stall 夹具断言序戒律再生效——踢出触发前绝不 Read：KickTrigger 翻转为先 waitExit(-1)（结构性证据）再读 1013 取证（05-07 登记戒律的回归形态，实测竞态 ~50% 翻 1000）
-- [Phase ?]: [Phase 06-03]: fetch catch 补 welcomeDone 代际标记守卫（Rule 2）——D-04 既定形态引入双在飞 connect，较慢者迟到失败不得用 'Unable to connect' 覆盖已建立会话（Pitfall 6 同族，fetch 通道无 sock 可守卫）
-- [Phase ?]: [Phase 06-03]: scheduleAttempt 入口清双 timer 保恰好一次（Rule 2）——双在飞 attempt 先后失败重入不叠加定时器，Pitfall 5 恰好一次纪律落到定时器机械层
-- [Phase ?]: [Phase 06-03]: 404 探测直连分支不设 stopReconnect——无认证模式重连链路继续走 WS，循环终止唯一挂点 = WELCOME 到达（成功判定恒为 WELCOME 的 prohibition 直接推论）
-- [Phase ?]: [Phase 06-04]: D-12/D-14 确认门 as-locked（用户 2026-08-23 裁决）——--once BoolVar（≡ --max-clients=1 --exit-when-empty=0，help 单行标明等价关系，第二客户端拒绝走既有 503 计数路径）+ --exit-when-empty[=duration]（exitEmptyValue 实现 flag.Value + IsBoolFlag 惯例：裸写=立即退出、=duration=重连宽限、不写=不开启；空格分隔形态不传值）——与 06-CONTEXT.md D-12/D-14 逐字一致
-- [Phase ?]: [Phase 06-04]: 语法糖分层纪律落地——fs.Visit 显式设置位判定（maxClientsSet/exitEmptySet）→ parse 期展开只填未显式位 → validateStartup 锚定显式设置位判组合矛盾（review #3：不依赖展开不变量，自证性更强）；IsBoolFlag 逐字引文作 func 行尾注释以满足验收 grep ==1
-- [Phase ?]: [Phase 06-05]: D1 清屏对照文本改 typeText echo 链路（Rule 3）——plan『spawn printf 先行』形态在 D-12 drain 语义下结构性不可观测（attach 前输出被丢弃无回放）；typeText InputEvent 链是 phase04-dom 已验证先例，恰为 must_have『终端经 echo 写入可观测文本』字面形态
-- [Phase ?]: [Phase 06-05]: RESEARCH A2 兑现——jsdom 25 CloseEvent 构造器探针先证可用，synthClose 置 null 抑制真实 close 混入断言面 + _savedClose 副本供 D6 代际场景二次驱动（staleClose）；assertOutputClean 运行时红线自证形态落地（review #7）
-- [Phase ?]: [Phase 06-06]: S5① 宽限计时起点锚定服务端 detach——c1 close 后先 waitClose（握手完成⇒detach 已发生）再 sleep 400ms，取消窗 1100ms 余量论证严格成立
-- [Phase ?]: [Phase 06-06]: OQ1 accept-255 协议层兑现——phase06.mjs S3/S4/S5 进程级退出状态 255 断言全绿（Go 层 exitf 桩收 -1，os.Exit(-1) Unix 截断只在真实二进制出现，06-02 下游消费点闭合）
-- [Phase ?]: [Phase 06-06]: 断连重接同一 PTY 协议层证据形态——echo S6PID=$$ 进程 ID 相等主证据（/S6PID=(\d+)/ 数字锚定防回显误命中）+ weshmark42 变量存活次级佐证 + 首连接无 EXIT 帧 + 服务端存活顺带锁定 D-14 默认
-- [Phase ?]: [Phase 06-07]: -max-clients help 重复标注裁决为修复（06-04 deferred 既定路由）——移除 help 文案自含 (default 32)，flag 包自动追加为单一事实源；纯展示层零语义，one-way 契约面不动
-- [Phase ?]: [Phase 06-07]: 旧 UAT 脚本对 EXIT 帧零适配落锤——phase02 T4a 仅断言 close code、phase03 无子进程退出场景，九脚本首跑全绿；六段式段 1 顺带清零三文件既有 gofmt 漂移（deferred-items 既定路由终点）
-- [Phase ?]: [Phase 07-01]: 无认证分支 bp 形态补注册 attach path-only 405 fallback（Rule 1 调和）——plan behavior 矩阵对无认证+BasePath 实例断言 405，现状无认证根挂载经 embed FS 404；取「bp 形态注册、根挂载不注册保持零漂移」，Pitfall 4 单侧定义防线落到两分支
-- [Phase ?]: [Phase 07-01]: 非法 --base-path 五族断言落 TestTLSKeyPairError 错误表（parse 期拒绝既定归属），TestParseArgs 只收合法/root 三行（wantBasePath 命名字段扩展，03-04 先例既存行零改动）
-- [Phase ?]: [Phase 07-01]: dist 升级前缀验收 grep 适配引号无关心形态——esbuild 以反引号模板字面量发射 '../../'（现状 /api/attach 同形态），字面量未重命名、引号非断言面（05-09 先例断言面守恒）
-- [Phase ?]: [Phase 07-02]: parseArgs 头注释 flag 计数 17→21 并补 Phase 7 行（Rule 1 文档漂移修复）——07-01 加 --base-path 后计数已陈旧，本 plan 再加三 flag 使漂移扩大；同区域主题直接相关一次修正
-- [Phase ?]: [Phase 07-02]: TestListenSocket 失败回滚子测补 Chown EPERM 注入（Rule 2 覆盖强化）——plan 给定的 Listen 失败注入零残留断言平凡成立；非 root chown uid 1 EPERM 是 T-07-02a Close 自动 unlink mitigation 的真实可达证据（root 环境自动跳过）
-- [Phase ?]: [Phase 07-03]: proxy 测试分文件（白盒 proxy_test.go / 黑盒 proxy_e2e_test.go）——Go 单文件单 package 约束使 plan 单文件四测试组字面不可达，05-04 resize 先例第二次沿用；remote_user 载体范围 = attach 链路事件行全覆盖 + 注册客户端会话事件（kick/pong_timeout/exit_when_empty 家族），未配置时 variadic 空值与现状逐字节一致
-- [Phase ?]: [Phase 07-03]: D-16 警告取合并形态（--auth-header 暴露面警告为主 + --no-auth 裸奔语义同行不丢）；Task 2 字面验收 grep 'clientIP(' 与 Task 1 验收结构性自相矛盾，按意图修正执行（旧自由函数零残留调用，修正版 grep==0）
-- [Phase ?]: [Phase 07-04]: supplementary groups 环境感知策略——root 清空附加组（NoSetGroups=false 最小权限既定语义）；非 root NoSetGroups=true 跳过（非 root 无 CAP_SETGID 清空必 EPERM 实测命中，GOROOT exec_linux.go:496-499 无条件调用；降回自身保留自身附加组零提权面）——plan flagged_assumptions 与免 root 测试要求的矛盾修正，07-08 人工 UAT 复核联动
-- [Phase ?]: [Phase 07-04]: D-22 stop-signal 序列统一出口 stopChildLocked（SignalGroup(stopSignal) + stopTimeout>0 时 AfterFunc 异步补 SIGKILL 不占 hubMu、ESRCH 幂等）——exit-when-empty 两触发点与 07-05 Shutdown 共用同一函数同一对字段，Options 单一通道双写即漂移
-- [Phase ?]: [Phase 07-04]: 信号类行为测试夹具纪律——trap 安装与 detach 信号竞态经落盘标记文件同步（01-03 先例）；trap "" 忽略型经 SIG_IGN 跨 exec 持久整组免疫（初版 setsid 探针受 fish 作业控制干扰误判，真实二进制冒烟修正）；捕获型 trap 特异退出码作证送达（exit 43）
-- [Phase ?]: [Phase 07-04]: SignalHangup 泛化删除的 grep==0 语义边界——方法删除 + 两调用点换 SignalGroup + 测试机械换名 TestSignalGroupHangup + 注释字面同清（05-08 纪律：验收 grep 是源码级机械检查，注释提及旧名同样计数）
-- [Phase ?]: [Phase 07-05]: Shutdown 的 stop-signal 序列取同步 sleep 形态（plan behavior 逐字）——stopChildLocked AfterFunc 异步补 KILL 服务 hubMu 持有方（exit-when-empty），Shutdown 不持 hubMu 同步 sleep 更直白且 KILL 测序确定；字段复用（Options 单一通道）是硬约束，函数复用非约束
-- [Phase ?]: [Phase 07-05]: WS Close 握手测试夹具 readCloseAsync——库 close 回显走读路径，测试客户端无在读 Read 时服务端主动 Close 等满内建 5s 上界；Shutdown 前启动客户端读循环 goroutine（plan behavior「客户端读循环」字面形态），真实浏览器协议栈透明回显无此窗口
-- [Phase ?]: [Phase 07-05]: 测试装配 startShutdownServerWith 本地变体（plan 字面 startTrackedServerWith 按意图修正——srv 句柄不暴露，Shutdown 直接调用面结构性需要）；parseArgs 头注释 28→29 补 --open 行（07-02 先例第二次沿用）
-- [Phase ?]: [Phase 07-06]: 配置 exit-when-empty 在 --once 展开之前应用（配置不算显式，展开覆盖配置值——flag > 配置推论）；cfgCredErr 上报点落合并段末尾，env/CLI 遮蔽的配置列表不解析不校验（D-02/D-05 不应用语义字面落地）
-- [Phase ?]: [Phase 07-06]: 默认值替换机制承载 D-05 优先级链——配置标量键换算 flag 注册默认值，flag > 配置 > 默认两档零新判定代码；配置键存在即「已给定」置显式位（socket 族/write-policy 矩阵配置同档）
-- [Phase ?]: [Phase 07-07]: S4c 控制字符探针取 UTF-8 线形等价物构造（本机三探针实证）——undici 头值 latin1 编码使朴素 JS 'ali\u0085ce' 上线为单字节 0x85（Go 侧 U+FFFD 复现不了剥离路径），'ali\u00C2\u0085ce' 双码点上线 0xC2 0x85 = UTF-8 客户端等价线形，Go 解码得 NEL 按 D-19 剥离
-- [Phase ?]: [Phase 07-07]: S4 事件行触发形态 = --exit-when-empty 的 exit_when_empty logEvent——attach+close 链路唯一确定性即时事件（携 Attach 入口提取的 c.remote/c.remote_user），进程随后 HUP 收口 255 顺带锁定；S5a 加 900ms 时序下界证宽限真实经过；S1 排序即解零 pacing（401 负面对照排最后）
-- [Phase ?]: [Phase 07-08]: RESEARCH A1 复核闭合——本机 nginx 1.14.1 实测 location /wesh/ 不匹配裸 /wesh（裸路径 404），README nginx 配方精确重定向块按实证确凿落文（非防御性建议）
-- [Phase ?]: [Phase 07-08]: SEC-07 D-15 双文件修订落位——REQUIREMENTS.md 与 ROADMAP.md SC2 同步改为服务端审计归因语义（原「子进程环境变量」表述作废），单一口径防文档间漂移；勾选状态与 Traceability 映射不动
-- [Phase ?]: [Phase 07-10]: G-07-3 闭合——listenSocket 活性探测（net.Dial unix 连通=存活→拒 EADDRINUSE 同形态文案 exit 1；失败=残留→照旧 Remove）；TOCTOU 两向安全降级；「不可服务即残留」边缘假设登记
-- [Phase ?]: [Phase 07-10]: G-07-8 选项 A 裁决落地——openBrowser goroutine Wait 收割防僵尸 + 非零退出补 wesh: warning 警告行（D-27 运行期非零覆盖从实现侧闭合，文档链不动）；警告行不含 URL（Wait err 结构性无 argv + 测试反断言双锁）
-- [Phase ?]: [Phase 07-10]: 长测试名夹具路径纪律——t.TempDir 拼长子测名可超 sun_path 108B（bind EINVAL），unix socket 测试夹具用 os.MkdirTemp 短根路径
-- [Phase ?]: [Phase 08-01]: logEvent 原子迁移 slog JSONHandler 落地——stderrW 动态 writer（Write 时读 os.Stderr 变量）保 captureStderr 语义；emitEvent(attrs) 为唯一底层出口（msg=event 单写口，08-02 扩展字段挂点）；包级 eventLog 不调 SetDefault（main.go 零改动）
-- [Phase ?]: [Phase 08-01]: 实证纠偏——slog JSONHandler time 键 = RFC3339Nano + 进程本地时区（GOROOT json_handler.go:93-99 appendJSONTime），非 08-RESEARCH/plan 所述 RFC3339 毫秒 UTC（appendRFC3339Millis 仅 TextHandler 分支）；08-02+ 与 README 运维节引用以本实证为准
-- [Phase ?]: [Phase 08-01]: 事件断言迁移形态定案——Go parseEvents/countByEvent + JS 内联 parseEvents 双侧同构（滤 '{' 起始行、单行非法 JSON 即 FAIL）；行尾锚定在 event 名精确相等下消解；红线负断言子串形态与 JSON 化正交逐字保留
-- [Phase ?]: [Phase 08-02]: detach 事件恰好一次归属 = removeLocked 返回 true 的路径 emit（reader detach 与 kick 互斥的既有所有权规则映射到事件面）；emitDetachLocked 为两调用点共用唯一 emit 形态（D-18 schema 单侧定义）；reason 判定序 pongTimedOut(hubMu 同锁) → exiting+closeBroadcastCode(广播码同源) → normal
-- [Phase ?]: [Phase 08-02]: pinger 签名收窄 (ctx, cl, interval)——pong_timeout 折入 detach reason（D-21），置位取 hubMu 写/detach 同锁读（Pattern 4 形态 b，-race 防线）；exitSignalNum 抽取为 exitMessage 与 session_end 信号号提取单侧定义（行为逐字节不变）
-- [Phase ?]: [Phase 08-02]: XFF 注入测试取中段注入——尾段 NEL 被 clientIP TrimSpace 先吃掉（unicode.IsSpace(NEL)=true 实证），中段才是 ParseIP 闸受力面；remote() trust 分支过 sanitizeRemoteUser 作 D-19 纵深第二道（双闸并存）
-- [Phase ?]: [Phase 08-03]: /healthz 键集白名单锁取完整形态——四键恰好（多/少一键皆 FAIL），200 与 503 两态同锁（T-08-03a prohibition 的『body 键集白名单断言』字面兑现）；draining body 同构四字段（RESEARCH A5）
-- [Phase ?]: [Phase 08-03]: draining 置位落 Shutdown 首行（emitEvent shutdown 之前，hubMu 锁定之前）——plan『首行（hubMu 锁定之前）』字面；两原子位注释登记 T-08-03d（无网络可达置位路径）
-- [Phase ?]: [Phase 08-04]: metricsCounters 全五字段 + Server.mc + 快照计数器读取在 Task 1 一次落地（plan 字面任务边界调整）——避免 tracer 提交携带五个硬编码 0 占位 series（tracer 纪律 production-quality）；终态与 plan must_haves 逐字一致
-- [Phase ?]: [Phase 08-04]: TestMetricsExposition 取黑盒形态（真实实例 HTTP GET）而非 plan 字面白盒直调——metrics_test.go 为 package server_test 外部包，未导出 handler 结构性不可达；黑盒经真实注册路径额外锁定接线（08-03 TestHealthz 先例）
-- [Phase ?]: [Phase 08-04]: ws_sent ≥ 2×pty_output 放大比断言可判定性论证（/bin/cat 零 pre-attach 输出 + 两端在册后驱 INPUT 恒双端扇出 + 帧类型字节严格大于）；auth 计数器精确值锁 ==1/==2 强于 plan 的 ≥1（实例私有 + 序列确定）
-- [Phase ?]: [Phase 08-05]: S4 draining 确定性夹具 = trap 忽略 stop-signal + --stop-timeout 3s 组合（plan 字面 '--stop-timeout 3' 意图修正——DurationVar 单位要求 + lifecycle 收口下无 trap 窗口 <1s 实证）；进程终结 P1 硬约束使窗口宽度 = stop-signal 序列时长
-- [Phase ?]: [Phase 08-05]: phase05-dom D5 踢出检测迁移 detach reason=kick 字段断言——08-02 D-21 折入的漏检消费者（dom 变体不在 08-01..08-04 回归集），本 plan 全量 14 脚本回归捕获；回归集含全量变体是迁移类变更漏检的最终防线
-- [Phase ?]: [Phase 08-05]: GOROOT gofmt 清零 multi_test/slowclient_test 既有漂移（07 deferred-items 既定路由终点，纯排版独立 style 提交先例第五次沿用）
-- [Phase ?]: [Phase 08-06]: G-08-2 闭合取 README 侧修复——两则 journald 示例统一 grep '^{' 预滤 + 合流机理说明（systemd 默认 StandardOutput=journal 使 stdout 横幅与 stderr JSON 合流），wesh 源码零改动（D-14/D-15/D-16 锁定推论）；新增 phase08-journal.mjs 合流模拟夹具（负对照自证不空转），进程收口取 child 'close' 事件防 exit 先于流 flush 竞态
-- [Phase ?]: [Phase 09-01]: goreleaser v2.18.0 构建目录实为 dist/wesh_<os>_<arch>_<variant>/（09-01 plan verify 块按 dist/<os>_<arch>/ 书写——按实证路径执行，断言面零变化）
-- [Phase ?]: [Phase 09-01]: 验收 grep 机械纪律第四次沿用——.goreleaser.yml 头注释登记 Pitfall 2 时避免字面引用模板串（注释提及同样计数）；YAML 静态审查通道 = ephemeral docker python+pyyaml（宿主无解析器，容器即弃零污染）
-- [Phase ?]: [Phase 09-02]: proto fuzz 直挂既有导出函数零改造（plan must_have 既定）——RED 种子即 PASS 为设计内回归门性质，按 TDD fail-fast 规则调查后继续；plan type=execute 不适用 plan 级 RED/GREEN 门序列，task 级 tdd 以 test→feat 提交拆分兑现
-- [Phase ?]: [Phase 09-02]: ci.yml fuzz job 注释避开 fuzztime=60s / go test -race 字面（验收 grep 机械纪律第五次沿用）；YAML 静态审查 ephemeral docker pyyaml 通道第二次沿用并强化为全结构断言
-- [Phase ?]: [Phase 09-06]: 负载矩阵标定通道落地——//go:build load 首行硬纪律 + 触发式洪水（bash read 闸消 pre-attach 不确定量）+ 尾闸 sleep 1 消 EXIT/1000 广播对 outbox 残余的截断竞态（首跑实测 32 端格缺 22428 字节，严格字节相等断言结构性恢复）
-- [Phase ?]: [Phase 09-06]: D-12 三断言全量实测现值成立零证伪——fanout 1/4/16/32 kicks=0 逐字节一致；legit-slow 400KB/s 读者 kicks=0；32 端 Alloc 峰值 19.8MB<=64MiB；信用门 6 次/16.7s=0.36/s 不震颤；defunct 三面 200 轮 goroutine/fd 精确回基线零 Z 态
-- [Phase ?]: [Phase 09-06]: go list 排除证据取 TestGoFiles+XTestGoFiles 双清单（server_test 外部包文件在 XTestGoFiles，plan 字面单清单为弱证据按意图升级）
-- [Phase ?]: [Phase 09-07]: Dockerfile ADD 远程 URL 制品必须 --chmod=755——默认落 0600 无执行位，scratch 零 RUN 无法补救（RESEARCH 定稿缺失，/tini permission denied exit 126 实测命中）；与 ADD --checksum=sha256 同行是供应链钉死+执行位的唯一形态
-- [Phase ?]: [Phase 09-07]: 实机 systemctl 通道 = systemd --user（08-05 先例单元 wesh-uat.service 即 user manager，plan『08-05 同通道』字面对应物）；两个 systemd 通道断言纪律——ExecMainStatus 须在 auto-restart 窗口内捕获（新进程启动归零）；停窗口夹具须 trap TERM+HUP（KillMode=control-group 使 systemctl stop 直 TERM 全 cgroup，只 trap HUP 结构性失效 0.4ms 瞬杀实测）
-- [Phase ?]: [Phase 09-07]: 验收 grep 机械纪律第六次沿用——unit 加固张力注释以散文说明（家目录隔离/根文件系统只读化），不写 ProtectHome/ProtectSystem 字面（注释提及同样计数，验收 ==0 是源码级机械检查）；systemd 239 纹理记录：manual stop 下 wesh 退出 255 → ActiveState=failed 但绝不复活（09-09 README 说明素材）
-- [Phase ?]: [Phase 09-08]: Caddyfile LAN 监听站点地址须裸 :PORT（28ae2f2 勘误）——http://0.0.0.0:PORT 在 Caddy 是字面 Host 匹配（仅 Host: 0.0.0.0 命中，真实主机名落空走兜底空 200），与 nginx 监听语义相反；两平台配方互抄必错第二实证点（Pitfall 6）
-- [Phase ?]: [Phase 09-08]: Caddy 三行为面实证锁定（09-09 README Caddy 节「实证 2026-08-30，Caddy v2.11.4」素材）：reverse_proxy 默认原样透传 Host（Origin 同源校验天然过，零 Host 行）；WS upgrade 内建自动；hijack 后无默认 WS idle 超时（65s 空闲存活双机实测）
-- [Phase ?]: [Phase 09-08]: Task 1 首证「外部 Host 照常被服务」结论勘误为假绿——proto-verify 就绪探针 curl 0.0.0.0 自身使 Host 字面命中站点地址；外部 Host 行为面断言必须以真实主机名/LAN IP 为请求目标（探针目标与断言语义正交纪律）
-- [Phase ?]: [Phase 09-08]: pw t1 认证形态与 phase07-a2 关键差异——Caddy 无认证层走 authedContext 预置 Authorization（避开 wesh 401→recordFail→429 节流 1s 窗口），裸 context 负面对照 + sleep 1.2s pacing 消解（05-09/07-07 纪律）
-- [Phase ?]: 09-03: D-18 三项 as-locked 落地——HINT_SHUTDOWN C-10 条件句式常量 + showShutdown 单写口（pre-onopen 分派与稳态 case 1001 唯一调用形态）；case 1001 在分派序修订后实际不可达但按 plan 字面保留为防回归纵深（单写口使两处零文案漂移）
-- [Phase ?]: 09-03: D13 夹具取黑洞 TCP 伺服器（accept-never-upgrade + SpyWebSocket URL 端口改写经 loadTerminal opts.blackholePort 注入）——plan 括注的 hold/不发 Hello 两形态结构性不可达（fetch hold 期 WS 未构造；opened 在 onopen 即置位先于 Hello），黑洞形态使 onopen 永不触发、opened 恒 false 零事件竞态
-- [Phase ?]: 09-03: dist 产物指纹断言以 grep -o 计出现次数（esbuild 单行 bundle 下 grep -c 计行数恒 1 失真）；esbuild 不去重字符串字面量实证（旧 hint 改前产物 2 处→改后恰 1 处）；TDD RED 先证——更新断言对旧 dist 三 FAIL 恰复现三项 WARNING bug 形态后重建转 GREEN（09-02 task 级 tdd 先例第二次沿用）
-- [Phase ?]: 09-04: D-05..D-08 确认门 as-locked（用户 2026-08-30 裁决）——--index 整页替换（ttyd -i 同款零模板注入面）+ 全通道统一（/ 与 /s/{token}/ 经 wh 单点装饰同一字节源，sharetoken.go 零改动）+ 启动一次读入（LimitReader(max+1) 四拒绝 exit 2，错误行零内容字节）+ index-max-size 纯配置键（16MiB 默认，无 CLI flag——P7 D-03 纪律明示例外）
-- [Phase ?]: 09-04: Options.CustomIndex 字段提前至 Task 2（Rule 3 最小跨文件必要——Task 2 验收 grep 要求 Options 字面量透传，字段缺失包不可编译）；TestStartupMatrix 既有行 indexMaxSize 16MiB 基线注入（maxClients 基线同步先例同款）
-- [Phase ?]: 09-05: undici fetch 自动 accept-encoding + Content-Encoding 透明解压使自定义页明文伺服态结构性不可观测——phase09.mjs 以 node:http rawFetch 原始请求通道（不注入头/不透明解压/5s 护栏）直证 gzip/明文双态与头面（09-04 Go transport 显式编码适配的 JS 侧对偶）
-- [Phase ?]: 09-05: UAT 脚本 task 级 tdd RED 形态——被测实现属先序 plan（09-04），RED 以 git archive 09-03 HEAD 构建 pre-09-04 二进制跑新脚本证判别力（S1 类别不匹配/S2-S5 拒启/S6 unknown key 全 FAIL exit 1）后 GREEN 18/18；plan 单 test 提交字面保持（09-02 先例第三次沿用）
-- [Phase ?]: [Phase 09-09]: D-13 标定表回填走验证结论形态——09-06 三断言全量现值成立零证伪，常量默认值零改动（git diff 零 .go 文件），README 12 行全量清单负载敏感项附 09-06 LOADDATA 数据摘要、时序项「行为测试已锁 + 一阶依据复核成立」；实测日期取 2026-08-29（09-06 实跑日）保数据可溯源
-- [Phase ?]: [Phase 09-09]: release.sh 干跑步骤清单取描述性措辞（验收 grep 机械纪律第七次沿用）——fuzztime=10m/-tags=load/git push origin 命令字面只在执行段单次出现满足 ==N 计数；好树干跑态利用脚本未入库窗口期（mv /tmp 副本对仓跑），闸序钉死（形态/已存在先于脏树闸）是各态独立可触发前提；shellcheck 缺席以 bash -n + 四态行为自证
-- [Phase ?]: [Phase 09-10]: 发布闸（Task 2 checkpoint:decision blocking）用户裁决 publish-later（2026-08-30）——v1.0.0 择机自行发布，单命令 ./scripts/release.sh v1.0.0（前置：工作树干净、与远端同步；脚本自带全量测试/长 fuzz×2/负载矩阵/确认闸→tag push 触发 release.yml）；phase 以能力交付收尾，release.yml 真实全链首证留待发布时（snapshot 已证形状——RESEARCH Pitfall 12 既定取舍）
-- [Phase 09]: [UAT 收口]: publish-later 裁决于同日 verify-work 会话升级为"现在发布"（用户授权 push 触发 CI darwin 证据 + 授权全链发布）——v1.0.0 于 2026-08-30T16:29Z 实发布上架（四平台产物 + checksums 核验全 OK + linux_amd64 --version 实跑 wesh 1.0.0）
-- [Phase 09]: [发布链插曲]: FuzzDecodeFileConfig 值红线断言的键名回显豁免口径（7850bc4）——发布长跑语料 ["FUZZ_PROBE_SECRET"] 表头把探针搬进键名位置，全文字面断言误判合法键名回显（config.go 单写口既定行为 + fuzz_test 头注释明示"键名回显不在断言面"）；stripKeyNameEcho 剥除两处键名上下文后断言（值透传仍 FAIL fail-closed）+ TestStripKeyNameEcho 六形态行为锁；产品代码零改动
+- [Milestone]: v1.0 全量收口（44/44 需求），v1.0.0 于 2026-08-30 实发布上架（四平台 + checksums 核验全 OK）
+- [Roadmap v1.1]: 五阶段沿研究骨架与依赖链——装配阀门(10) ≺ 生命周期主干(11) ≺ 交互背压(12) ≺ 资源防线与终结语义(13) ≺ 标定/UAT(14)；2026-09-03 原 13/14 合并（原 13 经 Phase 11 D-01/D-03 机制先行收窄后独立 phase 开销过重，合并同时提前闭合 --once 窗口期缺口）、原 15 重编号 14
+- [Research v1.1]: 零新增依赖；「装配期一次分岔、运行期零分岔」不抽象 session 接口（6-7 显式分支点）；最大风险=破坏既有不变量而不自知（D-10 唯一终结/D-13 零新 exitf/唯一收割者/Welcome 恒首帧/零身份 label）
+- [Requirements v1.1]: D5 裁决落定——SEC-09 per-client 下 WESH_REMOTE_USER 注入子进程 env（D-15 收窄理由结构性消失），shared 保持收窄语义；反特性五条入 Out of Scope（reattach/linger/运行期切模式/默认 per-client/ro 共享进程）
+- [Phase ?]: [Phase 10-01] run() 两模式均经启动期 pty.Start（sess=nil 与 New 体 sess.Cmd.Process.Pid 取引用冲突，归 Phase 11）；SpawnFunc 闭包 inert 零调用方
+- [Phase ?]: [Phase 10-01] ValidateOptions 包级互斥校验 option (b) 落地：per-client×SpawnFunc=nil / shared×SpawnFunc≠nil fail-fast，零值归一 shared 与 New 兜底同口径
+- [Phase ?]: [Phase 10-05] GOROOT gofmt（go1.26.3 现代 doc-comment 规则）定为收口闸工具：10-01 遗留两行 CJK 标点接续注释补空格归一（a412a87），新旧 gofmt 双 clean；历史闸用 PATH 旧版 gofmt 故未报
+- [Phase ?]: [Phase 11-01] perclient_test.go 落 package server_test（plan 文本 package server 与「同包复用 e2e_test.go helper」矛盾，按后者裁决）
+- [Phase ?]: [Phase 11-01] Task 1 TDD 以 plan 显式单 feat 提交收口；PC-02/03/04 需求勾选留给 phase 末 plan 11-06（ID 跨 6 plan 共享）
+- [Phase ?]: [Phase 11-02] darwin exit watcher dup-watch fail-closed 落地（Pitfall 9 挂账兑现）：errDupWatch 包级错误值 + watch() w.mu 内 dup 检查；awaitExit 既有分支退化 cmd.Wait() 兜底零新面；TestWatchDupPidFailClosed 由 CI macOS leg 承担运行
+- [Phase ?]: [Phase 11-03] D-02 容量再闸落地：capacityMessage 常量 + rejectCapacity 单点（两容量拒绝路径 wire 不可区分是有意为之）；Task 2 TDD 单 test 提交延续 11-01 先例
+- [Phase ?]: [Phase 11-03] D-03 复检回收落地：硬不变量「并发子进程数 ≤ maxClients」Phase 11 即成立——Phase 13 裁决项④提前消解，Phase 13 规划时移除 STATE Blockers ④
+- [Phase ?]: [Phase 11-04] plan 文本 kill -TERM $$ 勘误为 kill -HUP $$：交互 shell 无 trap 忽略 SIGTERM（实测不致死），HUP 致死且与 exit_test.go 信号夹具同款——后续 plan 信号夹具选型应直接用 HUP/trap 形态
+- [Phase ?]: [Phase 11-04] 竞态注入测关闭观测形态：客户端主动 Close 后 Read 恒 net.ErrClosed（库 prepareRead 语义），「读至 CloseError」经并发泵 + 1000 证据双通道（泵 CloseError / Close nil 返回）实现
+- [Phase ?]: [Phase 11-04] PC-03/PC-04 需求勾选延续既定归 phase 末 11-06（跨 6 plan 共享 ID）
+- [Phase ?]: [Phase 11-05] S5d 自杀信号沿用 11-04 勘误（kill -TERM→-HUP，STATE 裁决既定）；pid 数值纳入 SEC 运行时自净扫描（sensitivePids 三通道）
+- [Phase ?]: [Phase 11-05] PC-02/03/04 需求勾选延续既定归 phase 末 11-06（跨 6 plan 共享 ID + plan flagged_assumptions 明示保持 flagged-unverified）
+- [Phase ?]: [Phase 11-06] Phase 11 收口闸六段式全绿：静态面+全量-race(5包1m5.6s)+darwin双闸+八脚本两轮基线一致(12/18/10/28/23/34/21/18)+phase11.mjs 21/21+1skip+diff四件套；prohibitions 19/19人工确认零违反
+- [Phase ?]: [Phase 11-06] phase基点口径：branching_strategy=none下merge-base退化为HEAD——以phase首提交父提交954da7c为等价基点；PC-02/03/04勾选承载兑现（十四测+八场景+diff审查三证据链）
+- [Phase 11 REVIEW WR-01 → Phase 12]: per-client 输出闭包 trySend 失败直踢 1013（kickSlowConsumerLocked），丢失 05-13 attach 宽限与信用门暂存层——慢链路新端瞬态满箱即循环丢会话；PATTERNS:218 母本为 kickOrCreditLocked。Phase 12（1013/背压语义主场）规划时收口：补宽限门 + creditPending/afterDrain 重投
+- [Phase 11 REVIEW WR-02 → Phase 13]: reaped 栅栏 Wait-return→hubMu-acquire 微窗口（kill-after-reap 理论面，实际不可达=pid 回绕+µs 窗）——零成本严格修法：waitDone 在 reap 完成点关闭 + 快半段非阻塞 select 即结构性栅栏。随 Phase 13 终结语义一并处置
+- [Phase 11-per-client]: [Phase 11-07 CI 复验副产] ubuntu flaky 根因 = CI 慢 runner shell 冷启动慢，PS1 打印晚于 tty 回显落在回显行与结果行之间（"$ MARKER" 交错形态，CI run 33843785651 实证）——9936f2b 以 (?:\$ )? 容忍修正三处（InputEcho/echoMarker/ExitPrivate42 B 端），结果行锚定与回显行排除语义不变（六案例自检）；后续终端类测试断言沿用该容忍形态
+- [Phase 11-per-client]: [Phase 11 secure-phase] 21 威胁全 closed（threats_open: 0，L1 grep 深度 + register_authored_at_plan_time 短路）；accepted risks 三条登记（AR-1 审计空白→Phase 13 / AR-2 持续 EPERM 语义=护栏正确翻车 / AR-3 零新依赖供应链窗口）
+- [Phase 11-per-client]: [Phase 11-07] 单一文件门基点按 plan 规则以实际起始 HEAD 975af23 替换假设基点 f55c1ea（两者间仅 7358b82/975af23 两个 .planning-only 提交，f55c1ea 交叉核对同结果：恰 internal/server/perclient_test.go 一文件）；waitPgroupESRCH EPERM 容忍语义经探针参数化（waitPgroupESRCHWithProbe 四子测）确定性锁定，护栏保留与他错立即 Fatal 两半边零弱化
+- [Phase ?]: [Phase 12-01] D-08 one-way 门 option-a 用户派发确认落定：session 字符串枚举恒序列化（G-05-1 同形态），五 Welcome 组帧调用点统一恒传 s.sessionMode
+- [Phase ?]: [Phase 12-01] reset 判别通道以 @xterm/headless 探针实证升级：clear() 不退 alt screen 且不清其背后 normal buffer——phase12-dom D1 以 1049l 残影复活链路锁定 reset 效应（plan 原 DOM 空白断言两态皆过无判别力）
+- [Phase ?]: [Phase 12-01] 模式位解析缺键语义按 sessionDims :655-664 容错同构：缺键（旧服务端）静默 shared，键在场值非法 warn；PC-06 勾选留 phase 末 12-05（跨 plan 共享，11-01 先例）
+- [Phase ?]: [Phase 12-02] winsize 观测面复用同包 ptySize/pollSize（creack/pty Getsize 即 TIOCSWINSZ 直读）——plan 原文 unix.IoctlGetWinsize 同语义既有件，零新代码零新导入
+- [Phase ?]: [Phase 12-02] D2 判别面经 onopen lastReported 同步语义（Hello 即首报）收敛：握手后基线恒零 RESIZE，布局桩突变+resize 事件才产生新帧——消除 WELCOME refit 假阳面
+- [Phase ?]: [Phase 12-02] PC-05/PC-07 需求勾选留 phase 末 12-05（ID 跨 12-02/04/05 共享，12-04 协议层证据未落——11-01/12-01 先例延续）
+- [Phase ?]: [Phase 12-03] kickSlowConsumerLocked 调用移入独立回调 armSlowDwellLocked（AfterFunc 三件套承载）——startSessionGoroutines 函数体 kick 零命中验收闸字面可满足 + 闭包可读性；武装挂点形态属 Claude's Discretion 范围
+- [Phase ?]: [Phase 12-03] 慢但前进测滴漏形态经三轮 TCP 层实证（滴漏时间线/双端 ss/SIGQUIT 栈/服务端临时插桩）从 plan 文本「每 dwell/3 读一小批」演化为事件驱动 duty-cycle：PTY 行规程微帧 ~50-500B + 内核 send queue 自适应 ~3-4MiB 使亚秒级配额滴漏永不触发服务端续读（机制按 D-02 定义正确）；事件形态判别力内建（单轮 0.5×dwell < dwell、3 轮累计 > dwell，非重置实现必翻车）且机器无关
+- [Phase ?]: [Phase 12-03] dwell 踢出观测经 /healthz clients 归零轮询（只读 HTTP 不打扰 WS stall 面）替代固定 sleep 越点等待；gateTransitions 差值断言取下界（≥2/≥6）——瞬态二次停读使精确计数 flake（Phase 9 教训），两递增点存在性由配对论证锁定
+- [Phase ?]: [Phase 12-03] Rule 1/3 偏差：12-02 遗留 TestPerClientROInputDropped ro 半场 return 使 rw 对照半场不可达（go vet unreachable 暴露，go test 默认 vet 子集不含故 12-02 未现形）——labeled break 修复（0602e0b），解锁本 plan mandated verify；PC-10/PC-11 勾选留 12-05
+- [Phase ?]: [Phase 12-03] WR-01（Phase 11 REVIEW 遗留）按 D-04「dwell 涵盖不复刻」形态闭合：dwell 10s 从停读起点武装结构性涵盖 500ms attach 宽限（×20 余量）与一切瞬态满箱；阻塞持帧即暂存（帧在闭包栈上 ≡ shared 暂存字段语义等价，单消费者下复刻即死代码面）——宽限门与 creditPending/afterDrain 重投均不复刻，代码与注释双侧回指（perclient.go 闭包注释 + clients.go defaultSlowDwell 注释）；若瞬态满箱误踢案例实证出现，回写重开（CONTEXT deferred 既定）
+- [Phase ?]: [Phase 12-04] S6 场景形态裁决（Rule 3 实证驱动）：默认 --ping-interval=5s 下 dwell 1013 被 1006 pong_timeout 结构性先杀——coder/websocket writeControl 内层 5s 写超时（write.go:277-279）使 ping tick 落在 writer 持锁阻塞于满 TCP 窗口时 mu.lock 超时返回 DeadlineExceeded，被 pinger 单一判读误认为 pong 超时（实测 detach 恰于 attach+10.0007s）；S6 以生产 CLI flag --ping-interval=0（D-16「0 = 禁用保活」，Go harness 零值同构）隔离 dwell 看门狗，dwell 本身生产 10s 零覆写真实等待（两轮实测 10.6s/10.4s）
+- [Phase ?]: [Phase 12-04] 洪水量修正：plan 文本「seq 1 400000 级，超 outbox 512KiB 即足量」与 TCP 吸收带事实不符（2.7MB < ~10.6MiB 吸收带 → 停读永不形成、场景空转假绿）——按 slowclient_test.go 吸收带纪律上调至 seq 1 4000000（30.9MB ≈ 3× 余量，Go seqFlood Linux 分支同款）；S5 恢复期零输入纪律（tty 回显与洪水共用输出流，发标记会破坏连续性校验面——收齐信号 = 尾窗 '3999999\r\n4000000\r\n' 终态联合形态）
+- [Phase ?]: [Phase 12-04] phase12.mjs 六场景两轮全绿（20/20×2）：Welcome.session 双模式 / resize 直通隔离+零 W 帧 / ro RESIZE 直通+shared 对照 / ro INPUT 丢弃+rw 限速 / 停读续读 34.9MB 字节级连续 / 真实 dwell 1013+ESRCH；RawStallClient raw socket 停读夹具（phase05 rawStallClient 一般化）为后续 phase 可复用件；PC-05/06/07/10/11 勾选留 12-05（既定先例）
+- [Phase ?]: [Phase 12-05] Phase 12 收口闸六段式全绿：静态面（gofmt/vet 零输出）+ 全量 -race 5 包 1m21s（新测 12/12 逐名）+ darwin 双编译闸 + dist byte-identical + UAT 矩阵 16 轮（既有 10 协议脚本默认 shared 零修改与基线逐脚本一致 + 3 jsdom + phase12 两轮 20/20 + phase12-dom 14/14）+ diff 白名单审查（放宽形态零命中/红线文件零 diff/零新依赖 0 行）；PC-05/06/07/10/11 五需求勾选收口（三证据链映射表）
+- [Phase ?]: [Phase 12-05] WR-01（Phase 11 REVIEW 遗留）闭合回指登记（D-04「dwell 涵盖不复刻」形态）：dwell 10s 从停读起点武装结构性涵盖 500ms attach 宽限（×20 余量）；阻塞持帧即暂存（帧在闭包栈上 ≡ creditPending 语义等价）——宽限门与 creditPending/afterDrain 重投均不复刻；若瞬态满箱误踢案例实证出现则回写重开（CONTEXT deferred 口径）；登记项 STATE.md 规划期 :99 现位 :103（12-01..04 决策追加行移，内容逐字核对）
+- [Phase ?]: [Phase 12-05] diff 审查白名单补充项①：export_test.go M（+17/-0 GateTransitionsForTest 观测出口）为 12-03 plan 明示落地项，零断言纯观测出口文件——12-05 plan 白名单枚举未列属 plan 文本枚举缺口而非回归，三轴裁决（plan 授权/append-only/零断言）如实登记（WINDOWS #33）不判收口失败；phase 基点 = e8b39c0（86433a6^ Phase 12 首提交父提交，11-06 先例同构）
+- [Phase ?]: [Phase 13-01] D-01 one-way 门 option-a 用户派发确认落定：per-client --stop-timeout 未显式设置默认 5s（HUP 免疫泄漏防线默认开启）+ 显式 0 经 stopTimeoutSet 显式位尊重并 warn 泄漏风险；shared 字面 0 逐字不动（12-01 D-08 one-way 门先例同形态）
+- [Phase ?]: [Phase 13-01] Task 3 Rule 3 可测性提取：run() 内联双默认值覆写提取为纯函数 resolveStopTimeout（loadCustomIndex 同位纪律）——plan「终值落定直调」的直调点；TestValidateStartupWarnMerge 加第四枚负例（per-client 未设无 warn，Rule 2 判别力——锚定显式位而非终值的过宽实现必翻车）
+- [Phase ?]: [Phase 13-02] 双桶判序 per-IP 先/全局后（短路）：单 IP churn 过量尝试在 per-IP 桶即拒（AllowN 失败零消耗）不耗全局预算——反代后合法多用户共享全局配额不被单一 churning IP 占干（plan/RESEARCH 蓝本均未定序，实现 latitude 裁决）
+- [Phase ?]: [Phase 13-02] Rule 3：TestPerClientTeardownRaceOnce mutate 放宽 per-IP 桶（10 轮同 IP 连续 attach 超默认 burst 4，plan 对既有测试 attach 密度枚举缺口；测试对象 teardown 竞态非 churn 防线，断言行零改动）
+- [Phase ?]: [Phase 13-02] 惰性过期判别面：perIPRate=1/s burst=1200 > 15min TTL 补给上限 900——正补给使小 burst 的 allow-结果无判别力（重置与补给同满额），三相位精确计数 1200/120/1200 双向判别（无重置 960 翻车/过早重置相位二 1200 翻车）
+- [Phase ?]: [Phase 13-02] 事件 schema 键集白名单含日志封套（time/level/msg）+ 四段 schema——parseEvents 解析整行 JSON，纯四段白名单必翻车（Task 2 内自愈的 Rule 1 测试 bug）
+- [Phase ?]: [Phase 13-02] PC-08 勾选留 phase 末收口 plan（11-01/12-01/13-01 先例：ID 跨 plan 共享——机制本体已落地，13-03 场景面/13-07 压测面证据未齐）
+- [Phase ?]: [Phase 13-02] GOROOT gofmt（go1.26.3）存量命中两处（cmd/wesh/main_test.go 13-01 遗留 + perclient_test.go:1535 Phase 12 遗留，均为 //（ CJK 标点接续行）登记 deferred-items.md——范围外不修，13-08 收口闸应知悉
+- [Phase ?]: [Phase 13-03] session_end emit 位置取 close(waitDone) 前（plan「hubMu 解锁后」的 Rule 1 偏差）：与 shared lifecycle 母本同位 + 建立 emit→close(waitDone)→delete+Broadcast→exitf 的 happens-before 链——plan 位置与慢半段 Broadcast 无同步边，调度停摆下 exitf(os.Exit) 可先于事件落流
+- [Phase ?]: [Phase 13-03] Rule 1 关键补齐：upgradePerClient registerLocked 后补宽限取消点 + 空纪元门闩清零（11-01 早退守卫期两挂点 per-client 从未装配；触发端激活后缺失 = 宽限取消仅靠复查兜底 + exit-when-empty 单发缺陷）——GraceCancel 测试首跑实测暴露，单独 fix 提交
+- [Phase ?]: [Phase 13-03] WR-02 栅栏同构覆盖补 KILL 回调（planner 裁定「Pitfall 2 语义对一切 kill(-pgid) 同构适用」）；子先死断言值 42（判别力收紧）；PC-09/OPS-12 勾选留 phase 末（13-07 phase13.mjs S3 进程级 255 断言未齐）
+- [Phase ?]: [Phase 13-04] Shutdown 侧 D-state 兜底 terminate 落地（Rule 2——T-13-13 mitigation 为 threat register 硬要求而 plan behavior 四锚点未列 terminate 调用）：drained 形态终结仍归 pcSupervisor 零漂移，仅 join 到期未清零分支 Shutdown 直调 terminate（termOnce 交汇恰好一次，退出码同 last-reaped-code 规则）；形态四测试（stopTimeout=0+免疫=D-state 代理）锁定 exitf(0)+存活探针双观测
+- [Phase ?]: [Phase 13-04] 快照信号循环加 WR-02 waitDone 栅栏（研究明示 Discretion——按 13-03 planner 裁定「Pitfall 2 语义对一切 kill(-pgid) 同构适用」选栅栏形态）；join 实现形态选 hubCond.Wait + AfterFunc 兜底 Broadcast（零新同步件）；join 上界余量定值 shutdownJoinMargin=2s（研究 A1 保守形态）；测试夹具复用 startPerClientServerWithSpawn（11-03 已参数化，零新装配）；PC-09/OPS-12 勾选留 phase 末（先例延续）
+- [Phase ?]: [Phase 13-05] TestSpawnEventsSchema 零成功 spawn 构造（per-IP burst=1 + 恒败注入：dial ① spawn_failed + dial ② spawn_throttled 一窗捕获）——零会话零 watcher 使迟到 emit 面结构性不存在（13-03 跨测试迟写教训前置规避）；wire 定值文案逐 dial 绑定 + 注入敏感值三形态（err.Error()/路径/errno）零出现负断言
+- [Phase ?]: [Phase 13-05] ptyKills 恰按 plan 枚举两路径（teardown + 孤儿回收 AfterFunc），13-04 Shutdown 路径补 KILL 不在计数面（plan 白名单明示两路径；series HELP 文案已如实限定 teardown and orphan reaping）——运维面若需 Shutdown KILL 计数属 series 语义扩展，13-07/13-08 复核知悉项
+- [Phase ?]: [Phase 13-06] Task 1/2 TDD 按先例单 feat 提交收口（RED=编译红任务内观察即转 GREEN）；darwin 双编译闸前移抓出 reap_darwin_test.go whitelistEnv 两参遗漏（build-tag 文件 Linux 编译面不含，独立 fix 提交）——签名扩散类改动 darwin 闸应随任务即跑
+- [Phase ?]: [Phase 13-06] SEC-09 WESH_REMOTE_USER 落地：whitelistEnv 第三参空串不出键（键名白名单固定代码常量由 pty 包单侧定义）+ SpawnFunc 三参签名全链 + main.go 闭包 startOpts 局部复制防串台（T-13-21）；startPerClientServer 默认 spawnFn 升级生产镜像完整形态（注释契约真值优先）；签名扩散波及 shutdown/metrics/events 三测试文件（plan files_modified 枚举缺口，WINDOWS #36）；SEC-09 勾选留 phase 末（13-07 S6 进程级 env 回读未齐）
+- [Phase ?]: [Phase 13-07] phase13.mjs 六场景两轮 29/29（phase12 同构第三代 + dialAttach 双形态 dial 合流）；S2 KILL 兜底默认 5s 三面判别（~2s 存活 + ESRCH + elapsed≥4s 下界，实测 5.0s）；S1 事件/计数器/拒绝数三方精确相等 + XFF 换键双态（事件 remote==XFF 链首）；S6c printenv 缺席断言以 echo 标记程序序锚定
+- [Phase ?]: [Phase 13-07] TestChurn churn 负载格：10rps×30s（300 次）生产默认桶参数零覆写——attached=33/rejected=267/throttled=267、gor 8→8/fd 11→11/mem +110KB 精确回落基线；断言全部基线差值形态（gor/mem/fd 双采样 + 回收轮询 + 容差标定注释——Pitfall 7）；spawn_total==attached 程序序精确对照；PC-08/09/SEC-09/OPS-12 勾选留 13-08（Task 2 承载）
+- [Phase ?]: [Phase 13-08] 收口闸六段式全绿（零回归双证据 + phase13 两轮 29/29 + churn 格 + diff 白名单 23 文件零外改）；phase 基点 = e0ae66b^（首提交父提交，12-05 先例同构）；PC-08/09/SEC-09/OPS-12 四需求勾选收口（v1.1 10/15）
+- [Phase ?]: [Phase 13-08] WR-02 闭合回指：waitDone 非阻塞 select 结构性栅栏落地且同构覆盖三处 kill(-pgid) 面（teardown 快半段/补 KILL 回调/Shutdown 快照循环）——结构性消除非风险接受；D-10 文档段落地（README 保活先杀时序 + CONFIGURATION ping-interval 小节）；gofmt 三处 deferred 存量与 README「per-client 装配中」失实残留收口期归一
+- [Phase ?]: [Phase 14-01] D-01 小族四形态落地并双模式实证：newTestServer/newTracked/newHandle/newSess 两分支直传两族母本零改写；tracked 形态经 TestOversize1009、handle 形态经 TestHealthzDraining 获运行期首证，sess 形态编译期在场（14-04 首证）——后续 14-02..06 改造 plan 直接复用
+- [Phase ?]: [Phase 14-01] TestSlowConsumerKick per-client 列同步边勘误（Rule 1）：独立洪水拓扑下 shared 的「正常端 12MiB 等待」不构成踢出同步——首次 Read 过早续读重置 dwell 使会话 1000 收尾（全量 -race 负载实测命中）；kick 观测统一走 /healthz clients 计数轮询（TestPerClientDwellKick 先例通道），Read 推迟到踢出可观测后
+- [Phase ?]: [Phase 14-01] CI 时长增量实测：双跑使 internal/server -race 全量从 ~98.5s 增至 ~104-106s（+6-8s，洪水类测双跑为主贡献）；14-02..06 批量推开持续累积——14-12 收口闸知悉 CI 时长预算（蓝本估算 3-4 min/leg）
+- [Phase ?]: [Phase 14-01] TestReadLimitBoundary D-02 偏差登记：startRawCatServer 的 pre-listen stty 装配与 per-client attach 期 spawn 结构性不等价（无 pre-listen 窗口）——蓝本 limits 同断言双跑行的例外，保持 shared 单跑（边界值断言与进程模型无关，per-client 同值面由 TestOversize1009/PreHelloReadLimit 双跑承载）
+- [Phase ?]: [Phase 14-07] D-11 判定证真：32 会话实测（wesh 侧 Alloc 增量 2.2MB ≈ 24MiB 账面 9% / 子进程 VmRSS 合计 120MB < 160MB 账面 / fd 差值精确 4N / gor 5N+1）全部在可接受界线内——maxClients=32 默认值不动（零公开契约变更），one-way 确认门不触发；LOADDATA pc_flood/pc_resident 八行供 14-11 README 标定表回填
+- [Phase ?]: [Phase 14-07] Rule 1 夹具修正：loadDrain.note() 流尾采样帧级重置改跨帧滚动窗——tty ONLCR 行尾拆分使末帧载荷仅 \r\n（探针实证），帧级重置把帧边界误当流边界误判流截断（洪水格 sessions_16 复现率 4/6）；滚动窗保流截断判别力且内存恒 ≤128B，既有六负载格全套件回归绿
+- [Phase ?]: [Phase 14-07] 驻留格 fd 账面 4N 推导归类：master+pidfd+accepted 为服务端生产账面（ARCHITECTURE §10）+ dial socket 为 in-process harness 成本单独注释归类——实测差值精确 4N 逐项证实；gor 按生产账面 6N 收口（harness pinger 退场实测 5N+1）；PC-12 勾选留 14-11 文档承载（shared-ID 门先例）
+- [Phase ?]: [Phase 14-08] herdr UAT 就绪门 Rule 1 实测修正：「layouts 非空」不充分——server 启动期 area 先 {0,0,0,0} 再默认布局瞬态 {x>0,width≈默认宽-侧栏}（后者同样满足 isFullFor 谓词）且移动端过早 attach 使桌面 size 上报成 last-activity（compact-40 永不现 + S1d 假绿）；修正为桌面初始全量帧到达落定（OUTPUT>0 且 150ms 双采样相等）+ area 桌面全量几何双条件门——后续 herdr 断言类 UAT 沿用
+- [Phase ?]: [Phase 14-08] herdr 清理序列补 session delete：stop 后 session list 行保留 stopped 态（探针实证），delete 才清册+状态目录——「list 零残留」完整序列 = stop → delete → list 核验；session stop 以会话名为准（ambient HERDR_SOCKET_PATH 不干扰，执行 shell 位于 herdr pane 内的运行期再实证）
+- [Phase ?]: [Phase 14-08] phase14.mjs 两轮 18/18（S1 driving 三通道：area 翻转链四步 + 流层 254B/55B<<97049B + wesh 层双 pid/双 Welcome/流几何 120vs40；S2 ro 汇聚：ticket 全链 + pane read 门控实证 + rw 对照）；PC-13 勾选留 14-09（pw 观感层承载，共享 ID 先例）
+- [Phase ?]: [Phase 14-08] maxCursorCol 流层几何特征通道：CUP/HVP/CHA 三形态正则扫描取列坐标最大值（spike 只标定 CUP，实现扩展）——移动端几何只能寻址 ≤cols 列的关系断言材料，禁绝对常量
+- [Phase ?]: [Phase 14-02] e2e/multi 双模式分叉表落地：断开/重连（CORE-05 反转面经 newSessTestServer spawned 访问器取 pid 锚点，argv 零漂移）、fanout 双标记串交叉断言、owner 四测 D-03 四段式未装配列（零 t.Skip）、MaxClients spawn-intent 经 wesh_pty_spawn_total 程序序对照——50 个 mode= 子测试 -race 逐名绿，shared 87 条期望文案逐字零漂移
+- [Phase ?]: [Phase 14-03] 三文件归一映射落定：TestShutdown1001 per-client 列=TwoGroups 归位（N=2 组，plan action 3 明示 shared 保持单组语义）、StopTimeout 列=JoinBounded 归位（stop-timeout KILL 兜底唯一同需求映射）；ResidualGroup/DeadlineExits 判 per-client-only 保持原样（pcSessions 残留/D-state 收口无 shared 对照面）；emptyexit/metrics 混入测全归位吸收
+- [Phase ?]: [Phase 14-03] TestExitWhenEmptyPromoteKickOnce per-client 列 D-03 四段式 + 尾部 Shutdown 收口（1min 悬挂宽限计时器在 per-client 无 lifecycle-exiting 免疫——不收口即 +1min 迟触发 exit_when_empty 事件污染后继捕获窗；Pattern 7 供后续长 grace per-client 测试沿用）
+- [Phase ?]: [Phase 14-03] series 镜像口径以 metrics.go 现状核定：双模式同持 21 series（shared 四 spawn 计数器恒 0 不摘），plan 文本「17 shared/21 per-client」与 13-05 落地不符——WINDOWS #42 登记（14-12 diff 白名单审查知悉）；TestMetricsValues 放大比分叉 shared ×2 / per-client 1:1（R-08）
+- [Phase ?]: [Phase 14-04] resize_arb per-client 列三重可证伪面：双端各自 RESIZE（A→110x40/B→70x25）+ B 落定后 A 保持 110x40 负向余量断言（互不压缩为 Isolation 测外独有面）+ 双泵静默窗零 'W' 帧——比 TestGlobalCredit 单面形态更完整的三观测面（Pattern 8）
+- [Phase ?]: [Phase 14-04] startResizeServer 收编内联终态：装配体逐字内联至 newSessTestServer shared 分支（helper 名消失满足全仓零引用字面闸；e2e_test.go:36 注释同步）——14-02 startShutdownServerWith 后第二例专用 helper 收编闭环；Rule 3 枚举缺口（harness/e2e 不在 files_modified）WINDOWS 登记
+- [Phase ?]: [Phase 14-04] 蓝本三则归属偏差登记 CONTEXT 落地（D-02 偏差登记小节——14-06 续登 events/log 的既定通道）：owner 四测实在 multi_test.go:541/647/746/850（plan 行号 :301/373/428/497 为规划期陈旧值）/ resize wire 面实在 resize_arb_test.go / 计数不变量白盒面 clients_test:29 + wire 面 TestMaxClients503:1222；clients_test/resize_test 六测纯白盒单跑判定
+- [Phase ?]: [Phase 14-05] TestReadOnlyAllowsResize 为 handshake 行唯一分叉面：ro 运行期 RESIZE 两模式真值相反（shared D-09 忽略/per-client D-06 直通）——按 14-01 断言分叉表落地（shared 逐字 + per-client 断言直通真值 50/120），exitf 面同 TestExitFrameSignal 分叉；WINDOWS #44
+- [Phase ?]: [Phase 14-05] 零值/Writable:false Options 经 mutate 显式回写（Pattern 9）：小族基线 Writable:true 下 TestNoAuthMode/TestReadOnly* 覆写回 false 保期望值零改写；TestPingDisabled 显式 PingInterval=0 锁定禁用语义防基线漂移
+- [Phase ?]: [Phase 14-05] auth/origin/throttle/tickets 四文件 6 测纯函数白盒形态判定保持单跑（无装配可参数化，非覆盖缺口）；auth_e2e :403 收编 newTrackedTestServer（tracked 形态第二消费方）；startTestServer 零引用收编删除（14-02/04 闭环第三例，WINDOWS #45）
+- [Phase ?]: [Phase 14-06] sharetoken 白盒镜像双分支落地：package server 白盒文件经本地 startShareServer(t,mode) 镜像小族两分支（per-client = New(nil)+SpawnFunc 生产闭包镜像+spawned Kill+Close Cleanup）——包墙结构性不可达 server_test 小族的 D-01 同构形态；部署面 9 测双跑收口（sharetoken 2+customindex 8+proxy_e2e 4+basepath 3，proxy_e2e 5 调用点按 waitHandlers 用途分流）
+- [Phase ?]: [Phase 14-06] 三维归类收口核对：server 包实测 34 文件（plan 33+harness_test.go 小族本体零测桶）= ① 18 文件 81 测双跑（-v mode= 子测 216 PASS）+② perclient 36 测单模式+③ load 8 测+④ 纯白盒/纯函数 10 文件+⑤ events 9/log 1 单跑（D-02 续登第 4/5 则）+⑥ export 零测桶；蓝本 :378-399 十七行全命中或偏差登记，零静默漏网——SC1 单 step 双模式 CI 门形态达成（ci.yml 零 diff）
+- [Phase ?]: [Phase 14-06] TestMaxClients503/mode=per-client 隔离复跑 flake 判 14-02 遗留（基线 9af7ce1 worktree 复现 3/3，pcSessions linger 窗口竞态，轮询仅覆盖 HTTP 503 形态）——与本 plan 无关（全量 -race 两轮全绿），deferred-items.md 登记三修复方向，14-12 知悉
+- [Phase ?]: [Phase 14-09] pw 层海森bug 架构裁决（Rule 3 实证驱动，承重）：浏览器 tab 首键入后输出流非确定性死亡为载具级（10 轮实跑 + 23 探针 + minrepro 双形态均不复现——herdr/wesh 服务端无罪）；键入通道改 Windows Node 裸 WS 驱动端（ticket 认证），浏览器双 tab 退化为纯被动渲染观测面，D-07 断言面不变（桌面 tab 渲染观测 + 结构行对齐比较）
+- [Phase ?]: [Phase 14-09] 结构行幸存前缀判别面：目标行 = 含 │ 且边框右侧空白的结构行（pane 内容行排除——前台 reflow 属 herdr 正确行为）；pane 内容向下增长只从尾部吞 blank 行使幸存前缀序位不变，shared 压缩会整体改写边框列——herdr 类 TUI 布局稳定性断言的判别面形态
+- [Phase ?]: [Phase 14-09] minrepro 双件套交付（Track2 偏差副产）：minrepro-p14.mjs（Linux loopback）+ minrepro-win.mjs（Windows 过转发器）——两形态均未复现停摆本身即服务端无罪的反向证据，供 herdr 上游定位浏览器输入链停摆
+- [Phase ?]: [Phase 14-09] PC-13 勾选收口（14-08 既定裁决兑现：协议层 18/18 + 浏览器面 Windows 两轮 4/4 + 截图六帧人工复核——共享 ID 先例 11-01/12-01/13-01）
+- [Phase ?]: [Phase 14-10] run-all.mjs 17 项矩阵 runner 落地（D-04 形式化）：串行 spawn 聚合 + 10min 超时护栏（detached 进程组 SIGTERM→2s→SIGKILL）+ argv[3:] 过滤子集（未知名 exit 2 防静默跑空 + 脚本名误传二进制位守卫）+ pw 独立入口注记；全矩阵首跑 17/17 全绿 213.4s，逐脚本计数与 13-08 基线完全一致（phase14 实测 5.6s 远快于 A6 预估 1-2min）——SC2 三脚本重跑证据成型，14-12 收口闸单命令复用载具就位
+- [Phase ?]: [Phase 14-10] Rule 3 清障：残留核验命中的 2 wesh 进程 + 2 herdr 会话经 ps 起始时间实证为 14-09 minrepro/pw 诊断陈旧残留（早于本次矩阵运行 2.5h+，非本次泄漏——矩阵自身 phase14 S1j/S2g 零残留 PASS），SIGTERM + session stop/delete 清障后 default 外零残留——14-12 收口闸从清洁基线起跑
+- [Phase ?]: [Phase 14-11] PC-12 三件套落地：README「会话模式」节同位扩展（:96 段字节级不动纯插入——shared 表述零削弱以 diff 纯新增自证）+ ARCHITECTURE 七分支点/goroutine 拓扑 mermaid 段 + :7 GoTTY 误记修正（实为 per-connection spawn）+ CONFIGURATION max-clients 兼任进程上限行；herdr 配方取 phase14.mjs argv 逐字形态（--writable 在前——T-14-23 实证优先于 plan 文本 flag 序）；PC-12 勾选留 14-12（共享 ID 门）
+- [Phase ?]: [Phase 14-11] D-11 建议值表三档分档：默认 32「实测可承载，保持不变」明示 / 低配 VPS·内存受限 8 / 个人多端 4——依据列全部锚定 14-07 LOADDATA 实测值（每会话 bash ~3.7MiB + wesh 侧 ~61KiB），标注资源画像分档非硬性门槛；标定表 30 项程序化数据核对全过（N=16 取整 959→960KiB 自审修正）
+- [Phase ?]: [Phase 14-12] Phase 14 收口闸六段式全绿：静态面（gofmt/vet 含 -tags=load 零输出）+ 全量 -race 五包 2m37.986s（mode= 子测 216 RUN/216 PASS 与 14-06 收口审计精确一致）+ darwin amd64/arm64 双编译闸四命令零错 + dist byte-identical（md5 d5c25e27 复建一致）+ UAT 矩阵 17/17 零修改重跑（210.9s 逐脚本计数与 13-08 基线一致）+ load 双剖面八格 + diff 白名单终审零外改动
+- [Phase ?]: [Phase 14-12] phase 基点 = 03268f0^（Phase 14 首提交 docs(14): capture phase context 的父提交 = 96a188a Phase 13 PR #17 合并点）——branching_strategy=none 平直 main 下 merge-base 退化，11-06/12-05/13-08 先例同构
+- [Phase ?]: [Phase 14-12] diff 白名单 35 文件终审零外改动：27 internal/server 测试文件恰=各 plan files_modified 并集（26 M + harness_test.go A）+ 3 文档（14-11 三件套）+ 5 web/uat 新增（3 plan 声明 + minrepro 双件套 14-09 Track2 偏差副产经 #33 三轴裁决先例纳入白名单）；565 真删除行全归类零期望值漂移（断言文案字面量全保留，仅结构包裹/装配点收编/变量名形态变化）
+- [Phase ?]: [Phase 14-12] PC-12/PC-13 勾选收口——v1.1 全部 15/15 需求闭合（PC-12 证据链 = 三文档段 + 14-07 LOADDATA 八格回填 + diff 审查；PC-13 证据链 = phase14.mjs 两轮 18/18 + phase14-pw Windows 两轮 4/4 截图六帧 + run-all 三脚本重跑）；flagged_assumptions 终验：14-08 PC-13 unclassified 三边界形态检索结论登记，µs 级/版本漂移类保持 flagged-unverified（主面覆盖 + 同构论证口径，13-08 先例同构）
+- [Phase ?]: [Phase 14-12] Key Decisions 三行登记 PROJECT.md：三维归类执行机械（newTestServer 小族 + t.Run 双跑，ci.yml 零 diff 单 step 天然覆盖）/ maxClients=32 经负载矩阵实测成立不动（D-11 两段式——零公开契约变更 one-way 门不触发，README 三档建议值表）/ herdr 观测通道钉定（api snapshot 翻转链 + pane read + 版本钉定 0.8.100）
+- [Phase ?]: [Phase 14-13] G-14-34 闭合：ARCHITECTURE 组件图 mermaid 词法修复（4 subgraph 合法 id + 引号标题 + 12 边标签引号化，含 L41 {token} DIAMOND_START 主修复点）红转绿 + check-mermaid.mjs 词法校验载具常驻 scripts/（负对照自证堵 14-11 结构化校验不查词法的漏检面）+ 用户渲染目检 approved——UAT 34/34 全过 gap 清零
 
 ### Pending Todos
 
@@ -313,21 +208,34 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 2]: CR-01 最小缓解待执行——master fd O_NONBLOCK + ErrWouldBlock 走既有收口（用户 2026-08-15 决策，详见 02-VERIFICATION.md「Code Review 发现评估」节）
-- [Phase 5]: outbox 容量/水位/strikes 默认参数需负载测试标定（Phase 9 回填）；WR-01 S→C 写无超时背压并入 Phase 5——**已闭环（2026-08-30）**：WR-01/WR-02 于 05-13 修复闭合；标定由 09-06 负载矩阵全量现值零证伪（fanout {1,4,16,32} kicks=0/outbox 峰值 99.8% 精确转信用/Alloc 19.8MiB ≤ 64MiB）+ 09-09 README 标定表 12 行全量回填（负载敏感项附实测数据出处可溯源）
-- [Phase 6]: EXIT 直写 2s 超时为 RESEARCH OQ3 定值（拒绝可配化），标定挂账 Phase 9——**已闭环（2026-08-30）**：EXIT 2s 在 09-09 README 标定表 12 行全量清单内（时序项——行为测试已锁 + 一阶依据复核成立），09-06 三断言现值成立零证伪、常量默认值零改动
-- [Phase 7]: UI-REVIEW 3 项 WARNING 登记 07-deployment/deferred-items.md——**已由 09-03 全数闭环（2026-08-30，D-18 清零路由终点）**：1001 hint 条件句式化（C-10）/ #status role="alert" / pre-onopen 1001 按码分派；jsdom 行为锁 D11a/D12/D13 全绿 + dist 产物重建（登记文件保持历史原貌，闭合记录见 09-03-SUMMARY.md）
-- [Phase 9]: TestResize 时序 flake（CI 观察一次，非产品缺陷）——重载 CI runner 上 sh 调度延迟超 150ms 夹具窗，首 stty 落在 TIOCSWINSZ 后（产品语义反向证实）；同 sha 五次运行仅 CI 一次红；处置路由：随 09-REVIEW WR 清单一并择机修（轮询替代固定 sleep）
-- [Phase 9]: README.md:96 「及其 `.gz`」Phase 1 遗留文档债（09-REVIEW WR-03，非 Phase 9 引入）——随 09-REVIEW WR 清单一并择机处置
+- [Phase 9 遗留]: TestResize CI 时序 flake（CI 观察一次，重载 runner 调度延迟所致，非产品缺陷）——择机以轮询替代固定 sleep 修复
+- [Phase 9 遗留]: README.md:96「及其 `.gz`」Phase 1 遗留文档债——随 WR 清单择机处置
+- [v1.1 测试拓扑]: 协议层 UAT 在 Linux 开发机（headless 禁浏览器/禁 playwright）；Playwright 浏览器全链在 Windows 工作站（TCP 转发器 kill/restore 模拟断网）——见 CODEBUDDY.md 双机拓扑
+- [14-06 执行期发现→14-12 知悉] TestMaxClients503/mode=per-client 隔离复跑（-run 过滤非 -race 形态）高概率 flake：pcSessions linger 窗口竞态（detach 槽位释放早于收割，pre-spawn 容量再闸 1011；轮询仅重试 HTTP 503）——14-02 遗留（基线 9af7ce1 复现 3/3），全量 -race CI 同款命令不受影响；deferred-items.md 已登记修复方向
+
+<!-- v1.1 收口清理（2026-09-08，Phase 14 verify-work 转场时）：
+
+  - [v1.1 规划期裁决项] 移除：① stop-timeout 默认 5s 经 13-01 落地（27909f8 三态断言组）；③ healthz/metrics 四 OQ 经 13-03/13-05 落地；②④ 原文已注明闭合
+  - [Phase 12-04 发现 → Phase 13 裁决] pinger/dwell 竞态 移除：13-08 D-10 裁决=接受 1006 语义（死连接更早收口）+ README.md:155「保活先杀时序」文档化收口
+
+-->
 
 ## Deferred Items
 
+Items acknowledged at milestone v1.1 close on 2026-09-08（override_closeout——用户裁决接受，audit-open 8 项）:
+
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| deferred_item | GOROOT gofmt CJK 注释接续三处（cmd/wesh/main_test.go + perclient_test.go ×2） | Resolved（13-08 修复 5310723，登记状态未清） | 2026-09-08 |
+| deferred_item | TestMaxClients503/mode=per-client 隔离复跑 flake（pcSessions linger 窗口竞态，基线 9af7ce1 复现 3/3） | Open（修复方向三条登记 deferred-items.md；全量 -race 与 CI 命令不受影响） | 2026-09-08 |
+| debug_session | knowledge-base | unknown | 2026-09-08 |
 
 ## Session Continuity
 
-Last session: 2026-08-31
-Stopped at: Phase 09 complete — v1.0.0 released and verified end-to-end, milestone v1 44/44 closed (70/70 plans)
+Last session: 2026-09-08T07:10:00Z
+Stopped at: Phase 14 全收口（verify-work：UAT 34/34 + gap G-14-34 对账 resolved + SECURITY.md threats_open: 0 + verification passed + 转场完成）——v1.1 milestone 5/5 phases ready for /gsd-complete-milestone v1.1
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

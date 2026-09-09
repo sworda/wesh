@@ -24,6 +24,7 @@ import (
 	"golang.org/x/time/rate" // 钉版 v0.15.0 防版本漂移：rate API 自 2015 年签名稳定（rate.go:100-117），升级经 go.sum 审计链显式进行（review MEDIUM 处置）
 
 	"github.com/sworda/wesh/internal/proto"
+	"github.com/sworda/wesh/internal/pty"
 )
 
 // 多客户端五个测试可覆写参数的默认常量（R-01 初值；P2 D-10 常量纪律——一律常量
@@ -64,6 +65,28 @@ const (
 	// 为刚 attach 的消费端（attach+6ms / attach+177ms），宽限期直接封堵该窗口。
 	// 活跃消费端恢复是毫秒级（三个数量级余量）。Phase 9 负载测试标定回填。
 	defaultAttachGrace = 500 * time.Millisecond
+	// defaultSlowDwell per-client 慢客户端停读态 dwell 踢出阈值默认值（10s，
+	// 12-03，PC-10/PC-11，D-02/D-03）：per-client ReadLoop 输出闭包停读（阻塞
+	// 持帧）连续无恢复超过本值 → 1013 slow_consumer（kickSlowConsumerLocked
+	// 既有序列）；每次续读（outbox drain 恢复信号唤醒、持帧重试成功）重置计时
+	// ——慢但在前进的客户端永不被踢（D-02 判据核心）。
+	//
+	// 量级依据（12-CONTEXT specifics）：涵盖 attach 初期 outbox 瞬态满（上方
+	// defaultAttachGrace 500ms 场景的 ×20 余量）与分钟级内真慢不踢的「在前进」
+	// 边界；浏览器后台标签页节流（Chrome 定时器 ~1Hz）可超 10s 无消费——已知
+	// 风险接受：该场景 1013 后重连即新进程（PC-06）恢复成本一次 F5，ttyd 同
+	// 场景直接丢数据无提示。如 UAT 实证成为痛点，常量改值非公开契约变更
+	//（D-03）。
+	//
+	// 与 shared 侧废弃的 defaultGateDwell（本块上方第 5 轮实证废弃记录）的
+	// 区别：该方案死于「全体可写端均满 → 置信用保护」语义冲突（TestGlobalCredit
+	// 双 stall 场景踢出持信用端，kickOrCreditLocked 演化记录第 5 轮）——那是
+	// shared fan-out 不能阻塞读循环的特有约束；per-client 单消费者无误判面、
+	// 无信用集，冲突结构性不存在（D-02/D-04 论证）。反面教材而非母本。
+	//
+	// 刻意不暴露 CLI flag/TOML 键（D-03）——零调优需求，公开契约面不膨胀；
+	// Options.SlowDwell 仅为测试覆写通道（OutboxBytes 同档三段式）。
+	defaultSlowDwell = 10 * time.Second
 )
 
 // WritePolicy 取值（D-05 公开 CLI 契约——--write-policy=owner|all，全名无短选项
@@ -74,6 +97,20 @@ const (
 const (
 	WritePolicyOwner = "owner" // 默认（D-05 安全默认）
 	WritePolicyAll   = "all"
+)
+
+// SessionMode 取值（10-01 PC-01 公开 CLI 契约——--session-mode=shared|per-client，
+// 全名无短选项 P2 D-15；main.go parse 期枚举校验与 server Options 消费共用同一
+// 对常量，防双写漂移）：
+// shared = 全部客户端共享同一 PTY 会话（默认——REQUIREMENTS 反特性 A5：默认
+// 永不翻转为 per-client）；
+// per-client = 每客户端独立 PTY 子进程（v1.1 里程碑装配中——10-01 全部接缝
+// inert，当前版本行为与 shared 等价，10-CONTEXT D-05 注记；生命周期/交互语义
+// 归 Phase 11-14）。
+const (
+	SessionModeShared = "shared" // 默认（REQUIREMENTS 反特性 A5）
+	// per-client：生命周期/交互语义归 Phase 11-14 装配（当前与 shared 等价）。
+	SessionModePerClient = "per-client"
 )
 
 // client 是一个已注册 WS 客户端的全部服务端状态。writer goroutine 是该连接全程
@@ -133,6 +170,19 @@ type client struct {
 	// 单独打事件行，折入 detach reason=pong_timeout（code 1006）。
 	pongTimedOut bool
 
+	// 11-01（PC-02，Pattern 2 间接字段——读循环零分支的关键）：inQ 为输入
+	// 队列挂点，shared 升档赋 s.inputQ、per-client 升档赋 pc.inQ（server.go
+	// INPUT case 入队目标经本字段逐行不分支）。写一次于升档 client 构造
+	//（registerLocked 之前），此后只读——并发读写面与 remote/remoteUser
+	// 既有形态相同（全部读者在其后启动的 writer/pinger/读循环 goroutine 内，
+	// happens-before 由 goroutine 启动建立；plain 字段无锁安全，-race 全量
+	// 回归锁）。
+	inQ *inputQ
+	// 11-01（PC-02）：pc 为 per-client 会话绑定——shared 恒 nil（detach/kick
+	// 的 teardown 触发以 pc != nil 为门，perclient.go teardownPCLocked）。
+	// 写一次纪律与 inQ 同款（升档构造赋值，registerLocked 之前）。
+	pc *pcSession
+
 	// creditBlocked 信用门阻塞位（hubMu 保护）：仅可写端参与信用集，ro 客户端
 	// 此位恒 false——ro 满即踢永不持信用（R-08 分工表）。kickOrCreditLocked 置位、
 	// afterDrain 清位，两点各递增 registry.gateTransitions。
@@ -148,17 +198,25 @@ type client struct {
 // outbox 是每客户端字节有界输出队列（RESEARCH Pattern 2 逐字形态）：存 hub 组好的
 // 共享只读帧引用，逐客户端只记字节账——共享帧使全局 WS 出站内存 ≈ 最慢者滞后量
 // 而非 Σ。notEmpty 为 cap 1 信号量：trySend 非阻塞投递，writer 阻塞消费。
+//
+// notFull（12-03，PC-10/PC-11，D-01）为 cap 1 恢复信号量（notEmpty 同形）：
+// drain() 整批 swap 后非阻塞发送，消费者 = per-client 持帧闭包（perclient.go
+// ReadLoop 输出闭包停读态 select 等「outbox 由满转非满」）。shared 路径零
+// 消费者（onChunk/kickOrCreditLocked 不等本通道）：token 滞留缓冲至下一次
+// 持帧（若发生）——至多一次伪唤醒，持帧重试失败继续 select 无死锁面（drain
+// 每次都发新 token）。信号频率上界 = writer drain 频率，无广播放大面（T-12-09）。
 type outbox struct {
 	mu       sync.Mutex
 	q        [][]byte // 共享帧（hub 分配、只读，引用计数靠 GC 自然回收）
 	bytes    int
 	cap      int
 	notEmpty chan struct{}
+	notFull  chan struct{}
 }
 
 // newOutbox 构造字节容量为 cap 的 outbox（cap 由 s.outboxBytes 供给，测试可覆写）。
 func newOutbox(cap int) *outbox {
-	return &outbox{cap: cap, notEmpty: make(chan struct{}, 1)}
+	return &outbox{cap: cap, notEmpty: make(chan struct{}, 1), notFull: make(chan struct{}, 1)}
 }
 
 // trySend 非阻塞投递共享帧：超容量返回 false（调用方唯一处置 = 1013 踢出该客户端，
@@ -183,12 +241,21 @@ func (o *outbox) trySend(frame []byte) bool {
 // drain swap 出整队并重置字节计数。信用门半水位恢复判定（afterDrain）在写出成功
 // 后重新读当前字节——drain 返回的预重置计数不参与门判定（写出期间新入队的部分
 // 才是迟滞带语义的承载）。
+//
+// 12-03（PC-10/PC-11，D-01）恢复信号挂点：整批 swap 后 outbox 必为非满——
+// 尾部非阻塞发送 notFull（cap 1，已有信号在飞则接收方必会被唤醒，select
+// default 不阻塞，trySend notEmpty 同款形态）。锁序不受影响（outbox 自有 mu
+// 内，绝不触 hubMu——恢复通道不得引入 hubMu 反向依赖）。
 func (o *outbox) drain() (batch [][]byte, bytes int) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	batch, bytes = o.q, o.bytes
 	o.q = nil
 	o.bytes = 0
+	select {
+	case o.notFull <- struct{}{}:
+	default:
+	}
 	return batch, bytes
 }
 
@@ -284,6 +351,11 @@ type registry struct {
 	// gateTransitions 信用门开闭周期计数（kickOrCreditLocked 置位 creditBlocked 与
 	// afterDrain 清位两点递增）：Phase 8 OPS-07 门开闭周期计数挂点（review #10）；
 	// hubMu 保护，零 atomic 不违 R-07 单锁纪律。
+	// 12-03（PC-10/PC-11，D-05）新增 per-client 停读/续读两递增点（perclient.go
+	// ReadLoop 输出闭包持帧阻塞/恢复，hubMu 内）——mode-agnostic 聚合（与两模式
+	// 1013 kicks 同构），metrics.go 零改动：既有 series
+	// wesh_credit_gate_transitions_total 多两个递增点，非新增 series（17→N 镜像
+	// 扩展归 Phase 13，Phase 11 D-04 红线不违）。
 	gateTransitions int
 	// clientsTotal 累计注册客户端总数（08-04 OPS-07，D-05 连接三件套之二——
 	// counter 只增不减，与 n 的当前 gauge 成对）：hubMu 保护（与 kicks 同形态，
@@ -537,7 +609,7 @@ func (s *Server) afterDrain(c *client) {
 	if mode == proto.ModeRW {
 		prefs = s.clientPrefsRW
 	}
-	_ = c.outbox.trySend(proto.WelcomeFrame(mode, prefs, sd.cols, sd.rows)) // 补发阻塞期错过的尺寸推送
+	_ = c.outbox.trySend(proto.WelcomeFrame(mode, prefs, sd.cols, sd.rows, s.sessionMode)) // 补发阻塞期错过的尺寸推送
 	s.hubCond.Broadcast()
 }
 
@@ -581,6 +653,15 @@ func (s *Server) kickSlowConsumerLocked(c *client) {
 	// 之前、同一 hubMu 持有内同步完成——见 promoteNextLocked 注释。
 	if s.registry.owner == c {
 		s.promoteNextLocked()
+	}
+	// 11-01（PC-02，Anti-Pattern 7）：per-client 会话终结挂点之二——挂注册表
+	// 移除点覆盖一切断开形态（1013 踢出即断开形态之一，该端会话同样经
+	// teardown 序列 SIGHUP 终结；removeLocked 返回 true 之后、
+	// maybeExitWhenEmptyLocked 同位——与 detach 调用点同位同款注释纪律）。
+	// 恰好一次由 teardownOnce 保证（watcher 子死路径可能先触发——先到者执行，
+	// 后到者空转）。
+	if c.pc != nil {
+		s.teardownPCLocked(c.pc)
 	}
 	// 注册表空触发断开退出（06-02，SESS-01/02）：非空→空迁移事件挂点之二——
 	// kick 移除路径同挂点（removeLocked 返回 true 之后、hubCond.Broadcast 之前，
@@ -640,7 +721,7 @@ func (s *Server) promoteNextLocked() {
 			s.registry.owner = nil // 无可递补者：下一个 rw attach 按矩阵成为新 owner
 			return
 		}
-		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW, cand.dims.cols, cand.dims.rows)) {
+		if !cand.outbox.trySend(proto.WelcomeFrame(proto.ModeRW, s.clientPrefsRW, cand.dims.cols, cand.dims.rows, s.sessionMode)) {
 			s.kickSlowConsumerLocked(cand) // 升格通知不可达 = stalled，同义踢出后重扫
 			continue
 		}
@@ -723,26 +804,33 @@ func (s *Server) writer(c *client) {
 	}
 }
 
-// inputWriter 是会话级单 input-writer goroutine（CR-01 完整背压修复核心，
+// inputWriter 是单 input-writer goroutine（CR-01 完整背压修复核心，
 // RESEARCH Pattern 8）：独占 sess.Master.Write——阻塞等队列信号 → 顺序出队 →
 // 逐 payload 写 master。Attach 读循环内的同步 Master.Write 彻底消失（读循环
 // 零同步写，must_haves；禁止为输入方向恢复任何形式的读循环内同步 Master.Write
 // 或给读路径加 deadline——prohibitions，Pitfall 2/CR-01 老路禁止回潮）。
 //
-// 生命周期挂服务端：New 内启动（与 ReadLoop/lifecycle 同批装配）；终结 =
-// lifecycle 子进程退出路径 close(inputDone)——sess.Drain→Close 先关闭 master
-// fd，经 runtime poller 解除本 goroutine 的在途写阻塞（与 Read 同机制，既有
-// D-12 语义），写失败即 return（子进程退出路径由 lifecycle 收口）；select 收
-// inputDone 亦 return。队列残余随会话消亡（子进程已退出，输入无意义）。
-func (s *Server) inputWriter() {
+// 11-01（PC-02，Pattern 3 参数化泵函数——1 份代码 N 实例）：由 (s *Server)
+// 方法改包级函数 inputWriter(sess, q, done)，函数体逐字保留仅三处引用
+// 参数化；shared 在 New 内装配一次（s.sess/s.inputQ/s.inputDone——与
+// ReadLoop/lifecycle 同批），per-client 每会话装配一次（pc.sess/pc.inQ/
+// pc.inputDone——perclient.go startSessionGoroutines）。
+//
+// 生命周期挂点：shared 终结 = lifecycle 子进程退出路径 close(inputDone)——
+// sess.Drain→Close 先关闭 master fd，经 runtime poller 解除本 goroutine 的
+// 在途写阻塞（与 Read 同机制，既有 D-12 语义），写失败即 return（子进程退出
+// 路径由 lifecycle 收口）；per-client 同构（sessionWatcher 在 teardown 落定后
+// close(pc.inputDone)）。select 收 done 亦 return。队列残余随会话消亡（子进程
+// 已退出，输入无意义）。
+func inputWriter(sess *pty.Session, q *inputQ, done chan struct{}) {
 	for {
 		select {
-		case <-s.inputDone:
+		case <-done:
 			return
-		case <-s.inputQ.notEmpty:
+		case <-q.notEmpty:
 		}
-		for _, p := range s.inputQ.dequeue() {
-			if _, err := s.sess.Master.Write(p); err != nil {
+		for _, p := range q.dequeue() {
+			if _, err := sess.Master.Write(p); err != nil {
 				return // 子进程退出/master 已关——终结由 lifecycle 收口（D-12 同款）
 			}
 		}
@@ -793,6 +881,15 @@ func (s *Server) detach(c *client) {
 	if s.registry.owner == c {
 		s.promoteNextLocked()
 	}
+	// 11-01（PC-02，Anti-Pattern 7）：per-client 会话终结挂点之一——挂注册表
+	// 移除点覆盖一切断开形态（正常关闭/reader 错误/pong 超时/Shutdown 1001
+	// 广播引发的 detach 全部经此；removeLocked 返回 true 之后、
+	// maybeExitWhenEmptyLocked 同位——与 kick 调用点同位同款注释纪律）。
+	// 恰好一次由 teardownOnce 保证（watcher 子死路径可能先触发——先到者执行，
+	// 后到者空转）。
+	if c.pc != nil {
+		s.teardownPCLocked(c.pc)
+	}
 	// 注册表空触发断开退出（06-02，SESS-01/02）：非空→空迁移事件挂点之一——
 	// removeLocked 返回 true 之后、hubCond.Broadcast 之前（与 kick 调用点同位
 	// 同款注释纪律）。
@@ -821,10 +918,21 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 }
 
 // maybeExitWhenEmptyLocked 是注册表空触发断开退出的判定与执行（06-02，
-// SESS-01/02，D-13/D-14；07-04 D-22 换入可配 stop-signal 序列）。调用方必须
-// 已持 hubMu 且刚 removeLocked(c) 成功——事件 = 非空→空迁移（RESEARCH
-// Pitfall 2：启动期恒空天然免疫，检测只挂 detach/kickSlowConsumerLocked 两
-// 移除点，严禁轮询/状态式检测）。
+// SESS-01/02，D-13/D-14；07-04 D-22 换入可配 stop-signal 序列；13-03 PC-09
+// per-client 第二终结源触发端）。调用方必须已持 hubMu 且刚 removeLocked(c)
+// 成功——事件 = 非空→空迁移（RESEARCH Pitfall 2：启动期恒空天然免疫，
+// 检测只挂 detach/kickSlowConsumerLocked 两移除点，严禁轮询/状态式检测）。
+//
+// 四守卫与计时器机械两模式共用（下方同代码）；per-client 分歧仅在两触发点
+// 的动作面（13-03，Pitfall 1 窗口期闭合——原 11-01 早退守卫移除）：shared
+// 发 stop-signal 序列（stopChildLocked——默认 SIGHUP，D-22，终结由既有
+// lifecycle 单一路径收口）；per-client 置位 pcExitReq + hubCond.Broadcast()
+// 唤醒 pcSupervisor（server.go——(pcExitReq || exiting) && len(pcSessions)
+// ==0 时 terminate 收口）。per-client 分支绝不调 stopChildLocked（s.sess
+// 恒 nil——原早退守卫的 nil-deref 防线语义由本注释承接）、不发任何信号：
+// 末端断开的 teardown 挂点（detach/kick 的 teardownPCLocked）已 SIGHUP
+// 其会话，会话收割由 watcher 链驱动、pcSessions 归零由慢半段 Broadcast
+// 通知 pcSupervisor 重估。
 //
 // 四守卫任一成立即返回：!exitWhenEmpty（默认不开启 = 现状保持——无客户端时
 // 子进程继续运行，P5『断开不退出』产品承诺，D-14）|| exiting（lifecycle 终结
@@ -835,17 +943,22 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 // 移除点二次到达；门闩使每纪元恰好一次，Attach 升档清零开启新纪元）。
 //
 // grace==0（立即形态——0 是合法显式值，D-14 set/grace 分离）：logEvent
-// exit_when_empty + stop-signal 序列（stopChildLocked——默认 SIGHUP 与 06-02
-// 现状语义一致，D-22）。只发信号，不调 exitf、不经旁路 terminate——零新
-// exitf 分支（D-13 硬约束），终结由既有 lifecycle 单一路径收口（信号 →
-// 子进程死亡 → sess.Wait 返回 → exitf 以子进程退出码收口，两模式零分支差异）。
+// exit_when_empty + 模式分支动作。两模式均只触发不收口——不调 exitf、不经
+// 旁路 terminate（零新 exitf 分支，D-13 硬约束）：shared 终结由既有
+// lifecycle 单一路径收口（信号 → 子进程死亡 → sess.Wait 返回 → exitf 以
+// 子进程退出码收口）；per-client 终结由 pcSupervisor 单点收口（13-03）。
 //
 // grace>0（宽限形态）：既有 timer 先 Stop（幂等重启——再次断开重新计时）→
-// AfterFunc 启动 exitEmptyTimer（回调捕获最后离开者 remote）→ logEvent
-// exit_when_empty_wait。回调到期取 hubMu 复查『仍空且未 exiting』才发
-// stop-signal 序列（RESEARCH Pitfall 4：复查是恰好一次的兜底——宽限内
-// attach 已由取消点 Stop+置 nil，本回调能进入临界区即取消点未覆盖的残余
-// 窗口）；信号幂等（kill 已死 pgid 收 ESRCH 静默忽略）；timer 随会话消亡。
+// AfterFunc 启动 exitEmptyTimer（回调捕获最后离开者 remote 与计时器身份 t）→
+// logEvent exit_when_empty_wait。回调到期取 hubMu 复查『计时器身份未易主且
+// 仍空且未 exiting』才执行模式分支动作（RESEARCH Pitfall 4：复查是恰好
+// 一次的兜底——宽限内 attach 已由取消点 Stop+置 nil；10-review WR-03：对
+// 已触发但尚未取得 hubMu 的回调，取消点 Stop 返回 false 无效——若该窗口内
+// 完成一轮 attach+detach，取消点置 nil 后新纪元已武装新计时器，身份比对
+// s.exitEmptyTimer != t 成为陈旧回调的唯一闸：不动作，新纪元的宽限不得被
+// 旧回调架空）；shared 信号幂等（kill 已死 pgid 收 ESRCH 静默忽略）；
+// per-client 两行动作幂等（pcExitReq 重置位与重复 Broadcast 均无害）；timer
+// 随会话消亡。宽限取消点（cancelExitEmptyTimerLocked）两模式共用零改动。
 //
 // logEvent 三要素纪律（D-12② 延伸）：code 恒 websocket.StatusNormalClosure
 // （1000 收口桶，reason 区分语义）；token/ticket/凭据值永不入参（SEC-01 红线）。
@@ -855,9 +968,16 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 	}
 	s.exitEmptySignaled = true // 空纪元内幂等（08-review WR-01）：promote 踢出致空与外层移除点只发一次；新 attach（registerLocked 成功后同 hubMu 清零）开启新纪元
 	if s.exitWhenEmptyGrace == 0 {
-		// 立即形态：无计时器，迁移点直接发 stop-signal 序列（D-22）。
+		// 立即形态：无计时器，迁移点直接触发（模式分支动作见函数头注释）。
 		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)
-		s.stopChildLocked()
+		if s.sessionMode == SessionModePerClient {
+			// 第二终结源触发（不发信号——末端断开的 teardown 已 SIGHUP
+			// 其会话；置位 + 唤醒 pcSupervisor 重估两行动作）。
+			s.pcExitReq = true
+			s.hubCond.Broadcast()
+			return
+		}
+		s.stopChildLocked() // shared：stop-signal 序列（D-22），终结由 lifecycle 收口
 		return
 	}
 	if s.exitEmptyTimer != nil {
@@ -866,18 +986,33 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 	// 回调捕获最后离开者对端与 remote_user——回调触发时 c 已随 detach 消亡
 	//（remoteUser 与 remote 同为 Attach 入口写一次的只读字段，捕获同值）。
 	remote, remoteUser := c.remote, c.remoteUser
-	s.exitEmptyTimer = time.AfterFunc(s.exitWhenEmptyGrace, func() {
+	// 自引用闭包预声明（:= 短声明作用域起始于声明结束之后，闭包内引用 t
+	// 将编译失败 undefined）——var 先声明、AfterFunc 后赋值；回调首句取
+	// hubMu（武装方持锁中），取锁成功时赋值必然已完成且可见（锁同步边）。
+	var t *time.Timer
+	t = time.AfterFunc(s.exitWhenEmptyGrace, func() {
 		s.hubMu.Lock()
 		defer s.hubMu.Unlock()
-		// 复查『仍空且未 exiting』（Pitfall 4 恰好一次兜底；arbiter timer 同款
-		// 取锁纪律，resize.go initArbiter 先例）。不调 exitf——零新 exitf 分支
-		//（D-13 硬约束）；信号幂等（已死 pgid ESRCH 静默）。
-		if s.exiting || len(s.registry.set) != 0 {
+		// 复查『计时器身份未易主且仍空且未 exiting』（Pitfall 4 恰好一次兜底；
+		// arbiter timer 同款取锁纪律，resize.go initArbiter 先例）。10-review
+		// WR-03：已触发回调被调度延迟/等 hubMu 期间若完成一轮 attach+detach，
+		// 取消点 Stop 对已触发计时器无效、exitEmptyTimer 已被新纪元重武装——
+		// 身份不等即陈旧回调，不动作（新纪元宽限不得被旧回调架空）。赋值与
+		// 比较均在 hubMu 内无窗口（武装方持锁，回调取锁后 t 已可见）。不调
+		// exitf——零新 exitf 分支（D-13 硬约束）。
+		if s.exitEmptyTimer != t || s.exiting || len(s.registry.set) != 0 {
 			return
 		}
 		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
-		s.stopChildLocked()
+		if s.sessionMode == SessionModePerClient {
+			// 第二终结源触发（宽限到期形态——同立即形态两行动作）。
+			s.pcExitReq = true
+			s.hubCond.Broadcast()
+			return
+		}
+		s.stopChildLocked() // shared：信号幂等（已死 pgid ESRCH 静默）
 	})
+	s.exitEmptyTimer = t
 	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait", c.remoteUser)
 }
 

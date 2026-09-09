@@ -9,6 +9,19 @@ package server_test
 //（package server 白盒——内部类型不导出；Go 单文件单 package 约束使两测试
 // 分文件落位，SUMMARY 登记 plan 字面偏差）。
 //
+// 14-04 双模式 D-03 改造（蓝本 PITFALLS :388 resize 行「per-client=直通 +
+// 防抖（P7），无 min-rect」——resize 分叉的 wire 面实测归属即本文件；
+// resize_test.go 为 arbitrate() 纯函数白盒测，零 server 装配、无 mode 参数
+// 可参数化，保持单跑——14-04 判定登记）：
+//   - shared 列 = 上述仲裁黑盒断言逐字（四子测试）；装配经 newSessTestServer
+//     收编（原本地装配 helper 删除——D-01 散点消除，装配体内联至
+//     newSessTestServer shared 分支），sess 读回统一经 sessions() 访问器取
+//     唯一会话（shared = 单例包装）；
+//   - per-client 列 = D-03 显式断言仲裁器未装配——异尺寸双端各自 RESIZE
+//     直通（各自 winsize == 各自自报值）、无 min-rect 收敛（两端尺寸不互相
+//     压缩）、运行期帧流零 'W' 类型字节（误装配仲裁器时任一断言翻红——
+//     可证伪）；缺席以断言承载而非跳过（D-03 既定裁决：跳过即腐化无信号）。
+//
 // 参数序陷阱双保险（review MEDIUM 处置）：creack/pty Getsize 返回 (rows, cols)，
 // 与 sess.Resize(cols, rows) 入参序相反（io_test.go:24-25 注释纪律的仲裁断言
 // 映射）——本文件尺寸读回一律经 ptySize helper 归一为 (cols, rows)，断言处
@@ -17,8 +30,6 @@ package server_test
 import (
 	"context"
 	"encoding/json"
-	"net"
-	"net/http"
 	"testing"
 	"time"
 
@@ -29,29 +40,6 @@ import (
 	"github.com/sworda/wesh/internal/pty"
 	"github.com/sworda/wesh/internal/server"
 )
-
-// startResizeServer 装配形态照抄 e2e_test.go startTestServerWith（pty.Start +
-// server.New + net.Listen + http.Serve），返回值加挂 sess 供 creack/pty Getsize
-// 读回仲裁结果。不改 startTestServerWith 签名（其全部调用点在 e2e_test.go 与
-// 本 phase 新增测试文件，零波及——checker W3 方案 b 爆炸半径裁断）。
-func startResizeServer(t *testing.T, argv []string, opts server.Options) (exitCh chan int, wsURL string, sess *pty.Session) {
-	t.Helper()
-	// 零值等价形态（07-04 选项化适配：Uid/Gid -1 = 不降权，Dir/Term 空 = 现状）。
-	sess, err := pty.Start(argv, pty.StartOptions{Uid: -1, Gid: -1})
-	if err != nil {
-		t.Fatalf("pty.Start: %v", err)
-	}
-	exitCh = make(chan int, 1)
-	srv := server.New(sess, func(code int) { exitCh <- code }, opts)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("net.Listen: %v", err)
-	}
-	t.Cleanup(func() { killServer(ln, sess) })
-	go http.Serve(ln, srv.Handler())
-	return exitCh, "ws://" + ln.Addr().String() + "/ws", sess
-}
 
 // ptySize 读回当前 PTY 尺寸并归一为 (cols, rows)。注意：creack/pty Getsize
 // 返回 (rows, cols)——与 sess.Resize(cols, rows) 入参序相反（io_test.go:24-25
@@ -102,211 +90,311 @@ func sendResize(t *testing.T, ctx context.Context, c *websocket.Conn, cols, rows
 // TestResizeArbitration（VALIDATION 05-01-04，MULTI-04 行为锁定）：异尺寸多
 // 客户端共存的渲染正确性——min-rect / 2→1 last-wins / 防抖合并 / D-09 参与集
 // 分层与 ro 忽略双闸，全部经 Getsize 读回 PTY 真实尺寸实证。
+//
+// 14-04 双模式（文件头分叉表）：shared 列 = 四子测试仲裁语义逐字；per-client
+// 列 = D-03 仲裁器未装配的可证伪断言（直通 + 无 min-rect + 零 'W' 帧——
+// resize 行 wire 面的 per-client 半侧）。与 perclient_test.go Phase 12 直通
+// 三测（PassthroughRW/PassthroughRO/Isolation）的边界：本列锁「分叉点
+// （直通 vs 仲裁）+ 未装配（零 'W' 帧）」单一面——双端各自发 RESIZE 的
+// min-rect 反向收敛观测为本列独有面；resize 风暴/防抖细节与 ro 直通归
+// perclient_test.go 单一承载，不重复造同义断言（T-14-04）。
 func TestResizeArbitration(t *testing.T) {
-	// all 模式参与集：全部生效 rw 端（D-09 矩阵第二行）。A(132x43)/B(80x24)
-	// 双 rw attach → PTY = min(132,80)×min(43,24) = 80x24（任何参与端窗口
-	// ≥ PTY 尺寸，min-rect 不变量）；B 断开 → 2→1 恢复 last-wins（剩余者
-	// A 尺寸 132x43）。
-	t.Run("all模式min-rect与2to1恢复", func(t *testing.T) {
-		exitCh, wsURL, sess := startResizeServer(t, []string{"/bin/cat"}, server.Options{
-			Writable:    true,
-			WritePolicy: server.WritePolicyAll,
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			// per-client 列（D-03 显式断言未装配——误装配仲裁器时本列翻红；
+			// 蓝本 resize 行 wire 面的 per-client 半侧归属即本文件）：异尺寸双端
+			// A(100x30)/B(60x20) attach 各自 spawn（Hello 钳制尺寸出生），随后
+			// 各自 RESIZE 新值（A→110x40 / B→70x25）——三重可证伪面：
+			//  1. 各自 winsize == 各自最后自报值（经 sessions() 逐一会话观测；
+			//     若仲裁器被误装配，双端参与集按 min-rect 收敛 min(110,70)×
+			//     min(40,25)=70x25，A 的 110x40 断言翻红）；
+			//  2. 无 min-rect 收敛：B 的 resize 落定后 A 保持 110x40 不被压缩
+			//     （> 50ms 防抖窗余量后的负向断言——两端尺寸不互相压缩）；
+			//  3. 运行期帧流零 'W' 类型字节（仲裁器的 pushSessionDimsLocked
+			//     推送挂点在 per-client 不装配——误装配即 Welcome 约束帧上翻线；
+			//     泵启动前 Welcome 均已被 dialHello 消费，泵内任何 'W' 即违规）。
+			if mode == server.SessionModePerClient {
+				exitCh, wsURL, sessions := newSessTestServer(t, mode, []string{"/bin/cat"}, nil)
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cA, _ := dialHello(t, ctx, wsURL, 100, 30)
+				cB, _ := dialHello(t, ctx, wsURL, 60, 20)
+
+				sess := sessions()
+				if len(sess) != 2 {
+					t.Fatalf("spawned sessions = %d, want 2（异尺寸双端各自独立 spawn）", len(sess))
+				}
+				pollSize(t, sess[0], 100, 30) // A Hello 钳制尺寸出生基线
+				pollSize(t, sess[1], 60, 20)  // B Hello 钳制尺寸出生基线
+
+				// 双端读泵（静默窗 'W' 帧收集通道——perclient_test.go 同款夹具；
+				// cat 无自身输出帧流恒静，任何 'W' 即运行期约束帧违规）。
+				resChA := make(chan frameRes, 16)
+				resChB := make(chan frameRes, 16)
+				quit := make(chan struct{})
+				defer close(quit)
+				go readPump(ctx, cA, resChA, quit)
+				go readPump(ctx, cB, resChB, quit)
+
+				// 双端异尺寸 RESIZE 直通（钳制 [1,1000] 与 50ms 防抖语义保留——
+				// 细节面归 perclient_test.go，此处只锁分叉点）：A→110x40、B→70x25。
+				sendResize(t, ctx, cA, 110, 40)
+				pollSize(t, sess[0], 110, 40) // A 直通 + 防抖窗后应用
+				sendResize(t, ctx, cB, 70, 25)
+				pollSize(t, sess[1], 70, 25) // B 直通 + 防抖窗后应用
+
+				// 无 min-rect 收敛（负向断言）：B 的 resize 落定后余量 > 50ms
+				// 防抖窗——A 保持 110x40（若误装配仲裁，B 上报触发的重算早已
+				// 把 A 压到 min-rect）。
+				time.Sleep(300 * time.Millisecond)
+				if cols, rows := ptySize(t, sess[0]); cols != 110 || rows != 40 {
+					t.Fatalf("A PTY size = %dx%d, want 110x40——per-client 两端尺寸不互相压缩（min-rect 收敛即仲裁器误装配，D-03）", cols, rows)
+				}
+
+				// 运行期零 'W' 帧（select + time.After 竞速静默窗）：泵启动以来
+				// 双端累积帧（含 resize 序列期间入缓冲者）零 Welcome。
+				silent := time.After(500 * time.Millisecond)
+				welcomes := 0
+			silentWin:
+				for {
+					select {
+					case r := <-resChA:
+						if r.err != nil {
+							t.Fatalf("A 静默窗 read error: %v", r.err)
+						}
+						if len(r.data) > 0 && r.data[0] == proto.Welcome {
+							welcomes++
+						}
+					case r := <-resChB:
+						if r.err != nil {
+							t.Fatalf("B 静默窗 read error: %v", r.err)
+						}
+						if len(r.data) > 0 && r.data[0] == proto.Welcome {
+							welcomes++
+						}
+					case <-silent:
+						if welcomes != 0 {
+							t.Fatalf("双端静默窗内收到 %d 帧 'W'——per-client 运行期零 Welcome 约束帧（仲裁器未装配红线，D-03）", welcomes)
+						}
+						break silentWin
+					}
+				}
+
+				cA.Close(websocket.StatusNormalClosure, "")
+				cB.Close(websocket.StatusNormalClosure, "")
+				assertNoExit(t, exitCh)
+				return
+			}
+
+			// shared 列（v1.0 断言逐字——四子测试）：sess 读回统一经 sessions()
+			// 访问器取唯一会话（newSessTestServer 契约：shared = 单例包装）。
+
+			// all 模式参与集：全部生效 rw 端（D-09 矩阵第二行）。A(132x43)/B(80x24)
+			// 双 rw attach → PTY = min(132,80)×min(43,24) = 80x24（任何参与端窗口
+			// ≥ PTY 尺寸，min-rect 不变量）；B 断开 → 2→1 恢复 last-wins（剩余者
+			// A 尺寸 132x43）。
+			t.Run("all模式min-rect与2to1恢复", func(t *testing.T) {
+				exitCh, wsURL, sessions := newSessTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+					o.WritePolicy = server.WritePolicyAll
+				})
+				sess := sessions()[0] // shared 单例（访问器形态）
+
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cA, modeA := dialHello(t, ctx, wsURL, 132, 43)
+				if modeA != proto.ModeRW {
+					t.Fatalf("A welcome mode = %q, want %q", modeA, proto.ModeRW)
+				}
+				pollSize(t, sess, 132, 43) // attach 即时重算：单成员 last-wins
+
+				cB, modeB := dialHello(t, ctx, wsURL, 80, 24)
+				if modeB != proto.ModeRW {
+					t.Fatalf("B welcome mode = %q, want %q", modeB, proto.ModeRW)
+				}
+				// 双成员 → min-rect：min(132,80)×min(43,24) = 80x24（attach 即时重算不防抖）。
+				pollSize(t, sess, 80, 24)
+
+				// B 断开 → detach 即时重算 → 2→1 恢复 last-wins（剩余者 A 尺寸）。
+				cB.CloseNow()
+				pollSize(t, sess, 132, 43)
+
+				cA.Close(websocket.StatusNormalClosure, "")
+				assertNoExit(t, exitCh)
+			})
+
+			// 防抖合并（PITFALLS Pitfall 10 SIGWINCH 风暴防线）：ResizeDebounce 覆写
+			// 200ms，owner 单成员（last-wins）在 100ms 内连发 3 次异尺寸 RESIZE →
+			// 窗口内（+100ms 时点）Getsize 未变（单 time.Timer reset 合并，未逐次
+			// 应用）→ 轮询至 2s Getsize == 最后上报值（合并为一次应用）。
+			t.Run("防抖合并", func(t *testing.T) {
+				exitCh, wsURL, sessions := newSessTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+					o.ResizeDebounce = 200 * time.Millisecond
+				})
+				sess := sessions()[0] // shared 单例（访问器形态）
+
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
+				if modeA != proto.ModeRW {
+					t.Fatalf("A welcome mode = %q, want %q（owner 模式默认，单成员 last-wins）", modeA, proto.ModeRW)
+				}
+				pollSize(t, sess, 80, 24) // Hello 首尺寸生效基线
+
+				// 100ms 内连发 3 次异尺寸 RESIZE（loopback 毫秒级送达）。
+				sendResize(t, ctx, cA, 100, 40)
+				sendResize(t, ctx, cA, 90, 30)
+				sendResize(t, ctx, cA, 120, 50)
+
+				// +100ms 时点（< 200ms 防抖窗）：Getsize 未变——窗口内未应用（合并中）。
+				time.Sleep(100 * time.Millisecond)
+				if cols, rows := ptySize(t, sess); cols != 80 || rows != 24 {
+					t.Fatalf("防抖窗口内 PTY size = %dx%d, want 80x24（单 timer reset 合并，窗口内未应用）", cols, rows)
+				}
+				// 窗口后：合并为一次应用，应用值 = 最后上报 120x50（轮询 2s 上限）。
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					cols, rows := ptySize(t, sess)
+					if cols == 120 && rows == 50 {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("防抖窗口后 PTY size = %dx%d, want 120x50（合并为一次应用，最后上报值）", cols, rows)
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+
+				cA.Close(websocket.StatusNormalClosure, "")
+				assertNoExit(t, exitCh)
+			})
+
+			// owner 模式参与集分层 + ro 忽略闸（D-09 矩阵第一/四行）：A(owner 132x43)/
+			// B(降级 ro 80x24) → Getsize 跟随 A（132x43 而非 min——ro 旁观者永不参与、
+			// 不影响可写端 PTY 尺寸）；B 发 RESIZE → Getsize 不变（D-09 第二闸：服务端
+			// 直接忽略）；A 断开 → B 递补升格 → Getsize 切到 B 的 Hello 登记尺寸 80x24
+			//（递补后新 owner 尺寸接管）。
+			t.Run("owner模式参与集与ro忽略闸", func(t *testing.T) {
+				exitCh, wsURL, sessions := newSessTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+					o.WritePolicy = server.WritePolicyOwner
+				})
+				sess := sessions()[0] // shared 单例（访问器形态）
+
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cA, modeA := dialHello(t, ctx, wsURL, 132, 43)
+				if modeA != proto.ModeRW {
+					t.Fatalf("A welcome mode = %q, want %q（首个 rw attach 立 owner）", modeA, proto.ModeRW)
+				}
+				pollSize(t, sess, 132, 43) // owner 单成员 last-wins
+
+				cB, modeB := dialHello(t, ctx, wsURL, 80, 24)
+				if modeB != proto.ModeRO {
+					t.Fatalf("B welcome mode = %q, want %q（D-07 降级 ro 旁观者）", modeB, proto.ModeRO)
+				}
+				// B 为 ro 旁观者 → 不参与仲裁：PTY 保持 132x43 而非 min(80,24)。B 的
+				// Welcome 已读回（attach 已落定）——若 B 误参与，attach 即时重算早已应用
+				// min-rect；300ms 余量（> 50ms 防抖窗）后断言不变。
+				time.Sleep(300 * time.Millisecond)
+				if cols, rows := ptySize(t, sess); cols != 132 || rows != 43 {
+					t.Fatalf("ro 旁观者 attach 后 PTY size = %dx%d, want 132x43（D-09：旁观者尺寸永不影响可写端）", cols, rows)
+				}
+
+				// D-09 第二闸：B（降级 ro）发 RESIZE → 服务端直接忽略，Getsize 不变。
+				sendResize(t, ctx, cB, 100, 30)
+				time.Sleep(300 * time.Millisecond) // > 50ms 防抖窗——若误受理早已应用
+				if cols, rows := ptySize(t, sess); cols != 132 || rows != 43 {
+					t.Fatalf("ro 端 RESIZE 后 PTY size = %dx%d, want 132x43（D-09 第二闸：服务端直接忽略）", cols, rows)
+				}
+
+				// A 断开 → detach → FIFO 递补升格 B → 参与集切换（sizes 只留新 owner）
+				// → Getsize 切到 B 的 Hello 登记尺寸 80x24（递补后新 owner 尺寸接管）。
+				//（G-05-1 起升格 Welcome 与重算推送帧均落 cB 未被读流，Getsize 断言面不受影响。）
+				cA.CloseNow()
+				pollSize(t, sess, 80, 24)
+
+				cB.Close(websocket.StatusNormalClosure, "")
+				assertNoExit(t, exitCh)
+			})
+
+			// 运行期尺寸变化推送（G-05-1 运行期尺寸下发通道，05-10）：owner 模式
+			// A(owner rw 80x24)/B(降级 ro 60x20)；A 窗口 resize（RESIZE 上报）经 50ms
+			// 防抖重算后，recalcNow 的 last 变化分支向全部在线客户端推送携新会话尺寸的
+			// Welcome——两端（含 ro 旁观者与上报者自身）各在 5s 窗口收到第二帧 Welcome
+			// cols/rows==100/30；B 的推送帧 mode==ro（按各端当前生效 mode 组帧，D-13
+			// 双档纪律在推送通道不漂移）；pollSize 附带锁定 PTY 跟随（既有断言形态）。
+			//
+			// 回归自检（写进注释不断言）：S1 形态（owner 模式 A rw + B ro 降级，B 不参与）
+			// attach 无 resize——A attach 的 recalcNow 推送落在空注册表（升档重排后
+			// attach 者尚未 registerLocked），B attach 不参与不重算，last 不变零推送，
+			// accumPayload 的「窗口内无第二帧 Welcome」断言（multi_test.go）不受影响；
+			// TestResizeArbitration 既有三子测的 dialHello 尺寸组合（132x43/80x24 等）
+			// 触发的推送帧均落在未被读流的连接上，Getsize 断言面不受影响。
+			// 禁止负向静默窗口断言（「resize 前 B 无第二帧 Welcome」类——防抖/调度时序
+			// 引入 flaky 面，省）。
+			t.Run("运行期尺寸变化推送", func(t *testing.T) {
+				exitCh, wsURL, sessions := newSessTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+					o.WritePolicy = server.WritePolicyOwner
+				})
+				sess := sessions()[0] // shared 单例（访问器形态）
+
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
+				if modeA != proto.ModeRW {
+					t.Fatalf("A welcome mode = %q, want %q（首个 rw attach 立 owner）", modeA, proto.ModeRW)
+				}
+				pollSize(t, sess, 80, 24) // owner 单成员 last-wins 基线
+
+				cB, modeB := dialHello(t, ctx, wsURL, 60, 20)
+				if modeB != proto.ModeRO {
+					t.Fatalf("B welcome mode = %q, want %q（D-07 降级 ro 旁观者）", modeB, proto.ModeRO)
+				}
+
+				// 双端 attach Welcome 均被 dialHello 消费；武装第二帧 Welcome 读取
+				//（Pitfall 2 竞速形态——客户端 Read 永不带 deadline ctx）。
+				chA := readUntilWelcome(cA)
+				chB := readUntilWelcome(cB)
+
+				// A（owner）上报新窗口尺寸 → 50ms 防抖 → recalcNow → last 变化 → 双端推送。
+				sendResize(t, ctx, cA, 100, 30)
+				// B（ro 旁观者）：推送按各端当前 mode 组帧——mode 恒 ro，cols/rows 为新
+				// 会话尺寸 100x30（旁观者约束渲染的数据通道，G-05-1 服务端半侧闭合）。
+				select {
+				case wm := <-chB:
+					if wm == nil {
+						t.Fatal("B read terminated before dims-push Welcome（ro 旁观者运行期推送丢失）")
+					}
+					if wm["mode"] != proto.ModeRO {
+						t.Fatalf("B dims-push Welcome mode = %v, want %q（推送按各端当前生效 mode 组帧）", wm["mode"], proto.ModeRO)
+					}
+					if wm["cols"] != float64(100) || wm["rows"] != float64(30) {
+						t.Fatalf("B dims-push Welcome dims = %vx%v, want 100x30", wm["cols"], wm["rows"])
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("B 未在 5s 内收到 dims-push Welcome——ro 旁观者运行期尺寸下发失败（G-05-1）")
+				}
+				// A（上报者自身）：同收 100x30（上报者的会话尺寸确认回执——前端无需
+				// 特判自身上报路径）。
+				select {
+				case wm := <-chA:
+					if wm == nil {
+						t.Fatal("A read terminated before dims-push Welcome（上报者自身推送丢失）")
+					}
+					if wm["mode"] != proto.ModeRW {
+						t.Fatalf("A dims-push Welcome mode = %v, want %q", wm["mode"], proto.ModeRW)
+					}
+					if wm["cols"] != float64(100) || wm["rows"] != float64(30) {
+						t.Fatalf("A dims-push Welcome dims = %vx%v, want 100x30", wm["cols"], wm["rows"])
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("A 未在 5s 内收到 dims-push Welcome——上报者自身运行期尺寸下发失败（G-05-1）")
+				}
+				// PTY 跟随断言（既有形态）：防抖重算后 PTY 实际尺寸 = 推送的会话尺寸。
+				pollSize(t, sess, 100, 30)
+
+				cA.Close(websocket.StatusNormalClosure, "")
+				cB.Close(websocket.StatusNormalClosure, "")
+				assertNoExit(t, exitCh)
+			})
 		})
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cA, modeA := dialHello(t, ctx, wsURL, 132, 43)
-		if modeA != proto.ModeRW {
-			t.Fatalf("A welcome mode = %q, want %q", modeA, proto.ModeRW)
-		}
-		pollSize(t, sess, 132, 43) // attach 即时重算：单成员 last-wins
-
-		cB, modeB := dialHello(t, ctx, wsURL, 80, 24)
-		if modeB != proto.ModeRW {
-			t.Fatalf("B welcome mode = %q, want %q", modeB, proto.ModeRW)
-		}
-		// 双成员 → min-rect：min(132,80)×min(43,24) = 80x24（attach 即时重算不防抖）。
-		pollSize(t, sess, 80, 24)
-
-		// B 断开 → detach 即时重算 → 2→1 恢复 last-wins（剩余者 A 尺寸）。
-		cB.CloseNow()
-		pollSize(t, sess, 132, 43)
-
-		cA.Close(websocket.StatusNormalClosure, "")
-		assertNoExit(t, exitCh)
-	})
-
-	// 防抖合并（PITFALLS Pitfall 10 SIGWINCH 风暴防线）：ResizeDebounce 覆写
-	// 200ms，owner 单成员（last-wins）在 100ms 内连发 3 次异尺寸 RESIZE →
-	// 窗口内（+100ms 时点）Getsize 未变（单 time.Timer reset 合并，未逐次
-	// 应用）→ 轮询至 2s Getsize == 最后上报值（合并为一次应用）。
-	t.Run("防抖合并", func(t *testing.T) {
-		exitCh, wsURL, sess := startResizeServer(t, []string{"/bin/cat"}, server.Options{
-			Writable:       true,
-			ResizeDebounce: 200 * time.Millisecond,
-		})
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
-		if modeA != proto.ModeRW {
-			t.Fatalf("A welcome mode = %q, want %q（owner 模式默认，单成员 last-wins）", modeA, proto.ModeRW)
-		}
-		pollSize(t, sess, 80, 24) // Hello 首尺寸生效基线
-
-		// 100ms 内连发 3 次异尺寸 RESIZE（loopback 毫秒级送达）。
-		sendResize(t, ctx, cA, 100, 40)
-		sendResize(t, ctx, cA, 90, 30)
-		sendResize(t, ctx, cA, 120, 50)
-
-		// +100ms 时点（< 200ms 防抖窗）：Getsize 未变——窗口内未应用（合并中）。
-		time.Sleep(100 * time.Millisecond)
-		if cols, rows := ptySize(t, sess); cols != 80 || rows != 24 {
-			t.Fatalf("防抖窗口内 PTY size = %dx%d, want 80x24（单 timer reset 合并，窗口内未应用）", cols, rows)
-		}
-		// 窗口后：合并为一次应用，应用值 = 最后上报 120x50（轮询 2s 上限）。
-		deadline := time.Now().Add(2 * time.Second)
-		for {
-			cols, rows := ptySize(t, sess)
-			if cols == 120 && rows == 50 {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("防抖窗口后 PTY size = %dx%d, want 120x50（合并为一次应用，最后上报值）", cols, rows)
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-
-		cA.Close(websocket.StatusNormalClosure, "")
-		assertNoExit(t, exitCh)
-	})
-
-	// owner 模式参与集分层 + ro 忽略闸（D-09 矩阵第一/四行）：A(owner 132x43)/
-	// B(降级 ro 80x24) → Getsize 跟随 A（132x43 而非 min——ro 旁观者永不参与、
-	// 不影响可写端 PTY 尺寸）；B 发 RESIZE → Getsize 不变（D-09 第二闸：服务端
-	// 直接忽略）；A 断开 → B 递补升格 → Getsize 切到 B 的 Hello 登记尺寸 80x24
-	//（递补后新 owner 尺寸接管）。
-	t.Run("owner模式参与集与ro忽略闸", func(t *testing.T) {
-		exitCh, wsURL, sess := startResizeServer(t, []string{"/bin/cat"}, server.Options{
-			Writable:    true,
-			WritePolicy: server.WritePolicyOwner,
-		})
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cA, modeA := dialHello(t, ctx, wsURL, 132, 43)
-		if modeA != proto.ModeRW {
-			t.Fatalf("A welcome mode = %q, want %q（首个 rw attach 立 owner）", modeA, proto.ModeRW)
-		}
-		pollSize(t, sess, 132, 43) // owner 单成员 last-wins
-
-		cB, modeB := dialHello(t, ctx, wsURL, 80, 24)
-		if modeB != proto.ModeRO {
-			t.Fatalf("B welcome mode = %q, want %q（D-07 降级 ro 旁观者）", modeB, proto.ModeRO)
-		}
-		// B 为 ro 旁观者 → 不参与仲裁：PTY 保持 132x43 而非 min(80,24)。B 的
-		// Welcome 已读回（attach 已落定）——若 B 误参与，attach 即时重算早已应用
-		// min-rect；300ms 余量（> 50ms 防抖窗）后断言不变。
-		time.Sleep(300 * time.Millisecond)
-		if cols, rows := ptySize(t, sess); cols != 132 || rows != 43 {
-			t.Fatalf("ro 旁观者 attach 后 PTY size = %dx%d, want 132x43（D-09：旁观者尺寸永不影响可写端）", cols, rows)
-		}
-
-		// D-09 第二闸：B（降级 ro）发 RESIZE → 服务端直接忽略，Getsize 不变。
-		sendResize(t, ctx, cB, 100, 30)
-		time.Sleep(300 * time.Millisecond) // > 50ms 防抖窗——若误受理早已应用
-		if cols, rows := ptySize(t, sess); cols != 132 || rows != 43 {
-			t.Fatalf("ro 端 RESIZE 后 PTY size = %dx%d, want 132x43（D-09 第二闸：服务端直接忽略）", cols, rows)
-		}
-
-		// A 断开 → detach → FIFO 递补升格 B → 参与集切换（sizes 只留新 owner）
-		// → Getsize 切到 B 的 Hello 登记尺寸 80x24（递补后新 owner 尺寸接管）。
-		//（G-05-1 起升格 Welcome 与重算推送帧均落 cB 未被读流，Getsize 断言面不受影响。）
-		cA.CloseNow()
-		pollSize(t, sess, 80, 24)
-
-		cB.Close(websocket.StatusNormalClosure, "")
-		assertNoExit(t, exitCh)
-	})
-
-	// 运行期尺寸变化推送（G-05-1 运行期尺寸下发通道，05-10）：owner 模式
-	// A(owner rw 80x24)/B(降级 ro 60x20)；A 窗口 resize（RESIZE 上报）经 50ms
-	// 防抖重算后，recalcNow 的 last 变化分支向全部在线客户端推送携新会话尺寸的
-	// Welcome——两端（含 ro 旁观者与上报者自身）各在 5s 窗口收到第二帧 Welcome
-	// cols/rows==100/30；B 的推送帧 mode==ro（按各端当前生效 mode 组帧，D-13
-	// 双档纪律在推送通道不漂移）；pollSize 附带锁定 PTY 跟随（既有断言形态）。
-	//
-	// 回归自检（写进注释不断言）：S1 形态（owner 模式 A rw + B ro 降级，B 不参与）
-	// attach 无 resize——A attach 的 recalcNow 推送落在空注册表（升档重排后
-	// attach 者尚未 registerLocked），B attach 不参与不重算，last 不变零推送，
-	// accumPayload 的「窗口内无第二帧 Welcome」断言（multi_test.go）不受影响；
-	// TestResizeArbitration 既有三子测的 dialHello 尺寸组合（132x43/80x24 等）
-	// 触发的推送帧均落在未被读流的连接上，Getsize 断言面不受影响。
-	// 禁止负向静默窗口断言（「resize 前 B 无第二帧 Welcome」类——防抖/调度时序
-	// 引入 flaky 面，省）。
-	t.Run("运行期尺寸变化推送", func(t *testing.T) {
-		exitCh, wsURL, sess := startResizeServer(t, []string{"/bin/cat"}, server.Options{
-			Writable:    true,
-			WritePolicy: server.WritePolicyOwner,
-		})
-
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cA, modeA := dialHello(t, ctx, wsURL, 80, 24)
-		if modeA != proto.ModeRW {
-			t.Fatalf("A welcome mode = %q, want %q（首个 rw attach 立 owner）", modeA, proto.ModeRW)
-		}
-		pollSize(t, sess, 80, 24) // owner 单成员 last-wins 基线
-
-		cB, modeB := dialHello(t, ctx, wsURL, 60, 20)
-		if modeB != proto.ModeRO {
-			t.Fatalf("B welcome mode = %q, want %q（D-07 降级 ro 旁观者）", modeB, proto.ModeRO)
-		}
-
-		// 双端 attach Welcome 均被 dialHello 消费；武装第二帧 Welcome 读取
-		//（Pitfall 2 竞速形态——客户端 Read 永不带 deadline ctx）。
-		chA := readUntilWelcome(cA)
-		chB := readUntilWelcome(cB)
-
-		// A（owner）上报新窗口尺寸 → 50ms 防抖 → recalcNow → last 变化 → 双端推送。
-		sendResize(t, ctx, cA, 100, 30)
-		// B（ro 旁观者）：推送按各端当前 mode 组帧——mode 恒 ro，cols/rows 为新
-		// 会话尺寸 100x30（旁观者约束渲染的数据通道，G-05-1 服务端半侧闭合）。
-		select {
-		case wm := <-chB:
-			if wm == nil {
-				t.Fatal("B read terminated before dims-push Welcome（ro 旁观者运行期推送丢失）")
-			}
-			if wm["mode"] != proto.ModeRO {
-				t.Fatalf("B dims-push Welcome mode = %v, want %q（推送按各端当前生效 mode 组帧）", wm["mode"], proto.ModeRO)
-			}
-			if wm["cols"] != float64(100) || wm["rows"] != float64(30) {
-				t.Fatalf("B dims-push Welcome dims = %vx%v, want 100x30", wm["cols"], wm["rows"])
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("B 未在 5s 内收到 dims-push Welcome——ro 旁观者运行期尺寸下发失败（G-05-1）")
-		}
-		// A（上报者自身）：同收 100x30（上报者的会话尺寸确认回执——前端无需
-		// 特判自身上报路径）。
-		select {
-		case wm := <-chA:
-			if wm == nil {
-				t.Fatal("A read terminated before dims-push Welcome（上报者自身推送丢失）")
-			}
-			if wm["mode"] != proto.ModeRW {
-				t.Fatalf("A dims-push Welcome mode = %v, want %q", wm["mode"], proto.ModeRW)
-			}
-			if wm["cols"] != float64(100) || wm["rows"] != float64(30) {
-				t.Fatalf("A dims-push Welcome dims = %vx%v, want 100x30", wm["cols"], wm["rows"])
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("A 未在 5s 内收到 dims-push Welcome——上报者自身运行期尺寸下发失败（G-05-1）")
-		}
-		// PTY 跟随断言（既有形态）：防抖重算后 PTY 实际尺寸 = 推送的会话尺寸。
-		pollSize(t, sess, 100, 30)
-
-		cA.Close(websocket.StatusNormalClosure, "")
-		cB.Close(websocket.StatusNormalClosure, "")
-		assertNoExit(t, exitCh)
-	})
+	}
 }

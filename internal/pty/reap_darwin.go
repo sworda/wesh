@@ -15,14 +15,24 @@ package pty
 // 保留，待 Phase 5 多会话时重估。
 
 import (
+	"errors"
 	"os/exec"
 	"sync"
 
 	"golang.org/x/sys/unix"
 )
 
+// errDupWatch（Pitfall 9，11-02）：kqueue kevent 以 (ident,filter) 为唯一键，
+// 同 pid 重复 EV_ADD 是替换而非叠加；subs[pid] 覆盖会使先注册者 channel 被
+// 影子化，awaitExit 的 <-exited 永等 → 会话收割挂死（goroutine 泄漏 + EXIT
+// 永不送达）。fail-closed 把「挂死」变「可观测错误」；调用方经既有 watch-error
+// 分支退化 cmd.Wait() 阻塞直等兜底，收割语义保持（唯一收割者纪律不受影响）。
+var errDupWatch = errors.New("pty: duplicate exit watch pid")
+
 // exitWatcher 进程级共享：一个 kqueue fd、一个 loop goroutine，N 会话共用
 // （零每会话线程，D-14）。
+// dup-watch fail-closed 于 11-02 落地（Pitfall 9 挂账兑现之一；N 规模并发
+// 退出复演归 Phase 14 darwin CI）。
 type exitWatcher struct {
 	kq   int
 	mu   sync.Mutex
@@ -42,6 +52,12 @@ func newExitWatcher() (*exitWatcher, error) {
 func (w *exitWatcher) watch(pid int) (<-chan struct{}, error) {
 	ch := make(chan struct{}, 1)
 	w.mu.Lock()
+	if _, dup := w.subs[pid]; dup {
+		// 重复注册 fail-closed：先注册者订阅零改动（不被影子化），调用方
+		// 退化 cmd.Wait() 兜底（Pitfall 9，11-02）
+		w.mu.Unlock()
+		return nil, errDupWatch
+	}
 	w.subs[pid] = ch
 	w.mu.Unlock()
 	// EV_ADD 注册；EV_ONESHOT 触发一次即自动注销
@@ -113,6 +129,8 @@ func awaitExit(cmd *exec.Cmd) error {
 	}
 	exited, err := w.watch(cmd.Process.Pid)
 	if err != nil {
+		// errDupWatch 为当前唯一预期错误源（11-02，Pitfall 9）——重复注册
+		// 退化为阻塞直等，收割语义保持
 		return cmd.Wait()
 	}
 	<-exited

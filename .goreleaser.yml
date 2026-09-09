@@ -20,7 +20,10 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{.Version}} # 挂 cmd/wesh/main.go:32 var version = "dev" 注入点
+      # 版本三元组注入（挂 cmd/wesh/main.go var version/commit/builtAt）：
+      # date 用 CommitTimestamp（Unix 秒）而非 .Date——与 mod_timestamp 同源保可复现构建，
+      # 展示层由 formatBuiltAt 按运行机时区转 RFC3339
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.builtAt={{.CommitTimestamp}}
     mod_timestamp: "{{ .CommitTimestamp }}" # 可复现构建
 
 archives:

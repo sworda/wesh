@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+// 【14-05 形态判定】本文件两测（TestNormalizeOrigin/TestOriginAllowed）为纯
+// 函数白盒测——Origin 规范化/四段判定无 server 装配面，mode-agnostic 无装配
+// 可参数化，保持单跑（蓝本 origin 行的传输面双跑由 auth_e2e_test.go
+// TestOriginEndpoints 承载）。
+
 // TestNormalizeOrigin 锁定 --origin 值规范化语义（SEC-04/D-12）：小写 host +
 // 剥离默认端口（http:80/https:443——浏览器 Origin 序列化省略默认端口，
 // RFC 6454，Pitfall 3 白名单永不命中防线）；拒绝 path/query/fragment/

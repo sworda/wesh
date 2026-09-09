@@ -4,7 +4,7 @@
 
 ## 系统概览
 
-wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd> [args...]` 启动后在指定端口提供 HTTP/WebSocket 服务，浏览器打开页面即获得一个运行 `<cmd>` 的完整交互终端。整体为**单二进制分层架构**——Go 服务端（CLI 解析/装配层 → HTTP+WS 网关层 → PTY 数据面层）内嵌经 Vite 单文件构建的 xterm.js 前端（`go:embed`），采用 **GoTTY 式共享进程模型**：PTY 子进程随服务端启动时 spawn 一次，多个浏览器客户端共享同一会话（输出实时扇出、写权限经 owner 递补仲裁），这与 ttyd 的 per-connection spawn 模型是核心架构分叉。主要输入是浏览器键盘/粘贴字节与 RESIZE 事件，主要输出是 PTY 子进程的字节流（扇出 ×N 客户端）；wire 层为自定义二进制 WebSocket 协议 `wesh.v1`（1 字节帧类型 + 载荷）。支持平台仅 linux/darwin（amd64/arm64），Windows 不在支持范围（PTY 层构建标签限定）。
+wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd> [args...]` 启动后在指定端口提供 HTTP/WebSocket 服务，浏览器打开页面即获得一个运行 `<cmd>` 的完整交互终端。整体为**单二进制分层架构**——Go 服务端（CLI 解析/装配层 → HTTP+WS 网关层 → PTY 数据面层）内嵌经 Vite 单文件构建的 xterm.js 前端（`go:embed`）。进程模型自 v1.1 起支持双模式（`--session-mode`，详见「双模式架构」节）：`shared`（默认）——PTY 子进程随服务端启动时 spawn 一次，多个浏览器客户端共享同一会话（输出实时扇出、写权限经 owner 递补仲裁），这是 wesh 的自有差异化设计（勘误：v1.0 文档曾将共享模型归为 GoTTY 同类——经 GoTTY 源码核实，GoTTY 实为 per-connection spawn：每条 WS 连接各 `factory.New` → `pty.Start` 一个进程，此前表述有误，共享模型在同类工具中无先例）；`per-client`——每 WS 客户端 attach 时独立 spawn 一个 PTY 进程（ttyd 式 per-connection 生命周期），断开即终结、重连即全新进程。主要输入是浏览器键盘/粘贴字节与 RESIZE 事件，主要输出是 PTY 子进程的字节流（`shared` 扇出 ×N 客户端 / `per-client` 每会话独立流）；wire 层为自定义二进制 WebSocket 协议 `wesh.v1`（1 字节帧类型 + 载荷）。支持平台仅 linux/darwin（amd64/arm64），Windows 不在支持范围（PTY 层构建标签限定）。
 
 ## 组件图
 
@@ -12,11 +12,11 @@ wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd>
 graph TD
     FE[浏览器前端<br/>web/src/main.ts · xterm.js]
 
-    subgraph cmd/wesh（CLI 装配层）
+    subgraph CMDWESH["cmd/wesh（CLI 装配层）"]
         CLI[flag + TOML 解析<br/>启动校验矩阵 · TLS 预检]
     end
 
-    subgraph internal/server（网关层）
+    subgraph SRV["internal/server（网关层）"]
         HTTP[mux 路由 + 认证链<br/>basicAuth · throttle · origin · 安全头]
         ATTACH[WS 握手状态机<br/>server.Attach · Hello/ticket 核销]
         HUB[注册表 + fan-out hub<br/>信用门 · 模式判定矩阵]
@@ -26,36 +26,36 @@ graph TD
         OBS[可观测性<br/>/healthz · /metrics · slog JSON]
     end
 
-    subgraph internal/pty（数据面）
+    subgraph PTYLAYER["internal/pty（数据面）"]
         PTY[pty.Session<br/>master 读写 · 信号 · 平台收割]
     end
 
-    subgraph web（前端装配）
+    subgraph WEBPKG["web（前端装配）"]
         EMBED[go:embed 静态伺服<br/>gzip 预压 · 自定义首页装饰]
     end
 
     CHILD[子进程 &lt;cmd&gt;]
 
-    CLI -->|spawn| PTY
-    CLI -->|Options 装配| HTTP
-    FE -->|GET / · /s/{token}/| EMBED
-    FE -->|POST /api/attach 换 ticket| HTTP
-    FE -->|WS /ws（wesh.v1）| ATTACH
+    CLI -->|"spawn"| PTY
+    CLI -->|"Options 装配"| HTTP
+    FE -->|"GET / · /s/{token}/"| EMBED
+    FE -->|"POST /api/attach 换 ticket"| HTTP
+    FE -->|"WS /ws（wesh.v1）"| ATTACH
     HTTP --> ATTACH
-    ATTACH -->|注册| HUB
-    PTY -->|ReadLoop 32KiB chunk| HUB
-    HUB -->|'0' OUTPUT 扇出| CLIENTS
-    CLIENTS -->|WS 下行| FE
-    FE -->|'0' INPUT / '1' RESIZE| ATTACH
+    ATTACH -->|"注册"| HUB
+    PTY -->|"ReadLoop 32KiB chunk"| HUB
+    HUB -->|"'0' OUTPUT 扇出"| CLIENTS
+    CLIENTS -->|"WS 下行"| FE
+    FE -->|"'0' INPUT / '1' RESIZE"| ATTACH
     ATTACH --> INPUTQ
     ATTACH --> ARB
-    INPUTQ -->|独占 Master.Write| PTY
-    ARB -->|TIOCSWINSZ| PTY
+    INPUTQ -->|"独占 Master.Write"| PTY
+    ARB -->|"TIOCSWINSZ"| PTY
     PTY --- CHILD
     HTTP --- OBS
 ```
 
-HTTP 路由面（`server.Handler()` 装配，`--base-path` 时统一加前缀）：`GET /` 与 `/s/{token}/`（内嵌页/分享链接）、`POST /api/attach`（换一次性 ticket）、`/ws`（WS 升级）、`GET /healthz`（免认证探活，根路径固定不受 base-path 影响）、`GET /metrics`（Prometheus 文本，跟随认证闸）。
+HTTP 路由面（`server.Handler()` 装配，`--base-path` 时统一加前缀）：`GET /` 与 `/s/{token}/`（内嵌页/分享链接）、`POST /api/attach`（换一次性 ticket）、`/ws`（WS 升级）、`GET /healthz`（免认证探活，根路径固定不受 base-path 影响）、`GET /metrics`（Prometheus 文本 21 series，跟随认证闸；`session_active` 等同名 series 按模式取值，四枚 spawn 计数器为 per-client 专属、shared 侧恒 0 series 保留）。
 
 ## 数据流
 
@@ -65,7 +65,7 @@ HTTP 路由面（`server.Handler()` 装配，`--base-path` 时统一加前缀）
 2. 认证模式下前端 `POST /api/attach`（Basic 凭据经 401 challenge 获取）换一次性 ticket（128bit `crypto/rand`、单次使用、60s TTL、绑定 ro/rw 模式）；无认证模式该端点 404，前端据此跳过取票直连 WS。
 3. WS 连接 `/ws` 必须协商子协议 `wesh.v1`，握手守卫链（`server.Attach`）：Origin 白名单检查（403）→ 子协议预检（400）→ per-IP 半开上限 8（429）→ `--max-clients` 满员 503 闸 → Accept。
 4. 首帧必须为 Hello `{"version","cols","rows","ticket"?}`——5s 超时、预认证读上限 4KiB；ticket 核销失败统一 `auth_failed` + 1008（无区分 oracle）。
-5. 核销通过后进入模式判定矩阵（ticket 绑定 mode × `--writable` × `--write-policy` × owner 在位 → 生效 ro/rw），注册进客户端表，回 Welcome `{"mode","cols","rows","prefs"?}`（cols/rows 为会话尺寸恒在）；稳态读上限切 16KiB，pinger 按 `--ping-interval`（默认 5s）保活、pong 超时 10s 断开。
+5. 核销通过后进入模式判定矩阵（ticket 绑定 mode × `--writable` × `--write-policy` × owner 在位 → 生效 ro/rw），注册进客户端表，回 Welcome `{"mode","session","cols","rows","prefs"?}`（session 为会话模式位恒序列化；cols/rows 恒在，shared 为会话尺寸、per-client 回显本端 Hello 尺寸）；稳态读上限切 16KiB，pinger 按 `--ping-interval`（默认 5s）保活、pong 超时 10s 断开。
 
 **输出路径（PTY → 浏览器）**
 
@@ -85,9 +85,61 @@ RESIZE 帧 `{"cols","rows"}` 经钳制 [1,1000] 后进仲裁器（`resize.go`）
 
 **终结路径**
 
-- 子进程退出（唯一终结路径）：lifecycle goroutine 广播 EXIT `'X'` 帧（`{"exit_code","message"}`，信号死亡 exit_code=-1）→ 以 1000 关闭全部客户端 → `exitf` 按子进程退出码退出。
-- SIGTERM/SIGINT 优雅下线：向全部客户端发 1001（close reason `server_shutting_down`，前端终态面板不自动重连）→ 对子进程进程组执行 stop-signal 序列（`--stop-signal` → `--stop-timeout` 宽限 → SIGKILL）。
+- 子进程退出（shared 模式的唯一终结路径；per-client 由 sessionWatcher 私有单播 EXIT、pcSupervisor 承接第二终结源，见「双模式架构」节）：lifecycle goroutine 广播 EXIT `'X'` 帧（`{"exit_code","message"}`，信号死亡 exit_code=-1）→ 以 1000 关闭全部客户端 → `exitf` 按子进程退出码退出。
+- SIGTERM/SIGINT 优雅下线：向全部客户端发 1001（close reason `server_shutting_down`，前端终态面板不自动重连）→ 对子进程进程组执行 stop-signal 序列（`--stop-signal` → `--stop-timeout` 宽限 → SIGKILL；per-client 对 N 进程组快照逐组信号 + 有界 join——上界 `--stop-timeout` + 2s 余量，到期未收割的 D-state 残余直接 terminate 收口，绝不无限等待）。
 - `--once` / `--exit-when-empty` 空触发：向子进程进程组发 SIGHUP，wesh 退出状态 255。
+
+## 双模式架构
+
+`--session-mode` 的实现纪律是**装配期一次分岔、运行期零分岔**：模式在 `New`（goroutine 拓扑与组件装配）与 `Attach`（升档分支）装配期固化，运行期热路径不因模式判型分流——不抽象统一 session 接口，两模式各自直装配，全仓显式分支点收敛为九处判定面，按门控形态分两类——`sessionMode` 判型六类（`New` 装配分岔、`Attach` 升档分岔、exit-when-empty 终结分支的立即/宽限两触发点、`Shutdown` 收口分支、`/healthz` 与 `/metrics` 的 session_active 取值分支）与 `client.pc` 间接字段判型三类（RESIZE 直通、detach/kick 两处 teardown 挂点）。INPUT 是零分支面：`client.inQ` 间接字段使读循环同一行代码在 shared 写会话级队列、per-client 写本会话独享队列。per-client 另有三组非 shared 变体的纯新增机制：spawn 双令牌桶（全局 8/s·burst 16 + per-IP 1/s·burst 4——断网惊群/单点 churn 的 fork 防线，拒绝统一为 Error + 1011 容量文案且不落入前端自动重连触发集）；outbox notFull 恢复信号 + 零锁阻塞持帧 + dwell 看门狗（10s）背压三件套——停读不丢帧，「慢但在前进的客户端永不被踢」；sessionWatcher 每会话唯一收割者 + teardown `sync.Once` + reaped/waitDone 双栅栏——终结恰好一次、kill-after-reap 结构性不可能。
+
+goroutine 拓扑对比（事实源 `internal/server/perclient.go` 五件装配与 `server.go` shared 装配；生产账面 shared 3+3N / per-client 1+6N，实测标定见 README「per-client 资源义务与实测标定」节）：
+
+```mermaid
+graph TD
+    subgraph SH["shared 模式（默认）· 会话级 3 + 客户端级 3×N"]
+        SPTY["PTY 子进程 ×1<br/>启动期 spawn 一次"]
+        SRL["ReadLoop（会话级）<br/>onChunk 持 hubMu 经 fan-out hub 扇出 ×N<br/>全局信用门 hubCond 反压"]
+        SIW["inputWriter（会话级）<br/>会话级 inputQ → 独占 Master.Write"]
+        SLC["lifecycle（会话级）<br/>子死 → EXIT 广播 → exitf"]
+        SAR["resize 仲裁器<br/>min-rect · 参与集分层 · 50ms 防抖"]
+        SCL["每客户端 ×N<br/>reader · writer · pinger"]
+        SPTY -->|"32KiB chunk"| SRL
+        SRL -->|"OUTPUT 扇出"| SCL
+        SCL -->|"INPUT"| SIW
+        SIW --> SPTY
+        SCL -->|"RESIZE"| SAR
+        SAR -->|"TIOCSWINSZ"| SPTY
+        SLC -.->|"EXIT 广播 + 1000"| SCL
+    end
+    subgraph PC["per-client 模式（opt-in）· 服务级 1 + 会话级 6×N"]
+        PSUP["pcSupervisor ×1<br/>--once / exit-when-empty 第二终结源"]
+        PPTY["PTY 子进程 ×N<br/>attach 期 spawn"]
+        PRD["reader 读循环<br/>ro 门控 + 输入限速"]
+        PWR["writer<br/>outbox 512KiB drain"]
+        PPI["pinger"]
+        PRL["ReadLoop 闭包<br/>1:1 直投属主 outbox + dwell 看门狗"]
+        PIW["inputWriter<br/>每会话独享 inputQ"]
+        PSW["sessionWatcher<br/>唯一收割者 · EXIT 私有直写"]
+        PPTY --> PRL
+        PRL --> PWR
+        PRD -->|"INPUT"| PIW
+        PIW --> PPTY
+        PRD -->|"RESIZE 直通 TIOCSWINSZ"| PPTY
+        PSW -.->|"cmd.Wait 唯一收割"| PPTY
+        PSUP -.->|"等 pcSessions 归零 → exitf"| PSW
+    end
+```
+
+两模式的组件差异（keep / degrade / vanish）：
+
+| 去向 | 组件与机制 |
+|------|-----------|
+| **vanish**（仅 shared 装配） | fan-out hub（输出扇出 + 全局信用门 hubCond）· resize 仲裁器（per-client 尺寸直通 + 每会话防抖）· owner 递补升格与写权限仲裁矩阵 · 'W' 约束帧（per-client 的 Welcome 回显自有尺寸） |
+| **degrade**（机制保留，语义改变） | EXIT 帧广播 → 私有单播（服务端退出与子进程死亡解耦）· `--once`/`--exit-when-empty` 触发条件不变、终结目标 1 → N 进程组（pcSupervisor 承接）· 优雅关停 stop-signal 序列对每进程组各执行一遍 · ro/rw 分享链接「同会话视图凭证」→「按权限级别的独立进程入场券」· `--max-clients` 连接闸兼任进程闸（握手 503 + spawn 前复检）· Welcome cols/rows「会话尺寸」→「自有尺寸」 |
+| **keep**（模式无关零改动） | ticket 核销 · 认证失败节流 · Origin 白名单 · per-IP 半开上限 · TLS/安全头 · 读上限两档 · ping/pong 保活 · 关闭码纪律 · 1006-only 重连退避 · env 白名单 · 降权 · `/healthz` · `/metrics` · 审计日志 · 标题 `[ro]` 前缀 · `--client-option` 偏好三级覆盖 |
+
+模式语义（分享链接/ro/herdr·tmux 汇聚）与 per-client 资源义务的面向用户表述见 README「会话模式」节。
 
 ## 关键抽象
 
@@ -96,9 +148,10 @@ RESIZE 帧 `{"cols","rows"}` 经钳制 [1,1000] 后进仲裁器（`resize.go`）
 | `pty.Session` | `internal/pty/spawn.go` | 子进程 + PTY master 封装：`Start`（exec 数组不经 shell、env 白名单替换式注入、降权 Credential）、`ReadLoop`、`Resize`、`SignalGroup`（负 pid 进程组信号） |
 | `proto` 包 | `internal/proto/proto.go` | wire 协议单一事实源：帧类型常量（`'H'`/`'W'`/`'E'`/`'0'`/`'1'`/`'X'`）、payload 结构、`Subprotocol = "wesh.v1"`、两档读上限、尺寸钳制；前端 `main.ts` 帧常量与之手工对齐 |
 | `server.Server` | `internal/server/server.go` | 网关与会话生命周期收口：`New` 装配（钉死 ReadLoop/inputWriter/lifecycle 三个 goroutine）、`Handler()` 路由树、`Attach` WS 握手状态机、`Shutdown` 优雅下线 |
-| `server.Options` | `internal/server/server.go` | 装配期固化配置（写权限/保活/认证/容量/背压/部署形态），零值兜底集中在 `New` |
-| `client` / `outbox` / `registry` | `internal/server/clients.go` | 多客户端 hub：每客户端有界 outbox + 独立 writer；注册表 + 全局信用门（`hubCond`）构成 fan-out 背压；owner FIFO 递补升格 |
+| `server.Options` | `internal/server/server.go` | 装配期固化配置（写权限/保活/认证/容量/背压/会话模式/部署形态，含 spawn 双令牌桶四参与 SlowDwell），零值兜底集中在 `New` |
+| `client` / `outbox` / `registry` | `internal/server/clients.go` | 多客户端 hub：每客户端有界 outbox（附 notFull 恢复信号）+ 独立 writer；注册表 + 全局信用门（`hubCond`）构成 fan-out 背压；owner FIFO 递补升格 |
 | `inputQ` + input-writer | `internal/server/clients.go` | 会话级有界输入队列 + 单写者 goroutine 独占 master 写（读循环零同步写） |
+| `pcSession` / `upgradePerClient` / `sessionWatcher` / `teardownPCLocked` | `internal/server/perclient.go` | per-client 会话生命周期主干：升档 spawn 分支（双令牌桶判定 → 容量再闸 → hubMu 外 spawn → 注册点复检回收）、五 goroutine 装配、EXIT 私有化直写、`sync.Once` teardown（reaped/waitDone 双栅栏）、dwell 看门狗；伴生 `spawnThrottleStore`（`internal/server/spawnthrottle.go`）承载 spawn 双令牌桶 |
 | `arbiter` | `internal/server/resize.go` | resize 仲裁：纯函数 min-rect/last-wins + 参与集分层 + 防抖/即时重算双通道，全部字段 hubMu 保护 |
 | `ticketStore` / `throttleStore` / `shareTokens` | `internal/server/tickets.go` / `throttle.go` / `sharetoken.go` | 认证三原语：一次性 ticket（60s TTL）、per-IP 指数退避（1s 起翻倍封顶 30s）、ro/rw 分享 token（128bit，SHA-256 预哈希存储，重启即废） |
 | `web.Handler()` / `WithCustomIndex` | `web/embed.go` | go:embed 静态伺服：gzip 预压旁路、`Vary` 头纪律、`--index` 自定义首页 byte-identity 整页替换装饰 |
@@ -118,8 +171,9 @@ wesh/
 │   │                  #   进程组信号（signal_linux / signal_darwin 构建标签分支）
 │   ├── proto/         # wire 协议单一事实源：帧类型、payload、子协议、读上限
 │   └── server/        # HTTP+WS 网关：握手状态机、多客户端注册表与扇出/背压、
-│                      #   认证/节流/分享 token、resize 仲裁、健康检查与指标、
-│                      #   slog JSON 审计日志、TLS/安全头/Origin/反代信任
+│                      #   认证/节流/分享 token、resize 仲裁、per-client 会话生命
+│                      #   周期（升档 spawn/五 goroutine 装配/收割 teardown）、
+│                      #   健康检查与指标、slog JSON 审计日志、TLS/安全头/Origin/反代信任
 ├── web/               # 前端：src/main.ts + src/lib/（TypeScript + xterm.js 6），
 │   │                  #   vite-plugin-singlefile 构建为单 HTML 进 dist/，
 │   │                  #   embed.go 以 go:embed 嵌入二进制；uat/ 为协议层 UAT 脚本
