@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -1415,6 +1416,93 @@ func TestVersionFlag(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("run(--version) stdout = %q, want containing %q", out, want)
 		}
+	}
+}
+
+// TestVCSFromSettings 表驱动锁定 vcsFromSettings 回填契约：
+//   - vcs.revision/vcs.time 标准回填（本地 go build 路径）；
+//   - vcs.modified=true 且 revision 存在 → commit 追加 -dirty（二进制内容不对应
+//     裸 revision，与 build.sh 的 git describe --dirty 口径一致）；
+//   - modified=false/缺失 → 不追加；
+//   - 仅 modified=true 无 revision（仓库外构建异形态）→ 无裸值可标，保持原值；
+//   - Settings 顺序无关（modified 先于 revision 出现同样生效）。
+func TestVCSFromSettings(t *testing.T) {
+	const rev = "abc1234def5678"
+	const ts = "2026-09-09T00:00:00Z"
+	tv, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		t.Fatalf("parse fixture ts: %v", err)
+	}
+	wantUnix := strconv.FormatInt(tv.Unix(), 10)
+	tests := []struct {
+		name        string
+		settings    []debug.BuildSetting
+		wantCommit  string
+		wantBuiltAt string
+	}{
+		{
+			name: "clean tree",
+			settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: rev},
+				{Key: "vcs.time", Value: ts},
+				{Key: "vcs.modified", Value: "false"},
+			},
+			wantCommit:  rev,
+			wantBuiltAt: wantUnix,
+		},
+		{
+			name: "dirty tree appends suffix",
+			settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: rev},
+				{Key: "vcs.time", Value: ts},
+				{Key: "vcs.modified", Value: "true"},
+			},
+			wantCommit:  rev + "-dirty",
+			wantBuiltAt: wantUnix,
+		},
+		{
+			name: "modified key absent no suffix",
+			settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: rev},
+			},
+			wantCommit:  rev,
+			wantBuiltAt: "0",
+		},
+		{
+			name: "modified true without revision keeps original",
+			settings: []debug.BuildSetting{
+				{Key: "vcs.modified", Value: "true"},
+			},
+			wantCommit:  "none",
+			wantBuiltAt: "0",
+		},
+		{
+			name: "settings order irrelevant",
+			settings: []debug.BuildSetting{
+				{Key: "vcs.modified", Value: "true"},
+				{Key: "vcs.time", Value: ts},
+				{Key: "vcs.revision", Value: rev},
+			},
+			wantCommit:  rev + "-dirty",
+			wantBuiltAt: wantUnix,
+		},
+		{
+			name:        "empty settings out of repo build",
+			settings:    nil,
+			wantCommit:  "none",
+			wantBuiltAt: "0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotCommit, gotBuiltAt := vcsFromSettings(tt.settings, "none", "0")
+			if gotCommit != tt.wantCommit {
+				t.Errorf("commit = %q, want %q", gotCommit, tt.wantCommit)
+			}
+			if gotBuiltAt != tt.wantBuiltAt {
+				t.Errorf("builtAt = %q, want %q", gotBuiltAt, tt.wantBuiltAt)
+			}
+		})
 	}
 }
 

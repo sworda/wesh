@@ -43,7 +43,9 @@ var (
 // resolveVCS 用 buildinfo 回填本地构建缺失的 commit/builtAt——本地 go build 无 ldflags
 // 注入时，Go 1.18+ 在仓库内构建自动嵌入 vcs.revision/vcs.time（-trimpath 不影响）；
 // ldflags 注入值优先（commit 非默认值即跳过）。仓库外构建无 VCS 信息时保持默认值，
-// 展示层落 unknown。
+// 展示层落 unknown。vcs.modified=true（构建时工作树有未提交修改）时 commit 追加
+// -dirty 后缀——二进制内容并不对应该 revision 裸值，与 build.sh 的 git describe
+// --dirty 口径一致。
 func resolveVCS() {
 	if commit != "none" {
 		return
@@ -52,7 +54,16 @@ func resolveVCS() {
 	if !ok {
 		return
 	}
-	for _, s := range bi.Settings {
+	commit, builtAt = vcsFromSettings(bi.Settings, commit, builtAt)
+}
+
+// vcsFromSettings 从 buildinfo Settings 回填 commit/builtAt（纯函数，单测可注入）。
+// vcs.modified=true（构建时工作树有未提交修改）时 commit 追加 -dirty 后缀——二进制
+// 内容并不对应该 revision 裸值，与 build.sh 的 git describe --dirty 口径一致；
+// revision 缺失（仓库外构建）时无裸值可标，保持 commit 原值（none → unknown）。
+func vcsFromSettings(settings []debug.BuildSetting, commit, builtAt string) (string, string) {
+	dirty := false
+	for _, s := range settings {
 		switch s.Key {
 		case "vcs.revision":
 			if s.Value != "" {
@@ -62,8 +73,14 @@ func resolveVCS() {
 			if t, err := time.Parse(time.RFC3339, s.Value); err == nil {
 				builtAt = strconv.FormatInt(t.Unix(), 10)
 			}
+		case "vcs.modified":
+			dirty = s.Value == "true"
 		}
 	}
+	if dirty && commit != "none" {
+		commit += "-dirty"
+	}
+	return commit, builtAt
 }
 
 // formatBuiltAt 把内置 Unix 秒时间戳转本机时区 RFC3339；无有效值（值为 "0" 或非法）
