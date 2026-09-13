@@ -690,7 +690,7 @@ async function d12StatusRoleAlert() {
 // ═══════════════════ D13：pre-onopen 1001 → 自动重连（2026-09-13） ═══════════════════
 // 修复前形态（09-03 D-18③/R3）：握手未完成（opened=false）收 1001 → C-10 终态面板。
 // 2026-09-13 起 pre-onopen 1001/1011 同样进重连（服务端重启/瞬态容量自愈）；首连
-// 1006 仍落 'Unable to connect' 终态（无法区分网络不可达与地址错误，不无限空转）。
+// 1006 进"首连预算"重试（3 次、2s/4s/8s，见 D14），耗尽才落终态面板。
 // 夹具：黑洞 TCP 伺服器（接受连接永不完成 WS 升级）——onopen 结构性永不触发。
 async function d13PreOnOpen1001Dispatch() {
   console.log('D13: pre-onopen 1001 → Reconnecting 面板 + 退避内新连接构造（非 Unable to connect 误述）');
@@ -721,6 +721,44 @@ async function d13PreOnOpen1001Dispatch() {
   }
 }
 
+// ═══════════════════ D14：首连失败重试预算（2026-09-13） ═══════════════════
+// 冷启动（iOS 杀端重开、网络/证书刚就绪）首次 WS 失败不再直接落 'Unable to connect'
+// 终态——改为最多重试 3 次、间隔 2s/4s/8s（约 14s 窗口）自愈；预算耗尽后落回原
+// 终态面板（地址填错等持久失败不无限空转）。黑洞 TCP 夹具 + 逐次 synthClose(1006)
+// 驱动 !opened 路径（onopen 结构性永不触发）。
+async function d14FirstConnectRetryBudget() {
+  console.log('D14: 首连失败重试预算（opened=false 收 1006 → Connecting 面板 → 3 次重试 → Unable to connect 终态）');
+  const blackhole = createServer(() => { /* 接受后永不应答——WS 升级永不完成 */ });
+  await new Promise((r) => blackhole.listen(0, '127.0.0.1', r));
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port }, { blackholePort: blackhole.address().port });
+  try {
+    await waitFor(() => ctx.sockets.length >= 1, 'WS 构造（黑洞链路，握手悬置）');
+    ctx.sockets[ctx.sockets.length - 1].synthClose(1006);
+    const p1 = await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Reconnecting' ? q : null;
+    }, '首连失败 → Reconnecting 面板');
+    check('D14a', '首连失败 → Reconnecting 面板（措辞为 Connecting 而非 Connection was lost——从未连上过）',
+      /Connecting to the server/.test(p1.body), `body=${JSON.stringify(p1.body)}`);
+    // 剩余 3 次尝试：逐一等新 socket（2s/4s/8s 退避点）后合成 1006；最后一次失败
+    // 即预算耗尽（共 3 次），落终态面板
+    for (let i = 0; i < 3; i++) {
+      await waitFor(() => ctx.sockets.length >= i + 2, `重试 socket #${i + 2} 构造`, 12000);
+      ctx.sockets[ctx.sockets.length - 1].synthClose(1006);
+    }
+    const p2 = await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Unable to connect' ? q : null;
+    }, '预算耗尽 → Unable to connect 终态面板', 12000);
+    check('D14b', '预算耗尽 → Unable to connect 终态面板（保留原意：地址错误不无限空转）',
+      /unreachable/.test(p2.body), `body=${JSON.stringify(p2.body)}`);
+  } finally {
+    await cleanup(ctx, inst);
+    blackhole.close();
+  }
+}
+
 // ═══════════════════ D9：真实断网栈豁免（headless 硬约束，人工清单指针） ═══════════════════
 function d9RealNetworkStackExempt() {
   skip('D9', '真实 OS 断网栈与浏览器原生 online/offline 事件时序',
@@ -737,7 +775,7 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d11Shutdown1001NoReconnect, d12StatusRoleAlert, d13PreOnOpen1001Dispatch, d9RealNetworkStackExempt];
+const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d11Shutdown1001NoReconnect, d12StatusRoleAlert, d13PreOnOpen1001Dispatch, d14FirstConnectRetryBudget, d9RealNetworkStackExempt];
 let failed = 0;
 for (const s of scenarios) {
   try {

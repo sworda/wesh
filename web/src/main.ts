@@ -220,6 +220,15 @@ let countdownTimer: number | undefined;
 // 429 退避下限（ms，2026-09-13）：/api/attach 429 时读 Retry-After，作为下次
 // attempt 的退避下限（服务端明确告知的等待时间，不该被更短的本端退避覆盖）。
 let retryAfterMs = 0;
+// 首连失败重试（2026-09-13）：冷启动（iOS 杀端重开、网络/证书刚就绪）首次
+// fetch/WS 可能瞬失败。此前直接落 'Unable to connect' 终态要求手动 reload——
+// 改为**从未连上过**时最多重试 3 次、间隔放宽为 2s/4s/8s（约 14s 窗口），
+// 耗尽后仍落原终态面板（地址填错等持久失败不无限空转）。
+// hasEverConnected 一旦置位（WELCOME）即不再复位：已建立过会话的重连沿用无限
+// 退避（1s→30s），不受首连预算约束。
+let hasEverConnected = false;
+let firstConnectRetries = 0;
+const FIRST_CONNECT_RETRY_BUDGET = 3;
 
 // 重连循环单例入口（Pitfall 5）——已在循环则幂等返回，三触发源共用
 function startReconnect(): void {
@@ -235,10 +244,23 @@ function startReconnect(): void {
 function scheduleAttempt(): void {
   clearTimeout(reconnectTimer);
   clearInterval(countdownTimer);
+  // 首连预算闸（2026-09-13）：从未连上过时只允许 3 次尝试，耗尽后落回原终态
+  // 面板（保留「地址错误不无限空转」原意）。已建立过会话不受此约束。
+  if (!hasEverConnected && firstConnectRetries >= FIRST_CONNECT_RETRY_BUDGET) {
+    stopReconnect();
+    showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
+    return;
+  }
   // 429 退避下限：Retry-After 明确要求的等待优先于本端指数退避；消费后清零
   //（一次 attempt 一个下限，不长期抬高退避）。
-  const delay = Math.max(backoffMs(attempt), retryAfterMs);
+  let delay = Math.max(backoffMs(attempt), retryAfterMs);
   retryAfterMs = 0;
+  // 首连阶段起步放宽（2s/4s/8s）：iOS 冷启动网络栈/证书就绪常在数秒级，
+  // 1s 起步的 7s 窗口过窄；3 次即可覆盖约 14s。
+  if (!hasEverConnected) {
+    delay = Math.max(delay, Math.min(2000 * 2 ** firstConnectRetries, 30000));
+    firstConnectRetries++;
+  }
   retryAt = Date.now() + delay;
   showStatus(RECONNECTING_TITLE, reconnectingWaitBody(attempt + 1, Math.ceil(delay / 1000)), RECONNECTING_HINT, {
     label: 'Reconnect now',
@@ -492,12 +514,16 @@ const HINT_SHUTDOWN = 'If wesh is not restarted for you, start it again from you
 // countdown 1Hz 更新 / runAttempt 在途共用以下常量与模板函数
 const RECONNECTING_TITLE = 'Reconnecting';
 const RECONNECTING_HINT = 'If the server has exited, restart it from your shell. To skip the wait,';
-// 等待期正文（1Hz 倒计时更新）：N = 即将到来的 attempt 序号，S = 剩余秒数
+// 等待期正文（1Hz 倒计时更新）：N = 即将到来的 attempt 序号，S = 剩余秒数。
+// 2026-09-13：从未连上过（冷启动/iOS 杀端重开）时用「正在连接」措辞——首连阶段说
+// 「连接已丢失」不准确（尚未建立过）。
 function reconnectingWaitBody(n: number, s: number): string {
+  if (!hasEverConnected) return `Connecting to the server... retrying in ${s}s (attempt ${n}).`;
   return `The connection was lost. Retrying in ${s}s (attempt ${n}).`;
 }
 // attempt 在途正文（定时器触发或手动点击后 connect() 飞行中）
 function reconnectingNowBody(n: number): string {
+  if (!hasEverConnected) return `Connecting to the server... (attempt ${n})`;
   return `The connection was lost. Retrying now (attempt ${n})...`;
 }
 
@@ -718,7 +744,9 @@ async function connect(): Promise<void> {
     // 'Unable to connect' 覆盖健康会话（Pitfall 6 同族代际污染——fetch 通道无 sock
     // 可代际守卫，welcomeDone 即「新会话已建立」代际标记）
     if (welcomeDone) return;
-    showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
+    // 首连失败（2026-09-13）：不再直接落终态——进重连循环（预算 3 次、2s/4s/8s），
+    // 冷启动瞬失败自愈；预算耗尽由 scheduleAttempt 落回 'Unable to connect' 面板。
+    startReconnect();
     return;
   }
 
@@ -936,6 +964,7 @@ async function connect(): Promise<void> {
           // 升格 Welcome 重放到此同参重复注册——DOM 规范对同类型同 listener 的
           // addEventListener 去重，幂等无泄漏（05 RESEARCH Pattern 9 核实）
           welcomeDone = true;
+          hasEverConnected = true; // 置位后不再复位：首连预算只在"从未连上过"时生效
           authRetries = 0; // 新会话重新获得 auth_failed 重试额度（2026-09-13 预算制）
           retryAfterMs = 0; // 清 429 退避下限（新连接已建立）
           if (confirmBeforeUnloadOn) {
@@ -993,11 +1022,9 @@ async function connect(): Promise<void> {
     // 重连上下文不显示任何面板（Pitfall 7 面板保护）——onclose 随后来临分派
     //（1006 → scheduleAttempt 留循环；带码关闭 → 终态专版面板）
     if (reconnecting) return;
-    // 握手失败（含 WS 握手阶段满员 503——早闸后竞态窗口浏览器不暴露握手状态码，
-    // 落本通用文案，OQ2 裁决注记）；onclose 会随后再触发一次，showStatus 幂等
-    if (!opened) {
-      showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
-    }
+    // 2026-09-13：首连失败的面板/重试统一由 onclose 收口（WS 规范保证 error 后必有
+    // close；此前此处直接落 'Unable to connect' 会先闪一下终态面板再被重连面板覆盖）。
+    // 无动作 = 不抢写面板，等 onclose 走首连预算重试路径。
   };
 
   // onclose 按 ev.code 分派人话文案（D-12①）——只认 code 不认 reason（库自动 1009 的
@@ -1056,7 +1083,9 @@ async function connect(): Promise<void> {
       return;
     }
     if (!opened) {
-      showStatus('Unable to connect', UNREACHABLE_BODY, 'Check the shell where wesh is running, then');
+      // 首连失败（2026-09-13）：同 fetch catch 路径——进重连循环自愈，
+      // 预算 3 次耗尽由 scheduleAttempt 落回终态面板。
+      startReconnect();
       return;
     }
     switch (ev.code) {
@@ -1150,4 +1179,13 @@ document.addEventListener('visibilitychange', () => {
   if (ws === null || ws.readyState !== WebSocket.OPEN) {
     startReconnect();
   }
+});
+// bfcache/快照恢复（2026-09-13）：iOS 从后台恢复页面时可能不重跑脚本，DOM 停在
+// 旧面板上（用户观感＝"断开后一直卡着"）；pageshow.persisted=true 表示从 bfcache
+// 恢复，此时 WS 句柄必然已作废（不信任其 readyState），一律作废句柄并重连。
+// 正常加载/刷新时 persisted=false，零动作（不影响首次连接流程）。
+window.addEventListener('pageshow', (ev) => {
+  if (!ev.persisted) return;
+  ws?.close();
+  startReconnect();
 });
