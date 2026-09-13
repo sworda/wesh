@@ -1,7 +1,7 @@
 # wesh systemd unit 模板（D-17：Restart/LimitNOFILE/EnvironmentFile 600 全配）
 # 安装：cp deploy/wesh.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now wesh
 [Unit]
-Description=wesh — share terminal over web
+Description=wesh (Web Shell) — share terminal over web
 After=network-online.target
 Wants=network-online.target
 

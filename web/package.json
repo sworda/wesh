@@ -1,5 +1,6 @@
 {
   "name": "wesh-web",
+  "description": "wesh (Web Shell) — share terminal over web (frontend bundle embedded into the wesh binary)",
   "private": true,
   "type": "module",
   "scripts": {
