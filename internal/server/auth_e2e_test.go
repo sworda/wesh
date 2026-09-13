@@ -128,7 +128,8 @@ func TestAttachFlow(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			// #1 无凭据 → 401 + WWW-Authenticate challenge（fails=1，notBefore=+50ms）。
+			// #1 无凭据 → 401（2026-09-13：探测静默 401，无 WWW-Authenticate
+			// 挑战头——不触发浏览器原生弹窗，且不计节流；fails 保持 0）。
 			resp := postAttach(t, url, "", "", nil)
 			bodyNoCred, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -138,8 +139,8 @@ func TestAttachFlow(t *testing.T) {
 			if resp.StatusCode != http.StatusUnauthorized {
 				t.Fatalf("no-credential status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
 			}
-			if wa := resp.Header.Get("WWW-Authenticate"); wa != `Basic realm="wesh", charset="UTF-8"` {
-				t.Fatalf("WWW-Authenticate = %q, want %q (RFC 7617)", wa, `Basic realm="wesh", charset="UTF-8"`)
+			if wa := resp.Header.Get("WWW-Authenticate"); wa != "" {
+				t.Fatalf("no-credential WWW-Authenticate = %q, want 空（探测不挑战、不弹原生框）", wa)
 			}
 
 			time.Sleep(100 * time.Millisecond) // 过窗（fail#1 窗口 = 1×base = 50ms）
@@ -197,6 +198,108 @@ func TestAttachFlow(t *testing.T) {
 			assertNoExit(t, exitCh)
 		})
 	}
+}
+
+// TestNoCredentialProbeNoThrottle（2026-09-13 探测豁免）：无 Authorization 头的
+// 探测请求不进入节流计数器——连续多次 401 后，紧随的正确凭据必须直接 200，
+// 而非被自己探测出的窗口误伤成 429。这是「反复登录 / 登录即被拒」的根因回归锁：
+// 探测永远无法通过认证，计失败只会污染 per-IP 桶（共享出口 IP 下还会殃及他人）。
+// 对照：携带错误凭据仍计数（TestThrottleHTTP #3 的窗口语义不变）。
+func TestNoCredentialProbeNoThrottle(t *testing.T) {
+	cred, err := server.ParseCredential("probe-erin:probe-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			_, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+				o.Credentials = []server.Credential{cred}
+				o.ThrottleBase = 50 * time.Millisecond
+			})
+			url := attachURL(wsURL)
+			post := func(user, pass string) *http.Response {
+				t.Helper()
+				resp := postAttach(t, url, user, pass, nil)
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				return resp
+			}
+			// 连续 5 次无凭据探测（浏览器首访导航 + iOS 图标抓取形态）。
+			// base=50ms 下若计数，第 2 次起即 429，正确凭据也会被窗口挡住。
+			for i := 1; i <= 5; i++ {
+				if resp := post("", ""); resp.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("probe #%d status = %d, want %d (401)", i, resp.StatusCode, http.StatusUnauthorized)
+				}
+			}
+			// 关键断言：探测后正确凭据直接 200，而非 429（豁免生效）。
+			if resp := post("probe-erin", "probe-pass"); resp.StatusCode != http.StatusOK {
+				t.Fatalf("correct-credential status = %d, want %d (200——探测不污染节流)", resp.StatusCode, http.StatusOK)
+			}
+		})
+	}
+}
+
+// TestIconProbeExempt（2026-09-13 图标探测豁免）：favicon / apple-touch-icon
+// 三条路径无凭据 GET → 204 且无 WWW-Authenticate 挑战头（iOS 系统进程抓图标
+// 不再触发二次登录弹窗）；非 GET 不落 204；bp 形态下带前缀与裸路径均豁免。
+func TestIconProbeExempt(t *testing.T) {
+	cred, err := server.ParseCredential("icon-erin:icon-pass")
+	if err != nil {
+		t.Fatalf("ParseCredential: %v", err)
+	}
+	paths := []string{"/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"}
+	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			_, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
+				o.Credentials = []server.Credential{cred}
+			})
+			base := strings.TrimSuffix(attachURL(wsURL), "/api/attach")
+			for _, p := range paths {
+				resp, err := http.Get(base + p)
+				if err != nil {
+					t.Fatalf("GET %s: %v", p, err)
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusNoContent {
+					t.Fatalf("GET %s status = %d, want %d (204)", p, resp.StatusCode, http.StatusNoContent)
+				}
+				if wa := resp.Header.Get("WWW-Authenticate"); wa != "" {
+					t.Fatalf("GET %s WWW-Authenticate = %q, want 空（豁免不得挑战）", p, wa)
+				}
+			}
+			// 非 GET 不豁免：POST /favicon.ico 落 405（path-only fallback 或
+			// 子树 404 均可接受，关键是非 204）。
+			req, err := http.NewRequest(http.MethodPost, base+"/favicon.ico", nil)
+			if err != nil {
+				t.Fatalf("new POST: %v", err)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("POST /favicon.ico: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusNoContent {
+				t.Fatalf("POST /favicon.ico status = 204, want 非 204（豁免仅 GET）")
+			}
+		})
+	}
+	t.Run("basepath", func(t *testing.T) {
+		_, wsURL := newTestServer(t, server.SessionModeShared, []string{"/bin/cat"}, func(o *server.Options) {
+			o.Credentials = []server.Credential{cred}
+			o.BasePath = "/wesh"
+		})
+		// attachURL(wsURL) 形如 http://host/wesh/api/attach；bp 根 = 去掉 /api/attach。
+		root := strings.TrimSuffix(attachURL(wsURL), "/api/attach")
+		host := strings.TrimSuffix(root, "/wesh")
+		for _, u := range []string{root + "/favicon.ico", host + "/favicon.ico"} {
+			got := getStatus(t, u)
+			if got != http.StatusNoContent {
+				t.Fatalf("GET %s status = %d, want %d (bp 与裸路径双豁免)", u, got, http.StatusNoContent)
+			}
+		}
+	})
 }
 
 // TestTicketInvalid（SEC-02/D-10）：Hello 携从未签发的 ticket（22 字符合法形态

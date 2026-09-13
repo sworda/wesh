@@ -5,7 +5,9 @@
 // 连接真实 spawn 的 wesh 实例端到端断言（headless 硬约束，根 CODEBUDDY.md 分层策略层 3）。
 // 协议面「杀 WS → 重连接回原 PTY」由 phase06.mjs（06-06）覆盖；本脚本覆盖逻辑面：
 //   D1 1006 重连全链（Reconnecting 面板 C-9 → 退避自动重连 → 清屏 → beforeunload 重注册）
-//   D2/D3 不触发边界（1002/1013/1008 → 各专版手动面板 + 守候窗零新连接）
+//   D2 不触发边界（1002 → 手动面板 + 守候窗零新连接）
+//   D3 1013 前台可见自愈（2026-09-13：前台 → Reconnecting + 新连接；后台终态由
+//      reconnectOnKick 纯函数单测锁定）+ 1008 → 终态面板（守候窗零新连接）
 //   D4 双触发幂等（offline + onclose(1006) 相继到达 → 单循环，Pitfall 5）
 //   D5 Reconnect now 手动入口（点击即跳过等待立即 attempt，循环不终止）
 //   D6 代际守卫（旧 socket 迟到 onclose 零污染新会话，Pitfall 6）
@@ -13,12 +15,13 @@
 //   D8 online 快路径（清等待立即 attempt，D-04）
 //   D9 真实断网栈豁免场景（skipped+reason，指向 06-UAT.md 人工清单）
 //   D10 CR-01 代际守卫 fetch 半侧（双在飞 attempt 较旧链迟到成功不踩占健康连接）
-//   D11 1001 优雅下线（07-05 D-23：'Server shutting down' 终态面板 + 不进重连循环；
-//      重连上下文中收 1001 → 循环终止 + 面板分派，既有 L862-868 形态自然覆盖）
+//   D11 1001 优雅下线 → 自动重连自愈（2026-09-13 D-23 反转：会话 cookie 持久化后
+//      systemd restart 用户无感；Reconnecting 面板 + 退避内新连接；重连上下文再收
+//      1001 保持循环）
 //   D12 #status 面板族 alert 角色标注（09-03 D-18②/R2：role 属性 jsdom 断言面 + 真实
 //      AT 播报/节流行为平台豁免 skip 行——09-UI-SPEC §D-18 ② 已知边界）
-//   D13 pre-onopen 1001 分派（09-03 D-18③/R3：握手未完成（opened=false）收 1001 →
-//      C-10 专版而非 C-4 'Unable to connect' 误述；黑洞 TCP 夹具使 onopen 永不触发）
+//   D13 pre-onopen 1001 自动重连（2026-09-13：pre-onopen 1001/1011 进重连自愈；
+//      首连 1006 仍落 'Unable to connect' 终态；黑洞 TCP 夹具使 onopen 永不触发）
 //
 // 本文件夹具（phase05-dom.mjs loadTerminal 形态逐字复用 + 两件延伸）：
 //   - SpyWebSocket.synthClose(code)：合成 CloseEvent 驱动 onclose 分派（06-RESEARCH A2
@@ -133,6 +136,14 @@ async function loadTerminal(srv, opts = {}) {
   const url = `${origin}${opts.path ?? '/'}`;
   const dom = new JSDOM('', { url, pretendToBeVisual: true, runScripts: 'outside-only' });
   const { window } = dom;
+  // bundle 内未捕获错误转发到宿主 stderr（排查用：jsdom 默认吞掉 eval 内异常）
+  dom.virtualConsole.on('jsdomError', (e) => console.error('[jsdomError]', e?.message ?? e));
+  // structuredClone 桩（2026-09-13）：jsdom 未实现该全局，而 xterm 6 CoreService
+  // 构造期调用 structuredClone(DEFAULT_MODES) → 未桩则 bundle 在 jsdom 内抛错、
+  // 全部场景异常。桥接 Node 原生实现（Node 17+ 恒有）。
+  if (typeof window.structuredClone !== 'function') {
+    window.structuredClone = structuredClone;
+  }
 
   // ── 平台能力注入/桩 ──
   // SpyWebSocket：记录全部上行帧首字节 + 合成 CloseEvent 能力 + 实例台账
@@ -381,25 +392,28 @@ async function d2ProtocolErrorNoReconnect() {
   }
 }
 
-// ═══════════════════ D3：1013/1008 不触发边界（专版面板 + 守候窗零构造） ═══════════════════
+// ═══════════════════ D3：1013 前台自愈 / 1008 不触发边界 ═══════════════════
 async function d3KickedAndRefusedNoReconnect() {
-  console.log('D3: 1013/1008 不触发边界（Disconnected / Connection refused 专版 + 2.5s 守候窗零新连接）');
-  // ① 1013 慢消费者被踢 → 维持手动刷新（P5 D-10，D-01 确认保持）
+  console.log('D3: 1013 前台可见 → 自动重连自愈；1008 → 终态面板（守候窗零构造）');
+  // ① 1013 慢消费者被踢：2026-09-13 起仅前台可见时重连自愈（jsdom visibilityState
+  // 恒 'visible'，故本场景断言自愈路径）；后台标签页维持终态面板（D-10 原意）由
+  // reconnectOnKick 纯函数单测覆盖（jsdom 无法驱动隐藏态）。
   const inst1 = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
   const ctx1 = await loadTerminal({ scheme: inst1.scheme, port: inst1.port });
   try {
     await waitReady(ctx1.document);
+    const atKick = constructed;
     ctx1.sockets[ctx1.sockets.length - 1].synthClose(1013);
     const p = await waitFor(() => {
       const q = panel(ctx1.document);
-      return q.visible && q.title === 'Disconnected' ? q : null;
-    }, 'Disconnected 面板（C-1）');
-    check('D3a', '1013 → Disconnected 专版（C-1 文案，手动刷新语义保持）',
-      /could not keep up with the session output/.test(p.body), `body=${JSON.stringify(p.body)}`);
-    const atPanel1 = constructed;
-    await sleep(2500); // 守候窗容差论证同 D2b
-    check('D3b', '2.5s 守候窗内零新连接构造（1013 被踢不自动重连）',
-      constructed === atPanel1, `守候窗构造增量=${constructed - atPanel1}`);
+      return q.visible && q.title === 'Reconnecting' ? q : null;
+    }, '1013 前台可见 → Reconnecting 面板（自愈）');
+    check('D3a', '1013 前台可见 → Reconnecting 面板（2026-09-13 前台自愈；后台终态由 reconnectOnKick 单测锁定）',
+      /attempt/.test(p.body), `body=${JSON.stringify(p.body)}`);
+    // 1s 退避点后构造新连接（自动接回）
+    await waitFor(() => constructed > atKick, '1013 重连新连接构造（~1s 退避点）');
+    check('D3b', '1013 前台可见 → 退避内构造新连接（自动接回，无需手动刷新）',
+      constructed > atKick, `构造增量=${constructed - atKick}`);
   } finally {
     await cleanup(ctx1, inst1);
   }
@@ -602,13 +616,14 @@ async function d10StaleLateSuccessNoClobber() {
   }
 }
 
-// ═══════════════════ D11：1001 优雅下线（终态面板 + 不重连 + 重连上下文终止） ═══════════════════
-// 07-05 D-23：synthClose(1001) → 'Server shutting down' 终态面板（逐字文案），不进入
-// CORE-05 重连循环（1001 不在触发集——仅 1006；重连循环打正在重启的服务是 systemd
-// restart 场景的反 UX，D-23 否决形态）；对照 1006 仍进重连由 D1 既有场景锁定不回归。
+// ═══════════════════ D11：1001 优雅下线 → 自动重连自愈（2026-09-13 D-23 反转） ═══════════════════
+// 原 D-23：1001 落 'Server shutting down' 终态面板、不进重连循环。2026-09-13 会话
+// cookie 持久化落地后前提改变——重启/关停不再要求用户重新登录，1001 进可重连码集
+// 使 systemd restart 成为用户无感（退避 1s→30s，重连循环打重启中服务成本可忽略）。
+// 对照：1000（子进程退出）/1008/1009 仍维持终态面板。
 async function d11Shutdown1001NoReconnect() {
-  console.log('D11: 1001 优雅下线（Server shutting down 终态面板 + 守候窗零新连接；重连上下文 1001 终止循环）');
-  // ① 稳态会话收 1001 → 终态面板 + 不触发重连
+  console.log('D11: 1001 优雅下线 → 自动重连自愈（Reconnecting 面板 + 退避内新连接构造；重连上下文再收 1001 留循环）');
+  // ① 稳态会话收 1001 → 退避重连 + 新连接构造
   const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
   const base = constructed;
   const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port });
@@ -617,25 +632,18 @@ async function d11Shutdown1001NoReconnect() {
     ctx.sockets[ctx.sockets.length - 1].synthClose(1001);
     const p = await waitFor(() => {
       const q = panel(ctx.document);
-      return q.visible && q.title === 'Server shutting down' ? q : null;
-    }, 'Server shutting down 面板');
-    check('D11a', "1001 → 'Server shutting down' 终态面板（D-23 逐字文案：body + hint——hint 前缀 09-03 D-18① C-10 条件句式）",
-      p.body === 'The wesh server is shutting down. The session has ended.'
-      && p.hint.includes('If wesh is not restarted for you, start it again from your shell, then'),
-      `body=${JSON.stringify(p.body)}`);
-    // 2.5s 守候窗（容差论证同 D2b）：窗内零构造 = 1001 不进重连循环（prohibition
-    // 回归锁——若误入循环，首个 attempt ~1s 退避点必构造新连接）
+      return q.visible && q.title === 'Reconnecting' ? q : null;
+    }, '1001 → Reconnecting 面板（2026-09-13 自愈）');
+    check('D11a', "1001 → Reconnecting 面板（会话持久化后重启无感；不再落 'Server shutting down' 终态）",
+      /attempt/.test(p.body) && p.title !== 'Server shutting down', `body=${JSON.stringify(p.body)}`);
     const atPanel = constructed;
-    await sleep(2500);
-    check('D11b', '2.5s 守候窗内零新连接构造（1001 不重连——仅 1006 在 CORE-05 触发集）',
-      constructed === atPanel, `守候窗构造增量=${constructed - atPanel}`);
+    await waitFor(() => constructed > atPanel, '1001 重连新连接构造（~1s 退避点）');
+    check('D11b', '1001 → 退避内构造新连接（自动接回，无需手动刷新）',
+      constructed > atPanel, `构造增量=${constructed - atPanel}`);
   } finally {
     await cleanup(ctx, inst);
   }
-  // ② 重连上下文中收 1001（07-05 plan behavior 测试锁定点）：1006 启循环 → 退避
-  // 等待窗内同连接再到 1001 → reconnecting && code!==1006 不命中重连分支 →
-  // stopReconnect 循环终止 + 'Server shutting down' 面板分派（既有 L862-868 形态
-  // 自然覆盖——带码关闭在重连上下文落终态专版的通用路径）
+  // ② 重连上下文中再收 1001：留在循环（scheduleAttempt），不终止、不落终态面板。
   const inst2 = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
   const base2 = constructed;
   const ctx2 = await loadTerminal({ scheme: inst2.scheme, port: inst2.port });
@@ -647,21 +655,17 @@ async function d11Shutdown1001NoReconnect() {
       const q = panel(ctx2.document);
       return q.visible && q.title === 'Reconnecting' ? q : null;
     }, 'Reconnecting 面板出现（退避等待窗，未到 1s 退避点）');
-    // 退避等待窗内对同一连接再驱动 1001（synthClose 留存的 _savedClose 副本——
-    // sock===ws 守卫通过：退避期内未构造新连接；D6 二次驱动同款夹具形态）
+    // 退避等待窗内对同一连接再驱动 1001（synthClose 留存的 _savedClose 副本）
     ctx2.staleClose(sock, 1001);
-    const p = await waitFor(() => {
-      const q = panel(ctx2.document);
-      return q.visible && q.title === 'Server shutting down' ? q : null;
-    }, '重连上下文 1001 → Server shutting down 面板');
-    check('D11c', '重连上下文收 1001 → 循环终止 + 终态面板分派（非 Reconnecting 续循环）',
-      p.body === 'The wesh server is shutting down. The session has ended.',
-      `body=${JSON.stringify(p.body)}`);
-    // 2.5s 守候窗（> attempt 1 退避标称 1s + 容差）：退避定时器已被 stopReconnect
-    // 清除——窗内零构造 = 循环确已终止（未终止则 1s 退避点必构造 attempt 连接）
-    await sleep(2500);
-    check('D11d', '2.5s 守候窗内零新连接构造（stopReconnect 已清退避定时器，循环终止）',
-      constructed === base2 + 1, `构造=${constructed - base2}`);
+    await sleep(300);
+    const q = panel(ctx2.document);
+    check('D11c', '重连上下文收 1001 → 循环保持（Reconnecting，非 Server shutting down 面板）',
+      q.visible && q.title === 'Reconnecting', `title=${JSON.stringify(q.title)}`);
+    // 退避点后仍应构造新连接（循环未终止）
+    const atHere = constructed;
+    await waitFor(() => constructed > atHere, '重连上下文 1001 后新连接构造（循环未终止）');
+    check('D11d', '重连上下文 1001 → 退避点后构造新连接（循环未终止）',
+      constructed > atHere, `构造增量=${constructed - atHere}`);
   } finally {
     await cleanup(ctx2, inst2);
   }
@@ -683,37 +687,72 @@ async function d12StatusRoleAlert() {
   }
 }
 
-// ═══════════════════ D13：pre-onopen 1001 分派（09-03 D-18③/R3） ═══════════════════
-// 修复前形态：握手未完成（opened=false）收 1001 → !opened 截流误落 C-4 'Unable to
-// connect'（误述优雅关停为拒绝服务）；修复后 1001 先按码分派，落与稳态 D11a 同一
-// showShutdown 单写口 C-10 专版。夹具：黑洞 TCP 伺服器（接受连接永不完成 WS 升级）
-// ——onopen 结构性永不触发，opened 恒 false 且无原生 close/error 事件竞争断言面
-//（fetch /api/attach 仍走真实 wesh 实例 404 探测直连链路，端口改写只作用于 WS）。
+// ═══════════════════ D13：pre-onopen 1001 → 自动重连（2026-09-13） ═══════════════════
+// 修复前形态（09-03 D-18③/R3）：握手未完成（opened=false）收 1001 → C-10 终态面板。
+// 2026-09-13 起 pre-onopen 1001/1011 同样进重连（服务端重启/瞬态容量自愈）；首连
+// 1006 进"首连预算"重试（3 次、2s/4s/8s，见 D14），耗尽才落终态面板。
+// 夹具：黑洞 TCP 伺服器（接受连接永不完成 WS 升级）——onopen 结构性永不触发。
 async function d13PreOnOpen1001Dispatch() {
-  console.log('D13: pre-onopen 1001 分派（opened=false 收 1001 → C-10 专版非 C-4 误述 + 守候窗零新连接）');
+  console.log('D13: pre-onopen 1001 → Reconnecting 面板 + 退避内新连接构造（非 Unable to connect 误述）');
   const blackhole = createServer(() => { /* 接受后永不应答——WS 升级永不完成 */ });
   await new Promise((r) => blackhole.listen(0, '127.0.0.1', r));
   const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
-  const base = constructed;
   const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port }, { blackholePort: blackhole.address().port });
   try {
     // socket 构造与 onclose 注册同在 fetch resolve 后的同一同步段（connect() 该区间
     // 无 await）——观测到 sockets 非空时 handler 必已就位；黑洞链路 onopen 永不触发
     await waitFor(() => ctx.sockets.length >= 1, 'WS 构造（黑洞链路，握手悬置）');
+    const atPanel = constructed;
     ctx.sockets[ctx.sockets.length - 1].synthClose(1001);
     const p = await waitFor(() => {
       const q = panel(ctx.document);
       return q.visible ? q : null;
     }, 'pre-onopen 1001 → 面板出现');
-    check('D13a', "握手未完成收 1001 → 'Server shutting down' C-10 专版（非 'Unable to connect' 误述，D-18③/R3）",
-      p.title === 'Server shutting down' && p.title !== 'Unable to connect'
-      && p.body === 'The wesh server is shutting down. The session has ended.'
-      && p.hint.includes('If wesh is not restarted for you, start it again from your shell, then'),
+    check('D13a', "pre-onopen 收 1001 → Reconnecting 面板（非 'Unable to connect' 误述；服务端重启自愈）",
+      p.title === 'Reconnecting' && p.title !== 'Unable to connect' && /attempt/.test(p.body),
       `title=${JSON.stringify(p.title)}`);
-    const atPanel = constructed;
-    await sleep(2500); // 守候窗容差论证同 D2b/D11b：窗内零构造 = 不触发重连
-    check('D13b', '2.5s 守候窗内零新连接构造（pre-onopen 1001 不在 CORE-05 触发集——仅 1006）',
-      constructed === atPanel && constructed === base + 1, `构造=${constructed - base}`);
+    // 1s 退避点后构造新连接（黑洞链路再次悬置，构造计数照增）——自愈证据
+    await waitFor(() => constructed > atPanel, 'pre-onopen 1001 重连新连接构造');
+    check('D13b', 'pre-onopen 1001 → 退避内构造新连接（自动重连，不落终态面板）',
+      constructed > atPanel, `构造增量=${constructed - atPanel}`);
+  } finally {
+    await cleanup(ctx, inst);
+    blackhole.close();
+  }
+}
+
+// ═══════════════════ D14：首连失败重试预算（2026-09-13） ═══════════════════
+// 冷启动（iOS 杀端重开、网络/证书刚就绪）首次 WS 失败不再直接落 'Unable to connect'
+// 终态——改为最多重试 3 次、间隔 2s/4s/8s（约 14s 窗口）自愈；预算耗尽后落回原
+// 终态面板（地址填错等持久失败不无限空转）。黑洞 TCP 夹具 + 逐次 synthClose(1006)
+// 驱动 !opened 路径（onopen 结构性永不触发）。
+async function d14FirstConnectRetryBudget() {
+  console.log('D14: 首连失败重试预算（opened=false 收 1006 → Connecting 面板 → 3 次重试 → Unable to connect 终态）');
+  const blackhole = createServer(() => { /* 接受后永不应答——WS 升级永不完成 */ });
+  await new Promise((r) => blackhole.listen(0, '127.0.0.1', r));
+  const inst = await startWesh(['--writable', '--', 'bash', '--norc', '--noprofile']);
+  const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port }, { blackholePort: blackhole.address().port });
+  try {
+    await waitFor(() => ctx.sockets.length >= 1, 'WS 构造（黑洞链路，握手悬置）');
+    ctx.sockets[ctx.sockets.length - 1].synthClose(1006);
+    const p1 = await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Reconnecting' ? q : null;
+    }, '首连失败 → Reconnecting 面板');
+    check('D14a', '首连失败 → Reconnecting 面板（措辞为 Connecting 而非 Connection was lost——从未连上过）',
+      /Connecting to the server/.test(p1.body), `body=${JSON.stringify(p1.body)}`);
+    // 剩余 3 次尝试：逐一等新 socket（2s/4s/8s 退避点）后合成 1006；最后一次失败
+    // 即预算耗尽（共 3 次），落终态面板
+    for (let i = 0; i < 3; i++) {
+      await waitFor(() => ctx.sockets.length >= i + 2, `重试 socket #${i + 2} 构造`, 12000);
+      ctx.sockets[ctx.sockets.length - 1].synthClose(1006);
+    }
+    const p2 = await waitFor(() => {
+      const q = panel(ctx.document);
+      return q.visible && q.title === 'Unable to connect' ? q : null;
+    }, '预算耗尽 → Unable to connect 终态面板', 12000);
+    check('D14b', '预算耗尽 → Unable to connect 终态面板（保留原意：地址错误不无限空转）',
+      /unreachable/.test(p2.body), `body=${JSON.stringify(p2.body)}`);
   } finally {
     await cleanup(ctx, inst);
     blackhole.close();
@@ -736,7 +775,7 @@ function assertOutputClean() {
     !leaked, `details=${emittedDetails.length} 命中=${leaked}`);
 }
 
-const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d11Shutdown1001NoReconnect, d12StatusRoleAlert, d13PreOnOpen1001Dispatch, d9RealNetworkStackExempt];
+const scenarios = [d1FullReconnectChain, d2ProtocolErrorNoReconnect, d3KickedAndRefusedNoReconnect, d4DoubleTriggerIdempotent, d5ReconnectNowManual, d6StaleGenerationGuard, d7ExitFrameChain, d8OnlineFastPath, d10StaleLateSuccessNoClobber, d11Shutdown1001NoReconnect, d12StatusRoleAlert, d13PreOnOpen1001Dispatch, d14FirstConnectRetryBudget, d9RealNetworkStackExempt];
 let failed = 0;
 for (const s of scenarios) {
   try {

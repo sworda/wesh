@@ -200,10 +200,12 @@ func TestAuthHeaderNoAuthBypass(t *testing.T) {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusUnauthorized {
-				t.Fatalf("forged header without creds status = %d, want %d (401——伪造头不得绕过 Basic)", resp.StatusCode, http.StatusUnauthorized)
+				t.Fatalf("forged header without creds status = %d, want %d (401——伪造头不得绕过认证)", resp.StatusCode, http.StatusUnauthorized)
 			}
-			if wa := resp.Header.Get("WWW-Authenticate"); wa != `Basic realm="wesh", charset="UTF-8"` {
-				t.Errorf("WWW-Authenticate = %q, want RFC 7617 challenge（挑战形态不因伪造头改变）", wa)
+			// 2026-09-13：无凭据探测（仅伪造身份头）走静默 401 路径——无
+			// WWW-Authenticate 挑战头（不弹原生框），伪造头依旧无任何认证效力。
+			if wa := resp.Header.Get("WWW-Authenticate"); wa != "" {
+				t.Errorf("WWW-Authenticate = %q, want 空（无凭据探测静默 401）", wa)
 			}
 		})
 	}

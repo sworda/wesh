@@ -78,7 +78,11 @@ type Server struct {
 	originList  []string
 	tickets     *ticketStore
 	throttle    *throttleStore
-	tlsOn       bool
+	// 2026-09-13 会话 cookie：sessions 为表单登录会话表（仅认证模式装配，
+	// SessionFile 空 = 纯内存）；sessionTTL 为签发/续期 cookie 的 Max-Age 来源。
+	sessions   *sessionStore
+	sessionTTL time.Duration
+	tlsOn      bool
 
 	// hubMu 护注册表与 hub 临界区（R-07 单锁纪律；锁序 hubMu > outbox.mu——
 	// writer drain 不持 hubMu，绝不反序同持）。registry 结构见 clients.go。
@@ -363,6 +367,14 @@ type Options struct {
 	SpawnGlobalBurst int
 	SpawnPerIPRate   int
 	SpawnPerIPBurst  int
+	// SessionTTL/SessionFile 为生产直传字段（2026-09-13 会话 cookie 登录）：
+	// SessionTTL 为表单登录会话存活期（零值兜底 defaultSessionTTL = 30 天，
+	// 滑动续期）；SessionFile 为会话持久化文件路径（空 = 纯内存——wesh 重启即
+	// 失效；多端口/多实例共享同一路径实现「登录一次通用」）。仅在认证模式
+	//（Credentials 非空）装配；凭据摘要由 New 从 Credentials 派生，改密码即
+	// 整表吊销（无需额外字段）。
+	SessionTTL  time.Duration
+	SessionFile string
 }
 
 // defaultHelloTimeout 未认证 Hello 超时默认值（D-04：5s）。
@@ -569,6 +581,13 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	}
 	if len(opts.Credentials) > 0 {
 		s.throttle = newThrottleStore(opts.ThrottleBase, opts.ThrottleCap)
+		// 2026-09-13 会话 cookie：TTL 零值兜底 + 会话表装配（凭据摘要由 New
+		// 从预哈希凭据派生——改密码 → 摘要变化 → 旧会话整表吊销）。
+		if opts.SessionTTL <= 0 {
+			opts.SessionTTL = defaultSessionTTL
+		}
+		s.sessionTTL = opts.SessionTTL
+		s.sessions = newSessionStore(opts.SessionTTL, opts.SessionFile, credentialDigest(opts.Credentials))
 	}
 	// 信用门 cond 挂 hubMu（R-07：信用门状态与注册表同锁；构造必须在 goroutine
 	// 启动前——onChunk 的 Wait 与 detach/kick 的 Broadcast 均以它为挂点）。
@@ -654,14 +673,45 @@ func (s *Server) Handler() http.Handler {
 		wh = web.WithCustomIndex(wh, s.customIndex)
 	}
 	bp := s.basePath
-	if len(s.credentials) > 0 {
-		root := basicAuth(wh, s.credentials, s.throttle, s.proxy, &s.mc)
+	// 图标探测豁免（2026-09-13）：浏览器与 iOS 系统进程对根路径的自动探测
+	//（favicon / apple-touch-icon）不携带凭据，落入认证闸会 401 + 挑战头——iOS 的
+	// apple-touch-icon 探测因此二次弹出原生登录框，且每次 401 都被旧实现计入
+	// per-IP 节流（探测豁免已另修）。此处在认证两分支之外精确注册三条 GET 路径
+	// 返回 204 无挑战头：精确模式优先于 bp+"/" 子树（Go 1.22 ServeMux 最具体匹配）。
+	// apple-touch-icon-precomposed.png 是 iOS 旧版实际请求的变体；bp 形态双注册
+	//（带前缀 + 裸路径）与 /healthz 单侧定义纪律互补——探测直连后端端口时不带 bp。
+	for _, p := range []string{"/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"} {
+		mux.HandleFunc("GET "+bp+p, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 		if bp != "" {
-			mux.Handle(bp+"/", http.StripPrefix(bp, root))
-		} else {
-			mux.Handle("/", root)
+			mux.HandleFunc("GET "+p, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 		}
-		s.registerShareRoutes(mux, bp, wh, root)
+	}
+	if len(s.credentials) > 0 {
+		// 2026-09-13（表单登录改造）：GET / 公开——SPA shell 本身无敏感数据
+		//（终端数据只在 ticket 核销后的 WS 上流动；/api/attach 与 /ws 仍受认证
+		// 闸保护），登录视图由 SPA 自绘。首访不再 401 + WWW-Authenticate 原生
+		// 弹窗，iOS 图标探测也不再命中认证闸。副作用：静态 shell 不再门控，
+		// 需在 README 安全说明登记。
+		if bp != "" {
+			mux.Handle(bp+"/", http.StripPrefix(bp, wh))
+		} else {
+			mux.Handle("/", wh)
+		}
+		// 分享页：有效 token 给页；无效/缺席 token 走 401 通用文案（无挑战头
+		// ——分享链接失效不再触发浏览器原生弹窗，改由响应体提示重新登录）。
+		s.registerShareRoutes(mux, bp, wh, http.HandlerFunc(s.shareInvalidHandler))
+		// 登录/登出端点（凭据模式专属；无认证模式不注册 → 404，前端探测信号不变）。
+		// path-only 405 fallback 与 /api/attach 同款纪律（内建 405 会被子树吞掉）。
+		mux.Handle("POST "+bp+"/api/login", http.HandlerFunc(s.loginHandler))
+		mux.HandleFunc(bp+"/api/login", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		})
+		mux.Handle("POST "+bp+"/api/logout", http.HandlerFunc(s.logoutHandler))
+		mux.HandleFunc(bp+"/api/logout", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		})
 		// 分享 token 分支包装（05-06 D-01）：先做 token peek——命中按绑定 mode
 		// 签发（有效 token 优先于 throttle 直接放行，capability 语义：避免 NAT
 		// 出口 IP 误伤持票旁观者，R-03）；未携/错 token 委托原链（401 同文同码
@@ -669,7 +719,9 @@ func (s *Server) Handler() http.Handler {
 		// 分支先于 Origin 中间件是刻意排序：/ws Attach 守卫区 ⓪ 位的 Origin 检查
 		// 对 ticket 核销后的 WS 握手依然生效（纵深不变），跨站表单无从获知
 		// 128bit token，本面无 CSRF 增量。
-		attachChain := originMiddleware(basicAuth(http.HandlerFunc(s.attachHandler), s.credentials, s.throttle, s.proxy, &s.mc), s.origins)
+		// 2026-09-13：Basic 链换 sessionAuth（cookie 会话 → 显式 Basic fallback
+		// → 无凭据探测静默 401）；Origin 闸仍在最外（守卫顺序不变）。
+		attachChain := originMiddleware(s.sessionAuth(http.HandlerFunc(s.attachHandler)), s.origins)
 		mux.Handle("POST "+bp+"/api/attach", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if s.shareAttach(w, r) == shareHandled {
 				return

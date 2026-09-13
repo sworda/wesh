@@ -83,8 +83,10 @@ If you opened a share link and were prompted to log in, the link is invalid or h
 //	② Basic 解析与常数时间比较：r.BasicAuth()（stdlib 解析器，禁止手拆
 //	  Authorization base64——RESEARCH Don't Hand-Roll 表）+ matchCredential；
 //	  无/错凭据完全同文 401（WWW-Authenticate: Basic realm="wesh",
-//	  charset="UTF-8"，RFC 7617 + 通用 body——无枚举 oracle，OWASP 纪律）+
-//	  recordFail（D-08 统一计数器：与 Hello ticket 核销失败同一 per-IP store）；
+//	  charset="UTF-8"，RFC 7617 + 通用 body——无枚举 oracle，OWASP 纪律）；
+//	  recordFail（D-08 统一计数器：与 Hello ticket 核销失败同一 per-IP store）
+//	  仅「携带凭据但校验失败」时执行——无凭据探测（首访导航 / 图标抓取）不计数
+//	  （2026-09-13 探测豁免，见下方实现注释）；
 //	③ 认证成功 → recordSuccess 清零（D-08）→ next。
 //
 // 红线（SEC-01）：凭据/Authorization 头任何形态（含 base64）永不入日志参数——
@@ -136,7 +138,15 @@ func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxy
 		}
 		u, pass, ok := r.BasicAuth()
 		if !ok || !matchCredential(creds, u, pass) {
-			th.recordFail(ip, time.Now())
+			// 探测豁免（2026-09-13）：仅「携带了凭据但校验失败」才计入节流。
+			// 无 Authorization 头的请求（浏览器首访导航、iOS apple-touch-icon
+			// 系统探测等）永远无法通过认证，计失败只会污染 per-IP 桶，使紧随其后的
+			// 正确凭据命中 429（现场复现的「反复登录 / 登录即被拒」根因）。
+			// 爆破必然携带错误凭据（ok=true），计数语义不降级。
+			// 红线不变：无/错凭据 401 同文同码 + 挑战头，无枚举 oracle（SEC-01）。
+			if ok {
+				th.recordFail(ip, time.Now())
+			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="wesh", charset="UTF-8"`) // RFC 7617
 			logEvent(p.remote(r), websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed, p.remoteUser(r))
 			mc.authFailed.Add(1) // 08-04 OPS-07（D-06）：计数与事件同址递增（同上纪律）

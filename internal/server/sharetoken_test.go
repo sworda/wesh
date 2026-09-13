@@ -289,19 +289,21 @@ func TestShareToken(t *testing.T) {
 					}
 				}
 
-				// 错 token → 委托 / 链：凭据模式 401 challenge（D-08 recordFail 经此路径
-				// 自动计入，fail#1；本子测后续不再触 basicAuth，免 pacing）。
-				resp, err := http.Get(base + "/s/" + roTok + "x/") // 23 字符同形异值
-				if err != nil {
-					t.Fatalf("GET 错 token 页: %v", err)
-				}
-				readBody(t, resp)
-				if resp.StatusCode != http.StatusUnauthorized {
-					t.Fatalf("错 token GET status = %d, want %d (401 challenge)", resp.StatusCode, http.StatusUnauthorized)
-				}
-				if wa := resp.Header.Get("WWW-Authenticate"); wa != `Basic realm="wesh", charset="UTF-8"` {
-					t.Errorf("错 token GET WWW-Authenticate = %q, want RFC 7617 challenge", wa)
-				}
+			// 错 token → 委托 / 链：2026-09-13 表单登录改造后走
+			// shareInvalidHandler——401 通用文案但**无 WWW-Authenticate**（失效
+			// 分享链接不再触发浏览器原生弹窗，改由响应体提示重新登录），且
+			// **不计节流**（失效链接非凭据尝试）。
+			resp, err := http.Get(base + "/s/" + roTok + "x/") // 23 字符同形异值
+			if err != nil {
+				t.Fatalf("GET 错 token 页: %v", err)
+			}
+			readBody(t, resp)
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("错 token GET status = %d, want %d (401)", resp.StatusCode, http.StatusUnauthorized)
+			}
+			if wa := resp.Header.Get("WWW-Authenticate"); wa != "" {
+				t.Errorf("错 token GET WWW-Authenticate = %q, want 空（失效链接不弹原生框，2026-09-13）", wa)
+			}
 
 				// POST /s/abc/ → 405 + Allow: GET（path-only fallback；mux 层不触
 				// basicAuth）。占位路径段非真实 token，不涉红线。
