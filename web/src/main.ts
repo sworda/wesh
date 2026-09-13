@@ -7,7 +7,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard'; // 仅 WELCOME prefs osc52===true 时条件加载（D-12）
 import { sanitizeTitle } from './lib/title';
 import { parseQueryPrefs, splitPrefs, mergeTheme } from './lib/prefs';
-import { backoffMs } from './lib/reconnect';
+import { backoffMs, reconnectOnKick, shouldReconnect } from './lib/reconnect';
 
 // 帧常量与 internal/proto/proto.go 手工对齐（D-16，两侧注释互相指路）：
 // '0' INPUT / '1' RESIZE / '0' OUTPUT / 'H' Hello / 'W' Welcome / 'E' Error / 'X' EXIT；
@@ -189,7 +189,11 @@ let ws: WebSocket | null = null;
 // 可守卫（四 handler 的 sock !== ws 只覆盖 socket 建成后窗口），gen + welcomeDone
 // 双检查即该通道的代际守卫（06-03 deviation #1 catch 半侧的 resolve 半侧补全）
 let connectGen = 0;
-let retriedAuth = false; // auth_failed 静默重试仅一次的门闩（D-10；无限重试会把 60s TTL 正常过期放大成重试风暴）
+// auth_failed 静默重试预算（2026-09-13：由一次性门闩改计数预算）。ticket 60s
+// 过期/锁屏唤醒/服务端重启等正常场景都可能触发 auth_failed；预算 3 次容忍瞬断，
+// 耗尽后进重连循环（而非终态面板），WELCOME 到达时清零（新会话重新获得额度）。
+let authRetries = 0;
+const AUTH_RETRY_BUDGET = 3;
 // ro 判定模块级化——标题写口/04-03 粘贴门/04-05 osc52 门三处共用（RESEARCH §Pattern 6 核实注）
 let isRO = false;
 // D-08/12-01 会话模式位（per-connection，IN-01 登记口径）：WELCOME 分支按 session 键
@@ -213,6 +217,9 @@ let attempt = 0;
 let reconnectTimer: number | undefined;
 let retryAt = 0;
 let countdownTimer: number | undefined;
+// 429 退避下限（ms，2026-09-13）：/api/attach 429 时读 Retry-After，作为下次
+// attempt 的退避下限（服务端明确告知的等待时间，不该被更短的本端退避覆盖）。
+let retryAfterMs = 0;
 
 // 重连循环单例入口（Pitfall 5）——已在循环则幂等返回，三触发源共用
 function startReconnect(): void {
@@ -228,7 +235,10 @@ function startReconnect(): void {
 function scheduleAttempt(): void {
   clearTimeout(reconnectTimer);
   clearInterval(countdownTimer);
-  const delay = backoffMs(attempt);
+  // 429 退避下限：Retry-After 明确要求的等待优先于本端指数退避；消费后清零
+  //（一次 attempt 一个下限，不长期抬高退避）。
+  const delay = Math.max(backoffMs(attempt), retryAfterMs);
+  retryAfterMs = 0;
   retryAt = Date.now() + delay;
   showStatus(RECONNECTING_TITLE, reconnectingWaitBody(attempt + 1, Math.ceil(delay / 1000)), RECONNECTING_HINT, {
     label: 'Reconnect now',
@@ -526,6 +536,55 @@ function showShutdown(): void {
   showStatus('Server shutting down', 'The wesh server is shutting down. The session has ended.', HINT_SHUTDOWN);
 }
 
+// 登录视图（2026-09-13 表单登录 + HttpOnly cookie 会话）：#login 独立遮罩，
+// 仅无有效会话时展示（/api/attach 401 触发）；提交 POST /api/login，成功后隐藏
+// 并重走 connect()。终态面板与登录遮罩互斥（showLogin 先隐藏 #status）。
+let loginBusy = false;
+function showLogin(message?: string): void {
+  document.getElementById('status')!.hidden = true;
+  const err = document.getElementById('login-error')!;
+  err.textContent = message ?? '';
+  err.hidden = !message;
+  document.getElementById('login')!.hidden = false;
+  (document.getElementById('login-user') as HTMLInputElement | null)?.focus();
+}
+function hideLogin(): void {
+  document.getElementById('login')!.hidden = true;
+  (document.getElementById('login-form') as HTMLFormElement | null)?.reset();
+}
+async function submitLogin(ev: Event): Promise<void> {
+  ev.preventDefault();
+  if (loginBusy) return;
+  loginBusy = true;
+  const user = (document.getElementById('login-user') as HTMLInputElement).value;
+  const pass = (document.getElementById('login-pass') as HTMLInputElement).value;
+  try {
+    const resp = await fetch('api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user, pass }),
+    });
+    if (resp.ok) {
+      hideLogin();
+      void connect();
+      return;
+    }
+    if (resp.status === 429) {
+      const ra = Number.parseInt(resp.headers.get('Retry-After') ?? '', 10);
+      showLogin(`Too many attempts. Try again in ${Number.isFinite(ra) && ra > 0 ? ra : 1}s.`);
+      return;
+    }
+    showLogin('Incorrect username or password.');
+  } catch {
+    showLogin('Could not reach the server. Check your connection and try again.');
+  } finally {
+    loginBusy = false;
+  }
+}
+document.getElementById('login-form')?.addEventListener('submit', (ev) => {
+  void submitLogin(ev);
+});
+
 // 认证感知连接流程（D-02 前端半侧）：fetch POST /api/attach 取一次性 ticket →
 // 建 WS → Hello{version,cols,rows,ticket?}。ticket 只存本函数闭包变量与 Hello 载荷——
 // 禁止写入 URL query/localStorage/console（T-03-24 泄漏面红线）。
@@ -583,7 +642,8 @@ async function connect(): Promise<void> {
     // 取代（gen 过期：双击/online 竞速）或健康会话已建立（welcomeDone，06-03
     // deviation #1 同款代际标记）时静默丢弃返回：迟到链不得落 401/429/503 等终态
     // 面板覆盖健康会话/更新链 UI（catch 通道已有同款守卫，本行为 resolve 通道的对称
-    // 收口）
+    // 收口）；gen/welcomeDone 双检查即该通道的代际守卫（陈旧链的迟到 resolve
+    // 在此被丢弃，不提交任何状态）。
     if (gen !== connectGen || welcomeDone) return;
     if (resp.ok) {
       ticket = (await resp.json()).ticket;
@@ -606,26 +666,38 @@ async function connect(): Promise<void> {
       );
       return;
     } else if (resp.status === 429) {
-      if (reconnecting) stopReconnect(); // 终态循环终止（同上逐字契约）
+      // 429 现在进重连循环（2026-09-13）：读 Retry-After 作退避下限，等窗口过去
+      // 自动重试——不再落 "Too many attempts" 终态面板要求用户手动刷新。
+      const ra = Number.parseInt(resp.headers.get('Retry-After') ?? '', 10);
+      retryAfterMs = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 1000;
+      if (reconnecting) scheduleAttempt();
+      else startReconnect();
+      return;
+    } else if (resp.status === 403) {
+      // Origin 闸拒绝（2026-09-13 专版）：此前被 else 通用分支误报为「认证失败」，
+      // 诱导用户反复重登——403 与凭据无关（Origin 白名单/反代 Host 改写）。
+      if (reconnecting) stopReconnect();
       showStatus(
-        'Too many attempts',
-        'Too many failed authentication attempts. The server is temporarily refusing new attempts.',
-        'Wait a moment, then',
+        'Origin not allowed',
+        'The server rejected this page origin. Open the page at the server address, or add this origin with --origin.',
+        HINT_RESTART,
       );
       return;
     } else if (resp.status === 503) {
-      // C-2 专版（OQ2）：/api/attach 容量早闸——任意请求满员同此分支
-      if (reconnecting) stopReconnect(); // 终态循环终止（同上逐字契约）
-      showStatus(
-        'Server is full',
-        'The server has reached its maximum number of attached clients.',
-        'Wait for a slot to free up, then',
-      );
+      // C-2 专版（OQ2）：/api/attach 容量早闸——任意请求满员同此分支；
+      // 2026-09-13：改由重连循环等待空位（1011/503 同属瞬态容量），不再要求手动刷新。
+      if (reconnecting) scheduleAttempt();
+      else startReconnect();
       return;
     } else {
-      // 401 未携 token 及其余非 ok 状态同口径：通用认证失败，不细分（无 oracle 纪律延伸到前端文案）。
-      // fetch 的 401 不弹浏览器原生登录框（Pitfall 6 平台行为）——引导重新加载页面，
-      // 重新导航触发浏览器原生 Basic 弹窗（不自建登录表单，D-02 零新 UI 纪律）。
+      // 401 未携 token = 无有效会话（首次访问/会话过期/已登出）→ 自绘登录视图
+      //（2026-09-13：不再依赖浏览器原生 Basic 弹窗，也不再落终态面板；fetch 的
+      // 401 本就不弹原生框，Pitfall 6）。其余非 ok 状态保持通用认证失败面板。
+      if (resp.status === 401) {
+        if (reconnecting) stopReconnect();
+        showLogin();
+        return;
+      }
       if (reconnecting) stopReconnect(); // 终态循环终止（同上逐字契约）
       showStatus(
         'Authentication failed',
@@ -864,6 +936,8 @@ async function connect(): Promise<void> {
           // 升格 Welcome 重放到此同参重复注册——DOM 规范对同类型同 listener 的
           // addEventListener 去重，幂等无泄漏（05 RESEARCH Pattern 9 核实）
           welcomeDone = true;
+          authRetries = 0; // 新会话重新获得 auth_failed 重试额度（2026-09-13 预算制）
+          retryAfterMs = 0; // 清 429 退避下限（新连接已建立）
           if (confirmBeforeUnloadOn) {
             window.addEventListener('beforeunload', onBeforeUnload);
           }
@@ -937,33 +1011,48 @@ async function connect(): Promise<void> {
     // WS close 任意路径移除 beforeunload——含状态面板展示后与 auth_failed 重试前；
     // Session ended 后关页不再被拦截（D-18）；重试成功的新 WELCOME 会按开关重注册，无残留无双重
     window.removeEventListener('beforeunload', onBeforeUnload);
-    // auth_failed 守卫（D-10）：ticket 60s 过期是正常场景（页面放置超 TTL）——
-    // 静默重取 ticket 重试一次；重试再失败时 retriedAuth 已置位，落下方 switch 的
-    // 1008 分支展示 lastError.message（非无限循环，T-03-25 缓解）；
-    // 携 token 流程同样适用——重试经 connect() 同一入口重新 POST 携 token
-    if (lastError?.code === 'auth_failed' && !retriedAuth) {
-      retriedAuth = true;
+    // auth_failed 守卫（2026-09-13 改计数预算）：ticket 60s 过期/锁屏唤醒/
+    // 服务端重启都是正常场景——静默重取 ticket 最多 AUTH_RETRY_BUDGET 次；
+    // 预算耗尽后不落 1008 终态面板而是进重连循环（下方 shouldReconnect 的 1008
+    // 分支仍终态，但此处先行转循环——服务端重启期间的重试留给退避循环）。
+    // 预算在 WELCOME 到达时清零（新会话重新获得额度）。
+    // 携 token 流程同样适用——重试经 connect() 同一入口重新 POST 携 token。
+    if (lastError?.code === 'auth_failed') {
       lastError = null;
-      void connect();
+      if (authRetries < AUTH_RETRY_BUDGET) {
+        authRetries++;
+        void connect(); // 立即重取 ticket 重试（ticket 过期是正常场景）
+        return;
+      }
+      // 预算耗尽：不落 1008 终态面板，交给退避重连循环（服务端重启期间的自愈）。
+      startReconnect();
       return;
     }
-    // 重连上下文分派（Pitfall 7 面板保护的 onclose 半侧）：再 1006 = 本次 attempt 失败——
-    // scheduleAttempt 留在循环；带码关闭 = 服务端明确语义（auth_failed 重试耗尽后的
-    // 1008 等）——终止循环，落下方既有专版面板分派逐字不变
-    if (reconnecting && ev.code === 1006) {
-      scheduleAttempt();
-      return;
-    }
+    // 重连上下文分派（Pitfall 7 面板保护的 onclose 半侧）：可重连码 = 本次 attempt
+    // 失败——scheduleAttempt 留在循环；其余带码关闭 = 服务端明确语义——终止循环落面板。
+    const kickVisible = ev.code === 1013 && reconnectOnKick(document.visibilityState === 'visible');
     if (reconnecting) {
+      if (shouldReconnect(ev.code) || kickVisible) {
+        scheduleAttempt();
+        return;
+      }
       stopReconnect();
     }
-    // D-18③（R3）：1001 先按码分派再进 !opened 截流——握手未完成时服务端优雅关停
-    // 不再误述为 C-4「refusing new connections」，落与稳态 case 1001 同一 showShutdown
-    // 单写口专版（title/body/hint 同源）。位置在上方 reconnecting 两块之后：重连上下文
-    // 收 1001 仍先经 stopReconnect 清循环再落面板（D11c 行为零漂移）；pre-onopen 1001
-    // 与稳态同样不在 CORE-05 触发集（仅 1006——07-05 回归锁 D11b 不受影响）
-    if (ev.code === 1001) {
-      showShutdown();
+    // 可重连码统一分派（2026-09-13 扩码集）：
+    //   - 已建立会话收 1006/1001/1011 → 退避自动重连（1001 会话已持久化，重启无感）；
+    //   - pre-onopen 收 1001/1011（服务端重启/瞬态容量）→ 同样自愈；首连 1006 仍落
+    //     'Unable to connect' 终态（无法区分网络不可达与服务地址错误，不无限空转）；
+    //   - 1013 慢消费者被踢 → 仅前台可见时重连（后台重连只会再被踢，D-10 原意）。
+    if (opened && shouldReconnect(ev.code)) {
+      startReconnect();
+      return;
+    }
+    if (!opened && (ev.code === 1001 || ev.code === 1011)) {
+      startReconnect();
+      return;
+    }
+    if (opened && kickVisible) {
+      startReconnect();
       return;
     }
     if (!opened) {
@@ -980,13 +1069,8 @@ async function connect(): Promise<void> {
           'Start wesh again from your shell, then',
         );
         break;
-      case 1001: // D-23 优雅下线（Phase 7，proto.go 关闭码纪律块互指——发送路径 server
-        // Shutdown + reason server_shutting_down）。与 1000 的语义边界：进程退出 vs 服务
-        // 关停（子进程由服务端 stop-signal 序列终结）。1001 不在 CORE-05 触发集（仅
-        // 1006——systemd restart 场景看终态面板，而非重连循环打一个正在重启的服务，
-        // D-23 UX 闭环）；不调用 startReconnect（prohibition 回归锁）。面板经 showShutdown
-        // 单写口（hint 前缀 D-18① 条件句式）；上方 pre-onopen 分派先行 return 后本
-        // case 实际不可达——保留为分派序防回归纵深（单写口使两处落点零文案漂移）
+      case 1001: // 2026-09-13：1001 已进可重连码集（上方 shouldReconnect 分派先行
+        // return），本 case 结构性不可达——保留为分派序防回归纵深。
         showShutdown();
         break;
       case 1008: // 策略违反（version_mismatch 等）——Error 帧 message 优先展示（D-07）
@@ -1010,20 +1094,18 @@ async function connect(): Promise<void> {
           HINT_RESTART,
         );
         break;
-      case 1013: // C-1 专版（05 D-10/R-10）：慢消费者背压踢出。只认 ev.code 不渲染
-        // reason 内容（slow_consumer 是机器串，渲染远端内容是伪造钓鱼面）；不做任何
-        // 自动重连——后台标签页重连→再被踢循环比手动刷新更差（Phase 6 CORE-05 边界）；
-        // beforeunload 移除联动见本函数入口；URL token 保留使手动刷新可重新 attach
+      case 1013: // C-1 专版（05 D-10/R-10）：慢消费者背压踢出——**仅后台标签页落此**
+        //（前台可见已在上方 kickVisible 分派进重连自愈；后台重连只会再被踢并放大流量，
+        // D-10 原意保持）。只认 ev.code 不渲染 reason（机器串渲染是伪造钓鱼面）；
+        // beforeunload 移除联动见本函数入口；URL token 保留使手动刷新可重新 attach。
         showStatus(
           'Disconnected',
           'This client was disconnected because it could not keep up with the session output. The session itself is unaffected.',
           'To reattach from the latest output,',
         );
         break;
-      case 1006: // CORE-05 触发谓词（D-01 显式判定——不是 default 桶）：仅 opened 已置位的
-        // 已建立会话异常断开进重连（上方 !opened 分支先行收口首连失败）；1002 协议错误
-        // 等带码关闭留 default 桶 C-5 手动面板逐字不变；1013 被踢维持手动刷新（P5 D-10——
-        // 自动重连只会再被踢且后台标签页循环放大流量）
+      case 1006: // 2026-09-13：1006 已在上方 shouldReconnect 分派（opened 时）或
+        // !opened 截流收口，本 case 结构性不可达——保留为分派序防回归纵深。
         startReconnect();
         break;
       default: // C-5（R2 改写；R1 收窄——1006 已显式抽出进重连，残留 = 1002 协议错误
@@ -1054,4 +1136,18 @@ window.addEventListener('offline', () => {
 window.addEventListener('online', () => {
   // 清当前等待定时器立即试一次——不是新循环（D-04）；runAttempt 内清双 timer + attempt++
   if (reconnecting) runAttempt();
+});
+// 锁屏/后台唤醒即重连（2026-09-13）：设备休眠期间协议栈停答 ping（服务端 pong
+// 超时 CloseNow → 客户端 1006），后台页签的退避定时器又被浏览器节流——回前台
+// 立即补一次 attempt，不等残余退避走完。仅对已建立过会话（welcomeDone）生效，
+// 避免与首连在飞链竞速（首连链有自身 gen/abort 守卫，但无需在此触发）。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !welcomeDone) return;
+  if (reconnecting) {
+    runAttempt();
+    return;
+  }
+  if (ws === null || ws.readyState !== WebSocket.OPEN) {
+    startReconnect();
+  }
 });

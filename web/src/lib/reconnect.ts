@@ -8,8 +8,19 @@ export function backoffMs(attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 30000);
 }
 
-// 触发谓词显式判定（D-01）——1002 协议错误等带码关闭留 default 桶手动面板，
-// 1013 被踢维持手动刷新（P5 D-10）；1006 为浏览器本地合成码永不出现于线上（RFC6455 §7.4）
+// 触发谓词显式判定（D-01），2026-09-13 扩码集：
+//   - 1006 浏览器本地合成网络异常（永不出现于线上，RFC6455 §7.4）；
+//   - 1001 服务端优雅重启/关停（D-23 反转：会话已持久化，重启后 cookie 仍有效，
+//     自动重连把 systemd restart 变成用户无感——重连循环打重启中服务 1s→30s
+//     退避可接受）；
+//   - 1011 容量满 / spawn 节流等瞬态服务端错误（退避重试而非终态面板）。
+// 1002 协议错误 / 1008 策略违反 / 1009 超限维持终态面板（default 桶）。
 export function shouldReconnect(code: number): boolean {
-  return code === 1006;
+  return code === 1006 || code === 1001 || code === 1011;
+}
+
+// 1013 慢消费者被踢：仅页面前台可见时重连——后台标签被浏览器节流正是成为慢
+// 消费者的主因，隐藏时重连只会再被踢（D-10 原意保持）；前台可见则值得自愈。
+export function reconnectOnKick(visible: boolean): boolean {
+  return visible;
 }

@@ -7,6 +7,12 @@
          Basic 闸内，每次页面加载都会白刷一条 401 auth_failed 日志并白计一次节流失败
          （2026-08-22 实测定位；data: URL 零网络请求零鉴权面变化） -->
     <link rel="icon" href="data:," />
+    <!-- 苹果图标同样声明空 data URL（2026-09-13）：iOS 系统进程会不带凭据抓
+         /apple-touch-icon*.png，声明后浏览器不再发该请求（服务端另有 204 豁免兜底）。
+         apple-mobile-web-app-capable 使「添加到主屏幕」以独立窗口全屏运行。 -->
+    <link rel="apple-touch-icon" href="data:," />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <title>wesh</title>
     <style>
       /* singlefile 保证 CSS 先于 JS 内联——无白闪契约（body 背景与终端同色 #000000） */
@@ -21,6 +27,27 @@
         z-index: 1000;
       }
       #status[hidden] { display: none; }
+      /* #login 登录视图遮罩（2026-09-13 表单登录）：与 #status 同语言（全屏遮罩 +
+         居中面板），独立元素——仅无有效会话时展示；样式复用状态面板变量，无外部资源。 */
+      #login {
+        position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+        display: flex; align-items: center; justify-content: center;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        z-index: 1000;
+      }
+      #login[hidden] { display: none; }
+      #login-form { display: flex; flex-direction: column; gap: 12px; }
+      #login-form label { font-size: 12px; color: #a3a3a3; display: flex; flex-direction: column; gap: 4px; }
+      #login-form input {
+        padding: 8px; border-radius: 4px; border: 1px solid #2a2a2a;
+        background: #0d0d0d; color: #ffffff; font-size: 14px; font-family: inherit;
+      }
+      #login-form button {
+        margin-top: 4px; padding: 8px 12px; border-radius: 4px; border: 1px solid #2a2a2a;
+        background: #262626; color: #ffffff; font-size: 14px; cursor: pointer; font-family: inherit;
+      }
+      #login-error { margin-top: 8px; font-size: 12px; color: #e08a8a; min-height: 1em; }
+      #login-error[hidden] { display: none; }
       .status-panel {
         max-width: 480px; padding: 24px; border-radius: 8px;
         background: #161616; border: 1px solid #2a2a2a;
@@ -74,6 +101,20 @@
     </div>
     <!-- UI-SPEC §Page Shell 增量：resize 浮层为 body 直属第三个顶层元素，默认 hidden -->
     <div id="resize-overlay" hidden></div>
+    <!-- 登录视图（2026-09-13 表单登录）：#login 为第四个顶层元素，默认 hidden；
+         /api/attach 401（无会话）时由 main.ts showLogin() 展示。 -->
+    <div id="login" hidden>
+      <div class="status-panel">
+        <div class="status-title">Sign in</div>
+        <div class="status-body">Enter the operator credentials to access this terminal.</div>
+        <form id="login-form" autocomplete="on">
+          <label>Username<input id="login-user" name="user" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" required /></label>
+          <label>Password<input id="login-pass" name="pass" type="password" autocomplete="current-password" required /></label>
+          <button type="submit">Sign in</button>
+        </form>
+        <div id="login-error" hidden></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
