@@ -1,4 +1,4 @@
-// wesh — share terminal over web。
+// wesh（Web Shell）— share terminal over web。
 //
 // CLI 形态：wesh [flags] -- <cmd> [args...]（D-02）；`--` 后原样以 exec 数组传递，
 // 绝不经 shell。Phase 1 单次语义：WS 断开即退出（D-11），断线重连在 Phase 6。

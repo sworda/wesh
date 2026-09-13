@@ -1,11 +1,12 @@
-<!-- generated-by: gsd-doc-writer -->
 # wesh
+
+**wesh** = **Web Shell** — share terminal over web.
 
 [![CI](https://github.com/sworda/wesh/actions/workflows/ci.yml/badge.svg)](https://github.com/sworda/wesh/actions/workflows/ci.yml)
 [![Release](https://github.com/sworda/wesh/actions/workflows/release.yml/badge.svg)](https://github.com/sworda/wesh/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/github/license/sworda/wesh)](LICENSE)
 
-`wesh` 是通过 Web 分享终端的单二进制命令行工具：`wesh [flags] -- <cmd> [args...]` 启动后在指定端口提供 HTTP/WebSocket 服务，浏览器打开页面即获得一个运行 `<cmd>` 的完整交互终端。`--` 之后的命令及参数原样以 exec 数组传递，不经 shell。
+`wesh`（**We**b **Sh**ell，share terminal over web）是通过 Web 分享终端的单二进制命令行工具：`wesh [flags] -- <cmd> [args...]` 启动后在指定端口提供 HTTP/WebSocket 服务，浏览器打开页面即获得一个运行 `<cmd>` 的完整交互终端。`--` 之后的命令及参数原样以 exec 数组传递，不经 shell。
 
 ```
 wesh [flags] -- <cmd> [args...]
