@@ -326,32 +326,30 @@ func TestMetricsAuth(t *testing.T) {
 				})
 				base := httpBaseOf(wsURL)
 
-				// #0 GET / 无凭据 → 401 基线 body（同链同文对照面；fails=1，窗口 +50ms）。
-				st, _, bodyRoot := reqMetrics(t, base+"/", "", "")
-				if st != http.StatusUnauthorized {
-					t.Fatalf("#0 GET / status = %d, want %d（整站 Basic 闸基线）", st, http.StatusUnauthorized)
+				// #0 GET / → 200（2026-09-13 表单登录改造：SPA shell 公开承载
+				// 登录视图，不再是认证闸基线）。
+				st, _, _ := reqMetrics(t, base+"/", "", "")
+				if st != http.StatusOK {
+					t.Fatalf("#0 GET / status = %d, want %d（GET / 公开）", st, http.StatusOK)
 				}
-				time.Sleep(100 * time.Millisecond) // 过窗（fail#1 窗口 = 1×base = 50ms）
 
-				// #1 /metrics 无凭据 → 401 同文（fails=2，窗口 +100ms）。
+				// #1 /metrics 无凭据 → 401 同文（2026-09-13 探测豁免：不计节流，
+				// fails 保持 0；bodyNo 作为后续枚举-oracle 对照基面）。
 				st, _, bodyNo := reqMetrics(t, base+"/metrics", "", "")
 				if st != http.StatusUnauthorized {
 					t.Fatalf("#1 无凭据 GET /metrics status = %d, want %d（D-08 认证闸跟随）", st, http.StatusUnauthorized)
 				}
-				if bodyNo != bodyRoot {
-					t.Fatalf("#1 无凭据 401 body 与 GET / 不同文——/metrics 必须与整站同链同文:\nmetrics: %q\nroot:    %q", bodyNo, bodyRoot)
-				}
-				time.Sleep(150 * time.Millisecond) // 过窗（fail#2 窗口 = 2×base = 100ms）
 
-				// #2 /metrics 错凭据 → 401 同文（fails=3，窗口 +200ms；无枚举 oracle）。
+				// #2 /metrics 错凭据 → 401 同文（fails=1，窗口 +50ms；无枚举 oracle：
+				// 错凭据与无凭据 body 逐字节相等）。
 				st, _, bodyWrong := reqMetrics(t, base+"/metrics", "mx-op", "wrong-pass")
 				if st != http.StatusUnauthorized {
 					t.Fatalf("#2 错凭据 GET /metrics status = %d, want %d", st, http.StatusUnauthorized)
 				}
-				if bodyWrong != bodyRoot {
-					t.Fatalf("#2 错凭据 401 body 与无凭据/根路径不同文（枚举 oracle 面）:\nwrong: %q\nroot:  %q", bodyWrong, bodyRoot)
+				if bodyWrong != bodyNo {
+					t.Fatalf("#2 错凭据 401 body 与无凭据不同文（枚举 oracle 面）:\nwrong: %q\nno:    %q", bodyWrong, bodyNo)
 				}
-				time.Sleep(250 * time.Millisecond) // 过窗（fail#3 窗口 = 3×base = 150ms→200ms 余量）
+				time.Sleep(150 * time.Millisecond) // 过窗（fail#1 窗口 = 1×base = 50ms 余量）
 
 				// #3 正确凭据 → 200 同形态（recordSuccess 清零；Prometheus basic_auth 可采集面）。
 				st, _, body := reqMetrics(t, base+"/metrics", "mx-op", "mx-pass")
@@ -393,8 +391,8 @@ func TestMetricsAuth(t *testing.T) {
 				if st != http.StatusOK {
 					t.Errorf("凭据 bp 实例正确凭据 GET /metrics status = %d, want %d（D-09 根路径固定）", st, http.StatusOK)
 				}
-				if st := getStatus(t, baseCred+"/wesh/metrics"); st != http.StatusUnauthorized {
-					t.Errorf("凭据 bp 实例无头 GET /wesh/metrics status = %d, want %d（bp 子树经 Basic 闸）", st, http.StatusUnauthorized)
+				if st := getStatus(t, baseCred+"/wesh/metrics"); st != http.StatusNotFound {
+					t.Errorf("凭据 bp 实例无头 GET /wesh/metrics status = %d, want %d（GET / 公开后 bp 子树无认证闸，embed 404）", st, http.StatusNotFound)
 				}
 			})
 

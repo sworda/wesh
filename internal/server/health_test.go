@@ -177,14 +177,18 @@ func TestHealthz(t *testing.T) {
 				}
 				assertHealthz(t, hb, "ok", 0, 32, true)
 
-				if got := getStatus(t, base+"/"); got != http.StatusUnauthorized {
-					t.Errorf("对照 GET / status = %d, want %d（整站 Basic 闸不受例外影响）", got, http.StatusUnauthorized)
+				// 2026-09-13 表单登录改造：GET / 公开（SPA shell 承载登录视图），
+				// 认证闸收窄到 /api/attach、/ws 与 /metrics——对照点随之由 401
+				// 变为 200（免认证例外仍在 /healthz 本身，语义不受影响）。
+				if got := getStatus(t, base+"/"); got != http.StatusOK {
+					t.Errorf("对照 GET / status = %d, want %d（GET / 公开承载登录视图，2026-09-13）", got, http.StatusOK)
 				}
 			})
 
-			// bp 固定：bp=/wesh 实例下 /healthz 仍 200、/wesh/healthz 不可达（无认证
-			// 404 / 凭据 401）——D-09 根路径固定，拒绝双挂（探活路径可写死进 k8s
-			// probe 配置）。
+			// bp 固定：bp=/wesh 实例下 /healthz 仍 200、/wesh/healthz 不可达（404）
+			// ——D-09 根路径固定，拒绝双挂（探活路径可写死进 k8s probe 配置）。
+			// 2026-09-13：GET / 公开后 bp 子树不再经 basicAuth 拦截，故凭据实例的
+			// /wesh/healthz 也从 401 变为 404（embed FS 无此路径），与无认证形态一致。
 			t.Run("basepath_pinned", func(t *testing.T) {
 				// 无认证 bp 实例：/healthz 200；/wesh/healthz 404（embed FS 无此路径）。
 				_, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
@@ -200,8 +204,8 @@ func TestHealthz(t *testing.T) {
 					t.Errorf("无认证 bp 实例 GET /wesh/healthz status = %d, want %d（拒绝双挂）", got, http.StatusNotFound)
 				}
 
-				// 凭据 bp 实例：/healthz 无头 200；/wesh/healthz 无头 401（bp 子树经
-				// basicAuth 闸——探活例外不蔓延到 bp 挂载面）。
+				// 凭据 bp 实例：/healthz 无头 200；/wesh/healthz 无头 404（2026-09-13
+				// GET / 公开后 bp 子树不再有认证闸拦截，落 embed FS 404）。
 				cred, err := server.ParseCredential("hz-bp:hz-pass")
 				if err != nil {
 					t.Fatalf("ParseCredential: %v", err)
@@ -214,8 +218,8 @@ func TestHealthz(t *testing.T) {
 				if code, _ := getHealthz(t, baseCred+"/healthz"); code != http.StatusOK {
 					t.Errorf("凭据 bp 实例无头 GET /healthz status = %d, want %d", code, http.StatusOK)
 				}
-				if got := getStatus(t, baseCred+"/wesh/healthz"); got != http.StatusUnauthorized {
-					t.Errorf("凭据 bp 实例无头 GET /wesh/healthz status = %d, want %d（例外不蔓延）", got, http.StatusUnauthorized)
+				if got := getStatus(t, baseCred+"/wesh/healthz"); got != http.StatusNotFound {
+					t.Errorf("凭据 bp 实例无头 GET /wesh/healthz status = %d, want %d（bp 子树无认证闸，embed 404）", got, http.StatusNotFound)
 				}
 			})
 

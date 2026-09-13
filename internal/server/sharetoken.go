@@ -95,6 +95,15 @@ func (s *Server) sharePage(page, root http.Handler) http.HandlerFunc {
 	}
 }
 
+// shareInvalidHandler 是凭据模式下无效/缺席分享 token 的页面响应
+//（2026-09-13 表单登录改造）：401 + 通用 authRequiredBody，**无
+// WWW-Authenticate 挑战头**（不触发浏览器原生弹窗，失效链接改由响应体提示
+// 重新登录），**不计节流**（失效链接不是凭据尝试，探测豁免同口径）。
+// 无认证模式不消费本 handler（root 即 wh，直接给页）。
+func (s *Server) shareInvalidHandler(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, authRequiredBody, http.StatusUnauthorized)
+}
+
 // registerShareRoutes 装配分享链接两条路由（凭据与无认证模式均注册——OQ1 token
 // 通道与认证模式正交；bp 为 base-path 前缀，空串 = 根挂载，07-01 D-13/D-14；
 // page 为 embed handler（有效 token 委托目标），root 为 / 已注册的处理链

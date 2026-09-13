@@ -105,11 +105,46 @@ func TestTLSVersionAndCipherFloor(t *testing.T) {
 	}
 }
 
-// TestSecurityHeaders 双分支断言（D-06/Pitfall 7）：tlsOn=false 恒在六项精确
-// 值且无 Strict-Transport-Security（明文发 HSTS 与反代策略打架）；tlsOn=true
+// TestTLSNoHTTP2（2026-09-13）：NextProtos 钉死 http/1.1 + DisableHTTP2 结构性
+// 关掉自动装配；真实 ALPN 协商不得选中 h2（iOS Safari wss:// 握手依赖 h1）。
+func TestTLSNoHTTP2(t *testing.T) {
+	if got := TLSConfig().NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+		t.Fatalf("TLSConfig().NextProtos = %v, want [http/1.1]", got)
+	}
+	hs := &http.Server{}
+	DisableHTTP2(hs)
+	if hs.TLSNextProto == nil {
+		t.Fatal("DisableHTTP2 后 TLSNextProto == nil（go 仍会自动装配 h2）")
+	}
+	if len(hs.TLSNextProto) != 0 {
+		t.Fatalf("DisableHTTP2 后 TLSNextProto 非空: %v", hs.TLSNextProto)
+	}
+	// 集成：装配态服务器只通告 http/1.1。
+	cfg := TLSConfig()
+	cfg.Certificates = []tls.Certificate{selfSignedCert(t)}
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	ts.TLS = cfg
+	DisableHTTP2(ts.Config)
+	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
+	ts.StartTLS()
+	defer ts.Close()
+	cc := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2", "http/1.1"}} // 自签证书，测试内正当用途
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", ts.Listener.Addr().String(), cc)
+	if err != nil {
+		t.Fatalf("ALPN 握手失败: %v", err)
+	}
+	defer conn.Close()
+	if proto := conn.ConnectionState().NegotiatedProtocol; proto != "http/1.1" {
+		t.Fatalf("协商 ALPN = %q, want http/1.1（h2 必须被禁用）", proto)
+	}
+}
+
+// TestSecurityHeaders 双分支断言（D-06/Pitfall 7）：tlsOn=false 恒在六项精确// 值且无 Strict-Transport-Security（明文发 HSTS 与反代策略打架）；tlsOn=true
 // 追加 HSTS 精确值。CSP 逐字符精确断言——安全契约，防手滑漂移。
 func TestSecurityHeaders(t *testing.T) {
-	const csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+	const csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 	const hsts = "max-age=63072000; includeSubDomains"
 	want := map[string]string{
 		"Content-Security-Policy":      csp,

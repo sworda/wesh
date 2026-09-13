@@ -153,6 +153,9 @@ type config struct {
 	sessionMode    string // --session-mode=shared|per-client（默认 shared——REQUIREMENTS 反特性 A5；per-client 装配中，当前版本与 shared 等价，10-CONTEXT D-05）
 	sessionModeSet bool   // --session-mode 是否被显式设置（parseArgs 经 fs.Visit 填充；D-02 双源机制采集备用，write-policy×per-client warn 锚定归 10-02 消费）
 	argv0          string // argv[0] 落定副本（validateStartup per-client LookPath 预检数据源，10-02 消费）
+	// 2026-09-13 会话 cookie 登录（herdr-web 登录摩擦修复）：
+	sessionTTL  time.Duration // --session-ttl 表单登录会话存活期（默认 30 天；滑动续期；<=0 由 server 兜底默认）
+	sessionFile string        // --session-file 会话持久化文件路径（空串 = 纯内存，wesh 重启即失效；多端口/多实例共享同一路径 = 登录一次通用）
 }
 
 // clientOption 是 --client-option 的 parse 期产物：key 已过白名单（P4 D-14），
@@ -413,6 +416,12 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// 校验在 Parse 返回处（write-policy 同位先例——值非敏感，直接 return
 	// error 即可）。
 	fs.StringVar(&cfg.sessionMode, "session-mode", sessionModeDefault, "session mode: shared|per-client (default shared; per-client gives each connection its own PTY child process)")
+	// 2026-09-13 会话 cookie 登录（herdr-web 登录摩擦修复）：表单登录会话的
+	// 存活期与持久化路径。session-file 非空时会话落盘，wesh 崩溃/重启后 cookie
+	// 仍有效（systemd Restart=on-failure 场景用户无感）；多端口共享同一路径 =
+	// 登录一次通用。空/0 = 纯内存与默认 30 天（server 端兜底）。
+	fs.DurationVar(&cfg.sessionTTL, "session-ttl", 0, "form-login session lifetime with sliding renewal (0 = default 720h/30d)")
+	fs.StringVar(&cfg.sessionFile, "session-file", "", "persist login sessions to this file so cookies survive restarts (empty = in-memory only)")
 	// D-08：最大并发客户端数（one-way 公开契约——容量策略是部署关切开 flag，
 	// 与 P2 D-10 攻击面上限常量不同类）。默认 32（ARCHITECTURE §6『10–100 连接
 	// =团队围观/教学』区间下沿；账面内存与 goroutine 开销微小），Phase 9 负载
@@ -534,8 +543,7 @@ func parseArgs(args []string) (cfg config, argv []string, err error) {
 	// --stop-timeout 取 DurationVar 直收形态——负 duration 是合法语法，负值
 	// 检查是唯一闸，exitEmptyValue.Set 负值闸同纪律）。
 	fs.StringVar(&cfg.stopSignal, "stop-signal", stopSignalDefault, "signal sent to the child process group on shutdown: HUP|TERM|INT|KILL (default HUP)")
-	fs.DurationVar(&cfg.stopTimeout, "stop-timeout", stopTimeoutDefault, "grace before SIGKILL after stop-signal (0 = no escalation)")
-	// D-24：--uid/--gid 数字直通降权（one-way 公开契约）——落 pty.StartOptions
+	fs.DurationVar(&cfg.stopTimeout, "stop-timeout", stopTimeoutDefault, "grace before SIGKILL after stop-signal (0 = no escalation)") // D-24：--uid/--gid 数字直通降权（one-way 公开契约）——落 pty.StartOptions
 	// Uid/Gid → SysProcAttr.Credential（fork 后 exec 前生效，spawn.go 注释登记
 	// GOROOT forkExec 顺序）；数字直通不做名字解析（极简容器无 /etc/passwd 的
 	// NSS 解析差异规避——名字解析场景运维先 id -u/id -g 查好）。成对强制
@@ -1513,7 +1521,7 @@ func run(args []string) int {
 	// 不重排——shared 路径逐字节零回归）；提取为命名 opts 供 New 消费。
 	// 装配契约校验已前移至 pty.Start 之前（10-review WR-02——守卫触发时
 	// 零资源占用），此处不再重复调用。
-	opts := server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version, CustomIndex: customIndex, SessionMode: cfg.sessionMode, SpawnFunc: spawnFunc}
+	opts := server.Options{Writable: cfg.writable, WritePolicy: cfg.writePolicy, PingInterval: cfg.pingInterval, Credentials: cfg.credentials, Origins: cfg.origins, TLS: cfg.tlsCert != "", ClientPrefsRO: prefsRO, ClientPrefsRW: prefsRW, MaxClients: cfg.maxClients, ExitWhenEmpty: cfg.exitEmpty.set, ExitWhenEmptyGrace: cfg.exitEmpty.grace, ShareTokenRO: shareRO, ShareTokenRW: shareRW, BasePath: cfg.basePath, AuthHeader: cfg.authHeader, StopSignal: cfg.stopSignalSig, StopTimeout: cfg.stopTimeout, Version: version, CustomIndex: customIndex, SessionMode: cfg.sessionMode, SpawnFunc: spawnFunc, SessionTTL: cfg.sessionTTL, SessionFile: cfg.sessionFile}
 	srv := server.New(sess, os.Exit, opts)
 	// shareURLRO/shareURLRW 拼串单一事实源（07-01 D-14 既定注释）：启动打印与
 	// 07-05 --open 两消费点共用（两消费点不得各自重拼）；socket 分支保持零值
@@ -1608,6 +1616,10 @@ func run(args []string) int {
 		// 二次读盘；stdlib 约定 TLSConfig.Certificates 非空时 certFile/keyFile
 		// 传空串即可。
 		hs.TLSConfig.Certificates = []tls.Certificate{cert}
+		// 2026-09-13：禁用 HTTP/2——net/http h2 不支持 WS over h2（RFC 8441），
+		// ALPN 协商 h2 会让 iOS Safari 的 wss:// 建连不稳（详见 server.TLSConfig
+		// 与 server.DisableHTTP2 注释：仅设 NextProtos 会被 Go 追加 h2）。
+		server.DisableHTTP2(hs)
 		err = hs.ServeTLS(ln, "", "")
 	} else {
 		err = hs.Serve(ln)
