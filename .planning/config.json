@@ -91,7 +91,6 @@
   },
   "mode": "yolo",
   "granularity": "fine",
-  "quick_branch_template": null,
   "intel": {
     "enabled": false
   },
