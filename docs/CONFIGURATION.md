@@ -2,6 +2,8 @@
 
 # wesh 配置参考
 
+**简体中文** | [English](CONFIGURATION.en.md)
+
 wesh 是单二进制 Go 程序，无隐式配置文件搜索、无注册表——全部配置经 **CLI flag、环境变量、TOML 配置文件**三条通道给出，按固定优先级合并：
 
 ```

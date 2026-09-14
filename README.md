@@ -1,5 +1,7 @@
 # wesh
 
+**简体中文** | [English](README.en.md)
+
 **wesh** = **Web Shell** — share terminal over web.
 
 [![CI](https://github.com/sworda/wesh/actions/workflows/ci.yml/badge.svg)](https://github.com/sworda/wesh/actions/workflows/ci.yml)
@@ -27,7 +29,7 @@ wesh [flags] -- <cmd> [args...]
 
 ### 预编译二进制（推荐）
 
-发布物为 linux/darwin × amd64/arm64 四平台 tar.gz（Windows 不在支持范围），每个压缩包内含 `wesh` + `LICENSE` + `README.md` 三件套，解压即用：
+发布物为 linux/darwin × amd64/arm64 四平台 tar.gz（Windows 不在支持范围），每个压缩包内含 `wesh` + `LICENSE` + `README.md`（中文主版本）+ `README.en.md`（英文译本），解压即用：
 
 ```sh
 curl -LO https://github.com/sworda/wesh/releases/download/v1.0.0/wesh_v1.0.0_linux_amd64.tar.gz
@@ -175,6 +177,8 @@ per-client 下客户端数 == 子进程数：`--max-clients`（默认 `32`）兼
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | 反向代理（nginx/Caddy）、systemd、Docker、UNIX socket 部署 |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | 本地开发环境与构建流程 |
 | [TESTING.md](docs/TESTING.md) | 测试框架与运行方式 |
+
+上表文档均另提供英文译本，以 `.en.md` 后缀与中文主版本并列存放（如 [README.en.md](README.en.md)、[docs/CONFIGURATION.en.md](docs/CONFIGURATION.en.md)）；每篇文首的语言切换链接负责两版互跳。**中文是主版本**——英文译本随中文改动同步更新。
 
 ## 贡献
 
