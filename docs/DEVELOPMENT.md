@@ -2,6 +2,8 @@
 
 # 开发指南
 
+**简体中文** | [English](DEVELOPMENT.en.md)
+
 面向 wesh 贡献者的本地开发环境、构建流程与协作规范。首次上手（安装运行）见 [GETTING-STARTED.md](GETTING-STARTED.md)，系统结构见 [ARCHITECTURE.md](ARCHITECTURE.md)，测试细节见 [TESTING.md](TESTING.md)。
 
 ## 本地环境搭建

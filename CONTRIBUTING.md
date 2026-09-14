@@ -1,6 +1,8 @@
 <!-- generated-by: gsd-doc-writer -->
 # 贡献指南
 
+**简体中文** | [English](CONTRIBUTING.en.md)
+
 感谢关注 wesh！本文说明开发约定、CI 门禁与协作流程。上手请先读：
 
 - [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) —— 前置要求、安装与首次运行
@@ -75,6 +77,8 @@ pnpm -C web install && pnpm -C web build && go build -o wesh ./cmd/wesh
 权威文档为 [README.md](README.md) 与 `docs/` 目录（GETTING-STARTED / ARCHITECTURE / CONFIGURATION / DEPLOYMENT / DEVELOPMENT / TESTING）。`docs/` 与本文由工具链自动生成并会整体再生成——**直接手改的内容在下次生成时可能被覆盖**，发现问题请开 issue 或在 PR 描述中指出。`README.md` 已刻意移出自动生成范围：它不含 `<!-- generated-by: gsd-doc-writer -->` 标记，属手工维护文件，生成流程遇到无标记文件默认保留（或仅追加缺失章节），**修改时请直接编辑 README**。代码注释与 `web/uat/` 脚本内的说明不属于自动生成范围。
 
 其中 README、CONFIGURATION、ARCHITECTURE 三件套同源描述公开契约：**变更 flag / 环境变量 / TOML 键等公开契约时，须同步修改 `cmd/wesh/main.go`（flag 定义）与 `cmd/wesh/config.go`（TOML 结构）双源，并让三件套文档一并在同一 PR 中更新**，避免文档与实现漂移。
+
+每篇文档均另提供英文译本，以 `<名称>.en.md` 与中文主版本并列存放，文首的语言切换链接负责两版互跳（例如 [README.en.md](README.en.md)、[docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md)）。**中文是主版本**，也是唯一由生成流程维护的语言；英文译本属人工维护，刻意不带 `<!-- generated-by: gsd-doc-writer -->` 标记（该标记会声明生成器所有权）。改动中文主版本时，请在同一个 PR 内同步更新对应译本。
 
 ## 许可证
 

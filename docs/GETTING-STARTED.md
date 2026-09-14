@@ -1,6 +1,8 @@
 <!-- generated-by: gsd-doc-writer -->
 # 快速上手
 
+**简体中文** | [English](GETTING-STARTED.en.md)
+
 从零开始，在浏览器里看到自己终端的三步路径：装好依赖 → 构建 → loopback 启动。全程不需要管理员权限，也没有额外的系统库依赖（纯 Go 静态构建，前端页面已内嵌进二进制）。
 
 ## 前置要求

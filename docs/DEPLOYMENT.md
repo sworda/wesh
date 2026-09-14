@@ -2,6 +2,8 @@
 
 # wesh 部署指南
 
+**简体中文** | [English](DEPLOYMENT.en.md)
+
 wesh 是单二进制程序（前端页面经 `go:embed` 内嵌），部署哲学与 scp 一致：**一个文件拷过去即用**。本文覆盖部署目标与形态、构建/发布流水线、生产环境设置、回滚与监控。配置项（flag/TOML/环境变量）的完整语义见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 ## 部署目标

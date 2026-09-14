@@ -2,6 +2,8 @@
 
 # wesh 架构
 
+**简体中文** | [English](ARCHITECTURE.en.md)
+
 ## 系统概览
 
 wesh 是一个通过 Web 分享终端的命令行工具：`wesh [flags] -- <cmd> [args...]` 启动后在指定端口提供 HTTP/WebSocket 服务，浏览器打开页面即获得一个运行 `<cmd>` 的完整交互终端。整体为**单二进制分层架构**——Go 服务端（CLI 解析/装配层 → HTTP+WS 网关层 → PTY 数据面层）内嵌经 Vite 单文件构建的 xterm.js 前端（`go:embed`）。进程模型自 v1.1 起支持双模式（`--session-mode`，详见「双模式架构」节）：`shared`（默认）——PTY 子进程随服务端启动时 spawn 一次，多个浏览器客户端共享同一会话（输出实时扇出、写权限经 owner 递补仲裁），这是 wesh 的自有差异化设计（勘误：v1.0 文档曾将共享模型归为 GoTTY 同类——经 GoTTY 源码核实，GoTTY 实为 per-connection spawn：每条 WS 连接各 `factory.New` → `pty.Start` 一个进程，此前表述有误，共享模型在同类工具中无先例）；`per-client`——每 WS 客户端 attach 时独立 spawn 一个 PTY 进程（ttyd 式 per-connection 生命周期），断开即终结、重连即全新进程。主要输入是浏览器键盘/粘贴字节与 RESIZE 事件，主要输出是 PTY 子进程的字节流（`shared` 扇出 ×N 客户端 / `per-client` 每会话独立流）；wire 层为自定义二进制 WebSocket 协议 `wesh.v1`（1 字节帧类型 + 载荷）。支持平台仅 linux/darwin（amd64/arm64），Windows 不在支持范围（PTY 层构建标签限定）。
