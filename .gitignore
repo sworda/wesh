@@ -5,6 +5,12 @@ web/dist/*.gz
 /wesh
 /tags
 
+# npm 发布产物（scripts/publish/publish.sh 写入；goreleaser 亦复用该目录）
+/dist/
+
+# 本地 npm 发布配置（registry 凭据/包名覆盖，绝不入库）
+/scripts/publish/.env.internal
+
 # local review / debug output
 /review_output/
 /.opencodereview/
