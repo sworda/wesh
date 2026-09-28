@@ -1818,20 +1818,20 @@ func TestPerClientStallBlocksAndResumes(t *testing.T) {
 	}
 	time.Sleep(silent)
 
-	// 恢复读取：readUntilError 全速收干至终结；同时观测续读点递增（+1）。
-	res := readUntilError(c)
+	// 恢复读取：readUntilErrorProgress 全速收干至终结；同时观测续读点递增（+1）。
+	// 收干等待用进展看门狗（15s 零进展判死流）——绝对时限判据有结构性错误面：
+	// 收干速度由 runner 吞吐决定（run 36404082978 同 SHA 双 run 一过一挂实证），
+	// 判据本体是「慢但在前进：零丢数据、不被踢」，与速度无关。
+	res, progress := readUntilErrorProgress(c)
 	waitGateTransitions(t, srv, base, 2, 15*time.Second)
 
-	select {
-	case r := <-res:
-		var ce websocket.CloseError
-		if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
-			t.Fatalf("恢复读取后终结 = %v, want CloseError 1000（子进程退出广播；静默窗内被踢则此处为 1013——PC-11 违反）", r.err)
-		}
-		assertSeqContinuity(t, r.acc, floodLast)
-	case <-time.After(45 * time.Second):
-		t.Fatal("恢复读取后 45s 内未收齐洪水——续读后流未恢复（持帧阻塞未被唤醒，死锁）")
+	r := waitDrainWithProgress(t, res, progress, 15*time.Second,
+		"续读后流未恢复（持帧阻塞未被唤醒，死锁）")
+	var ce websocket.CloseError
+	if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
+		t.Fatalf("恢复读取后终结 = %v, want CloseError 1000（子进程退出广播；静默窗内被踢则此处为 1013——PC-11 违反）", r.err)
 	}
+	assertSeqContinuity(t, r.acc, floodLast)
 }
 
 // PC-10 持续过载 1013（12-03，D-02/D-03）：SlowDwell=500ms 覆写（o.StopTimeout
@@ -1952,18 +1952,17 @@ func TestPerClientDwellNoKickWhileProgressing(t *testing.T) {
 		t.Fatalf("duty-cycle gateTransitions 差值 = %d, want ≥ 10（5 对停读/续读递增点未齐备）", diff)
 	}
 	// 全速收干至终结：零 1013、退出广播 1000、seq 连续（慢消费全程零丢数据）。
-	res := readUntilError(c)
-	select {
-	case r := <-res:
-		acc = append(acc, r.acc...)
-		var ce websocket.CloseError
-		if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
-			t.Fatalf("duty-cycle 后终结 = %v, want CloseError 1000（慢但在前进全程未被踢——D-02 违反）", r.err)
-		}
-		assertSeqContinuity(t, acc, floodLast)
-	case <-time.After(45 * time.Second):
-		t.Fatal("duty-cycle 后 45s 内未收齐洪水——全速收干阶段流未恢复")
+	// 收干等待用进展看门狗（15s 零进展判死流）替代绝对时限——第五次 flake 根治
+	//（前四次收口均在放大预算或调参，本处根治判据：速度非判据，停滞才是）。
+	res, progress := readUntilErrorProgress(c)
+	r := waitDrainWithProgress(t, res, progress, 15*time.Second,
+		"duty-cycle 后全速收干阶段流未恢复")
+	acc = append(acc, r.acc...)
+	var ce websocket.CloseError
+	if !errors.As(r.err, &ce) || ce.Code != websocket.StatusNormalClosure {
+		t.Fatalf("duty-cycle 后终结 = %v, want CloseError 1000（慢但在前进全程未被踢——D-02 违反）", r.err)
 	}
+	assertSeqContinuity(t, acc, floodLast)
 }
 
 // D-05 观测计数收口（12-03）：起止快照 GateTransitionsForTest 差值断言——
