@@ -63,14 +63,23 @@ func seqFlood() (argv []string, last int) {
 }
 
 // readUntilError 在 goroutine 中持续读 conn 直到出错，返回途中累积的 OUTPUT 载荷
-// 与终结错误（Pitfall 2 竞速形态的安全封装——调用方以 select time.After 收口）。
+// 与终结错误（Pitfall 2 竞速形态的安全封装——调用方以进展看门狗或无条件收口，
+// 禁止对读 goroutine 本身设绝对时限——见 waitDrainWithProgress）。
 type readResult struct {
 	acc []byte
 	err error
 }
 
 func readUntilError(c *websocket.Conn) <-chan readResult {
+	ch, _ := readUntilErrorProgress(c)
+	return ch
+}
+
+// readUntilErrorProgress 同 readUntilError，另返回累计 OUTPUT 字节计数器
+//（进展看门狗的观测通道——第五次 flake 根治面，见 waitDrainWithProgress）。
+func readUntilErrorProgress(c *websocket.Conn) (<-chan readResult, *atomic.Int64) {
 	ch := make(chan readResult, 1)
+	var n atomic.Int64
 	go func() {
 		var r readResult
 		for {
@@ -82,10 +91,42 @@ func readUntilError(c *websocket.Conn) <-chan readResult {
 			}
 			if len(data) > 0 && data[0] == proto.Output {
 				r.acc = append(r.acc, data[1:]...)
+				n.Add(int64(len(data) - 1))
 			}
 		}
 	}()
-	return ch
+	return ch, &n
+}
+
+// waitDrainWithProgress 以进展看门狗等待洪水收干至终结，返回读 goroutine 的
+// 最终结果。绝对时限判据（前四版 45s time.After）有结构性错误面：收干速度 =
+// seq 子进程产出 × PTY 管线 × runner 吞吐，慢环境合法超时（run 36404082978
+// 实证：同 SHA push run 16.78s 收齐、pull_request run 45s 耗尽翻车）——而测试
+// 判据本体是「慢但在前进：零丢数据、不被踢」（D-02/PC-11），与速度无关。
+//
+// 看门狗语义：每 tick 检查累计字节数，仍在前进即刷新计时；停滞超过 stall
+// （零字节推进）才判失败——洪水总量有界（Linux ~30.9MB / darwin ~6.9MB），
+// 只要流持续推进必达终结，无需外层总时限。stall 取值远大于慢环境合法停顿
+// （writer 阻塞亚秒级、outbox 回填毫秒级），15s 零进展即死流铁证。
+func waitDrainWithProgress(t *testing.T, res <-chan readResult, progress *atomic.Int64, stall time.Duration, why string) readResult {
+	t.Helper()
+	var last int64 = -1
+	lastMove := time.Now()
+	for {
+		select {
+		case r := <-res:
+			return r
+		default:
+		}
+		if cur := progress.Load(); cur != last {
+			last = cur
+			lastMove = time.Now()
+		}
+		if time.Since(lastMove) > stall {
+			t.Fatalf("收干停滞：%v 内零字节进展（累计 %d B）——%s", stall, last, why)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // assertKicked1013 断言 conn 在 timeout 内被 1013 slow_consumer 踢出终结（stall
