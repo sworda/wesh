@@ -10,6 +10,8 @@ PASS=0; FAIL=0
 P=""
 cleanup() { [ -n "$P" ] && kill -9 $P 2>/dev/null; rm -rf "$D"; }
 trap cleanup EXIT
+# 交互/外部信号路径兜底：EXIT trap 覆盖不到被信号打断的瞬时机（泄漏防线同 proc-guard.mjs）
+trap 'cleanup; exit 130' INT TERM HUP
 ok() { if [ "$2" = "$3" ]; then echo "  PASS  $1 ($2)"; PASS=$((PASS+1)); else echo "  FAIL  $1 (want=$3 got=$2)"; FAIL=$((FAIL+1)); fi; }
 
 # 自签证书（1 天有效，UAT 一次性）

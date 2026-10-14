@@ -3,7 +3,8 @@
 // （[ro] 标题、onclose 文案面板、resize 视觉重绘）仍由人工确认。
 //
 // 运行：node web/uat/phase02.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
 
@@ -33,7 +34,7 @@ function startWesh(args) {
   return new Promise((resolve, reject) => {
     // D-03 适配（Phase 3 裸跑收口）：显式 loopback bind——无凭据起服的合法前提
     //（默认 0.0.0.0 无凭据自 Phase 3 起拒绝启动）；协议断言语义零改动。
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);

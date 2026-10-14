@@ -42,7 +42,8 @@
 //
 // 运行：node web/uat/phase13.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh；
 // 先构建：go build -o /tmp/wesh-uat/wesh ./cmd/wesh）
-import { spawn, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { spawnTracked } from './lib/proc-guard.mjs';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
 
@@ -105,7 +106,7 @@ const redactArgs = (args) => args.map((a, i) => {
 // 断言通道）。子进程追踪收口：kill 恒 SIGKILL（CPU 受限 CI 泄漏级联减速实证纪律）。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

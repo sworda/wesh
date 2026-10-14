@@ -21,7 +21,8 @@
 // assertOutputClean 运行时自证零命中。
 //
 // 运行：node web/uat/phase08-journal.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { spawnTracked } from './lib/proc-guard.mjs';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
 
@@ -106,7 +107,7 @@ const redactArgs = (args) => args.map((a, i) => {
 function startWesh(args, { defaultListen = true, unix = false, env } = {}) {
   return new Promise((resolve, reject) => {
     const argv = defaultListen ? ['--bind', '127.0.0.1', '--port', '0', ...args] : args;
-    const child = spawn(WESH, argv, { stdio: ['ignore', 'pipe', 'pipe'], env: env ?? process.env });
+    const child = spawnTracked(WESH, argv, { stdio: ['ignore', 'pipe', 'pipe'], env: env ?? process.env });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

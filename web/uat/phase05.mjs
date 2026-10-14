@@ -16,7 +16,8 @@
 // 多 WS 建连即本 phase 特性；独立 spawn 纪律仅保留给需隔离凭据/容量配置的场景。
 //
 // 运行：node web/uat/phase05.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
@@ -81,7 +82,7 @@ const parseEvents = (text) =>
 // 可能的管道分块边界；stderr 持续捕获（S6 的 logEvent 断言通道——三要素无敏感串）。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

@@ -13,7 +13,8 @@
 // 鼠标事件 clientX/Y → cell 换算确定（cell = (floor(x/9), floor(y/17))）。
 //
 // 运行：node web/uat/phase04-dom.mjs [wesh 二进制路径]（默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
@@ -38,7 +39,7 @@ async function waitFor(fn, label, timeout = 5000) {
 
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });

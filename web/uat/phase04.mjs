@@ -12,7 +12,8 @@
 // 多客户端下同进程多 WS 建连已是 Phase 5 特性，独立 spawn 仅为场景间零状态干扰。
 //
 // 运行：node web/uat/phase04.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
 
@@ -43,7 +44,7 @@ const check = (id, name, ok, detail = '') => {
 // 所有场景显式 --bind 127.0.0.1 + --port 0（loopback 随机端口，与用户服务零干扰）。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
@@ -67,7 +68,7 @@ function startWesh(args) {
 // 而是直接非零退出，startWesh 等端口必然超时，必须走此 spawn-exit 形态）。
 function spawnExpectExit(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += d; });
     const to = setTimeout(() => {
