@@ -301,8 +301,12 @@ func TestStartZeroValueParity(t *testing.T) {
 // 断言 Credential 字段（creack/pty StartWithSize 只补 Setsid/Setctty 不覆盖）；
 // e2e 以 /usr/bin/id -u 观测子进程真实 uid。
 func TestDropPrivilegesSelf(t *testing.T) {
+	// darwin/XNU PTY slave 末次关闭丢弃未读 output queue（见 TestExecArrayNoShell
+	// 注释）——`id -u` 仅 3 字节且立即退出，ReadLoop 常未读到即整段丢失
+	// （macOS CI 实测 out==""，被误判为降权未生效）。同款处置：经 sh 驻留 0.2s
+	// 给读取窗口，降权 e2e 语义不变。
 	uid, gid := os.Getuid(), os.Getgid()
-	sess, err := Start([]string{"/usr/bin/id", "-u"}, StartOptions{Uid: uid, Gid: gid})
+	sess, err := Start([]string{"/bin/sh", "-c", `printf %s "$(/usr/bin/id -u)"; sleep 0.2`}, StartOptions{Uid: uid, Gid: gid})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
