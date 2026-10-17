@@ -21,7 +21,8 @@
 //（根 CODEBUDDY.md 四层测试策略第 2 层；allowProposedApi 纪律同款）。
 //
 // 运行：node web/uat/phase05-dims.mjs [wesh 二进制路径]（默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import pkg from '@xterm/headless';
 const { Terminal } = pkg;
 
@@ -53,7 +54,7 @@ const check = (name, actual, expected) => {
 // 本脚本不走分享链接（无认证模式裸 Hello），无 token 面——红线天然不触。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

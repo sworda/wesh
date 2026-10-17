@@ -17,7 +17,8 @@
 // helper），spawn 实例 SIGKILL 收口仅用于未预期退出场景的清理。
 //
 // 运行：node web/uat/phase06.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
 
@@ -88,7 +89,7 @@ const redactArgs = (args) => args.map((a, i) => {
 
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

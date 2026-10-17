@@ -2,7 +2,8 @@
 // 166x61 → 首帧落定 → +8s 后 INPUT "echo MARK:$fish_pid\r" → 观测 30s 内输出帧：
 // MARK 输出是否到达、字节是否停流。若 loopback 复现 = 纯 herdr/服务端问题，
 // 与浏览器/转发器/Windows 无关。零依赖 Node ≥22。
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import os from 'node:os';
 
 const WESH = '/tmp/wesh-uat/wesh';
@@ -19,7 +20,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function startWesh() {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', '--session-mode', 'per-client', '--writable', '--insecure-http', '--', HERDR, '--session', SESSION], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', '--session-mode', 'per-client', '--writable', '--insecure-http', '--', HERDR, '--session', SESSION], { stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('wesh 启动超时')); }, 8000);
     child.stderr.on('data', () => {});

@@ -29,7 +29,8 @@
 //   pw 层不纳入矩阵（双机拓扑硬约束，RESEARCH OQ3 裁决）：Windows 工作站独立执行
 //   node web/uat/pw/phase14-pw.mjs——汇总表末尾注记，收口闸人工两段式
 //   （Linux runner 全绿 + Windows pw 全绿）。
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { spawnTracked, leakedPids } from './lib/proc-guard.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,7 +91,7 @@ function runScript(name) {
   return new Promise((resolve) => {
     const t0 = Date.now();
     const tag = norm(name);
-    const child = spawn('node', [path.join(HERE, name), WESH], {
+    const child = spawnTracked('node', [path.join(HERE, name), WESH], {
       cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
     });
     let timedOut = false;
@@ -147,4 +148,10 @@ for (const r of results) {
 console.log('-------------------------');
 console.log(`总计: ${passN}/${results.length} PASS，全程 ${(totalMs / 1000).toFixed(1)}s`);
 console.log('注: pw 层独立执行入口（Windows 工作站）: node web/uat/pw/phase14-pw.mjs —— 双机拓扑硬约束不纳入本矩阵（收口闸人工两段式）');
+
+// 残留核验：矩阵跑完扫描 WESH 二进制存活实例（proc-guard 只读核验——泄漏可见而非静默）。
+// 不接管 exit code（门禁语义归各子脚本 exit code，14-12 收口闸口径）；残留仅提示且不
+// 自动 kill（并行跑批时他人实例同二进制，跨进程 kill 即 D-09 污染事故的反向形态）
+const leaked = leakedPids(WESH);
+console.log(`残留核验: ${leaked.length === 0 ? '零命中（清洁）' : `⚠ ${leaked.length} 个残留 pid=${leaked.join(' ')}（人工 pkill -f ${WESH}）`}`);
 process.exit(passN === results.length ? 0 : 1);

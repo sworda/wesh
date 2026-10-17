@@ -46,7 +46,8 @@
 //   （默认 /tmp/wesh-uat/wesh 与 ~/.local/bin/herdr；先构建：
 //    go build -o /tmp/wesh-uat/wesh ./cmd/wesh。启动打 herdr --version 进
 //    日志——诊断材料非断言，版本漂移先核版本纪律 D-09）
-import { spawn, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { spawnTracked } from './lib/proc-guard.mjs';
 import os from 'node:os';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
@@ -132,7 +133,7 @@ const redactArgs = (args) => args.map((a, i) => {
 // CI 泄漏级联减速实证纪律——清理序列内的常规 kill 兜底除外）。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

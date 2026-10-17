@@ -2,7 +2,8 @@
 // SEC-07 多值头/空值头真实服务行为：原始 socket 手构 WS Upgrade（两行同名头/空值头），
 // 无效 ticket 触发 auth_failed close 事件行，断言 remote_user 取首值 / 空值不出键。
 // 红线：凭据值只作请求构造材料，永不进输出。
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import net from 'node:net';
 import crypto from 'node:crypto';
 
@@ -31,7 +32,7 @@ const parseEvents = (text) =>
 
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '', stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('启动超时')); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });

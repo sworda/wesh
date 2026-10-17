@@ -27,7 +27,8 @@
 // 运行：node web/uat/phase08.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
 // 调试：PHASE08_ONLY=S1,S3 node web/uat/phase08.mjs（场景过滤，仅调试用——提交形态
 // 恒为全场景开启）。
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 
 const WESH = process.argv[2] ?? '/tmp/wesh-uat/wesh';
 
@@ -112,7 +113,7 @@ const redactArgs = (args) => args.map((a, i) => {
 function startWesh(args, { defaultListen = true, unix = false, env } = {}) {
   return new Promise((resolve, reject) => {
     const argv = defaultListen ? ['--bind', '127.0.0.1', '--port', '0', ...args] : args;
-    const child = spawn(WESH, argv, { stdio: ['ignore', 'pipe', 'pipe'], env: env ?? process.env });
+    const child = spawnTracked(WESH, argv, { stdio: ['ignore', 'pipe', 'pipe'], env: env ?? process.env });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

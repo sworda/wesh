@@ -23,7 +23,8 @@
 // 运行：node web/uat/phase07.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
 // 调试：PHASE07_ONLY=S1,S3 node web/uat/phase07.mjs（场景过滤，仅调试用——提交形态
 // 恒为全场景开启）。
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import net from 'node:net';
@@ -117,7 +118,7 @@ const redactArgs = (args) => args.map((a, i) => {
 function startWesh(args, { defaultListen = true, unix = false, env } = {}) {
   return new Promise((resolve, reject) => {
     const argv = defaultListen ? ['--bind', '127.0.0.1', '--port', '0', ...args] : args;
-    const child = spawn(WESH, argv, { stdio: ['ignore', 'pipe', 'pipe'], env: env ?? process.env });
+    const child = spawnTracked(WESH, argv, { stdio: ['ignore', 'pipe', 'pipe'], env: env ?? process.env });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;
@@ -163,7 +164,7 @@ function startWesh(args, { defaultListen = true, unix = false, env } = {}) {
 // S1c/S1d 配置加载失败 exit 2 场景消费；stderr 全量返回供类别/探针断言。
 function spawnExpectExit(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += d; });
     const to = setTimeout(() => {

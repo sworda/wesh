@@ -22,7 +22,8 @@
 // 弹窗形态、多端像素级一致性、真实节流工具下的慢网——见 05-UAT.md 豁免注记。
 //
 // 运行：node web/uat/phase05-dom.mjs [wesh 二进制路径]（默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
@@ -72,7 +73,7 @@ async function waitFor(fn, label, timeout = 5000) {
 // token 值只存闭包变量作断言材料——红线：永不进 check detail/控制台输出。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;
@@ -398,7 +399,7 @@ async function d5SlowConsumerPanel() {
   // 被测端：jsdom 页开 ro 链接
   const ctx = await loadTerminal({ scheme: inst.scheme, port: inst.port }, { path: pathFromUrl(inst.shareRO) });
   // 驱动端：独立子进程（rw owner 制造输出洪水）——独立事件循环不随主进程阻塞 stall
-  const driver = spawn(process.execPath, [new URL('./phase05-flood-driver.mjs', import.meta.url).pathname, String(inst.port)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const driver = spawnTracked(process.execPath, [new URL('./phase05-flood-driver.mjs', import.meta.url).pathname, String(inst.port)], { stdio: ['ignore', 'pipe', 'pipe'] });
   let driverOut = '';
   driver.stdout.on('data', (d) => { driverOut += d.toString(); });
   driver.stderr.on('data', () => {});

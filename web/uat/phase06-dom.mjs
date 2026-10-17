@@ -44,7 +44,8 @@
 // detail 只打状态码/布尔/形状/文案常量；assertOutputClean() 运行时自净断言兜底（review #7）。
 //
 // 运行：node web/uat/phase06-dom.mjs [wesh 二进制路径]（默认 /tmp/wesh-uat/wesh）
-import { spawn } from 'node:child_process';
+null
+import { spawnTracked } from './lib/proc-guard.mjs';
 import { createServer } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
@@ -98,7 +99,7 @@ const tokenFromUrl = (url) => /\/s\/([^/]+)\//.exec(url)[1];
 // （无认证模式，/api/attach 404 探测直连链路既有），分享链接行不用于导航。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     let settling = false;

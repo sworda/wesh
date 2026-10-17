@@ -7,7 +7,8 @@
 // 永不进入 check detail 或任何控制台输出——detail 只打印状态码/布尔/耗时。
 //
 // 运行：node web/uat/phase03.mjs [wesh 二进制路径]   （默认 /tmp/wesh-uat/wesh）
-import { spawn, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { spawnTracked } from './lib/proc-guard.mjs';
 import { promisify } from 'node:util';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,7 +57,7 @@ const check = (id, name, ok, detail = '') => {
 // 默认 0.0.0.0 无凭据自 Phase 3 起拒绝启动）。
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, ['--bind', '127.0.0.1', '--port', '0', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`wesh 启动超时: ${args.join(' ')}; stderr=${stderr}`)); }, 8000);
@@ -80,7 +81,7 @@ function startWesh(args) {
 // listening 行而是直接非零退出，startWesh 等端口必然超时，必须走此 spawn-exit 形态）。
 function spawnExpectExit(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += d; });
     const to = setTimeout(() => {

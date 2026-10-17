@@ -1,7 +1,8 @@
 // Phase 07 UAT B3 自动化证据脚本（Linux 侧运行）
 // OPS-04: ① --cwd 符号链接按内核语义解析；② --term 任意字符串不校验（$TERM 原样）；
 //         ③ --stop-timeout 极大值只推迟 KILL 不阻塞 exitf（子进程死亡即时退出）
-import { spawn, execSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
+import { spawnTracked } from './lib/proc-guard.mjs';
 import { symlinkSync, rmSync, existsSync } from 'node:fs';
 
 const WESH = '/tmp/wesh-uat/wesh';
@@ -28,7 +29,7 @@ const outputText = (frames, fromIdx = 0) =>
 
 function startWesh(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnTracked(WESH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '', stdoutBuf = '';
     const to = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`启动超时: stderr=${stderr}`)); }, 8000);
     child.stderr.on('data', (d) => { stderr += d; });
