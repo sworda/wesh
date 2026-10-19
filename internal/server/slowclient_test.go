@@ -62,6 +62,19 @@ func seqFlood() (argv []string, last int) {
 	return []string{"seq", "1", "4000000"}, 4000000
 }
 
+// seqFloodLarge 供 dwell duty-cycle 使用：每轮停读→续读会把客户端侧 TCP
+// 吸收带（Linux 自动调优实测上限 ~6MiB 读 + ~4MiB 写，合计 ~10MiB）读空，
+// 轮数与洪水总量必须按此预算。3 轮 × ~10MiB ≈ 30MiB，5,000,000 行 ≈ 38.7MB
+// 留 ~28% 余量；4,000,000 行（30.9MB）在三次全速读后即耗尽——第 4 轮停读点
+// 永不发生（perclient_test.go 的 gateTransitions +7 超时根因）。
+// darwin 分支不变：kqueue 路径吸收带仅 ~320KiB/端，6.9MB 足够 3 轮。
+func seqFloodLarge() (argv []string, last int) {
+	if runtime.GOOS == "darwin" {
+		return []string{"seq", "1", "999999"}, 999999
+	}
+	return []string{"seq", "1", "5000000"}, 5000000
+}
+
 // readUntilError 在 goroutine 中持续读 conn 直到出错，返回途中累积的 OUTPUT 载荷
 // 与终结错误（Pitfall 2 竞速形态的安全封装——调用方以进展看门狗或无条件收口，
 // 禁止对读 goroutine 本身设绝对时限——见 waitDrainWithProgress）。

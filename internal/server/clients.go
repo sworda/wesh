@@ -914,7 +914,7 @@ func (s *Server) emitDetachLocked(c *client, reason string, code websocket.Statu
 	if c.remoteUser != "" {
 		attrs = append(attrs, slog.String("remote_user", c.remoteUser))
 	}
-	emitEvent(attrs...)
+	s.emitEvent(attrs...)
 }
 
 // maybeExitWhenEmptyLocked 是注册表空触发断开退出的判定与执行（06-02，
@@ -969,7 +969,7 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 	s.exitEmptySignaled = true // 空纪元内幂等（08-review WR-01）：promote 踢出致空与外层移除点只发一次；新 attach（registerLocked 成功后同 hubMu 清零）开启新纪元
 	if s.exitWhenEmptyGrace == 0 {
 		// 立即形态：无计时器，迁移点直接触发（模式分支动作见函数头注释）。
-		logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)
+		s.logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty", c.remoteUser)
 		if s.sessionMode == SessionModePerClient {
 			// 第二终结源触发（不发信号——末端断开的 teardown 已 SIGHUP
 			// 其会话；置位 + 唤醒 pcSupervisor 重估两行动作）。
@@ -1003,7 +1003,7 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 		if s.exitEmptyTimer != t || s.exiting || len(s.registry.set) != 0 {
 			return
 		}
-		logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
+		s.logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty", remoteUser)
 		if s.sessionMode == SessionModePerClient {
 			// 第二终结源触发（宽限到期形态——同立即形态两行动作）。
 			s.pcExitReq = true
@@ -1013,7 +1013,7 @@ func (s *Server) maybeExitWhenEmptyLocked(c *client) {
 		s.stopChildLocked() // shared：信号幂等（已死 pgid ESRCH 静默）
 	})
 	s.exitEmptyTimer = t
-	logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait", c.remoteUser)
+	s.logEvent(c.remote, websocket.StatusNormalClosure, "exit_when_empty_wait", c.remoteUser)
 }
 
 // stopChildLocked 是 D-22 stop-signal 序列的统一出口（07-04，OPS-04）：向子进程
@@ -1044,5 +1044,5 @@ func (s *Server) cancelExitEmptyTimerLocked(remote, remoteUser string) {
 	}
 	s.exitEmptyTimer.Stop()
 	s.exitEmptyTimer = nil
-	logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty_cancel", remoteUser)
+	s.logEvent(remote, websocket.StatusNormalClosure, "exit_when_empty_cancel", remoteUser)
 }

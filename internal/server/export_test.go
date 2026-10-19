@@ -9,10 +9,10 @@ import (
 )
 
 // LockStderr 供 server_test 包的 captureStderr 在置换/恢复 os.Stderr 两个
-// 写点持写锁：与 stderrW.Write 的 RLock 配对，把「置换写」与「在途事件读」
-// 串行化（08-01 门禁修正——跨测试遗留 handler 的事件写出曾与下一测试的
-// 置换构成 data race）。返回解锁函数；调用方必须在置换语句后立即解锁，
-// 禁止整个捕获期持锁（事件写出会全部阻塞，waitHandlers 死锁）。
+// 写点持写锁：与 newEventLogger 装配期快照读的 RLock 配对，建立
+// happens-before（08-01 门禁修正——置换写与快照读曾是裸访问的 data race；
+// 事件写出本身已不再读全局变量，见 log.go）。返回解锁函数；调用方必须在
+// 置换语句后立即解锁，禁止整个捕获期持锁（否则装配期快照会阻塞）。
 func LockStderr() func() {
 	stderrMu.Lock()
 	return stderrMu.Unlock

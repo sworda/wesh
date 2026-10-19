@@ -534,15 +534,17 @@ func TestThrottledRetryAfter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCredential: %v", err)
 	}
+	// 捕获必须在装配前：per-Server logger 在 server.New 装配期快照
+	// os.Stderr（log.go newEventLogger），晚于装配则事件写入真实 stderr。
+	restore := captureStderr(t)
+	defer restore() // 失败路径兜底恢复 os.Stderr（幂等）
+
 	_, wsURL, waitHandlers := startTrackedServerWith(t, []string{"/bin/cat"}, server.Options{
 		Writable:     true,
 		Credentials:  []server.Credential{cred},
 		ThrottleBase: 200 * time.Millisecond,
 	})
 	url := attachURL(wsURL)
-
-	restore := captureStderr(t)
-	defer restore() // 失败路径兜底恢复 os.Stderr（幂等）
 
 	post := func(user, pass string) *http.Response {
 		t.Helper()
@@ -611,14 +613,16 @@ func TestAuthFailedNoUsername(t *testing.T) {
 	// emit 与本测试的捕获窗收口无同步边——迟到的 emit 会落入后继捕获测试的
 	// 窗口（13-03 TestPerClientSessionEnd 严格计数在全程 -race 下实测受害）。
 	// 本测试改为体内显式收口（下方 Kill + waitExit）。
+	// 捕获必须在装配前：per-Server logger 在 server.New 装配期快照
+	// os.Stderr（log.go newEventLogger）。
+	restore := captureStderr(t)
+	defer restore()
+
 	exitCh, wsURL, _, sess, waitHandlers := startEventsServerWith(t, []string{"/bin/cat"}, server.Options{
 		Writable:    true,
 		Credentials: []server.Credential{cred},
 	})
 	url := attachURL(wsURL)
-
-	restore := captureStderr(t)
-	defer restore()
 
 	// 错凭据（独特用户名——断言材料，非真实账号）→ 401 auth_failed。
 	resp := postAttach(t, url, "no-such-user-7f3a", "no-such-pass", nil)

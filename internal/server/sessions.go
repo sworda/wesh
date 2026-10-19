@@ -292,7 +292,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		retry := int64((wait + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.FormatInt(retry, 10))
 		s.mc.authThrottled.Add(1)
-		emitEvent(
+		s.emitEvent(
 			slog.String("event", "throttled"),
 			slog.String("remote", s.proxy.remote(r)),
 			slog.Int("code", http.StatusTooManyRequests),
@@ -311,7 +311,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	if !matchCredential(s.credentials, req.User, req.Pass) {
 		s.throttle.recordFail(ip, now)
 		s.mc.authFailed.Add(1)
-		logEvent(s.proxy.remote(r), websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed, s.proxy.remoteUser(r))
+		s.logEvent(s.proxy.remote(r), websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed, s.proxy.remoteUser(r))
 		http.Error(w, authRequiredBody, http.StatusUnauthorized)
 		return
 	}
@@ -347,7 +347,7 @@ func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 //
 // 无认证模式（len(credentials)==0）不装配本中间件（Handler 分支保证）。
 func (s *Server) sessionAuth(next http.Handler) http.Handler {
-	basic := basicAuth(next, s.credentials, s.throttle, s.proxy, &s.mc)
+	basic := basicAuth(s.eventLogger(), next, s.credentials, s.throttle, s.proxy, &s.mc)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(sessionCookieName); err == nil {
 			if ok, renewed := s.sessions.validate(c.Value, time.Now()); ok {

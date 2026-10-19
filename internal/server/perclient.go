@@ -143,9 +143,9 @@ const capacityMessage = "server is at capacity"
 // （协议零改动红线），分辨率由 logEvent 事件名承担（max_clients vs
 // spawn_failed——「wire 聚合、日志细分」，SEC-07 先例同构，D-04）。
 // 两调用点：upgradePerClient 的 pre-spawn 闸与注册点复检回收分支。
-func rejectCapacity(ctx context.Context, c *websocket.Conn, remote, remoteUser string) {
+func rejectCapacity(l *slog.Logger, ctx context.Context, c *websocket.Conn, remote, remoteUser string) {
 	_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, capacityMessage))
-	logEvent(remote, websocket.StatusInternalError, "max_clients", remoteUser)
+	logEventWith(l, remote, websocket.StatusInternalError, "max_clients", remoteUser)
 	_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
 }
 
@@ -184,7 +184,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 		// 出，建立「拒绝可观测 ⟹ 计数已递增」的单向序。
 		s.mc.ptySpawnThrottled.Add(1)
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, capacityMessage))
-		logEvent(remote, websocket.StatusInternalError, "spawn_throttled", remoteUser)
+		s.logEvent(remote, websocket.StatusInternalError, "spawn_throttled", remoteUser)
 		_ = c.Close(websocket.StatusInternalError, proto.ErrServerError)
 		return nil
 	}
@@ -204,7 +204,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	full := len(s.pcSessions) >= s.maxClients
 	s.hubMu.Unlock()
 	if full {
-		rejectCapacity(ctx, c, remote, remoteUser)
+		rejectCapacity(s.eventLogger(), ctx, c, remote, remoteUser)
 		return nil
 	}
 	// spawn 在 hubMu 之外（Anti-Pattern 1：fork/exec 阻塞不得冻结全控制面）；
@@ -225,7 +225,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 		// 同名机器串）。收口 = 关连接零残留：零 client 构造、零注册、零
 		// pcSessions 登记；spawn 失败由 pty 包保证 fd 完好（Pitfall 5）。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrServerError, "failed to start process"))
-		logEvent(remote, websocket.StatusInternalError, "spawn_failed", remoteUser)
+		s.logEvent(remote, websocket.StatusInternalError, "spawn_failed", remoteUser)
 		// 13-05（OPS-12 D-08）ptySpawnFailures 递增点：logEvent 同点（失败分支
 		// 单点——与 13-02 throttled 拒绝序列同形态的计数器分辨率）。
 		s.mc.ptySpawnFailures.Add(1)
@@ -265,7 +265,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	if len(s.pcSessions) >= s.maxClients {
 		s.hubMu.Unlock()
 		s.reapOrphanSession(sess)
-		rejectCapacity(ctx, c, remote, remoteUser)
+		rejectCapacity(s.eventLogger(), ctx, c, remote, remoteUser)
 		return nil
 	}
 	cl := &client{
@@ -326,7 +326,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	if cl.remoteUser != "" {
 		attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
 	}
-	emitEvent(attachAttrs...)
+	s.emitEvent(attachAttrs...)
 	// 13-05（OPS-12 D-09 后半）session_start 事件（每次 spawn 成功恰一条）：
 	// 紧随 attach 事件之后、startSessionGoroutines 之前（shared 母本
 	// server.go :597-601「审计事件先于任何连接/会话流量落流」同序——程序序
@@ -336,7 +336,7 @@ func (s *Server) upgradePerClient(ctx context.Context, c *websocket.Conn, remote
 	// 写一次字段（13-03 session_end duration 数据源，本事件起点同源）。
 	// 零敏感值红线（log.go:85-89）：pid 数值 + client_id 定长数值关联键，
 	// 无 token/ticket/凭据面（T-13-17）。
-	emitEvent(slog.String("event", "session_start"), slog.Int("pid", pc.sess.Cmd.Process.Pid), slog.Int64("client_id", cl.attachSeq))
+	s.emitEvent(slog.String("event", "session_start"), slog.Int("pid", pc.sess.Cmd.Process.Pid), slog.Int64("client_id", cl.attachSeq))
 	c.SetReadLimit(proto.ReadLimitPostAuth)
 	s.startSessionGoroutines(ctx, cl, pc)
 	return cl
@@ -534,7 +534,7 @@ func (s *Server) sessionWatcher(cl *client, pc *pcSession) {
 			endAttrs = append(endAttrs, slog.String("signal", name))
 		}
 	}
-	emitEvent(endAttrs...)
+	s.emitEvent(endAttrs...)
 	s.hubMu.Lock()
 	pc.exitCode = code
 	pc.reaped = true
