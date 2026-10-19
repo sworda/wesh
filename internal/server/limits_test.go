@@ -89,16 +89,18 @@ func readCloseErr(t *testing.T, c *websocket.Conn, ctx context.Context) websocke
 // captureStderr 将进程 os.Stderr 替换为管道写端，返回恢复函数：调用即恢复
 // os.Stderr 并返回捕获全文（幂等，可 defer 兜底）。
 //
-// 进程全局替换不并行——同包测试默认串行（无 t.Parallel），且五测中仅
-// TestOversize1009 一处断言 stderr（plan 裁决：避免 fd 替换竞争，其余以
-// CloseError 为准）。恢复时序安全（多客户端形态）：logEvent 在服务端读循环内、
-// 客户端观测 CloseError 之后数微秒写出——TestOversize1009 以 assertNoExit 的
-// 200ms 静默窗口覆盖该余量（远超读循环调度延迟），恢复无竞态。
+// 硬约束：必须在任何 server 装配（server.New / newTestServer / startXxx）之前
+// 调用。事件 writer 由 server.New 装配期快照 os.Stderr（log.go newEventLogger）
+// ——先装配后捕获的 server 固定写真实 stderr，捕获必为空。
 //
-// 置换/恢复两个写点经 server.LockStderr 持写锁（08-01 门禁修正）：上一测试
-// 未追踪 server 的遗留 handler goroutine 可能在置换瞬间仍在 stderrW.Write
-// 内读 os.Stderr（实测 ~1/3 命中率的 data race）——写锁与读侧 RLock 互斥，
-// 建立 happens-before。锁仅裹置换语句本身，不在捕获期持有。
+// 隔离语义（跨测试串味根治）：每个 Server 持有装配期快照的 writer，前一测试
+// 遗留 goroutine 的迟到 detach/session_end 只会写入它自己的 writer（捕获恢复
+// 后即已关闭），不会落进下一测试的管道。CI 36414414529 的
+// TestRemoteUserLogging 计数 3≠2 即旧动态 writer 的该污染形态。
+//
+// 进程全局替换不并行——同包测试默认串行（无 t.Parallel）。置换/恢复两个
+// 写点经 server.LockStderr 持写锁：与 server.New 内快照读的 RLock 互斥，
+// 建立 happens-before（data race 门禁）。锁仅裹置换语句本身，不在捕获期持有。
 func captureStderr(t *testing.T) func() string {
 	t.Helper()
 	r, w, err := os.Pipe()

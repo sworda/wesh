@@ -118,3 +118,26 @@ func TestLogEventJSON(t *testing.T) {
 		t.Fatalf("remote_user 键不应出现（未配置 --auth-header）: %v", ev)
 	}
 }
+// TestEventWriterSnapshotIsolation 锁定「事件 writer 在 Server 装配期快照」的
+// 隔离语义——跨测试串味根因回归（CI run 36414414529：server 169.196s，
+// TestRemoteUserLogging 读到前序测试遗留的 detach，携 remote_user 计数 3≠2）。
+//
+// 确定性复现旧实现的污染窗口：capture1 内装配 server（新实现快照 pipe1）；
+// restore1 后开启 capture2，再触发该 server 发事件。旧实现每次写动态读
+// os.Stderr，事件落入 pipe2（本断言立即失败）；新实现写已关闭的 pipe1，
+// pipe2 必须为空。不依赖调度时序，故为 flake 的稳定回归锁。
+func TestEventWriterSnapshotIsolation(t *testing.T) {
+	restore1 := captureStderr(t)
+	_, _, _, srv := newHandleTestServer(t, server.SessionModeShared, []string{"/bin/cat"}, func(o *server.Options) {
+		// Shutdown 的 stop-signal 段有界等待：缩短以免测试尾部多等默认 StopTimeout。
+		o.StopTimeout = 50 * time.Millisecond
+	})
+	_ = restore1()
+
+	restore2 := captureStderr(t)
+	srv.Shutdown() // emit shutdown——同步写事件出口
+	out2 := restore2()
+	if strings.TrimSpace(out2) != "" {
+		t.Fatalf("后续捕获管道收到前序 server 的事件（writer 未在装配期快照）: %q", out2)
+	}
+}

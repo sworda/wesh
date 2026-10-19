@@ -61,6 +61,13 @@ import (
 func TestExitWhenEmptyImmediate(t *testing.T) {
 	for _, mode := range []string{server.SessionModeShared, server.SessionModePerClient} {
 		t.Run("mode="+mode, func(t *testing.T) {
+			// 捕获必须在装配前：per-Server logger 在 server.New 装配期快照
+			// os.Stderr（log.go newEventLogger）。shared 列不消费捕获，故条件化。
+			var capture func() string
+			if mode == server.SessionModePerClient {
+				capture = captureStderr(t)
+				defer func() { _ = capture() }()
+			}
 			exitCh, wsURL := newTestServer(t, mode, []string{"/bin/cat"}, func(o *server.Options) {
 				o.ExitWhenEmpty = true
 				o.ExitWhenEmptyGrace = 0
@@ -77,9 +84,6 @@ func TestExitWhenEmptyImmediate(t *testing.T) {
 			//	  进程组 + 退出状态 255 对齐（Go 桩常量 -1）+ exit_when_empty 事件
 			//	  恰 1 条。
 			if mode == server.SessionModePerClient {
-				restore := captureStderr(t)
-				defer restore() // 失败路径兜底恢复 os.Stderr（幂等，limits_test.go 先例）
-
 				if err := c.Close(websocket.StatusNormalClosure, ""); err != nil {
 					t.Fatalf("close: %v", err)
 				}
@@ -89,7 +93,7 @@ func TestExitWhenEmptyImmediate(t *testing.T) {
 				waitExit(t, exitCh, -1)
 				assertNoExit(t, exitCh)
 
-				out := restore()
+				out := capture()
 				evs := parseEvents(t, out)
 				if n := countByEvent(evs, "exit_when_empty"); n != 1 {
 					t.Fatalf("exit_when_empty count = %d, want 1（per-client 立即形态触发事件；out=%q）", n, out)

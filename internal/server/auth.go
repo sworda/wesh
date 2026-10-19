@@ -110,7 +110,7 @@ If you opened a share link and were prompted to log in, the link is invalid or h
 // authFailed+1、429 站点 authThrottled+1（计数与事件同址递增，metrics 只加
 // 计数不打行；无 IP label——per-IP 明细查日志事件，metrics 只看总量）。
 // 三调用点同改（server.go root / attach 链 / /metrics 注册）传 &s.mc。
-func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxyInfo, mc *metricsCounters) http.Handler {
+func basicAuth(l *slog.Logger, next http.Handler, creds []Credential, th *throttleStore, p proxyInfo, mc *metricsCounters) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := p.clientIP(r)
 		if wait, throttled := th.retryAfter(ip, time.Now()); throttled {
@@ -129,7 +129,7 @@ func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxy
 			if u := p.remoteUser(r); u != "" {
 				attrs = append(attrs, slog.String("remote_user", u))
 			}
-			emitEvent(attrs...)
+			emitWith(l, attrs...)
 			// 08-04 OPS-07（D-06）：计数与事件同址递增（429 事件行既有，
 			// metrics 只加计数不打行；无 IP label——per-IP 明细查日志事件）。
 			mc.authThrottled.Add(1)
@@ -148,7 +148,7 @@ func basicAuth(next http.Handler, creds []Credential, th *throttleStore, p proxy
 				th.recordFail(ip, time.Now())
 			}
 			w.Header().Set("WWW-Authenticate", `Basic realm="wesh", charset="UTF-8"`) // RFC 7617
-			logEvent(p.remote(r), websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed, p.remoteUser(r))
+			logEventWith(l, p.remote(r), websocket.StatusCode(http.StatusUnauthorized), proto.ErrAuthFailed, p.remoteUser(r))
 			mc.authFailed.Add(1) // 08-04 OPS-07（D-06）：计数与事件同址递增（同上纪律）
 			http.Error(w, authRequiredBody, http.StatusUnauthorized)
 			return

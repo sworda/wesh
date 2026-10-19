@@ -17,10 +17,13 @@ package server
 //   - 启动行/分享链接行（含 token）与 wesh: warning: 警告行保持人读文本不变
 //     （D-14/D-16）——operator 交互输出与机器审计事件两通道分流，不经本文件。
 //
-// 装配形态（08-RESEARCH Pattern 1/Open Question 倾向）：server 包包级 eventLog
-// 单例，不调 slog.SetDefault（不污染全局默认 logger，测试隔离性更好；D-15
-// 恒 JSON 恒 INFO 无配置面）。JSONHandler 内部 mu 串行化记录（GOROOT
-// json_handler.go:36），并发 emit 行级原子——每记录恒完整一行。
+// 装配形态（08-RESEARCH Pattern 1/Open Question 倾向）：每个 Server 实例持有
+// 自己的 slog.Logger（New 装配期构造，writer 于同一刻快照），不调
+// slog.SetDefault（不污染全局默认 logger；D-15 恒 JSON 恒 INFO 无配置面）。
+// per-Server 而非包级单例是测试隔离的结构性要求：跨测试遗留 goroutine 的
+// 迟到事件只能写入它所属实例的 writer，不会串入下一测试的捕获管道。
+// JSONHandler 内部 mu 串行化记录（GOROOT json_handler.go:36），并发 emit
+// 行级原子——每记录恒完整一行。
 
 import (
 	"context"
@@ -31,39 +34,48 @@ import (
 	"github.com/coder/websocket"
 )
 
-// stderrW 动态解析 os.Stderr——保持迁移前 logEvent「调用时解析 os.Stderr
-// 变量」语义（08-RESEARCH Pitfall 1：NewJSONHandler 构造时捕获 io.Writer，
-// 若直接传 os.Stderr 则 captureStderr 置换后事件行写进旧 writer，全部
-// stderr 断言测试结构性失明）。每次 Write 调用时读 os.Stderr 变量是
-// 捕获语义的唯一保真形态。
+// stderrMu 只负责「装配期读 os.Stderr」与「测试置换 os.Stderr」之间的
+// data race 同步：写入侧各自持有装配期快照的 writer，不再在每次 Write 时
+// 反查全局变量。读侧 RLock、置换侧（export_test.go LockStderr）Lock。
 //
-// stderrMu 串行化「读 os.Stderr」与「测试置换 os.Stderr」（08-01 门禁修正）：
-// 动态 writer 的读与 captureStderr 的写都是对同一包级变量的裸访问，跨测试
-// 遗留 handler goroutine 的事件写出会与下一测试的置换构成 data race——
-// 读侧 RLock、置换侧（export_test.go LockStderr）Lock，两侧经同一互斥锁
-// 建立 happens-before，race detector 认可。仅在读/置换瞬间持锁，不在整个
-// 捕获期持写锁（否则事件写出全阻塞，waitHandlers 死锁）。
+// 历史教训：旧实现每次 Write 动态读 os.Stderr，使跨测试遗留 goroutine 的
+// 事件写出会落进「下一个测试刚置换的捕获管道」，表现为 TestRemoteUserLogging
+// 等断言读到前序测试的 detach/session_end（CI 169.196s 形态）。
 var stderrMu sync.RWMutex
 
-type stderrW struct{}
-
-func (stderrW) Write(p []byte) (int, error) {
+// newEventLogger 在 Server 装配期快照当前 os.Stderr 作为事件 writer。
+// 快照点是根因修复：captureStderr 在装配前置换 os.Stderr，故本测试的
+// server 固定写入自己的捕获管道；此后其他测试再置换全局变量，也不会
+// 把本 server 遗留 goroutine 的输出导向新测试的管道。
+func newEventLogger() *slog.Logger {
 	stderrMu.RLock()
-	defer stderrMu.RUnlock()
-	return os.Stderr.Write(p)
+	w := os.Stderr
+	stderrMu.RUnlock()
+	return slog.New(slog.NewJSONHandler(w, nil))
 }
 
-// eventLog 包级单例：JSONHandler(stderrW{}, nil)——nil opts 即默认键
-// time/level/msg + LevelInfo 阈值（D-15 恒 INFO 无配置面）。
-var eventLog = slog.New(slog.NewJSONHandler(stderrW{}, nil))
-
-// emitEvent 是全部运行期事件的底层出口：msg 恒 "event"（D-18），属性集由
+// emitWith 是全部运行期事件的底层出口：msg 恒 "event"（D-18），属性集由
 // 调用方组好传入。08-02 扩展字段事件（attach/detach+reason/session_* 等）
 // 的挂点即本函数；本 plan（08-01）仅 logEvent 消费。
 // 禁止 kv 交替参数形态（奇数/非 string 键产出 !BADKEY，GOROOT logger.go:187）
 // ——一律 slog.String/Int 类型化 attr 经 LogAttrs 发出。
-func emitEvent(attrs ...slog.Attr) {
-	eventLog.LogAttrs(context.Background(), slog.LevelInfo, "event", attrs...)
+func emitWith(l *slog.Logger, attrs ...slog.Attr) {
+	l.LogAttrs(context.Background(), slog.LevelInfo, "event", attrs...)
+}
+
+// eventLogger 返回实例 logger；零值 Server（白盒测试 &Server{} 直构造的
+// 既有纪律，见 clients_test.go/resize_test.go）回退到装配期语义的默认
+// logger——不写回字段，故并发调用无数据竞争。
+func (s *Server) eventLogger() *slog.Logger {
+	if s.logger != nil {
+		return s.logger
+	}
+	return newEventLogger()
+}
+
+// emitEvent 为 Server 实例出口（per-Server logger，不与进程全局共享）。
+func (s *Server) emitEvent(attrs ...slog.Attr) {
+	emitWith(s.eventLogger(), attrs...)
 }
 
 // logEvent 打 D-12② stderr 单行事件，三要素齐全：对端 remote、码值 code、
@@ -87,10 +99,10 @@ func emitEvent(attrs ...slog.Attr) {
 // D-03 红线随第四字段延伸：token/ticket/凭据同样禁止作为 remote_user 传入
 // （结构性保证：remote_user 提取源只能是配置头名的 HTTP 头，/s/ 路径 token
 // 与 Hello ticket 不可能进入该提取路径，T-07-03c——见 proxy.go 注释头）。
-// 包级函数（无 Server 状态依赖）：HTTP 层中间件（basicAuth）与 WS 握手段共用
-// 唯一出口；HTTP 层事件 code 复用 HTTP 状态码值（websocket.StatusCode 底层 int，
-// PATTERNS Shared Patterns 裁决）。
-func logEvent(remote string, code websocket.StatusCode, reason string, remoteUser ...string) {
+// logEventWith 供无 Server 接收者的装配期辅助函数（basicAuth 中间件、
+// rejectCapacity）使用；Server 方法形态见下方 logEvent。HTTP 层事件 code
+// 复用 HTTP 状态码值（websocket.StatusCode 底层 int，PATTERNS 裁决）。
+func logEventWith(l *slog.Logger, remote string, code websocket.StatusCode, reason string, remoteUser ...string) {
 	attrs := []slog.Attr{
 		slog.String("event", reason),
 		slog.String("remote", remote),
@@ -99,5 +111,10 @@ func logEvent(remote string, code websocket.StatusCode, reason string, remoteUse
 	if len(remoteUser) > 0 && remoteUser[0] != "" {
 		attrs = append(attrs, slog.String("remote_user", remoteUser[0]))
 	}
-	emitEvent(attrs...)
+	emitWith(l, attrs...)
+}
+
+// logEvent 为 Server 实例出口（per-Server logger）。
+func (s *Server) logEvent(remote string, code websocket.StatusCode, reason string, remoteUser ...string) {
+	logEventWith(s.eventLogger(), remote, code, reason, remoteUser...)
 }

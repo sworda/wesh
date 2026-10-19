@@ -34,6 +34,11 @@ type Server struct {
 	sess  *pty.Session
 	exitf func(code int)
 
+	// logger 为 per-Server 事件出口：New 装配期以 newEventLogger 快照
+	// os.Stderr（测试捕获管道由 captureStderr 在装配前置换）。运行期只读、
+	// 不含可变状态，故无需加锁——不同 Server 实例的 writer 天然隔离。
+	logger *slog.Logger
+
 	// startedAt 为会话起点（08-02，D-22）：New 尾部记录（goroutine 启动之前），
 	// 与 pty.Start 时刻差毫秒级、审计语义无碍；session_end 事件的
 	// duration_seconds 数据源。New 写入后运行期只读。
@@ -513,6 +518,7 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	s := &Server{
 		sess:             sess,
 		exitf:            exitf,
+		logger:           newEventLogger(),
 		writable:         opts.Writable,
 		writePolicy:      opts.WritePolicy,
 		helloTimeout:     opts.HelloTimeout,
@@ -622,7 +628,7 @@ func New(sess *pty.Session, exitf func(int), opts Options) *Server {
 	// 子进程 PID；无 remote/code 键）——goroutine 启动之前 emit（审计事件
 	// 先于任何连接/会话流量落流）。
 	s.startedAt = time.Now()
-	emitEvent(slog.String("event", "session_start"), slog.Int("pid", sess.Cmd.Process.Pid))
+	s.emitEvent(slog.String("event", "session_start"), slog.Int("pid", sess.Cmd.Process.Pid))
 	// 08-03 D-10：会话存活位置位——goroutine 启动前（/healthz session_active
 	// 数据源；置 false 挂点在 lifecycle sess.Wait 返回区段）。
 	s.sessionAlive.Store(true)
@@ -742,7 +748,7 @@ func (s *Server) Handler() http.Handler {
 		// 链——无/错凭据 401 同文、节流 429 同 store；Prometheus scrape_config
 		// 原生 basic_auth 可采集），根路径固定不带 bp（采集器直连后端端口，
 		// 路径恒定可写死进 Prometheus 静态配置；拒绝双挂，单侧定义纪律）。
-		mux.Handle("GET /metrics", basicAuth(http.HandlerFunc(s.metricsHandler), s.credentials, s.throttle, s.proxy, &s.mc))
+		mux.Handle("GET /metrics", basicAuth(s.eventLogger(), http.HandlerFunc(s.metricsHandler), s.credentials, s.throttle, s.proxy, &s.mc))
 	} else {
 		if bp != "" {
 			mux.Handle(bp+"/", http.StripPrefix(bp, wh))
@@ -873,7 +879,7 @@ func (s *Server) shareAttach(w http.ResponseWriter, r *http.Request) shareResult
 // 归因——两签发通道经同一提取点天然同口径，07-03 Task 2 双通道测试锁定）。
 func (s *Server) issueTicketJSON(w http.ResponseWriter, r *http.Request, mode string) {
 	if s.registry.n.Load() >= int64(s.maxClients) {
-		logEvent(s.proxy.remote(r), websocket.StatusCode(http.StatusServiceUnavailable), "max_clients", s.proxy.remoteUser(r))
+		s.logEvent(s.proxy.remote(r), websocket.StatusCode(http.StatusServiceUnavailable), "max_clients", s.proxy.remoteUser(r))
 		http.Error(w, "server is full", http.StatusServiceUnavailable)
 		return
 	}
@@ -1019,7 +1025,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// 强转同 auth.go 401/429 先例）。
 	if s.registry.n.Load() >= int64(s.maxClients) {
 		release()
-		logEvent(remote, websocket.StatusCode(http.StatusServiceUnavailable), "max_clients", remoteUser)
+		s.logEvent(remote, websocket.StatusCode(http.StatusServiceUnavailable), "max_clients", remoteUser)
 		http.Error(w, "server is full", http.StatusServiceUnavailable)
 		return
 	}
@@ -1040,7 +1046,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	// logEvent 埋点在此建立，02-05 复核清单以此为准）。防御性退化：直接 return，
 	// 不进注册表。
 	if c.Subprotocol() != proto.Subprotocol {
-		logEvent(remote, websocket.StatusPolicyViolation, "subprotocol_required", remoteUser)
+		s.logEvent(remote, websocket.StatusPolicyViolation, "subprotocol_required", remoteUser)
 		_ = c.Close(websocket.StatusPolicyViolation, "subprotocol_required")
 		release()
 		return
@@ -1064,7 +1070,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-helloDone:
 		default:
-			logEvent(remote, websocket.StatusPolicyViolation, "hello_timeout", remoteUser)
+			s.logEvent(remote, websocket.StatusPolicyViolation, "hello_timeout", remoteUser)
 			_ = c.Close(websocket.StatusPolicyViolation, "hello_timeout")
 		}
 	})
@@ -1088,21 +1094,21 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 	s.mc.wsRecvBytes.Add(int64(len(data)))
 	if len(data) == 0 {
 		// OQ2 裁决：Hello 前空消息按畸形处理（1002 桶）。
-		logEvent(remote, websocket.StatusProtocolError, "empty_frame", remoteUser)
+		s.logEvent(remote, websocket.StatusProtocolError, "empty_frame", remoteUser)
 		_ = c.Close(websocket.StatusProtocolError, "empty_frame")
 	} else if data[0] != proto.Hello {
 		// D-04 抢跑帧：1002 直关，不发 Error 帧。
-		logEvent(remote, websocket.StatusProtocolError, "frame_before_hello", remoteUser)
+		s.logEvent(remote, websocket.StatusProtocolError, "frame_before_hello", remoteUser)
 		_ = c.Close(websocket.StatusProtocolError, "frame_before_hello")
 	} else if h, ok := proto.DecodeHello(data[1:]); !ok {
 		// D-05 1002 桶含畸形 Hello（DecodeHello 的未知字段忽略纪律不受影响）。
-		logEvent(remote, websocket.StatusProtocolError, "malformed_hello", remoteUser)
+		s.logEvent(remote, websocket.StatusProtocolError, "malformed_hello", remoteUser)
 		_ = c.Close(websocket.StatusProtocolError, "malformed_hello")
 	} else if h.Version != proto.Subprotocol {
 		// D-06 正常客户端路径：先 Error 帧后 1008；close reason 与 code 同名机器串
 		// （D-07）。Error 写失败不补救——连接已死，Close 仍把码值送上。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrVersionMismatch, "protocol version wesh.v1 required"))
-		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrVersionMismatch, remoteUser)
+		s.logEvent(remote, websocket.StatusPolicyViolation, proto.ErrVersionMismatch, remoteUser)
 		_ = c.Close(websocket.StatusPolicyViolation, proto.ErrVersionMismatch)
 	} else if mode, tok := s.checkTicket(ip, h.Ticket); !tok {
 		// D-10 统一口径：节流中/过期/非法/重放 ticket → 同 Error{auth_failed}+1008，
@@ -1111,7 +1117,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 		// 公开协议信息先查，核销紧随其后）；核销全部在预认证 4KiB 读上限档内完成
 		// （Hello JSON +ticket ~120B，D-11 两档纪律不变）。
 		_ = c.Write(ctx, websocket.MessageBinary, proto.ErrorFrame(proto.ErrAuthFailed, "authentication failed"))
-		logEvent(remote, websocket.StatusPolicyViolation, proto.ErrAuthFailed, remoteUser)
+		s.logEvent(remote, websocket.StatusPolicyViolation, proto.ErrAuthFailed, remoteUser)
 		// 08-04 OPS-07（D-06）：WS 侧 auth_failed 计数与事件同址递增
 		// （401/429 事件行既有，metrics 只加计数不打行；无 IP label——
 		// per-IP 明细查日志事件）。
@@ -1243,7 +1249,7 @@ func (s *Server) Attach(w http.ResponseWriter, r *http.Request) {
 			if cl.remoteUser != "" {
 				attachAttrs = append(attachAttrs, slog.String("remote_user", cl.remoteUser))
 			}
-			emitEvent(attachAttrs...)
+			s.emitEvent(attachAttrs...)
 			c.SetReadLimit(proto.ReadLimitPostAuth)
 			// writer 是该连接全程唯一 WS 写端（clients.go）；pinger 保活（D-16）挂
 			// 升档序列尾段（PATTERNS 注意 5），与既有单 reader 循环并发装配——库硬性
@@ -1476,7 +1482,7 @@ func (s *Server) pinger(ctx context.Context, cl *client, interval time.Duration)
 // 事件，稳态档即该连接会话事件；空串/缺省不出键，与现状逐字节一致）。
 func (s *Server) logIfMessageTooBig(remote string, err error, remoteUser ...string) {
 	if errors.Is(err, websocket.ErrMessageTooBig) {
-		logEvent(remote, websocket.StatusMessageTooBig, "message_too_big", remoteUser...)
+		s.logEvent(remote, websocket.StatusMessageTooBig, "message_too_big", remoteUser...)
 	}
 }
 
@@ -1594,7 +1600,7 @@ func (s *Server) lifecycle() {
 			endAttrs = append(endAttrs, slog.String("signal", name))
 		}
 	}
-	emitEvent(endAttrs...)
+	s.emitEvent(endAttrs...)
 	// 08-03 D-10：PTY 会话死亡即探活语义翻转——与 session_end 事件同区段
 	//（sess.Wait 返回与退出码提取完成后）；/healthz 的 session_active 数据源，
 	// 先于 terminate→exitf（waitExit 收码即测试侧同步边）。
@@ -1760,7 +1766,7 @@ func (s *Server) Shutdown() {
 	s.draining.Store(true)
 	// 08-02 D-17：shutdown 事件（进程级——无 remote/code 键），hubMu 锁定前
 	// emit；draining 置位与本事件同函数不同点。
-	emitEvent(slog.String("event", "shutdown"))
+	s.emitEvent(slog.String("event", "shutdown"))
 	s.hubMu.Lock()
 	s.exiting = true
 	// 08-02 D-21：1001 优雅下线广播码同点登记（hubMu 保护，detach 同锁读）——
